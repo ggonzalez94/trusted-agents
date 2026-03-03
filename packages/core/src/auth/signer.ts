@@ -1,4 +1,5 @@
 import { keccak256, toBytes } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { sign } from "viem/accounts";
 import { bytesToBase64, nowUnix } from "../common/index.js";
 import { computeContentDigest } from "./content-digest.js";
@@ -17,7 +18,8 @@ export class RequestSigner implements IRequestSigner {
 
 	constructor(config: SignerConfig) {
 		this.privateKey = config.privateKey;
-		this.keyId = formatKeyId(config.chainId, config.address);
+		const address = config.address ?? privateKeyToAccount(config.privateKey).address;
+		this.keyId = formatKeyId(config.chainId, address);
 	}
 
 	async sign(request: HttpRequestComponents): Promise<SignedHeaders> {
@@ -28,7 +30,7 @@ export class RequestSigner implements IRequestSigner {
 
 		// Compute Content-Digest if body exists
 		let effectiveRequest = request;
-		if (request.body) {
+		if (request.body !== undefined) {
 			const contentDigest = await computeContentDigest(request.body);
 			headers["Content-Digest"] = contentDigest;
 			effectiveRequest = {

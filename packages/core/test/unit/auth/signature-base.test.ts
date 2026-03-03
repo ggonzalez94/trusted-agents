@@ -17,7 +17,7 @@ describe("buildSignatureBase", () => {
 		};
 
 		const base = buildSignatureBase(request, params);
-		const lines = base.split("\n");
+		const lines = base.trimEnd().split("\n");
 
 		expect(lines[0]).toBe('"@method": POST');
 		expect(lines[1]).toBe('"@path": /a2a');
@@ -81,7 +81,7 @@ describe("buildSignatureInput", () => {
 	it("should produce a valid Signature-Input string", () => {
 		const request: HttpRequestComponents = {
 			method: "POST",
-			url: "https://agent.example.com/a2a",
+			url: "https://agent.example.com/a2a?x=1",
 			headers: {},
 		};
 

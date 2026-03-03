@@ -11,6 +11,11 @@ import {
 describe("FileConversationLogger", () => {
 	let tmpDir: string;
 	let logger: FileConversationLogger;
+	const context = {
+		connectionId: "conn-001",
+		peerAgentId: 42,
+		peerDisplayName: "Bob's Agent",
+	};
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "conv-logger-test-"));
@@ -22,7 +27,7 @@ describe("FileConversationLogger", () => {
 	});
 
 	it("should log a message and create a new conversation", async () => {
-		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE);
+		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE, context);
 
 		const conv = await logger.getConversation("conv-001");
 		expect(conv).not.toBeNull();
@@ -32,7 +37,7 @@ describe("FileConversationLogger", () => {
 	});
 
 	it("should append messages to an existing conversation", async () => {
-		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE);
+		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE, context);
 		await logger.logMessage("conv-001", SAMPLE_OUTGOING_MESSAGE);
 
 		const conv = await logger.getConversation("conv-001");
@@ -46,8 +51,8 @@ describe("FileConversationLogger", () => {
 	});
 
 	it("should list all conversations", async () => {
-		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE);
-		await logger.logMessage("conv-002", SAMPLE_OUTGOING_MESSAGE);
+		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE, context);
+		await logger.logMessage("conv-002", SAMPLE_OUTGOING_MESSAGE, context);
 
 		const list = await logger.listConversations();
 		expect(list).toHaveLength(2);
@@ -59,7 +64,7 @@ describe("FileConversationLogger", () => {
 	});
 
 	it("should update lastMessageAt when logging a new message", async () => {
-		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE);
+		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE, context);
 		const conv1 = await logger.getConversation("conv-001");
 		const first = conv1!.lastMessageAt;
 
@@ -71,12 +76,12 @@ describe("FileConversationLogger", () => {
 	});
 
 	it("should generate a transcript for a conversation", async () => {
-		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE);
+		await logger.logMessage("conv-001", SAMPLE_CONVERSATION_MESSAGE, context);
 		await logger.logMessage("conv-001", SAMPLE_OUTGOING_MESSAGE);
 
 		const transcript = await logger.generateTranscript("conv-001");
 
-		expect(transcript).toContain("Unknown");
+		expect(transcript).toContain("Bob's Agent");
 		expect(transcript).toContain("Hello, how can I help you today?");
 		expect(transcript).toContain("I need help scheduling a meeting.");
 	});

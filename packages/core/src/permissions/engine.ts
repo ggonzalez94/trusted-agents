@@ -3,6 +3,10 @@ import type { PermissionResult } from "./types.js";
 
 export class PermissionEngine {
 	check(contact: Contact, scope: string): PermissionResult {
+		if (contact.status !== "active") {
+			return { allowed: false, reason: `Connection status ${contact.status} is not allowed` };
+		}
+
 		const permission = this.getEffectivePermission(contact, scope);
 
 		if (permission === null) {
@@ -13,7 +17,11 @@ export class PermissionEngine {
 			return { allowed: false, reason: `Scope "${scope}" is denied` };
 		}
 
-		return { allowed: true };
+		if (typeof permission === "object") {
+			return { allowed: true, constraints: permission };
+		}
+
+		return { allowed: true, constraints: undefined };
 	}
 
 	getEffectivePermission(

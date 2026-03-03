@@ -1,4 +1,4 @@
-export type ConnectionStatus = "active" | "revoked" | "pending";
+export type ConnectionStatus = "active" | "idle" | "stale" | "revoked" | "pending";
 
 export interface Contact {
 	connectionId: string;

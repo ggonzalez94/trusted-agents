@@ -15,18 +15,26 @@ export interface VerificationResult {
 	valid: boolean;
 	signerAddress?: `0x${string}`;
 	keyId?: string;
+	keyIdChainId?: number;
+	created?: number;
+	replayKey?: string;
 	error?: string;
 }
 
 export interface SignerConfig {
 	privateKey: `0x${string}`;
 	chainId: number;
-	address: `0x${string}`;
+	address?: `0x${string}`;
 }
 
 export interface SignatureParams {
 	created: number;
 	keyId: string;
+}
+
+export interface VerifierConfig {
+	maxSignatureAgeSeconds?: number;
+	maxClockSkewSeconds?: number;
 }
 
 export interface IRequestSigner {

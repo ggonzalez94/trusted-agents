@@ -49,3 +49,10 @@ export class ConfigError extends TrustedAgentError {
 		this.name = "ConfigError";
 	}
 }
+
+export class ValidationError extends TrustedAgentError {
+	constructor(message: string) {
+		super(message, "VALIDATION_ERROR");
+		this.name = "ValidationError";
+	}
+}

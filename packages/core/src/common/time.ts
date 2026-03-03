@@ -7,7 +7,7 @@ export function nowUnix(): number {
 }
 
 export function isExpired(expiresUnix: number): boolean {
-	return nowUnix() > expiresUnix;
+	return nowUnix() >= expiresUnix;
 }
 
 export function expiresIn(seconds: number): number {

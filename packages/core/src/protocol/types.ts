@@ -1,13 +1,15 @@
+export type JsonRpcId = string | number | null;
+
 export interface JsonRpcRequest {
 	jsonrpc: "2.0";
 	method: string;
-	id: string;
+	id: JsonRpcId;
 	params?: unknown;
 }
 
 export interface JsonRpcResponse {
 	jsonrpc: "2.0";
-	id: string;
+	id: JsonRpcId;
 	result?: unknown;
 	error?: JsonRpcErrorObject;
 }
@@ -58,6 +60,7 @@ export interface ConnectionRequestParams {
 	proposedScope: string[];
 	message?: string;
 	nonce: string;
+	protocolVersion?: string;
 	timestamp: string;
 }
 
@@ -66,6 +69,7 @@ export interface ConnectionAcceptParams {
 	from: AgentIdentifier;
 	to: AgentIdentifier;
 	acceptedScope: string[];
+	requestNonce: string;
 	timestamp: string;
 }
 
@@ -87,6 +91,15 @@ export interface AgentCard {
 	url: string;
 	capabilities: string[];
 	protocols: string[];
+	version?: string;
+	defaultInputModes?: string[];
+	defaultOutputModes?: string[];
+	skills?: Array<{
+		id: string;
+		name: string;
+		description?: string;
+		tags?: string[];
+	}>;
 	trustedAgentProtocol?: {
 		version: string;
 		agentAddress: `0x${string}`;

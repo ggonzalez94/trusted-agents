@@ -36,6 +36,7 @@ describe("buildConnectionAccept", () => {
 			from: { agentId: 2, chain: "eip155:1" },
 			to: { agentId: 1, chain: "eip155:1" },
 			acceptedScope: ["general-chat"],
+			requestNonce: "nonce-001",
 			timestamp: "2025-01-01T00:01:00.000Z",
 		};
 

@@ -10,6 +10,9 @@ export interface ServerConfig {
 	agentDescription: string;
 	capabilities: string[];
 	agentUrl: string;
+	signatureMaxAgeSeconds?: number;
+	signatureClockSkewSeconds?: number;
+	rateLimitPerMinute?: number;
 }
 
 export interface RequestContext {
@@ -21,6 +24,8 @@ export interface RequestContext {
 export type ServerEnv = {
 	Variables: {
 		requestContext: RequestContext;
+		requestBody: string;
+		requestMethod?: string;
 	};
 };
 

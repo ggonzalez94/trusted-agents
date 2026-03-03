@@ -6,7 +6,7 @@ import {
 	methodNotFound,
 	parseError,
 } from "../protocol/index.js";
-import type { JsonRpcRequest, JsonRpcResponse } from "../protocol/types.js";
+import type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from "../protocol/types.js";
 import type { MethodHandler, RequestContext } from "./types.js";
 
 export function createRouter(handlers: Record<string, MethodHandler>) {
@@ -22,38 +22,41 @@ export function createRouter(handlers: Record<string, MethodHandler>) {
 			};
 		}
 
-		const request = parsed as JsonRpcRequest;
+		const request = parsed as Partial<JsonRpcRequest>;
+		const requestId = normalizeJsonRpcId(request.id);
 
 		if (
 			!request ||
 			typeof request !== "object" ||
 			request.jsonrpc !== "2.0" ||
-			!request.method ||
-			!request.id
+			typeof request.method !== "string" ||
+			!isValidJsonRpcId(request.id)
 		) {
 			return {
 				jsonrpc: "2.0",
-				id:
-					request && typeof request === "object" && typeof request.id === "string"
-						? request.id
-						: "",
+				id: requestId,
 				error: invalidRequest(),
 			};
 		}
 
 		const handler = handlers[request.method];
 		if (!handler) {
-			return createJsonRpcError(request.id, methodNotFound(request.method));
+			return createJsonRpcError(request.id, methodNotFound());
 		}
 
 		try {
 			const result = await handler(request.params, ctx);
 			return createJsonRpcResponse(request.id, result);
-		} catch (err) {
-			return createJsonRpcError(
-				request.id,
-				internalError(err instanceof Error ? err.message : undefined),
-			);
+		} catch {
+			return createJsonRpcError(request.id, internalError());
 		}
 	};
+}
+
+function isValidJsonRpcId(id: unknown): id is JsonRpcId {
+	return typeof id === "string" || typeof id === "number" || id === null;
+}
+
+function normalizeJsonRpcId(id: unknown): JsonRpcId {
+	return isValidJsonRpcId(id) ? id : null;
 }

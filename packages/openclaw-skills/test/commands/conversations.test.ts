@@ -45,7 +45,11 @@ describe("executeConversations", () => {
 			humanApprovalGiven: null,
 		};
 
-		await logger.logMessage("conv-abc", msg1);
+		await logger.logMessage("conv-abc", msg1, {
+			connectionId: "conn-abc",
+			peerAgentId: 42,
+			peerDisplayName: "TravelBot",
+		});
 		await logger.logMessage("conv-abc", msg2);
 
 		const result = await executeConversations({ dataDir: tmpDir });
@@ -67,7 +71,11 @@ describe("executeConversations", () => {
 			humanApprovalGiven: null,
 		};
 
-		await logger.logMessage("conv-xyz", msg);
+		await logger.logMessage("conv-xyz", msg, {
+			connectionId: "conn-xyz",
+			peerAgentId: 99,
+			peerDisplayName: "SupportBot",
+		});
 
 		const result = await executeConversations({
 			dataDir: tmpDir,

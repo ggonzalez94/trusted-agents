@@ -17,4 +17,5 @@ export interface TrustedAgentsConfig {
 	chains: Record<string, ChainConfig>;
 	inviteExpirySeconds: number;
 	resolveCacheTtlMs: number;
+	resolveCacheMaxEntries: number;
 }

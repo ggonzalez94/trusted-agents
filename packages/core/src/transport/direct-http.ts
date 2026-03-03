@@ -51,9 +51,10 @@ export class DirectHttpTransport implements TransportProvider {
 
 		let lastError: Error | undefined;
 		for (let attempt = 0; attempt <= retries; attempt++) {
+			let timer: NodeJS.Timeout | undefined;
 			try {
 				const controller = new AbortController();
-				const timer = setTimeout(() => controller.abort(), timeout);
+				timer = setTimeout(() => controller.abort(), timeout);
 
 				const response = await fetch(url, {
 					method: "POST",
@@ -62,8 +63,6 @@ export class DirectHttpTransport implements TransportProvider {
 					signal: controller.signal,
 				});
 
-				clearTimeout(timer);
-
 				if (!response.ok) {
 					throw new TransportError(
 						`HTTP ${response.status} from agent ${peerId}: ${response.statusText}`,
@@ -71,6 +70,14 @@ export class DirectHttpTransport implements TransportProvider {
 				}
 
 				const result = (await response.json()) as ProtocolResponse;
+				if (result.jsonrpc !== "2.0") {
+					throw new TransportError("Invalid JSON-RPC response: jsonrpc must be 2.0");
+				}
+				if (result.id !== message.id) {
+					throw new TransportError(
+						`Response id mismatch: expected ${message.id}, got ${String(result.id)}`,
+					);
+				}
 
 				// Update last contact timestamp (fire and forget)
 				this.trustStore.touchContact(contact.connectionId).catch(() => {});
@@ -83,6 +90,10 @@ export class DirectHttpTransport implements TransportProvider {
 					lastError = new TransportError(`Request to agent ${peerId} failed: ${err.message}`);
 				} else {
 					lastError = new TransportError(`Request to agent ${peerId} failed`);
+				}
+			} finally {
+				if (timer) {
+					clearTimeout(timer);
 				}
 			}
 		}
@@ -110,12 +121,15 @@ export class DirectHttpTransport implements TransportProvider {
 			const controller = new AbortController();
 			const timer = setTimeout(() => controller.abort(), 5_000);
 
-			const response = await fetch(contact.peerEndpoint, {
-				method: "HEAD",
-				signal: controller.signal,
-			});
-
-			clearTimeout(timer);
+			let response: Response;
+			try {
+				response = await fetch(contact.peerEndpoint, {
+					method: "HEAD",
+					signal: controller.signal,
+				});
+			} finally {
+				clearTimeout(timer);
+			}
 
 			// Server is alive if we get any response (2xx or 4xx)
 			return response.status < 500;

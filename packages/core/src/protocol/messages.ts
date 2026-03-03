@@ -1,6 +1,7 @@
 import { generateNonce } from "../common/index.js";
 import type {
 	JsonRpcErrorObject,
+	JsonRpcId,
 	JsonRpcRequest,
 	JsonRpcResponse,
 	Message,
@@ -10,7 +11,7 @@ import type {
 export function createJsonRpcRequest(
 	method: string,
 	params?: unknown,
-	id?: string,
+	id?: JsonRpcId,
 ): JsonRpcRequest {
 	return {
 		jsonrpc: "2.0",
@@ -20,7 +21,7 @@ export function createJsonRpcRequest(
 	};
 }
 
-export function createJsonRpcResponse(id: string, result: unknown): JsonRpcResponse {
+export function createJsonRpcResponse(id: JsonRpcId, result: unknown): JsonRpcResponse {
 	return {
 		jsonrpc: "2.0",
 		id,
@@ -28,7 +29,7 @@ export function createJsonRpcResponse(id: string, result: unknown): JsonRpcRespo
 	};
 }
 
-export function createJsonRpcError(id: string, error: JsonRpcErrorObject): JsonRpcResponse {
+export function createJsonRpcError(id: JsonRpcId, error: JsonRpcErrorObject): JsonRpcResponse {
 	return {
 		jsonrpc: "2.0",
 		id,

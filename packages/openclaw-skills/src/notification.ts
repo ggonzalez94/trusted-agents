@@ -14,6 +14,6 @@ export class ConsoleNotificationAdapter implements NotificationAdapter {
 
 	async confirm(message: string): Promise<boolean> {
 		console.log(`[CONFIRM] ${message}`);
-		return true;
+		return false;
 	}
 }

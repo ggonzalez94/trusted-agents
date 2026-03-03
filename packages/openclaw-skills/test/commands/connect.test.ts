@@ -15,9 +15,9 @@ function createMockResolver(agent: ResolvedAgent): IAgentResolver {
 
 const mockAgent: ResolvedAgent = {
 	agentId: 1,
-	chain: "base-sepolia",
+	chain: "eip155:84532",
 	ownerAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-	agentAddress: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+	agentAddress: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
 	endpoint: "https://agent1.example.com/a2a",
 	capabilities: ["message/send"],
 	registrationFile: {
@@ -27,7 +27,7 @@ const mockAgent: ResolvedAgent = {
 		services: [{ name: "a2a", endpoint: "https://agent1.example.com/a2a" }],
 		trustedAgentProtocol: {
 			version: "0.1.0",
-			agentAddress: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+			agentAddress: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
 			capabilities: ["message/send"],
 		},
 	},
@@ -53,19 +53,21 @@ describe("executeConnect", () => {
 	it("should connect successfully with a valid invite", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
-			chain: "base-sepolia",
+			chain: "eip155:84532",
 			privateKey: inviterPrivateKey,
 			expirySeconds: 3600,
 		});
 
 		const resolver = createMockResolver(mockAgent);
-		const sendRequest = vi.fn().mockResolvedValue({ jsonrpc: "2.0", id: "1", result: {} });
+		const sendRequest = vi
+			.fn()
+			.mockResolvedValue({ jsonrpc: "2.0", id: "1", result: { accepted: true } });
 
 		const result = await executeConnect({
 			inviteUrl: url,
 			privateKey: connectorPrivateKey,
 			agentId: 2,
-			chain: "base-sepolia",
+			chain: "eip155:84532",
 			dataDir: tmpDir,
 			resolver,
 			sendRequest,
@@ -74,13 +76,14 @@ describe("executeConnect", () => {
 		expect(result.success).toBe(true);
 		expect(result.connectionId).toBeTruthy();
 		expect(result.peerName).toBe("TestAgent");
-		expect(resolver.resolve).toHaveBeenCalledWith(1, "base-sepolia");
+		expect(result.status).toBe("active");
+		expect(resolver.resolve).toHaveBeenCalledWith(1, "eip155:84532");
 	});
 
 	it("should fail with an expired invite", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
-			chain: "base-sepolia",
+			chain: "eip155:84532",
 			privateKey: inviterPrivateKey,
 			expirySeconds: -1,
 		});
@@ -91,7 +94,7 @@ describe("executeConnect", () => {
 			inviteUrl: url,
 			privateKey: connectorPrivateKey,
 			agentId: 2,
-			chain: "base-sepolia",
+			chain: "eip155:84532",
 			dataDir: tmpDir,
 			resolver,
 		});
@@ -103,15 +106,16 @@ describe("executeConnect", () => {
 	it("should fail with an invalid invite URL", async () => {
 		const resolver = createMockResolver(mockAgent);
 
-		await expect(
-			executeConnect({
-				inviteUrl: "https://trustedagents.link/connect?invalid=true",
-				privateKey: connectorPrivateKey,
-				agentId: 2,
-				chain: "base-sepolia",
-				dataDir: tmpDir,
-				resolver,
-			}),
-		).rejects.toThrow();
+		const result = await executeConnect({
+			inviteUrl: "https://trustedagents.link/connect?invalid=true",
+			privateKey: connectorPrivateKey,
+			agentId: 2,
+			chain: "eip155:84532",
+			dataDir: tmpDir,
+			resolver,
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Invalid invite URL");
 	});
 });

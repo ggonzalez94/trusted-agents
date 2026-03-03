@@ -99,6 +99,7 @@ describe("Full connection flow", () => {
 			from: { agentId: 1, chain: "eip155:1" },
 			to: { agentId: 2, chain: "eip155:1" },
 			acceptedScope: ["general-chat", "scheduling"],
+			requestNonce: parsed.nonce,
 			timestamp: nowISO(),
 		});
 

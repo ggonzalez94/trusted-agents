@@ -18,11 +18,15 @@ interface CacheEntry {
 
 export class AgentResolver implements IAgentResolver {
 	private readonly cache = new Map<string, CacheEntry>();
+	private readonly maxCacheEntries: number;
 
 	constructor(
 		private readonly chains: Record<string, ChainConfig>,
 		private readonly createClient: (rpcUrl: string) => PublicClient,
-	) {}
+		options?: { maxCacheEntries?: number },
+	) {
+		this.maxCacheEntries = options?.maxCacheEntries ?? 1000;
+	}
 
 	async resolve(agentId: number, chain: string): Promise<ResolvedAgent> {
 		const chainConfig = this.chains[chain];
@@ -75,7 +79,18 @@ export class AgentResolver implements IAgentResolver {
 			agent,
 			cachedAt: Date.now(),
 		});
+		this.evictIfNeeded();
 
 		return agent;
+	}
+
+	private evictIfNeeded(): void {
+		while (this.cache.size > this.maxCacheEntries) {
+			const first = this.cache.keys().next();
+			if (first.done) {
+				return;
+			}
+			this.cache.delete(first.value);
+		}
 	}
 }

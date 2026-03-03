@@ -133,7 +133,11 @@ describe("Message exchange after connection", () => {
 			humanApprovalRequired: false,
 			humanApprovalGiven: null,
 		};
-		await bobLogger.logMessage(conversationId, incomingMsg);
+		await bobLogger.logMessage(conversationId, incomingMsg, {
+			connectionId,
+			peerAgentId: 1,
+			peerDisplayName: "Alice's Agent",
+		});
 
 		// Alice also logs the outgoing message
 		const outgoingMsgAlice: ConversationMessage = {
@@ -144,7 +148,11 @@ describe("Message exchange after connection", () => {
 			humanApprovalRequired: false,
 			humanApprovalGiven: null,
 		};
-		await aliceLogger.logMessage(conversationId, outgoingMsgAlice);
+		await aliceLogger.logMessage(conversationId, outgoingMsgAlice, {
+			connectionId,
+			peerAgentId: 2,
+			peerDisplayName: "Bob's Agent",
+		});
 
 		// Step 5: Bob responds (signed)
 		const bobSigner = new RequestSigner({

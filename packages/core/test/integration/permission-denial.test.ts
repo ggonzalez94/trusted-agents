@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RequestSigner } from "../../src/auth/signer.js";
 import { nowISO } from "../../src/common/time.js";
+import { FilePendingInviteStore } from "../../src/connection/pending-invites.js";
 import { PermissionEngine } from "../../src/permissions/engine.js";
 import { createA2AServer } from "../../src/server/a2a-server.js";
 import { FileTrustStore } from "../../src/trust/file-trust-store.js";
@@ -90,7 +91,7 @@ describe("Permission denial", () => {
 
 		expect(response.status).toBe(403);
 		const body = await response.json();
-		expect(body.error).toBe("Forbidden");
+		expect(body.error?.message).toBe("Forbidden");
 	});
 
 	it("should deny a request from an unknown peer (not in trust store)", async () => {
@@ -147,6 +148,10 @@ describe("Permission denial", () => {
 	});
 
 	it("should allow bootstrap methods from unknown peers", async () => {
+		const pendingInvites = new FilePendingInviteStore(bobTmpDir);
+		const bootstrapNonce = "test-nonce";
+		await pendingInvites.create(bootstrapNonce, Math.floor(Date.now() / 1000) + 3600);
+
 		const app = createA2AServer(
 			{
 				agentId: 2,
@@ -161,6 +166,7 @@ describe("Permission denial", () => {
 			},
 			{
 				trustStore: bobStore,
+				pendingInviteStore: pendingInvites,
 				handlers: {
 					"connection/request": async () => ({ accepted: true }),
 				},
@@ -181,7 +187,7 @@ describe("Permission denial", () => {
 				from: { agentId: 3, chain: "eip155:1" },
 				to: { agentId: 2, chain: "eip155:1" },
 				proposedScope: ["general-chat"],
-				nonce: "test-nonce",
+				nonce: bootstrapNonce,
 				timestamp: nowISO(),
 			},
 		});
@@ -236,7 +242,7 @@ describe("Permission denial", () => {
 
 		const body = await response.json();
 
-		expect(body.error).toBe("Forbidden");
+		expect(body.error?.message).toBe("Forbidden");
 		expect(JSON.stringify(body)).not.toContain("stack");
 		expect(JSON.stringify(body)).not.toContain("privateKey");
 		expect(JSON.stringify(body)).not.toContain("password");

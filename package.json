@@ -6,7 +6,7 @@
     "build": "bun run --filter '*' build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/core build && bun run --cwd packages/openclaw-skills typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."

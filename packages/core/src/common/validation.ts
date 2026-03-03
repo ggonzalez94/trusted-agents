@@ -24,6 +24,15 @@ export function isCAIP2Chain(value: string): boolean {
 	return CAIP2_REGEX.test(value);
 }
 
+export function caip2ToChainId(value: string): number | null {
+	if (!isCAIP2Chain(value)) {
+		return null;
+	}
+	const [, chainId] = value.split(":");
+	const parsed = Number.parseInt(chainId ?? "", 10);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 export function assertEthereumAddress(value: string): asserts value is `0x${string}` {
 	if (!isEthereumAddress(value)) {
 		throw new Error(`Invalid Ethereum address: ${value}`);

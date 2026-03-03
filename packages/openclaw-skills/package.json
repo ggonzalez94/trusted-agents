@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun run --cwd ../core build && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

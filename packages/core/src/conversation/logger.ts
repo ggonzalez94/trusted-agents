@@ -1,10 +1,28 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+	AsyncMutex,
+	assertPathWithinBase,
+	assertSafeFileComponent,
+	resolveDataDir,
+} from "../common/index.js";
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
 
+export interface ConversationContext {
+	connectionId: string;
+	peerAgentId: number;
+	peerDisplayName: string;
+	topic?: string;
+}
+
 export interface IConversationLogger {
-	logMessage(conversationId: string, message: ConversationMessage): Promise<void>;
+	logMessage(
+		conversationId: string,
+		message: ConversationMessage,
+		context?: ConversationContext,
+	): Promise<void>;
 	getConversation(conversationId: string): Promise<ConversationLog | null>;
 	listConversations(filter?: { connectionId?: string }): Promise<ConversationLog[]>;
 	generateTranscript(conversationId: string): Promise<string>;
@@ -12,31 +30,49 @@ export interface IConversationLogger {
 
 export class FileConversationLogger implements IConversationLogger {
 	private readonly conversationsDir: string;
+	private readonly writeMutex = new AsyncMutex();
 
-	constructor(private readonly dataDir: string = join(process.env.HOME ?? "~", ".trustedagents")) {
+	constructor(dataDir: string = join(process.env.HOME ?? "~", ".trustedagents")) {
+		this.dataDir = resolveDataDir(dataDir);
 		this.conversationsDir = join(this.dataDir, "conversations");
 	}
+	private readonly dataDir: string;
 
-	async logMessage(conversationId: string, message: ConversationMessage): Promise<void> {
-		const log = await this.loadLog(conversationId);
+	async logMessage(
+		conversationId: string,
+		message: ConversationMessage,
+		context?: ConversationContext,
+	): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const log = await this.loadLog(conversationId);
 
-		if (log) {
-			log.messages.push(message);
-			log.lastMessageAt = message.timestamp;
-			await this.saveLog(conversationId, log);
-		} else {
+			if (log) {
+				log.messages.push(message);
+				log.lastMessageAt = message.timestamp;
+				if (context?.topic) {
+					log.topic = context.topic;
+				}
+				await this.saveLog(conversationId, log);
+				return;
+			}
+
+			if (!context) {
+				throw new Error("context is required when creating a new conversation log entry");
+			}
+
 			const newLog: ConversationLog = {
 				conversationId,
-				connectionId: "",
-				peerAgentId: 0,
-				peerDisplayName: "Unknown",
+				connectionId: context.connectionId,
+				peerAgentId: context.peerAgentId,
+				peerDisplayName: context.peerDisplayName,
+				...(context.topic ? { topic: context.topic } : {}),
 				startedAt: message.timestamp,
 				lastMessageAt: message.timestamp,
 				status: "active",
 				messages: [message],
 			};
 			await this.saveLog(conversationId, newLog);
-		}
+		});
 	}
 
 	async getConversation(conversationId: string): Promise<ConversationLog | null> {
@@ -81,7 +117,7 @@ export class FileConversationLogger implements IConversationLogger {
 	}
 
 	private async loadLog(conversationId: string): Promise<ConversationLog | null> {
-		const filePath = join(this.conversationsDir, `${conversationId}.json`);
+		const filePath = this.filePathForConversation(conversationId);
 		try {
 			const raw = await readFile(filePath, "utf-8");
 			return JSON.parse(raw) as ConversationLog;
@@ -98,10 +134,20 @@ export class FileConversationLogger implements IConversationLogger {
 	}
 
 	private async saveLog(conversationId: string, log: ConversationLog): Promise<void> {
-		await mkdir(this.conversationsDir, { recursive: true });
-		const filePath = join(this.conversationsDir, `${conversationId}.json`);
-		const tmpPath = `${filePath}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(log, null, "\t"), "utf-8");
+		await mkdir(this.conversationsDir, { recursive: true, mode: 0o700 });
+		const filePath = this.filePathForConversation(conversationId);
+		const tmpPath = `${filePath}.${randomUUID()}.tmp`;
+		await writeFile(tmpPath, JSON.stringify(log, null, "\t"), {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
 		await rename(tmpPath, filePath);
+	}
+
+	private filePathForConversation(conversationId: string): string {
+		assertSafeFileComponent(conversationId, "conversationId");
+		const filePath = join(this.conversationsDir, `${conversationId}.json`);
+		assertPathWithinBase(this.conversationsDir, filePath, "conversationId");
+		return filePath;
 	}
 }

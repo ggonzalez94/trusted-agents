@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RequestSigner } from "../../../src/auth/signer.js";
 import type { HttpRequestComponents } from "../../../src/auth/types.js";
 import { RequestVerifier } from "../../../src/auth/verifier.js";
+import { nowUnix } from "../../../src/common/time.js";
 import { ALICE, BOB } from "../../fixtures/test-keys.js";
 
 describe("RequestVerifier", () => {
@@ -39,14 +40,14 @@ describe("RequestVerifier", () => {
 	});
 
 	it("should return invalid for a malformed Signature header", async () => {
+		const created = nowUnix();
 		const request: HttpRequestComponents = {
-			method: "POST",
+			method: "GET",
 			url: "https://agent.example.com/a2a",
 			headers: {
-				"Signature-Input": `sig1=("@method" "@path" "@authority");created=123;keyid="erc8128:1:${ALICE.address}"`,
+				"Signature-Input": `sig1=("@method" "@path" "@authority");created=${created};keyid="erc8128:1:${ALICE.address}"`,
 				Signature: "not-valid-format",
 			},
-			body: "{}",
 		};
 
 		const result = await verifier.verify(request);

@@ -4,6 +4,7 @@ export type {
 	VerificationResult,
 	SignerConfig,
 	SignatureParams,
+	VerifierConfig,
 	IRequestSigner,
 	IRequestVerifier,
 } from "./types.js";

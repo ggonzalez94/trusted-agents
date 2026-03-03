@@ -1,4 +1,11 @@
-import { encodePacked, keccak256, recoverMessageAddress, toBytes } from "viem";
+import {
+	encodeAbiParameters,
+	keccak256,
+	parseAbiParameters,
+	recoverMessageAddress,
+	toBytes,
+} from "viem";
+import { isAddressEqual } from "viem";
 import { isExpired } from "../common/index.js";
 import { ConnectionError } from "../common/index.js";
 import type { InviteData } from "./types.js";
@@ -33,7 +40,10 @@ export function parseInviteUrl(url: string): InviteData {
 	};
 }
 
-export async function verifyInvite(invite: InviteData): Promise<{
+export async function verifyInvite(
+	invite: InviteData,
+	options?: { expectedSignerAddress?: `0x${string}` },
+): Promise<{
 	valid: boolean;
 	signerAddress: `0x${string}`;
 	error?: string;
@@ -48,8 +58,8 @@ export async function verifyInvite(invite: InviteData): Promise<{
 
 	try {
 		const message = keccak256(
-			encodePacked(
-				["uint256", "string", "string", "uint256"],
+			encodeAbiParameters(
+				parseAbiParameters("uint256 agentId, string chain, string nonce, uint256 expires"),
 				[BigInt(invite.agentId), invite.chain, invite.nonce, BigInt(invite.expires)],
 			),
 		);
@@ -58,6 +68,17 @@ export async function verifyInvite(invite: InviteData): Promise<{
 			message: { raw: toBytes(message) },
 			signature: invite.signature,
 		});
+
+		if (
+			options?.expectedSignerAddress &&
+			!isAddressEqual(signerAddress, options.expectedSignerAddress)
+		) {
+			return {
+				valid: false,
+				signerAddress,
+				error: "Invite signer does not match expected agent identity",
+			};
+		}
 
 		return { valid: true, signerAddress };
 	} catch (err) {

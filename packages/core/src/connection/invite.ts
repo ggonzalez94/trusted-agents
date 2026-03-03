@@ -1,4 +1,4 @@
-import { encodePacked, keccak256, toBytes } from "viem";
+import { encodeAbiParameters, keccak256, parseAbiParameters, toBytes } from "viem";
 import { signMessage } from "viem/accounts";
 import { expiresIn, generateNonce } from "../common/index.js";
 import type { InviteData } from "./types.js";
@@ -17,8 +17,8 @@ export async function generateInvite(params: {
 	const expires = expiresIn(expirySeconds);
 
 	const message = keccak256(
-		encodePacked(
-			["uint256", "string", "string", "uint256"],
+		encodeAbiParameters(
+			parseAbiParameters("uint256 agentId, string chain, string nonce, uint256 expires"),
 			[BigInt(agentId), chain, nonce, BigInt(expires)],
 		),
 	);

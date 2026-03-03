@@ -4,7 +4,11 @@ export { generateInvite } from "./invite.js";
 
 export { parseInviteUrl, verifyInvite } from "./invite-verifier.js";
 
-export { PendingInviteStore } from "./pending-invites.js";
+export {
+	PendingInviteStore,
+	FilePendingInviteStore,
+	type IPendingInviteStore,
+} from "./pending-invites.js";
 
 export {
 	buildConnectionRequest,

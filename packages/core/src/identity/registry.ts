@@ -67,6 +67,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 
 			const transferLog = receipt.logs.find(
 				(log) =>
+					log.address.toLowerCase() === this.registryAddress.toLowerCase() &&
 					log.topics[0] === "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
 			);
 

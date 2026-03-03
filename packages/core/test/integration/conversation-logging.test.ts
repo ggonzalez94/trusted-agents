@@ -9,6 +9,11 @@ describe("Conversation logging integration", () => {
 	let tmpDir: string;
 	let logger: FileConversationLogger;
 	const conversationId = "conv-int-001";
+	const context = {
+		connectionId: "conn-int-001",
+		peerAgentId: 7,
+		peerDisplayName: "Scheduling Bot",
+	};
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "conv-int-test-"));
@@ -57,7 +62,7 @@ describe("Conversation logging integration", () => {
 		];
 
 		for (const msg of messages) {
-			await logger.logMessage(conversationId, msg);
+			await logger.logMessage(conversationId, msg, context);
 		}
 
 		const conv = await logger.getConversation(conversationId);
@@ -110,8 +115,16 @@ describe("Conversation logging integration", () => {
 			humanApprovalGiven: null,
 		};
 
-		await logger.logMessage("conv-a", msg1);
-		await logger.logMessage("conv-b", msg2);
+		await logger.logMessage("conv-a", msg1, {
+			connectionId: "conn-a",
+			peerAgentId: 1,
+			peerDisplayName: "Agent A",
+		});
+		await logger.logMessage("conv-b", msg2, {
+			connectionId: "conn-b",
+			peerAgentId: 2,
+			peerDisplayName: "Agent B",
+		});
 
 		const all = await logger.listConversations();
 		expect(all).toHaveLength(2);
@@ -132,7 +145,7 @@ describe("Conversation logging integration", () => {
 			humanApprovalGiven: null,
 		};
 
-		await logger.logMessage("conv-persist", msg);
+		await logger.logMessage("conv-persist", msg, context);
 
 		const logger2 = new FileConversationLogger(tmpDir);
 		const conv = await logger2.getConversation("conv-persist");

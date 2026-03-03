@@ -7,4 +7,5 @@ export interface PermissionCheck {
 export interface PermissionResult {
 	allowed: boolean;
 	reason?: string;
+	constraints?: Record<string, unknown>;
 }
