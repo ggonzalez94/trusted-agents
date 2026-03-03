@@ -19,10 +19,8 @@ This is distinct from the general "trustless agent economy" problem (where stran
 | Layer | Standard | Role in This System |
 |---|---|---|
 | **Identity** | **ERC-8004** (Identity Registry) | On-chain agent identity as ERC-721 NFT. tokenURI resolves to a registration file (agent card) declaring endpoints, capabilities, and keys. |
-| **HTTP Authentication** | **ERC-8128** (Signed HTTP Requests) | Every HTTP request between agents is cryptographically signed using the agent's Ethereum key via RFC 9421 HTTP Message Signatures. This is how agents prove identity on every API call — not just at login time. |
-| **Initial Auth** | **SIWA** (Sign In With Agent) | Initial handshake that proves an agent owns its ERC-8004 identity. Built on ERC-8004 + ERC-8128. Already has an SDK and OpenClaw skill. |
-| **Communication** | **A2A** (Agent-to-Agent Protocol) | JSON-RPC 2.0 over HTTP/SSE. Agent Cards for capability advertisement. Task-based interaction model. Developed by Google, now Linux Foundation. |
-| **Tool Integration** | **MCP** (Model Context Protocol) | For agents to expose tools and resources to each other. Complementary to A2A — MCP is for tools, A2A is for agent-to-agent collaboration. |
+| **HTTP Authentication** | **ERC-8128** (Signed HTTP Requests) | Every HTTP request between agents is cryptographically signed using the agent's Ethereum key via RFC 9421 HTTP Message Signatures. This is how agents prove identity on every API call — not just at login time. Implemented directly with ethers.js/viem. |
+| **Communication** | **A2A v0.3.0** (Agent-to-Agent Protocol) | JSON-RPC 2.0 over HTTP/SSE. Agent Cards for capability advertisement. Task-based interaction model. Developed by Google, now Linux Foundation. **Note**: v0.3.0 is the latest released version and is pinned for v1 MVP stability. |
 | **Agent Runtime** | **OpenClaw** (or similar frameworks) | The actual agent runtime: gateway, skills, memory, heartbeat. Runs on a server. |
 
 ### Why ERC-8128 for Signing HTTP Requests?
@@ -33,8 +31,8 @@ ERC-8128 is purpose-built for exactly this use case. Key properties:
 - **Built on RFC 9421** (IETF HTTP Message Signatures), so it extends an established web standard rather than inventing something new.
 - **Covers the full request**: method, path, headers, body hash, and timestamps are all included in the signature via `Signature-Input` and `Content-Digest` headers.
 - **Identity format**: the `keyid` in the signature input is formatted as `erc8128:<chainId>:<address>`, which directly maps to the agent's on-chain identity.
-- **Composable with ERC-8004**: ERC-8128 proves "this request came from this address"; ERC-8004 proves "this address is agent #42 with these capabilities and this reputation." Together they give you authenticated + authorized agent communication.
-- **Already integrated with SIWA**: the SIWA library handles both the initial handshake (proving on-chain identity) and ongoing request signing (ERC-8128).
+- **Composable with ERC-8004**: ERC-8128 proves "this request came from this address"; ERC-8004 proves "this address is agent #42 with these capabilities." Together they give you authenticated + authorized agent communication.
+- **No additional auth layer needed**: ERC-8128 handles both proving identity and authenticating every request. No separate handshake protocol, SDK, or session management is required — just ethers.js/viem and RFC 9421.
 
 ---
 
@@ -63,9 +61,11 @@ Registration File (JSON on IPFS or HTTPS)
 Endpoints, Public Key, Capabilities, Supported Protocols
 ```
 
-The wallet that mints the NFT is the **owner**. The agent holds a **private key** that it uses to sign all HTTP requests via ERC-8128.
+**v1 Requirement**: The agent can use its own private key, including for registration. Security is not our main concern for this release. We can add session keys and delegation later
 
-**v1 Simplification**: In this version, the agent directly holds a private key (either the owner's key or a dedicated agent key). The registration file declares the corresponding public address. We may want to extend this in the future with a **session key delegation pattern** — where the owner signs a scoped, time-limited delegation to an ephemeral key the agent holds, keeping the owner's main key cold. This is a natural upgrade path but not required for v1.
+The registration file declares the agent's public address via the `agentAddress` field in `trustedAgentProtocol`. Peers verify ERC-8128 signatures against this address.
+
+**Future upgrade**: A **session key delegation pattern** — where the owner signs a scoped, time-limited delegation to an ephemeral key — is a natural extension but not required for v1.
 
 ### 3.2 Ownership Verification
 
@@ -75,16 +75,18 @@ Supported ownership proof methods (extensible):
 
 - **Ethereum wallet**: The agent's ERC-8004 NFT is owned by a specific wallet address. Verifiable on-chain.
 - **ENS name**: The owner's ENS name resolves to the wallet that owns the agent NFT.
-- **Out-of-band verification**: The owner shares their agentId directly (in person, via a messaging app, QR code, etc.). Trust is established socially, then cryptographically maintained.
+- **Out-of-band verification**: The owner shares their agentId directly (in person, via a messaging app, QR code, etc.). Trust is established socially, then cryptographically maintained. This is the main and default model we wanna build for v1.
 - **Future: phone number, email, social accounts**: The registration file can include additional identity claims. Verification of these can be added later without changing the core protocol.
 
 ### 3.3 Verifying a Remote Agent
 
 When Agent A receives a request claiming to be from Agent B:
 
-1. **Check trust store**: Is Agent B's agentId in our local trusted contacts? If not, reject.
-2. **Verify ERC-8128 signature**: Validate the HTTP request signature against Agent B's known public address.
-3. **Optionally re-resolve on-chain**: Periodically re-fetch Agent B's registration file from the ERC-8004 registry to check for key rotation or deactivation.
+1. **Check trust context**:
+   - For normal message methods (`message/*`, `connection/revoke`, `connection/update-scope`), Agent B MUST already be in the trust store.
+   - For bootstrap methods (`connection/request`, `connection/accept`, `connection/reject`), Agent B may be pre-trust, but the request MUST match a valid handshake context (for example: unexpired invite nonce or a pending local connection approval flow).
+2. **Verify ERC-8128 signature**: Validate the HTTP request signature against Agent B's known or freshly resolved public address.
+3. **Re-resolve on-chain** (mandatory): Re-fetch Agent B's registration file from the ERC-8004 registry at a configurable interval (recommended: every 24 hours) to check for key rotation or deactivation. **Always** re-resolve before high-consequence actions (purchases, bookings, or any action with real-world side effects).
 
 The critical property: **every single HTTP request is authenticated**. There are no sessions to hijack, no tokens to steal. If the key is compromised, revoke it on-chain and all future requests from the old key are rejected.
 
@@ -92,9 +94,9 @@ The critical property: **every single HTTP request is authenticated**. There are
 
 ## 4. Connection Flow
 
-Two connection models are supported. **Model C (Invitation Link) is the default** — it's how most people will connect their agents in practice.
+Two connection models are supported. **Invitation Link is the default** — it's how most people will connect their agents in practice.
 
-### 4.1 Model C: Invitation Link (Default Flow)
+### 4.1 Invitation Link (Default Flow)
 
 This is the primary flow. A user generates a signed invitation link and shares it with a friend via any channel (text message, email, QR code, in person, etc.).
 
@@ -144,9 +146,9 @@ This is the primary flow. A user generates a signed invitation link and shares i
  ┌────────────┐  7. Connection Request (signed, ERC-8128) ┌────────────┐
  │  Alice's   │ ◄──────────────────────────────────────── │  Bob's     │
  │  Agent     │    {                                      │  Agent     │
- │            │      from: agentId 77,                    │            │
- │            │      to: agentId 42,                      │            │
- │            │      inviteNonce: "abc123",                │            │
+ │            │      from: { agentId: 77, ... },            │            │
+ │            │      to: { agentId: 42, ... },              │            │
+ │            │      nonce: "abc123",                       │            │
  │            │      proposedScope: [...]                  │            │
  │            │    }                                       │            │
  └──────┬─────┘                                           └────────────┘
@@ -184,7 +186,11 @@ https://trustedagents.link/connect?
 
 The link can be shared through any channel. The signature proves it was generated by the agent's key holder. The nonce ensures it can only be used once.
 
-### 4.2 Model A: Direct Connection Request
+**Note on `trustedagents.link`**: This is a data-carrying URI convention, not a required live service. The receiving agent parses the query parameters (`agentId`, `chain`, `nonce`, `expires`, `sig`) directly from the URL — no web server at `trustedagents.link` needs to be running. The domain simply provides a human-recognizable namespace.
+
+**Invite redemption rule**: The inviter stores each generated invite nonce in a local `pendingInvites` store with status (`unused`, `redeemed`, `expired`). A bootstrap `connection/request` referencing an invite nonce is accepted only if the nonce exists, is unexpired, and is still `unused`; once accepted, it is atomically marked `redeemed`.
+
+### 4.2 Direct Connection Request
 
 For cases where Alice already knows Bob's agentId (from a previous interaction, a shared directory, etc.), she can instruct her agent to connect directly without an invitation link.
 
@@ -205,20 +211,24 @@ The connection request message:
 
 ```json
 {
-  "type": "trusted-agent-connection-request",
-  "from": {
-    "agentId": 42,
-    "chain": "eip155:8453",
-    "ownerAddress": "0xAlice..."
-  },
-  "to": {
-    "agentId": 77,
-    "chain": "eip155:8453"
-  },
-  "proposedScope": ["scheduling", "general-chat"],
-  "message": "Hey! Alice wants to connect our agents.",
-  "nonce": "unique-random-value",
-  "timestamp": "2026-03-02T14:30:00Z"
+  "jsonrpc": "2.0",
+  "method": "connection/request",
+  "id": "req-uuid-001",
+  "params": {
+    "from": {
+      "agentId": 42,
+      "chain": "eip155:8453",
+      "ownerAddress": "0xAlice..."
+    },
+    "to": {
+      "agentId": 77,
+      "chain": "eip155:8453"
+    },
+    "proposedScope": ["scheduling", "general-chat"],
+    "message": "Hey! Alice wants to connect our agents.",
+    "nonce": "unique-random-value",
+    "timestamp": "2026-03-02T14:30:00Z"
+  }
 }
 ```
 
@@ -244,25 +254,35 @@ When a connection is established, both agents agree on a **scope** — what the 
 
 - Scope is **per-peer** — Alice might grant Bob's agent scheduling access but not purchasing.
 - Scope is **configurable by the human** — both at connection time and modifiable later.
-- Scope is **extensible** — new capability types can be added without protocol changes. If an agent receives a scope it doesn't understand, it ignores it.
+- Scope is **extensible** — new capability types can be added without protocol changes.
+- Unknown runtime scopes are **rejected by default** (`403 Forbidden`) unless explicitly configured in local permissions.
 - Scope is **enforced locally** — each agent checks incoming requests against the stored scope for that peer before processing.
+
+**Enforcement model**: Scope defines what the *owner* permits their agent to do with a given peer, and enforcement happens locally on both sides. When Alice's agent receives a message from Bob's agent tagged with `scope: "purchases"`, it checks whether Alice has granted Bob purchasing permissions — if not, the request is rejected. Conversely, Alice's agent will not *send* a request under a scope that Alice hasn't approved. There is no honor system: both agents independently enforce their own owner's permissions.
+
+> **Terminology note**: Three related terms appear throughout this spec:
+> - **Capabilities** — what an agent *can do*, declared in its registration file (array of strings, e.g. `["scheduling", "research"]`).
+> - **Permissions** — what an owner *permits* for a given peer, stored in the trust store (object mapping scope labels to configuration).
+> - **Scope** — which permission a specific message operates under (single string in message metadata, e.g. `"scheduling"`).
 
 ### 4.4 Trust Store (Local State)
 
-Each agent maintains a local trust store — the contacts list. Stored as a JSON file (consistent with OpenClaw's file-based architecture):
+Each agent maintains a local trust store — the contacts list. Stored as a JSON file (consistent with OpenClaw's file-based architecture).
+
+**connectionId format**: connectionIds are UUIDv4 values generated by the initiating agent at connection establishment time. They are unique per trust relationship.
 
 ```json
 // ~/.trustedagents/contacts.json
 {
   "contacts": [
     {
-      "connectionId": "conn-42-77-001",
+      "connectionId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
       "peerAgentId": 77,
       "peerChain": "eip155:8453",
       "peerOwnerAddress": "0xBob...",
       "peerDisplayName": "Bob's Agent",
       "peerEndpoint": "https://bob-agent.example.com/a2a",
-      "peerPublicKey": "0x...",
+      "peerAgentAddress": "0x...",
       "permissions": {
         "scheduling": true,
         "general-chat": true
@@ -274,6 +294,8 @@ Each agent maintains a local trust store — the contacts list. Stored as a JSON
   ]
 }
 ```
+
+We might introduce a shared trust store in the future. If it doesn't add too much complexity we should add an abstraction to make this possible.
 
 ---
 
@@ -356,7 +378,7 @@ Alice's Agent                                    Bob's Agent
      │◄─────────────────────────────────────────────────
 ```
 
-**Critical security rule**: If the request is not signed by a key in the trust store, return `403 Forbidden` with no additional information. The endpoint should not leak data to unauthenticated callers.
+**Critical security rule**: All non-bootstrap methods MUST be signed by a key in the trust store; otherwise return `403 Forbidden` with no additional information. Bootstrap methods (`connection/request`, `connection/accept`, `connection/reject`) may be processed pre-trust only when they match a valid handshake context (invite nonce or pending local connection flow), pass signature verification, and satisfy expiry checks. The endpoint should not leak data to unauthenticated callers.
 
 ### 5.3 Message Format
 
@@ -369,16 +391,17 @@ Messages use the A2A protocol format with Trusted Agent metadata extensions:
   "id": "msg-uuid-001",
   "params": {
     "message": {
+      "messageId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "role": "user",
       "parts": [
         {
-          "type": "text",
+          "kind": "text",
           "text": "Alice wants to schedule dinner Thursday. What times work?"
         }
       ],
       "metadata": {
         "trustedAgent": {
-          "connectionId": "conn-42-77-001",
+          "connectionId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
           "conversationId": "conv-dinner-2026-03-02",
           "scope": "scheduling",
           "requiresHumanApproval": false
@@ -389,6 +412,10 @@ Messages use the A2A protocol format with Trusted Agent metadata extensions:
 }
 ```
 
+> **A2A version note**: This spec targets A2A `v0.3.0` and uses its method and message shapes (`message/send`, `Message.messageId`). For MVP, interoperability is required between Trusted Agents implementations; optional A2A fields outside this profile may be ignored.
+
+> **On extensions**: A2A defines an extensions mechanism for protocol-level extensions. The `trustedAgent` fields in `metadata` use free-form metadata rather than a registered extension, which is simpler for v1. A formal A2A extension URI (e.g., `urn:trustedagents:v1`) may be registered in a future version.
+
 **Extension fields**:
 
 | Field | Purpose |
@@ -398,20 +425,22 @@ Messages use the A2A protocol format with Trusted Agent metadata extensions:
 | `scope` | Declares which permission scope this message operates under. Receiver validates against stored permissions. |
 | `requiresHumanApproval` | Hints that this message involves a decision the receiving agent should escalate to its human. |
 
+> **Note on `messageId`**: The `messageId` field shown in the message example above is part of the A2A base spec (`Message.messageId`), not a Trusted Agent extension. It is required by A2A for message deduplication and reference.
+
 ### 5.4 Request Types
 
 The protocol defines these request types, all sent as A2A messages:
 
-| Request | Description | Requires Human Approval? |
-|---|---|---|
-| `connection/request` | Initial connection request | Always |
-| `connection/accept` | Accept a connection | Always |
-| `connection/reject` | Reject a connection | Always |
-| `connection/revoke` | Revoke an existing connection | Always |
-| `connection/update-scope` | Modify permissions on a connection | Always |
-| `message/send` | Send a conversational message | Per agent configuration |
-| `message/action-request` | Request the peer agent to take an action | Configurable per scope |
-| `message/action-response` | Response to an action request | No (response to approved request) |
+| Request | Description | Requires Human Approval? | Allowed Pre-Trust? |
+|---|---|---|---|
+| `connection/request` | Initial connection request | Always | Yes (must match valid handshake context) |
+| `connection/accept` | Accept a connection | Always | Yes (must match pending request/nonce) |
+| `connection/reject` | Reject a connection | Always | Yes (must match pending request/nonce) |
+| `connection/revoke` | Revoke an existing connection | Always | No |
+| `connection/update-scope` | Modify permissions on a connection | Always | No |
+| `message/send` | Send a conversational message | Per agent configuration | No |
+| `message/action-request` | Request the peer agent to take an action | Configurable per scope | No |
+| `message/action-response` | Response to an action request | No (response to approved request) | No |
 
 ---
 
@@ -427,7 +456,7 @@ Each conversation is stored as a structured log file:
 // ~/.trustedagents/conversations/conv-dinner-2026-03-02.json
 {
   "conversationId": "conv-dinner-2026-03-02",
-  "connectionId": "conn-42-77-001",
+  "connectionId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "peerAgentId": 77,
   "peerDisplayName": "Bob's Agent",
   "topic": "Dinner scheduling - Thursday",
@@ -521,14 +550,14 @@ The human can interject at any point in a conversation. The agent relays the hum
 ┌──────────────────────────────────────────────────────────────────┐
 │                     ON-CHAIN (Base / Ethereum L2)                 │
 │                                                                  │
-│  ┌────────────────────┐   ┌────────────────────┐                 │
-│  │  ERC-8004           │   │  ERC-8004           │                │
-│  │  Identity Registry  │   │  Reputation Registry │                │
-│  │                     │   │  (future: connection │                │
-│  │  agentId (ERC-721)  │   │   attestations)      │                │
-│  │  → tokenURI         │   │                      │                │
-│  │  → owner wallet     │   │                      │                │
-│  └────────────────────┘   └────────────────────┘                 │
+│  ┌────────────────────┐                                          │
+│  │  ERC-8004           │                                          │
+│  │  Identity Registry  │                                          │
+│  │                     │                                          │
+│  │  agentId (ERC-721)  │                                          │
+│  │  → tokenURI         │                                          │
+│  │  → owner wallet     │                                          │
+│  └────────────────────┘                                          │
 │                                                                  │
 └──────────────────────────────┬───────────────────────────────────┘
                                │
@@ -544,12 +573,11 @@ The human can interject at any point in a conversation. The agent relays the hum
 │    "name": "Alice's Agent",                                      │
 │    "description": "Personal assistant",                          │
 │    "services": [                                                 │
-│      { "name": "A2A", "endpoint": "https://alice.agent/a2a" },  │
-│      { "name": "MCP", "endpoint": "https://alice.agent/mcp" }   │
+│      { "name": "A2A", "endpoint": "https://alice.agent/a2a" }   │
 │    ],                                                            │
 │    "trustedAgentProtocol": {                                     │
 │      "version": "1.0",                                           │
-│      "connectionEndpoint": "https://alice.agent/ta/connect",     │
+│      "agentAddress": "0xAgentPublicAddress...",                   │
 │      "capabilities": ["scheduling","research","general-chat"]    │
 │    }                                                             │
 │  }                                                               │
@@ -612,6 +640,48 @@ The human can interject at any point in a conversation. The agent relays the hum
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+### 7.1 Error Handling and Failure Modes
+
+| Failure | Detection | Response |
+|---|---|---|
+| **Replayed nonce** | Nonce already consumed in local nonce store | Reject with `400 Bad Request`. Log the attempt. |
+| **Offline agent** | Connection timeout or DNS failure | Queue message for retry with exponential backoff (max 3 retries). Notify owner if peer remains unreachable after all retries. |
+| **Key rotation** | On-chain re-resolve returns a different `agentAddress` than stored | Update trust store with new address. Re-verify the current request against the new key. If verification fails, reject and notify owner. |
+| **Unknown scope** | Incoming message references a scope not in the stored permissions | Reject with `403 Forbidden`. Do not leak which scopes are valid. |
+| **Signature failure** | ERC-8128 signature does not verify against known `agentAddress` | Reject with `403 Forbidden`. Log the attempt with details for the owner. |
+| **Expired invite** | `expires` timestamp is in the past | Reject invite processing. Inform user the invite has expired and a new one is needed. |
+| **Deactivated identity** | On-chain re-resolve shows NFT burned or transferred | Remove peer from trust store. Notify owner that the connection is no longer valid. |
+| **Content-Digest mismatch** | Body hash doesn't match `Content-Digest` header | Reject with `400 Bad Request`. Possible tampering or corruption in transit. |
+
+### 7.2 Versioning
+
+The Trusted Agents Protocol uses semantic versioning. Version negotiation rules:
+
+- **Same major version required**: Agents with different major versions (e.g., v1 and v2) cannot communicate. The initiating agent should include its protocol version in the connection request.
+- **Minor version tolerance**: An agent running v1.2 can communicate with an agent running v1.0. The higher-versioned agent must not use features from the newer minor version unless the peer has acknowledged support.
+- The `trustedAgentProtocol.version` field in the registration file declares the agent's supported protocol version.
+
+### 7.3 Connection Lifecycle
+
+Connections do not expire automatically but can be explicitly revoked by either party via `connection/revoke`.
+
+**Staleness recommendations**:
+
+| Status | Condition | Recommended Action |
+|---|---|---|
+| **Active** | Last contact within 24 hours | No action needed. |
+| **Idle** | Last contact between 24 hours and 7 days | Re-resolve on-chain before next communication. |
+| **Stale** | Last contact more than 30 days ago | Re-resolve on-chain. Optionally notify owner to confirm connection is still desired. |
+
+Agents should update `lastContactAt` in the trust store on every successful message exchange.
+
+### 7.4 Security Considerations
+
+- **Per-peer rate limiting**: Each agent should enforce rate limits per trusted peer to prevent abuse from a compromised peer agent. Recommended: configurable limit (e.g., 60 requests/minute per peer).
+- **Trust store integrity**: The trust store file (`contacts.json`) should be protected with filesystem permissions (owner-only read/write). Corruption or tampering with the trust store could allow unauthorized communication.
+- **Key storage**: The agent's private key must be stored securely — environment variable, encrypted keyfile, or hardware security module. It must never be committed to version control, logged, or transmitted.
+- **Registration file integrity**: While hosted over HTTPS, the registration file is not signed. Agents should verify that the `agentAddress` in the registration file matches the key used in ERC-8128 signatures. A mismatch indicates a compromised registration file or DNS hijack.
+
 ---
 
 ## 8. End-to-End Walkthrough
@@ -621,7 +691,7 @@ The human can interject at any point in a conversation. The agent relays the hum
 ```
 1. Generate or assign a private key for the agent.
 
-2. From the owner's wallet, mint an ERC-8004 identity NFT.
+2. From the owner's wallet(or the agent's wallet if the user asks the agent to do it), mint an ERC-8004 identity NFT.
    → This gives the agent an agentId (e.g., 42).
    → The owner wallet is the NFT owner.
 
@@ -631,19 +701,17 @@ The human can interject at any point in a conversation. The agent relays the hum
      "name": "Alice's Personal Agent",
      "description": "Personal assistant for scheduling, research, comms",
      "services": [
-       { "name": "A2A", "endpoint": "https://alice-agent.example.com/a2a" },
-       { "name": "MCP", "endpoint": "https://alice-agent.example.com/mcp" }
+       { "name": "A2A", "endpoint": "https://alice-agent.example.com/a2a" }
      ],
      "trustedAgentProtocol": {
        "version": "1.0",
-       "connectionEndpoint": "https://alice-agent.example.com/ta/connect",
-       "publicKey": "0xAgentPublicKey...",
+       "agentAddress": "0xAgentPublicAddress...",
        "capabilities": ["scheduling", "research", "general-chat"]
      }
    }
 
-4. Upload to IPFS (or host at HTTPS URL).
-   Set tokenURI via setAgentURI(agentId, ipfs://...).
+4. Upload it to IPFS
+   Set tokenURI via setAgentURI(agentId, https://...).
 
 5. Configure the agent runtime with:
    - The private key
@@ -653,7 +721,7 @@ The human can interject at any point in a conversation. The agent relays the hum
 6. Start the agent server (HTTPS endpoint accessible).
 ```
 
-### Phase 1: Alice Invites Bob (Model C)
+### Phase 1: Alice Invites Bob
 
 ```
 Alice: "Create an invite for Bob"
@@ -736,10 +804,11 @@ Approval is requested for actions with consequences (e.g., making a reservation)
 ### Milestone 1: Identity + Auth Foundation
 
 - [ ] Mint ERC-8004 identities on Base Sepolia for two test agents
-- [ ] Create and host registration files with Trusted Agent protocol extensions
-- [ ] Implement ERC-8128 HTTP request signing (use SIWA SDK)
+- [ ] Create and host registration files (HTTPS) with Trusted Agent protocol extensions
+- [ ] Implement ERC-8128 HTTP request signing directly with ethers.js/viem + RFC 9421
 - [ ] Implement ERC-8128 signature verification middleware
 - [ ] Build registration file resolver (agentId → on-chain lookup → fetch registration file)
+- [ ] **Tests**: Unit tests for ERC-8128 sign/verify round-trip, Content-Digest computation, nonce generation
 
 ### Milestone 2: Connection Flow
 
@@ -748,6 +817,7 @@ Approval is requested for actions with consequences (e.g., making a reservation)
 - [ ] Build connection request / acceptance handshake
 - [ ] Implement local trust store (contacts.json read/write)
 - [ ] Human notification for connection approvals (via agent's messaging channel)
+- [ ] **Tests**: Integration test with two agents completing a full invite → accept → store flow
 
 ### Milestone 3: Communication
 
@@ -757,6 +827,7 @@ Approval is requested for actions with consequences (e.g., making a reservation)
 - [ ] Conversation logging (structured JSON + markdown transcript generation)
 - [ ] Human notification for messages requiring approval
 - [ ] Permission engine (validate message scope against stored permissions)
+- [ ] **Tests**: Integration test for message exchange, permission denial, and conversation logging. Adversarial tests: replayed nonce, forged signature, unknown scope.
 
 ### Milestone 4: OpenClaw Integration
 
@@ -765,6 +836,24 @@ Approval is requested for actions with consequences (e.g., making a reservation)
 - [ ] Conversation review via chat: `/conversations with Bob`
 - [ ] Notification preferences configuration
 - [ ] Agent-to-agent message sending from natural language instructions
+- [ ] **Tests**: End-to-end test of OpenClaw skill commands with mock agents
+
+### Code vs. Skills Boundary
+
+The implementation is split between a reusable library and OpenClaw-specific skills:
+
+**npm library** (`trusted-agents-core`):
+- ERC-8128 request signing and verification (ethers.js/viem + RFC 9421)
+- Registration file resolver (on-chain lookup → fetch → parse)
+- Trust store management (CRUD operations on contacts.json)
+- Transport interface (abstract + DirectHttpTransport implementation)
+- Permission engine (scope validation, rate limiting)
+
+**OpenClaw skills** (consume the library):
+- Connection manager skill (invite generation, handshake orchestration)
+- Conversation logger skill (structured JSON + markdown transcript)
+- Human notification skill (approval flows, real-time alerts)
+- User commands: `/connect`, `/invite`, `/contacts`, `/conversations`
 
 ---
 
@@ -774,12 +863,14 @@ Approval is requested for actions with consequences (e.g., making a reservation)
 
 | Decision | Rationale |
 |---|---|
-| Agent holds private key directly | Simplicity. Session key delegation is a natural future upgrade. |
+| Dedicated agent key (not owner wallet key) | Security isolation. If the agent key is compromised, the owner's wallet is unaffected. Key rotation doesn't require NFT transfer. |
+| Direct ERC-8128 implementation (ethers.js/viem + RFC 9421) | No dependency on external auth SDKs. ERC-8128 handles both identity proof and request signing — a separate handshake protocol is unnecessary. |
 | One agent per person | Simplicity. The ERC-8004 model (one wallet, multiple agentIds) supports multi-agent later. |
 | Agents run on servers (always on) | Simplicity. Relay/mailbox for offline agents is a future transport. |
 | Endpoints and registration files are public | Simplicity. Conversations are private. Endpoint privacy can be layered on later. |
 | ERC-8128 for all HTTP signing | It's the purpose-built standard. Built on RFC 9421, composable with ERC-8004. |
 | Trust scope is extensible per-peer | Users need granular control. Start with a few standard scopes, allow custom ones. |
+| HTTPS for registration file hosting (v1) | Simpler deployment than IPFS. IPFS is a future option for immutability. |
 
 ### Planned Future Extensions
 
@@ -790,28 +881,50 @@ Approval is requested for actions with consequences (e.g., making a reservation)
 | **P2P transport** | Direct peer-to-peer connections via libp2p or similar. No server needed. |
 | **Multi-agent per human** | Separate work and personal agents, each with their own identity and trust relationships. |
 | **Private endpoints** | Endpoints shared only with trusted contacts (not in the public registration file). |
-| **On-chain connection attestations** | Record trust relationships on-chain via the Reputation Registry for public verifiability. |
+| **Reputation Registry integration** | Record trust relationships on-chain via the ERC-8004 Reputation Registry for public verifiability. Not used in v1 flows. |
+| **MCP tool integration** | Expose agent tools and resources via MCP alongside A2A communication. Complementary to A2A — MCP for tools, A2A for agent-to-agent collaboration. |
+| **SIWA (Sign In With Agent)** | Agent-to-server authentication protocol built on ERC-8004 + ERC-8128. Useful if agents need to authenticate with third-party web services, but not required for agent-to-agent trust. See `siwa.builders.garden`. |
+| **A2A extension URI** | Register a formal A2A extension URI (e.g., `urn:trustedagents:v1`) instead of using free-form metadata for `trustedAgent` fields. |
 | **Phone/email identity verification** | Additional ownership proof methods beyond wallet signatures. |
 | **Group connections** | Trust relationships involving multiple agents (e.g., a project team). |
 | **Audit dashboard** | Web interface for reviewing all agent conversations, filtering by contact and topic. |
+| **IPFS registration files** | Host registration files on IPFS for immutability guarantees and censorship resistance. |
 
 ---
 
 ## Appendix A: Key References
 
+### Core Dependencies
+
 - **ERC-8004 Spec**: https://eips.ethereum.org/EIPS/eip-8004
 - **ERC-8004 Contracts**: https://github.com/erc-8004/erc-8004-contracts
 - **ERC-8128 Discussion**: https://ethereum-magicians.org/t/erc-8128-signed-http-requests-with-ethereum/27515
-- **SIWA (Sign In With Agent)**: https://siwa.id/
-- **SIWA OpenClaw Skill**: https://playbooks.com/skills/openclaw/skills/bankr
-- **A2A Protocol**: https://a2a-protocol.org/latest/
+- **A2A Protocol (latest spec)**: https://a2a-protocol.org/latest/specification/
+- **A2A Protocol (v0.3.0 release spec)**: https://a2a-protocol.org/v0.3.0/specification/ — pinned for v1 MVP implementation.
 - **A2A GitHub**: https://github.com/a2aproject/A2A
 - **RFC 9421 (HTTP Message Signatures)**: https://www.rfc-editor.org/rfc/rfc9421
 
+### Related Projects (not core dependencies)
+
+- **SIWA (Sign In With Agent)**: https://siwa.builders.garden — agent-to-server authentication protocol built on ERC-8004 + ERC-8128. Solves a different problem (agent authenticating with web services) than Trusted Agents (agent-to-agent trust).
+- **OpenClaw**: https://openclaw.ai — agent runtime framework
+
 ## Appendix B: Deployed Registry Addresses
 
-ERC-8004 Identity Registry (Base): `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
-ERC-8004 Reputation Registry (Base): `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63`
+### Identity Registry (used in v1)
 
-ERC-8004 Identity Registry (Ethereum): `0x8004A818BFB912233c491871b3d84c89A494BD9e`
-ERC-8004 Reputation Registry (Ethereum): `0x8004B663056A597Dffe9eCcC1965A193B7388713`
+| Network | Address |
+|---|---|
+| Base Mainnet | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
+| Ethereum Mainnet | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
+
+> **Note**: For development and testing, deploy to Base Sepolia. The ERC-8004 contracts use CREATE2 deterministic deployment — the same deployer + salt yields the same address across networks.
+
+### Reputation Registry (not used in v1 — future extension)
+
+| Network | Address |
+|---|---|
+| Base Mainnet | `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63` |
+| Ethereum Mainnet | `0x8004B663056A597Dffe9eCcC1965A193B7388713` |
+
+> These addresses are deployed but the Reputation Registry is not used in any v1 protocol flow. See "Reputation Registry integration" in the Future Extensions table.
