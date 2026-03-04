@@ -15,6 +15,18 @@ export class ERC8004Registry implements IIdentityRegistry {
 		private readonly registryAddress: `0x${string}`,
 	) {}
 
+	/** Verify the registry contract exists on-chain before sending transactions. */
+	async verifyDeployed(): Promise<void> {
+		const code = await this.publicClient.getCode({ address: this.registryAddress });
+		if (!code || code === "0x") {
+			throw new IdentityError(
+				`No ERC-8004 registry contract at ${this.registryAddress} on this chain. ` +
+				`Check that the registry address matches the network (testnet vs mainnet). ` +
+				`See https://github.com/erc-8004/erc-8004-contracts for deployed addresses.`,
+			);
+		}
+	}
+
 	async getTokenURI(agentId: number): Promise<string> {
 		try {
 			const uri = await this.publicClient.readContract({
@@ -49,8 +61,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 
 	async register(agentURI: string, walletClient: WalletClient): Promise<number> {
 		try {
-			const [account] = await walletClient.getAddresses();
-			if (!account) {
+			if (!walletClient.account) {
 				throw new IdentityError("No account available on wallet client");
 			}
 
@@ -59,7 +70,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 				abi: ERC8004_ABI,
 				functionName: "register",
 				args: [agentURI],
-				account,
+				account: walletClient.account,
 				chain: walletClient.chain,
 			});
 
@@ -86,8 +97,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 
 	async setAgentURI(agentId: number, newURI: string, walletClient: WalletClient): Promise<void> {
 		try {
-			const [account] = await walletClient.getAddresses();
-			if (!account) {
+			if (!walletClient.account) {
 				throw new IdentityError("No account available on wallet client");
 			}
 
@@ -96,7 +106,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 				abi: ERC8004_ABI,
 				functionName: "setAgentURI",
 				args: [BigInt(agentId), newURI],
-				account,
+				account: walletClient.account,
 				chain: walletClient.chain,
 			});
 
