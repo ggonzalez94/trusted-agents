@@ -1,0 +1,26 @@
+{
+  "name": "trusted-agents-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "tap": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.5.0",
+    "@x402/fetch": "^2.5.0",
+    "commander": "^13.0.0",
+    "trusted-agents-core": "workspace:*",
+    "viem": "^2.23.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
