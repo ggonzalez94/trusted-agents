@@ -10,6 +10,22 @@ CLI for onboarding and operating agents on the Trusted Agents Protocol. Agents c
 
 ## Install
 
+### One-line installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
+```
+
+This clones the repo, builds the CLI, places `tap` on your PATH (`~/.local/bin`), and links skill files into any detected agent runtime (Claude Code, Codex, OpenClaw).
+
+Re-run to update. Uninstall with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --uninstall
+```
+
+### Manual install
+
 ```bash
 # From the monorepo root
 bun install

@@ -7,3 +7,4 @@ dist/
 coverage/
 TODO.md
 xmtp-*.db3*
+*.tgz
