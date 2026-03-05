@@ -219,6 +219,18 @@ File: `packages/sdk/src/orchestrator.ts`
 - Preserve pending request timeout cleanup to avoid memory leaks
 - Validate both unit tests and optional XMTP integration test
 
+### Adding/changing/removing a CLI command
+- Update the relevant skill file in `packages/sdk/skills/trusted-agents/`
+- Every CLI command must appear in exactly one skill file as a documented command
+- Skill structure maps to command domains:
+  - `SKILL.md` (root): utility commands — `balance`, `config`, `identity`
+  - `onboard/SKILL.md`: `init`, `register`, `register update`
+  - `connections/SKILL.md`: `invite`, `connect`, `contacts`
+  - `messaging/SKILL.md`: `message`, `conversations`
+- Keep skills concise: command syntax + flags + one example + errors. No internal implementation details.
+- Every `SKILL.md` must have YAML frontmatter with `name` and `description`
+- Cross-references between skills (e.g., "use `tap contacts list` to check") are fine; duplicate primary docs are not
+
 ## Build/Test Commands Agents Should Actually Use
 ```bash
 bun install
