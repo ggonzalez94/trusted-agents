@@ -1,8 +1,13 @@
-import type { GlobalOptions } from "../types.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
+import {
+	appendConversationLog,
+	buildOutgoingMessageRequest,
+	findContactForPeer,
+} from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function messageSendCommand(
 	peer: string,
@@ -17,13 +22,7 @@ export async function messageSendCommand(
 
 		// Resolve peer by name or agentId
 		const contacts = await ctx.trustStore.getContacts();
-
-		const agentIdNum = Number.parseInt(peer, 10);
-		const contact = contacts.find(
-			(c) =>
-				c.peerDisplayName.toLowerCase() === peer.toLowerCase() ||
-				(!Number.isNaN(agentIdNum) && c.peerAgentId === agentIdNum),
-		);
+		const contact = findContactForPeer(contacts, peer);
 
 		if (!contact) {
 			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
@@ -35,22 +34,36 @@ export async function messageSendCommand(
 
 		await ctx.transport.start?.();
 		try {
-			const request = {
-				jsonrpc: "2.0" as const,
-				id: crypto.randomUUID(),
-				method: "message/send",
-				params: {
-					message: {
-						messageId: crypto.randomUUID(),
-						role: "user" as const,
-						parts: [{ kind: "text" as const, text }],
-					},
-				},
-			};
+			const request = buildOutgoingMessageRequest(contact, text);
+			const messageTimestamp = new Date().toISOString();
 
-			const response = await ctx.transport.send(contact.peerAgentId, request, {
-				peerAddress: contact.peerAgentAddress,
-			});
+			let response: Awaited<ReturnType<typeof ctx.transport.send>>;
+			try {
+				response = await ctx.transport.send(contact.peerAgentId, request, {
+					peerAddress: contact.peerAgentAddress,
+				});
+			} catch (err) {
+				if (err instanceof Error && err.message.startsWith("Response timeout for message ")) {
+					void appendConversationLog(
+						ctx.conversationLogger,
+						contact,
+						request,
+						"outgoing",
+						messageTimestamp,
+					).catch(() => {});
+					void ctx.trustStore.touchContact(contact.connectionId).catch(() => {});
+				}
+				throw err;
+			}
+
+			void appendConversationLog(
+				ctx.conversationLogger,
+				contact,
+				request,
+				"outgoing",
+				messageTimestamp,
+			).catch(() => {});
+			void ctx.trustStore.touchContact(contact.connectionId).catch(() => {});
 
 			success(
 				{
