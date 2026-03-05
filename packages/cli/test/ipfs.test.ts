@@ -6,18 +6,18 @@ describe("ipfs", () => {
 		process.env.TAP_PINATA_JWT = "env-token";
 		const jwt = resolvePinataJwt("flag-token");
 		expect(jwt).toBe("flag-token");
-		delete process.env.TAP_PINATA_JWT;
+		process.env.TAP_PINATA_JWT = "";
 	});
 
 	it("should fall back to env var", () => {
 		process.env.TAP_PINATA_JWT = "env-token";
 		const jwt = resolvePinataJwt();
 		expect(jwt).toBe("env-token");
-		delete process.env.TAP_PINATA_JWT;
+		process.env.TAP_PINATA_JWT = "";
 	});
 
 	it("should return undefined when no jwt available", () => {
-		delete process.env.TAP_PINATA_JWT;
+		process.env.TAP_PINATA_JWT = "";
 		const jwt = resolvePinataJwt();
 		expect(jwt).toBeUndefined();
 	});

@@ -127,5 +127,5 @@ export async function uploadToIpfsPinata(
 }
 
 export function resolvePinataJwt(flagValue?: string): string | undefined {
-	return flagValue ?? process.env.TAP_PINATA_JWT;
+	return flagValue ?? (process.env.TAP_PINATA_JWT || undefined);
 }
