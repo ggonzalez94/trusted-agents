@@ -15,3 +15,8 @@ export {
 	buildConnectionAccept,
 	buildConnectionReject,
 } from "./handshake.js";
+
+export {
+	handleConnectionRequest,
+	type ConnectionRequestContext,
+} from "./request-handler.js";

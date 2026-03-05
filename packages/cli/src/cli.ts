@@ -205,10 +205,11 @@ Examples:
 	message
 		.command("listen")
 		.description("Stream incoming messages (long-running)")
-		.action(async () => {
+		.option("--yes", "Auto-accept incoming connection requests")
+		.action(async (cmdOpts: { yes?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageListenCommand } = await import("./commands/message-listen.js");
-			await messageListenCommand(opts);
+			await messageListenCommand(opts, { yes: cmdOpts.yes });
 		});
 
 	// conversations

@@ -3,6 +3,7 @@ import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { error, info, success } from "../lib/output.js";
 import { exitCodeForError, errorCode } from "../lib/errors.js";
+import { promptYesNo } from "../lib/prompt.js";
 import {
 	buildConnectionRequest,
 	caip2ToChainId,
@@ -136,13 +137,3 @@ export async function connectCommand(
 	}
 }
 
-function promptYesNo(prompt: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		process.stderr.write(prompt);
-		process.stdin.setEncoding("utf-8");
-		process.stdin.once("data", (data) => {
-			const answer = String(data).trim().toLowerCase();
-			resolve(answer === "y" || answer === "yes");
-		});
-	});
-}

@@ -1,17 +1,49 @@
+import { CONNECTION_REQUEST, handleConnectionRequest } from "trusted-agents-core";
+import type { ResolvedAgent } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { error, info } from "../lib/output.js";
 import { exitCodeForError, errorCode } from "../lib/errors.js";
+import { promptYesNo } from "../lib/prompt.js";
 
-export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
+export async function messageListenCommand(
+	opts: GlobalOptions,
+	cmdOpts?: { yes?: boolean },
+): Promise<void> {
 	try {
 		const config = await loadConfig(opts);
 		const ctx = buildContextWithTransport(config);
+		const autoApprove = cmdOpts?.yes ?? false;
 
 		info("Listening for incoming messages... (Ctrl+C to stop)", opts);
 
 		ctx.transport.onMessage(async (from, message) => {
+			if (message.method === CONNECTION_REQUEST) {
+				return handleConnectionRequest({
+					message,
+					resolver: ctx.resolver,
+					trustStore: ctx.trustStore,
+					ownAgent: { agentId: config.agentId, chain: config.chain },
+					approve: async (peer: ResolvedAgent) => {
+						if (autoApprove) {
+							info(
+								`Auto-accepting connection from ${peer.registrationFile.name} (#${peer.agentId})`,
+								opts,
+							);
+							return true;
+						}
+						info(
+							`Connection request from ${peer.registrationFile.name} (#${peer.agentId}) on ${peer.chain}`,
+							opts,
+						);
+						info(`Capabilities: ${peer.capabilities.join(", ")}`, opts);
+						return promptYesNo("Accept? [y/N] ");
+					},
+				});
+			}
+
+			// All other messages: log to stdout
 			const line = JSON.stringify({
 				timestamp: new Date().toISOString(),
 				from,
@@ -47,3 +79,4 @@ export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
 		process.exitCode = exitCodeForError(err);
 	}
 }
+
