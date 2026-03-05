@@ -1,235 +1,236 @@
 # Agents.md
 
-## Project Overview
+## Purpose
+This file is for coding agents working in this repository.
+It focuses on implementation reality, not aspirational architecture.
+When this file conflicts with code, code wins.
 
-**tap** (Trusted Agents Protocol) — a peer-to-peer protocol for AI agent communication on Ethereum. Agents register on-chain via ERC-8004 NFTs, discover each other through IPFS-hosted registration files, and communicate over XMTP encrypted messaging.
+## System Snapshot (As Implemented)
+- `tap` is a local-first agent protocol stack with:
+	- On-chain identity via ERC-8004 (`tokenId` is `agentId`)
+	- Registration metadata in a registration file (`ipfs://...` or `https://...`)
+	- Peer messaging over XMTP using JSON-RPC 2.0 payloads
+- No backend service exists in this repo.
+- Package boundaries:
+	- `packages/core`: protocol + storage + transport abstractions
+	- `packages/cli`: executable UX and config/bootstrap behavior
+	- `packages/sdk`: orchestration wrapper for embedding in other runtimes
+- Dependency direction:
+	- `cli -> core`
+	- `sdk -> core`
+	- `core` has no internal workspace dependencies
 
-No central server. Agents run locally (CLI or embedded) and coordinate through on-chain registry + direct XMTP messaging.
+## Read Order For Fast Orientation
+1. `packages/core/src/protocol/*` (wire protocol)
+2. `packages/core/src/identity/*` (on-chain + registration resolution)
+3. `packages/core/src/transport/interface.ts` then `transport/xmtp.ts`
+4. `packages/core/src/trust/*` and `conversation/*` (state persistence)
+5. `packages/cli/src/lib/context.ts` and `commands/*` (runtime composition)
+6. `packages/sdk/src/orchestrator.ts` (programmatic integration path)
 
-## Tech Stack
+## Core Abstractions To Preserve
 
-| Tool | Version | Notes |
-|------|---------|-------|
-| **Bun** | workspace manager | Package manager AND script runner. Use `bun install`, `bun run test`, etc. |
-| **TypeScript** | ^5.7 | Strict mode, ES2022 target, ESM only |
-| **Biome** | ^1.9 | Linter AND formatter (NOT ESLint/Prettier) |
-| **Vitest** | ^3.0 | Test framework |
-| **viem** | ^2.23 | Ethereum client library |
-| **@xmtp/node-sdk** | ^5.4 | Encrypted messaging transport |
-| **Commander** | ^13 | CLI framework (packages/cli only) |
+### 1) `TransportProvider` (replaceable transport seam)
+File: `packages/core/src/transport/interface.ts`
+- Contract:
+	- `send(peerId, message, options?) -> JsonRpcResponse`
+	- `onMessage(handler)`
+	- `isReachable(peerId)`
+	- optional `start/stop`
+- Architectural intent: transport is swappable.
+- Current implementation: only `XmtpTransport`.
 
-## Project Structure
+### 2) `IAgentResolver` (identity resolution seam)
+File: `packages/core/src/identity/resolver.ts`
+- Resolves `agentId + chain -> ResolvedAgent` using:
+	- `tokenURI(agentId)` from ERC-8004
+	- `ownerOf(agentId)` from ERC-8004
+	- fetch + validate registration file
+- Has in-memory cache with TTL and max entries.
 
+### 3) `ITrustStore` (connection state seam)
+Files: `packages/core/src/trust/trust-store.ts`, `file-trust-store.ts`
+- Contact CRUD + lookups by `connectionId`, `(agentId, chain)`, and address.
+- `FileTrustStore` is the only implementation, with atomic writes.
+
+### 4) `IConversationLogger` (message log seam)
+Files: `packages/core/src/conversation/logger.ts`
+- Append/list/get conversation logs and generate markdown transcript.
+- Backed by one JSON file per conversation.
+
+### 5) `NotificationAdapter` + `ApprovalHandler` (SDK human-in-loop seam)
+Files: `packages/sdk/src/notification.ts`, `approval.ts`
+- SDK orchestration defers approvals/notifications to host runtime.
+
+## Protocol And Identity Standards Enforced In Code
+
+### JSON-RPC methods (canonical names)
+File: `packages/core/src/protocol/methods.ts`
+- `connection/request`
+- `connection/accept`
+- `connection/reject`
+- `connection/revoke`
+- `connection/update-scope`
+- `message/send`
+- `message/action-request`
+- `message/action-response`
+
+`BOOTSTRAP_METHODS` currently contains only:
+- `connection/request`
+- `connection/accept`
+- `connection/reject`
+
+### Registration file invariants
+File: `packages/core/src/identity/registration-file.ts`
+- Must be type `eip-8004-registration-v1`
+- Must include at least one `services` entry named `xmtp`
+- `xmtp.endpoint` must be a valid Ethereum address
+- Non-XMTP services must use `https:` URLs
+- `trustedAgentProtocol.agentAddress` must be a valid Ethereum address
+- `xmtp.endpoint` must match `trustedAgentProtocol.agentAddress` (case-insensitive)
+
+### URI safety rules during registration fetch
+File: `packages/core/src/identity/registration-file.ts`
+- `ipfs://...` is rewritten to `https://ipfs.io/ipfs/...`
+- Direct remote URIs must be `https:`
+- Local/private network hosts are blocked (`localhost`, `127.x`, RFC1918 ranges, `.local`)
+- 10s fetch timeout via `AbortController`
+
+### Chain identifier standard
+- Core expects CAIP-2 (`eip155:<chainId>`)
+- CLI accepts aliases (`base-sepolia`, `taiko`, etc.) and normalizes to CAIP-2
+
+## Runtime Composition (Where behavior is decided)
+
+### CLI composition
+File: `packages/cli/src/lib/context.ts`
+- Builds:
+	- `FileTrustStore`
+	- `AgentResolver`
+	- `XmtpTransport` (when transport is needed)
+- Transport gets resolver injected for bootstrap sender verification.
+
+### SDK composition
+File: `packages/sdk/src/orchestrator.ts`
+- Reuses the same core abstractions.
+- Can use custom `transport` or construct `XmtpTransport` from `xmtp` config.
+- `start()` is idempotent with an internal `transportStarted` flag.
+
+## Non-Obvious Behavior You Need To Know
+
+1. Single private key is used for all trust roots:
+- ERC-8004 ownership
+- invite signing
+- XMTP identity
+- XMTP db encryption seed (unless overridden)
+
+2. XMTP DB encryption key is deterministic by default:
+- `keccak256("xmtp-db-encryption:" + privateKey)`
+- This keeps XMTP DB readable across restarts without extra secrets.
+
+3. Unknown inbound senders are hard-rejected unless bootstrap path passes:
+- In `XmtpTransport`, unknown sender can only proceed via `connection/request`
+- Requires `agentResolver` and inbox address verification against resolved `agentAddress`
+
+4. Known senders are still blocked unless contact status is `active`.
+
+5. Trust store lookup by address can throw:
+- `findByAgentAddress()` throws if multiple active contacts match same address (+ optional chain)
+
+6. File stores are atomic but process-local locked:
+- Uses `AsyncMutex` per instance + `tmp file -> rename`
+- No cross-process lock exists
+
+7. `loadConfig()` requires `agent_id` by default:
+- Most commands fail unless `agent_id >= 0`
+- `register` explicitly bypasses this with `{ requireAgentId: false }`
+
+8. `init` writes `agent_id: -1` until successful registration updates config.
+
+9. **Config lives inside data-dir** — `--data-dir` (or `TAP_DATA_DIR`) is the single root for all per-agent state:
 ```
-trusted-agents/
-├── package.json              # Root workspace config
-├── tsconfig.base.json        # Shared TS settings (all packages extend this)
-├── biome.json                # Monorepo-wide lint/format config
-├── bun.lock
-│
-├── packages/core/            # Protocol library — no CLI, no side effects
-│   └── src/
-│       ├── common/           # Errors, crypto, validation, mutex, paths
-│       ├── config/           # Schema, defaults, types
-│       ├── identity/         # ERC-8004 registry, agent resolution, registration files
-│       ├── protocol/         # JSON-RPC method constants, message types
-│       ├── transport/        # TransportProvider interface + XMTP implementation
-│       ├── connection/       # Invite generation/verification, handshake
-│       ├── trust/            # Contact store (ITrustStore, FileTrustStore)
-│       ├── permissions/      # Scope-based permission engine
-│       ├── conversation/     # Message logging (FileConversationLogger)
-│       └── index.ts          # Barrel exports
-│
-├── packages/cli/             # "tap" CLI tool
-│   └── src/
-│       ├── bin.ts            # Entry point (#!/usr/bin/env node)
-│       ├── cli.ts            # Commander program definition
-│       ├── types.ts          # CLI-specific types
-│       ├── lib/              # Config loader, wallet, keyfile, output, errors, IPFS
-│       └── commands/         # One file per command (init, register, connect, etc.)
-│
-└── packages/sdk/             # Programmatic SDK for agent integration
-    ├── src/
-    │   ├── orchestrator.ts   # TrustedAgentsOrchestrator class
-    │   ├── approval.ts       # ApprovalHandler for connection consent
-    │   ├── notification.ts   # NotificationAdapter interface
-    │   ├── commands/         # execute* functions (invite, connect, contacts, conversations)
-    │   └── index.ts
-    └── skills/trusted-agents/ # SKILL.md definitions per operation
+<dataDir>/
+├── config.yaml              # agent_id, chain, xmtp.env
+├── identity/agent.key       # Raw private key hex (chmod 0600)
+├── contacts.json            # Connected peers (trust store)
+├── pending-invites.json     # Outstanding invite nonces
+├── ipfs-cache.json          # Content hash → CID (avoids re-upload)
+├── conversations/<id>.json  # Per-peer message transcripts
+└── xmtp/<inboxId>.db3       # XMTP client DB (encrypted)
 ```
+- Resolution order: `--data-dir` flag > `TAP_DATA_DIR` env > `~/.local/share/trustedagents` (if exists) > `~/.trustedagents`
+- Config resolution: `--config` flag > `<dataDir>/config.yaml` > legacy `~/.config/trustedagents/config.yaml`
+- This means setting `TAP_DATA_DIR` alone fully isolates an agent (useful for running multiple agents on one machine)
 
-**Dependency graph**: `cli` → `core`, `sdk` → `core`. Core has zero internal package deps.
+10. Chain support differs between layers:
+- Core defaults: Base + Base Sepolia
+- CLI extends chain map with Taiko + Taiko Hoodi
+- Wallet helper has explicit viem mappings for known chain IDs
 
-## Commands
+11. Register upload path has hidden cache:
+- `packages/cli/src/commands/register.ts` stores content-hash cache at `<dataDir>/ipfs-cache.json`
+- Cached CID is reused only if `HEAD https://ipfs.io/ipfs/<cid>` succeeds
 
+12. x402 payment is chain-asymmetric:
+- Registration tx can be on other chains
+- IPFS x402 payment still uses Base mainnet USDC
+
+13. Permissions are not globally enforced by transport:
+- `PermissionEngine` exists but is not auto-wired into CLI message handling
+- Enforcement is caller responsibility
+
+14. Conversation logging is not automatically wired into CLI send/listen flows:
+- Logger exists, conversation commands read logs
+- Message commands currently send/listen without automatic log writes
+
+15. SDK sharp edge:
+- `TrustedAgentsOrchestrator.connect()` uses `this.transport!`
+- If neither `transport` nor `xmtp` config is provided, this will fail at runtime
+
+16. Invite chain value is not strongly validated in invite generation:
+- `generateInvite()` signs any chain string given by caller
+- CAIP-2 correctness is enforced at higher layers, not inside invite generation
+
+## If You Change X, Also Check Y
+
+### Adding/changing a protocol method
+- Update `packages/core/src/protocol/methods.ts`
+- Decide if it belongs in `BOOTSTRAP_METHODS`
+- Update transport request handling logic in `xmtp.ts`
+- Update CLI/SDK command callers and tests
+
+### Adding a new chain
+- Add to CLI `lib/chains.ts` alias map and `ALL_CHAINS`
+- Add viem mapping in CLI `lib/wallet.ts` (or confirm fallback behavior is acceptable)
+- Ensure config loading/overrides still produce CAIP-2 keys
+
+### Changing contact or conversation persistence
+- Keep atomic write pattern (`tmp + rename`) and strict file modes
+- Keep safe path checks for user-derived file components
+- Update tests that rely on persistence across instances
+
+### Changing register flow
+- Keep registration file invariants aligned with validator
+- Keep config auto-update behavior for `agent_id`
+- Re-run cache and upload tests (`register`, `ipfs` behavior)
+
+### Changing transport identity checks
+- Preserve bootstrap sender verification semantics
+- Preserve pending request timeout cleanup to avoid memory leaks
+- Validate both unit tests and optional XMTP integration test
+
+## Build/Test Commands Agents Should Actually Use
 ```bash
-bun install                  # Install all workspace packages
-bun run build                # Build all packages (tsc → dist/)
-bun run test                 # Run all tests (vitest run)
-bun run test:watch           # Watch mode
-bun run test:xmtp            # XMTP integration test (needs XMTP_INTEGRATION=true)
-bun run typecheck            # Type-check all packages (sequential: core first)
-bun run lint                 # Biome check
-bun run lint:fix             # Biome auto-fix
-bun run format               # Biome format
+bun install
+bun run lint
+bun run typecheck
+bun run test
+# Optional integration:
+XMTP_INTEGRATION=true bun run test:xmtp
 ```
 
-## Code Conventions
-
-### TypeScript — ESM Only
-
-- **All imports must use `.js` extensions** — even for `.ts` source files:
-  ```typescript
-  import { ConfigError } from "../common/errors.js";
-  import type { TrustedAgentsConfig } from "./types.js";
-  ```
-- No path aliases — use relative paths
-- `type` keyword required for type-only imports (`import type { ... }`)
-- `verbatimModuleSyntax: true` — TypeScript preserves import/export forms exactly
-
-### Formatting (Biome)
-
-- **Tabs** for indentation (not spaces)
-- **Double quotes** for strings
-- **Semicolons always**
-- **100-char line width**
-- Imports auto-organized (sorted by biome)
-
-### Naming
-
-| What | Convention | Example |
-|------|-----------|---------|
-| Files & directories | kebab-case | `registration-file.ts`, `pending-invites/` |
-| Types, interfaces, classes | PascalCase | `ResolvedAgent`, `FileTrustStore` |
-| Functions & variables | camelCase, verb-first | `validateConfig()`, `isEthereumAddress()` |
-| Constants | SCREAMING_SNAKE or camelCase | `CONNECTION_REQUEST`, `DEFAULT_CONFIG` |
-| Env vars | `TAP_` prefix | `TAP_PRIVATE_KEY`, `TAP_CHAIN` |
-| No `I` prefix | on interfaces | `ITrustStore` is the exception (legacy) |
-
-### Exports
-
-- **Named exports only** (no default exports)
-- Barrel exports via `index.ts` in each module directory
-- Packages export via `src/index.ts` → compiled `dist/index.js`
-
-### Error Handling
-
-Custom error hierarchy in `packages/core/src/common/errors.ts`:
-
-```
-TrustedAgentError (base)
-├── AuthenticationError     (AUTH_ERROR)
-├── IdentityError           (IDENTITY_ERROR)
-├── ConnectionError         (CONNECTION_ERROR)
-├── PermissionError         (PERMISSION_ERROR)
-├── TransportError          (TRANSPORT_ERROR)
-├── ConfigError             (CONFIG_ERROR)
-└── ValidationError         (VALIDATION_ERROR)
-```
-
-CLI maps these to exit codes: 0=success, 1=general, 2=usage, 3=network, 4=identity, 5=permission.
-
-## Testing
-
-**Framework**: Vitest 3.x with Node environment.
-
-**Structure**:
-```
-packages/*/test/
-├── unit/           # Isolated tests with mocks (core package)
-├── integration/    # End-to-end flows
-├── fixtures/       # Test data (registration files, keys, messages)
-└── helpers/        # Factory functions (createTestContact, createMockPublicClient)
-```
-
-**Patterns**:
-- Test files: `*.test.ts`
-- Mocking: `vi.fn()`, `vi.spyOn()`, `vi.restoreAllMocks()` in `afterEach`
-- Temp directories: `mkdtemp()` + cleanup in `afterEach` for file-based tests
-- Test keys: Well-known Hardhat/Anvil accounts (ALICE, BOB) from `test/fixtures/test-keys.ts`
-- Timeout: 10 seconds default
-- Each package has its own `vitest.config.ts`
-
-**CLI tests** are flat in `packages/cli/test/`. **Core tests** are organized by feature under `test/unit/`.
-
-## Architecture — Key Concepts
-
-### Identity (ERC-8004)
-
-Agents register on-chain via ERC-8004 NFT registry. The NFT `tokenId` becomes the `agentId`.
-
-- **Registration file**: JSON on IPFS with name, description, XMTP endpoint, capabilities
-- **AgentResolver**: Resolves `agentId` → `ResolvedAgent` by querying the registry contract + fetching IPFS metadata. Has LRU cache (1000 entries, 24h TTL).
-- **Registry addresses** (CREATE2 — deterministic):
-  - Base Mainnet: `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
-  - Base Sepolia: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
-
-### Transport (XMTP)
-
-`TransportProvider` is the abstract interface. `XmtpTransport` is the only implementation.
-
-- Sends/receives JSON-RPC protocol messages over XMTP DMs
-- Agent's Ethereum address = XMTP endpoint (same key for both)
-- XMTP database encrypted with deterministic key: `keccak256("xmtp-db-encryption:" + privateKey)`
-- Request-response pattern with timeout + pending request tracking
-
-### Connection Handshake
-
-1. Agent A generates invite (signed with private key, includes nonce + expiry)
-2. Agent B parses invite URL, verifies signature (recovers signer address)
-3. Agent B sends `connection/request` via XMTP
-4. Agent A responds `connection/accept` or `connection/reject`
-5. Both store `Contact` in their trust store
-
-### Trust Store
-
-File-based (`contacts.json`) with `AsyncMutex` for concurrent access. Atomic writes via temp-file + rename.
-
-### Protocol
-
-JSON-RPC 2.0 based. Methods: `connection/request`, `connection/accept`, `connection/reject`, `message/send`.
-
-### Permissions
-
-Freeform string scopes per contact. Values are `boolean` or constraint objects (`{ maxCalls: 100 }`). Evaluated by `PermissionEngine`.
-
-## Non-Obvious Things
-
-1. **Bun is the package manager** — not npm/yarn/pnpm. All scripts use `bun run`.
-
-2. **ESM `.js` extensions are mandatory** — TypeScript source files import with `.js` extension. This is required by `verbatimModuleSyntax` + ESM module resolution. Forgetting `.js` will cause runtime errors.
-
-3. **Biome, not ESLint/Prettier** — run `bun run lint:fix` and `bun run format`. Biome handles both linting and formatting in one tool.
-
-4. **Tab indentation** — Biome enforces tabs, not spaces.
-
-5. **Single private key = everything** — the Ethereum private key is used for: on-chain identity (ERC-8004 owner), invite signing, XMTP client identity, and XMTP DB encryption seed. It's the single root of trust.
-
-6. **Agent address duality** — Ethereum address serves as both the on-chain identity proof AND the XMTP messaging endpoint.
-
-7. **CAIP-2 chain identifiers** — chains are referenced as `eip155:<chainId>` (e.g., `eip155:84532` for Base Sepolia), not by name.
-
-8. **Workspace protocol** — packages reference each other with `workspace:*` in package.json. Don't use version numbers for internal deps.
-
-9. **Build order matters for typecheck** — `bun run typecheck` builds core first, then checks cli and sdk in parallel (they depend on core's `.d.ts` output).
-
-10. **No coverage config** — vitest configs are minimal. Run `vitest run --coverage` manually if needed.
-
-11. **XMTP integration tests require env var** — set `XMTP_INTEGRATION=true` to run XMTP transport tests. They're skipped by default.
-
-12. **File storage paths**:
-    ```
-    ~/.config/trustedagents/config.yaml    # Config file
-    ~/.local/share/trustedagents/          # Data directory (or ~/.trustedagents/ fallback)
-      ├── identity/agent.key               # Private key (0600 permissions)
-      ├── contacts.json                    # Trust store
-      ├── pending-invites.json             # Invite nonce state
-      ├── conversations/<id>.json          # Message logs
-      └── xmtp/<inbox-id>.db3             # XMTP client DB (encrypted)
-    ```
-
-13. **CLI output modes** — commands auto-detect TTY (plain text) vs piped (JSON envelope). Override with `--json` or `--plain`.
-
-14. **x402 payment protocol** — the CLI `register` command uses x402 to pay for IPFS uploads with USDC from the agent's wallet. Alternative: Pinata JWT or self-hosted URI.
-
-15. **`noUnusedLocals` and `noUnusedParameters` are on** — TypeScript will error on unused variables. Prefix with `_` if intentionally unused.
+## Repository Conventions Worth Respecting
+- ESM only; TypeScript imports use `.js` extension in source.
+- Named exports only.
+- Biome handles both lint and format.
+- TypeScript strictness includes `noUnusedLocals` and `noUnusedParameters`.

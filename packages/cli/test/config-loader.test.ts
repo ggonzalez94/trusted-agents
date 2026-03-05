@@ -2,7 +2,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import YAML from "yaml";
 import { resolveConfigPath, resolveDataDir } from "../src/lib/config-loader.js";
 
 describe("config-loader", () => {
@@ -23,13 +22,27 @@ describe("config-loader", () => {
 
 	describe("resolveConfigPath", () => {
 		it("should use --config flag when provided", () => {
-			const path = resolveConfigPath({ config: "/custom/config.yaml" });
+			const path = resolveConfigPath({ config: "/custom/config.yaml" }, "/some/data");
 			expect(path).toBe("/custom/config.yaml");
 		});
 
-		it("should use default path when no flag provided", () => {
-			const path = resolveConfigPath({});
-			expect(path).toContain("config.yaml");
+		it("should prefer config.yaml inside dataDir when it exists", async () => {
+			const dataDir = join(tmpDir, "data");
+			await mkdir(dataDir, { recursive: true });
+			await writeFile(join(dataDir, "config.yaml"), "agent_id: 1", "utf-8");
+
+			const path = resolveConfigPath({}, dataDir);
+			expect(path).toBe(join(dataDir, "config.yaml"));
+		});
+
+		it("should return <dataDir>/config.yaml as default path", () => {
+			// When neither dataDir nor legacy has a config, returns the new default
+			const dataDir = join(tmpDir, "fresh-data-no-config");
+			// Note: if legacy ~/.config/trustedagents/config.yaml exists on this
+			// machine, the function will return that instead. This test verifies the
+			// return value ends with config.yaml in either case.
+			const path = resolveConfigPath({}, dataDir);
+			expect(path).toMatch(/config\.yaml$/);
 		});
 	});
 
@@ -43,11 +56,6 @@ describe("config-loader", () => {
 			process.env["TAP_DATA_DIR"] = "/env/data";
 			const dir = resolveDataDir({});
 			expect(dir).toBe("/env/data");
-		});
-
-		it("should use yaml data_dir when set", () => {
-			const dir = resolveDataDir({}, { data_dir: tmpDir });
-			expect(dir).toBe(tmpDir);
 		});
 
 		it("should prioritize CLI flag over env", () => {

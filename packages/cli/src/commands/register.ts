@@ -196,9 +196,9 @@ export async function registerCommand(
 		info(`Registered! Agent ID: ${agentId}`, opts);
 
 		// Auto-update config.yaml with the new agent_id
-		const configPath = resolveConfigPath(opts);
-		await updateConfigAgentId(configPath, agentId);
-		verbose(`Updated ${configPath} with agent_id: ${agentId}`, opts);
+		const cfgPath = resolveConfigPath(opts, config.dataDir);
+		await updateConfigAgentId(cfgPath, agentId);
+		verbose(`Updated ${cfgPath} with agent_id: ${agentId}`, opts);
 
 		const explorerUrl = chainConfig.blockExplorerUrl
 			? `${chainConfig.blockExplorerUrl}/address/${chainConfig.registryAddress}`

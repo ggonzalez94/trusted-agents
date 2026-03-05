@@ -8,14 +8,13 @@ import type { GlobalOptions } from "../types.js";
 import { loadKeyfile } from "./keyfile.js";
 import { ALL_CHAINS, resolveChainAlias } from "./chains.js";
 
-const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "trustedagents", "config.yaml");
+const LEGACY_CONFIG_PATH = join(homedir(), ".config", "trustedagents", "config.yaml");
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "trustedagents");
 const FALLBACK_DATA_DIR = join(homedir(), ".trustedagents");
 
 interface YamlConfig {
 	agent_id?: number;
 	chain?: string;
-	data_dir?: string;
 	xmtp?: {
 		env?: "dev" | "production" | "local";
 		db_encryption_key?: string;
@@ -30,22 +29,25 @@ interface YamlConfig {
 	invite_expiry_seconds?: number;
 }
 
-export function resolveConfigPath(opts: GlobalOptions): string {
-	return opts.config ?? DEFAULT_CONFIG_PATH;
-}
-
-export function resolveDataDir(opts: GlobalOptions, yaml?: YamlConfig): string {
-	// Priority: CLI flag > env > yaml > default
+export function resolveDataDir(opts: GlobalOptions): string {
+	// Priority: CLI flag > env > default
 	if (opts.dataDir) return opts.dataDir;
 	const envDir = process.env["TAP_DATA_DIR"];
 	if (envDir) return envDir;
-	if (yaml?.data_dir) {
-		const dir = yaml.data_dir;
-		return dir.startsWith("~") ? join(homedir(), dir.slice(1)) : dir;
-	}
 	// Use XDG path if it exists, otherwise fallback
 	if (existsSync(DEFAULT_DATA_DIR)) return DEFAULT_DATA_DIR;
 	return FALLBACK_DATA_DIR;
+}
+
+export function resolveConfigPath(opts: GlobalOptions, dataDir: string): string {
+	if (opts.config) return opts.config;
+	// New default: config lives inside data dir
+	const newPath = join(dataDir, "config.yaml");
+	if (existsSync(newPath)) return newPath;
+	// Legacy fallback: ~/.config/trustedagents/config.yaml
+	if (existsSync(LEGACY_CONFIG_PATH)) return LEGACY_CONFIG_PATH;
+	// Default to new path (init will create it here)
+	return newPath;
 }
 
 function loadYamlConfig(configPath: string): YamlConfig | undefined {
@@ -63,9 +65,9 @@ export async function loadConfig(
 	opts: GlobalOptions,
 	{ requireAgentId = true }: LoadConfigOptions = {},
 ): Promise<TrustedAgentsConfig> {
-	const configPath = resolveConfigPath(opts);
+	const dataDir = resolveDataDir(opts);
+	const configPath = resolveConfigPath(opts, dataDir);
 	const yaml = loadYamlConfig(configPath);
-	const dataDir = resolveDataDir(opts, yaml);
 
 	// Resolve agent ID: CLI flag > env > yaml > error
 	const agentIdStr = process.env["TAP_AGENT_ID"];

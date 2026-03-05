@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import YAML from "yaml";
 import type { GlobalOptions } from "../types.js";
-import { resolveConfigPath } from "../lib/config-loader.js";
+import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { error, success } from "../lib/output.js";
 import { exitCodeForError, errorCode } from "../lib/errors.js";
@@ -14,7 +14,8 @@ export async function configSetCommand(
 	const startTime = Date.now();
 
 	try {
-		const configPath = resolveConfigPath(opts);
+		const dataDir = resolveDataDir(opts);
+		const configPath = resolveConfigPath(opts, dataDir);
 
 		if (!existsSync(configPath)) {
 			throw new Error(`Config file not found at ${configPath}. Run 'tap init' first.`);

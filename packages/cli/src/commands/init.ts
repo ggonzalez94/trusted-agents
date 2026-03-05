@@ -19,8 +19,8 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 	const startTime = Date.now();
 
 	try {
-		const configPath = resolveConfigPath(opts);
 		const dataDir = resolveDataDir(opts);
+		const configPath = resolveConfigPath(opts, dataDir);
 
 		// Check if config already exists
 		if (existsSync(configPath)) {
@@ -76,7 +76,6 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			const yamlConfig: Record<string, unknown> = {
 				agent_id: -1,
 				chain,
-				data_dir: dataDir,
 				xmtp: { env: xmtpEnv },
 			};
 			if (Object.keys(chainsYaml).length > 0) {
