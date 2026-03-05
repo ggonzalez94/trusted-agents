@@ -2,19 +2,20 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import YAML from "yaml";
 import {
 	ERC8004Registry,
+	fetchRegistrationFile,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type { RegistrationFile } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
-import type { GlobalOptions } from "../types.js";
+import YAML from "yaml";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { resolvePinataJwt, uploadToIpfsPinata, uploadToIpfsX402 } from "../lib/ipfs.js";
 import { error, info, success, verbose } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
-import { uploadToIpfsX402, uploadToIpfsPinata, resolvePinataJwt } from "../lib/ipfs.js";
-import { buildWalletClient, buildPublicClient } from "../lib/wallet.js";
+import { buildPublicClient, buildWalletClient } from "../lib/wallet.js";
+import type { GlobalOptions } from "../types.js";
 
 export interface RegisterOptions {
 	name: string;
@@ -24,14 +25,137 @@ export interface RegisterOptions {
 	pinataJwt?: string;
 }
 
+export interface RegisterUpdateOptions {
+	name?: string;
+	description?: string;
+	capabilities?: string;
+	uri?: string;
+	pinataJwt?: string;
+}
+
+function parseCapabilities(input: string): string[] {
+	return input
+		.split(",")
+		.map((capability) => capability.trim())
+		.filter(Boolean);
+}
+
+function upsertXmtpService(
+	services: RegistrationFile["services"],
+	agentAddress: `0x${string}`,
+): RegistrationFile["services"] {
+	let hasXmtp = false;
+	const updated = services.map((service) => {
+		if (service.name !== "xmtp") {
+			return service;
+		}
+		hasXmtp = true;
+		return { ...service, endpoint: agentAddress };
+	});
+
+	if (hasXmtp) {
+		return updated;
+	}
+
+	return [{ name: "xmtp", endpoint: agentAddress }, ...updated];
+}
+
+function buildRegistrationFile(
+	name: string,
+	description: string,
+	capabilities: string[],
+	agentAddress: `0x${string}`,
+): RegistrationFile {
+	return {
+		type: "eip-8004-registration-v1",
+		name,
+		description,
+		services: [{ name: "xmtp", endpoint: agentAddress }],
+		trustedAgentProtocol: {
+			version: "1.0",
+			agentAddress,
+			capabilities,
+		},
+	};
+}
+
+export function buildUpdatedRegistrationFile(
+	current: RegistrationFile,
+	agentAddress: `0x${string}`,
+	updates: {
+		name?: string;
+		description?: string;
+		capabilities?: string[];
+	},
+): RegistrationFile {
+	return {
+		...current,
+		name: updates.name ?? current.name,
+		description: updates.description ?? current.description,
+		services: upsertXmtpService(current.services, agentAddress),
+		trustedAgentProtocol: {
+			...current.trustedAgentProtocol,
+			agentAddress,
+			capabilities: updates.capabilities ?? current.trustedAgentProtocol.capabilities,
+		},
+	};
+}
+
+function canonicalizeJson(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map((item) => canonicalizeJson(item));
+	}
+
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>)
+				.filter(([, entryValue]) => entryValue !== undefined)
+				.sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+				.map(([key, entryValue]) => [key, canonicalizeJson(entryValue)]),
+		);
+	}
+
+	return value;
+}
+
 /** Deterministic JSON serialization for content comparison. */
 function canonicalJson(obj: unknown): string {
-	return JSON.stringify(obj, Object.keys(obj as Record<string, unknown>).sort());
+	return JSON.stringify(canonicalizeJson(obj));
 }
 
 /** SHA-256 hash of the canonical JSON representation. */
 function contentHash(registrationFile: RegistrationFile): string {
 	return createHash("sha256").update(canonicalJson(registrationFile)).digest("hex");
+}
+
+function hasSameRegistrationContent(left: RegistrationFile, right: RegistrationFile): boolean {
+	return contentHash(left) === contentHash(right);
+}
+
+function isFullManifestReplacement(cmdOpts: RegisterUpdateOptions): boolean {
+	return (
+		cmdOpts.name !== undefined &&
+		cmdOpts.description !== undefined &&
+		cmdOpts.capabilities !== undefined
+	);
+}
+
+function emitNoChangeResult(
+	agentId: number,
+	agentURI: string,
+	opts: GlobalOptions,
+	startTime: number,
+): void {
+	success(
+		{
+			agent_id: agentId,
+			agent_uri: agentURI,
+			updated: false,
+			no_change: true,
+		},
+		opts,
+		startTime,
+	);
 }
 
 interface IpfsCache {
@@ -67,26 +191,34 @@ async function verifyCidAccessible(cid: string): Promise<boolean> {
 }
 
 /**
- * Upload a registration file to IPFS, reusing a cached CID if the content is unchanged.
+ * Resolve URI for registration metadata.
  *
  * Priority: --uri (skip upload) > cached CID > x402 > Pinata JWT (legacy)
  */
 async function resolveAgentURI(
-	registrationFile: RegistrationFile,
-	privateKey: `0x${string}`,
-	dataDir: string,
-	cmdOpts: { uri?: string; pinataJwt?: string; name: string },
+	params: {
+		registrationFile?: RegistrationFile;
+		privateKey: `0x${string}`;
+		dataDir: string;
+		uri?: string;
+		pinataJwt?: string;
+		nameHint: string;
+	},
 	opts: GlobalOptions,
 ): Promise<{ agentURI: string; ipfsCid?: string } | null> {
 	// 1. Explicit URI — no upload needed
-	if (cmdOpts.uri) {
-		info(`Using provided URI: ${cmdOpts.uri}`, opts);
-		return { agentURI: cmdOpts.uri };
+	if (params.uri) {
+		info(`Using provided URI: ${params.uri}`, opts);
+		return { agentURI: params.uri };
+	}
+
+	if (!params.registrationFile) {
+		throw new Error("registrationFile is required when URI is not provided");
 	}
 
 	// 2. Check IPFS cache — skip upload if identical content was previously uploaded
-	const hash = contentHash(registrationFile);
-	const cache = await loadIpfsCache(dataDir);
+	const hash = contentHash(params.registrationFile);
+	const cache = await loadIpfsCache(params.dataDir);
 	const cached = cache[hash];
 	if (cached) {
 		verbose(`Found cached IPFS CID for content hash ${hash.slice(0, 12)}…`, opts);
@@ -99,26 +231,31 @@ async function resolveAgentURI(
 	}
 
 	// 3. Try x402 (always pays with USDC on Base mainnet — no account needed)
-	const jwt = resolvePinataJwt(cmdOpts.pinataJwt);
+	const jwt = resolvePinataJwt(params.pinataJwt);
 	if (!jwt) {
-		info("Uploading registration file to IPFS via x402 (paying with USDC on Base mainnet)...", opts);
+		info(
+			"Uploading registration file to IPFS via x402 (paying with USDC on Base mainnet)...",
+			opts,
+		);
 		try {
-			const ipfs = await uploadToIpfsX402(registrationFile, privateKey);
+			const ipfs = await uploadToIpfsX402(params.registrationFile, params.privateKey);
 			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-			await saveIpfsCache(dataDir, cache);
+			await saveIpfsCache(params.dataDir, cache);
 			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			verbose(`x402 upload failed: ${msg}`, opts);
 			error(
 				"UPLOAD_ERROR",
-				`IPFS upload via x402 failed: ${msg}\n\n` +
-				`x402 requires USDC on Base mainnet (not testnet) to pay for IPFS pinning.\n` +
-				`Send USDC to your agent's address on Base (chain ID 8453).\n\n` +
-				`Alternatives:\n` +
-				`  --pinata-jwt <token>  Use a Pinata API key instead (works on any chain)\n` +
-				`  --uri <url>           Skip IPFS upload with a pre-hosted registration file`,
+				`IPFS upload via x402 failed: ${msg}
+
+x402 requires USDC on Base mainnet (not testnet) to pay for IPFS pinning.
+Send USDC to your agent's address on Base (chain ID 8453).
+
+Alternatives:
+  --pinata-jwt <token>  Use a Pinata API key instead (works on any chain)
+  --uri <url>           Skip IPFS upload with a pre-hosted registration file`,
 				opts,
 			);
 			return null;
@@ -127,10 +264,10 @@ async function resolveAgentURI(
 
 	// 4. Pinata JWT (authenticated API)
 	info("Uploading registration file to IPFS via Pinata...", opts);
-	const ipfs = await uploadToIpfsPinata(registrationFile, jwt, `tap-${cmdOpts.name}`);
+	const ipfs = await uploadToIpfsPinata(params.registrationFile, jwt, `tap-${params.nameHint}`);
 	info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 	cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-	await saveIpfsCache(dataDir, cache);
+	await saveIpfsCache(params.dataDir, cache);
 	return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
 }
 
@@ -155,31 +292,29 @@ export async function registerCommand(
 		const agentAddress = account.address;
 
 		// Build registration file
-		const capabilities = cmdOpts.capabilities
-			.split(",")
-			.map((c) => c.trim())
-			.filter(Boolean);
-
-		const registrationFile: RegistrationFile = {
-			type: "eip-8004-registration-v1",
-			name: cmdOpts.name,
-			description: cmdOpts.description,
-			services: [
-				{ name: "xmtp", endpoint: agentAddress },
-			],
-			trustedAgentProtocol: {
-				version: "1.0",
-				agentAddress,
-				capabilities,
-			},
-		};
+		const registrationFile = buildRegistrationFile(
+			cmdOpts.name,
+			cmdOpts.description,
+			parseCapabilities(cmdOpts.capabilities),
+			agentAddress,
+		);
 
 		// Validate before uploading
 		validateRegistrationFile(registrationFile);
 		verbose("Registration file validated", opts);
 
 		// Upload to IPFS (x402 or Pinata JWT) or use provided URI
-		const result = await resolveAgentURI(registrationFile, config.privateKey, config.dataDir, cmdOpts, opts);
+		const result = await resolveAgentURI(
+			{
+				registrationFile,
+				privateKey: config.privateKey,
+				dataDir: config.dataDir,
+				uri: cmdOpts.uri,
+				pinataJwt: cmdOpts.pinataJwt,
+				nameHint: cmdOpts.name,
+			},
+			opts,
+		);
 		if (!result) {
 			process.exitCode = 1;
 			return;
@@ -214,8 +349,8 @@ export async function registerCommand(
 				explorer: explorerUrl,
 				next_steps: [
 					`Agent #${agentId} is live on ${chainConfig.name}`,
-					`Create an invite: tap invite create`,
-					`Share the link with a peer, who runs: tap connect <url> --yes`,
+					"Create an invite: tap invite create",
+					"Share the link with a peer, who runs: tap connect <url> --yes",
 				],
 			},
 			opts,
@@ -228,10 +363,7 @@ export async function registerCommand(
 }
 
 export async function registerUpdateCommand(
-	cmdOpts: Omit<RegisterOptions, "capabilities" | "description"> & {
-		description?: string;
-		capabilities?: string;
-	},
+	cmdOpts: RegisterUpdateOptions,
 	opts: GlobalOptions,
 ): Promise<void> {
 	const startTime = Date.now();
@@ -249,29 +381,103 @@ export async function registerUpdateCommand(
 		const account = privateKeyToAccount(config.privateKey);
 		const agentAddress = account.address;
 
-		// Build updated registration file
-		const capabilities = cmdOpts.capabilities
-			? cmdOpts.capabilities.split(",").map((c) => c.trim()).filter(Boolean)
-			: [];
+		const hasManifestOverrides =
+			cmdOpts.name !== undefined ||
+			cmdOpts.description !== undefined ||
+			cmdOpts.capabilities !== undefined;
+		if (cmdOpts.uri && hasManifestOverrides) {
+			error(
+				"VALIDATION_ERROR",
+				"Do not combine --uri with --name/--description/--capabilities. Either provide a full URI or let tap build and upload a new registration file.",
+				opts,
+			);
+			process.exitCode = 2;
+			return;
+		}
 
-		const registrationFile: RegistrationFile = {
-			type: "eip-8004-registration-v1",
-			name: cmdOpts.name,
-			description: cmdOpts.description ?? "",
-			services: [
-				{ name: "xmtp", endpoint: agentAddress },
-			],
-			trustedAgentProtocol: {
-				version: "1.0",
+		const publicClient = buildPublicClient(chainConfig);
+		const walletClient = buildWalletClient(config.privateKey, chainConfig);
+		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
+
+		await registry.verifyDeployed();
+		const existingAgentURI = await registry.getTokenURI(config.agentId);
+
+		if (cmdOpts.uri) {
+			if (existingAgentURI === cmdOpts.uri) {
+				emitNoChangeResult(config.agentId, cmdOpts.uri, opts, startTime);
+				return;
+			}
+
+			info(`Updating agent #${config.agentId} URI on ${chainConfig.name}...`, opts);
+			await registry.setAgentURI(config.agentId, cmdOpts.uri, walletClient);
+
+			success(
+				{
+					agent_id: config.agentId,
+					agent_uri: cmdOpts.uri,
+					updated: true,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		const fullReplacement = isFullManifestReplacement(cmdOpts);
+		let currentRegistrationFile: RegistrationFile | null = null;
+		let registrationFile: RegistrationFile;
+
+		if (fullReplacement) {
+			registrationFile = buildRegistrationFile(
+				cmdOpts.name!,
+				cmdOpts.description!,
+				parseCapabilities(cmdOpts.capabilities!),
 				agentAddress,
-				capabilities,
+			);
+			validateRegistrationFile(registrationFile);
+			verbose("Replacement registration file validated", opts);
+
+			try {
+				currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				verbose(
+					`Current registration could not be fetched; proceeding with replacement upload: ${message}`,
+					opts,
+				);
+			}
+		} else {
+			info(`Fetching current registration for agent #${config.agentId}...`, opts);
+			currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
+
+			registrationFile = buildUpdatedRegistrationFile(currentRegistrationFile, agentAddress, {
+				name: cmdOpts.name,
+				description: cmdOpts.description,
+				capabilities:
+					cmdOpts.capabilities !== undefined ? parseCapabilities(cmdOpts.capabilities) : undefined,
+			});
+			validateRegistrationFile(registrationFile);
+			verbose("Updated registration file validated", opts);
+		}
+
+		if (
+			currentRegistrationFile &&
+			hasSameRegistrationContent(currentRegistrationFile, registrationFile)
+		) {
+			emitNoChangeResult(config.agentId, existingAgentURI, opts, startTime);
+			return;
+		}
+
+		const result = await resolveAgentURI(
+			{
+				registrationFile,
+				privateKey: config.privateKey,
+				dataDir: config.dataDir,
+				pinataJwt: cmdOpts.pinataJwt,
+				nameHint: registrationFile.name,
 			},
-		};
-
-		validateRegistrationFile(registrationFile);
-
-		// Upload to IPFS or use provided URI
-		const result = await resolveAgentURI(registrationFile, config.privateKey, config.dataDir, cmdOpts, opts);
+			opts,
+		);
 		if (!result) {
 			process.exitCode = 1;
 			return;
@@ -279,11 +485,10 @@ export async function registerUpdateCommand(
 
 		// Update on-chain
 		info(`Updating agent #${config.agentId} URI on ${chainConfig.name}...`, opts);
-		const publicClient = buildPublicClient(chainConfig);
-		const walletClient = buildWalletClient(config.privateKey, chainConfig);
-		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
-
-		await registry.verifyDeployed();
+		if (existingAgentURI === result.agentURI) {
+			emitNoChangeResult(config.agentId, result.agentURI, opts, startTime);
+			return;
+		}
 		await registry.setAgentURI(config.agentId, result.agentURI, walletClient);
 
 		success(

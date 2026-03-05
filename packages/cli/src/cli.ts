@@ -1,7 +1,7 @@
 import { Command } from "commander";
-import type { GlobalOptions } from "./types.js";
+import { errorCode, exitCodeForError } from "./lib/errors.js";
 import { error } from "./lib/output.js";
-import { exitCodeForError, errorCode } from "./lib/errors.js";
+import type { GlobalOptions } from "./types.js";
 
 export function createCli(): Command {
 	const program = new Command();
@@ -24,14 +24,17 @@ export function createCli(): Command {
 		.description("First-time setup wizard")
 		.option("--private-key <hex>", "Import an existing private key instead of generating one")
 		.option("--chain <name>", "Chain to register on (alias or CAIP-2)", "base-sepolia")
-		.addHelpText("after", `
+		.addHelpText(
+			"after",
+			`
 Supported chains:
   base-sepolia   Base Sepolia testnet (default)
   base           Base mainnet
   taiko          Taiko mainnet
   taiko-hoodi    Taiko Hoodi testnet
   eip155:<id>    Any chain by CAIP-2 ID
-`)
+`,
+		)
 		.action(async (cmdOpts: { privateKey?: string; chain?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { initCommand } = await import("./commands/init.js");
@@ -42,7 +45,9 @@ Supported chains:
 	const register = program
 		.command("register")
 		.description("Register agent on-chain via ERC-8004")
-		.addHelpText("after", `
+		.addHelpText(
+			"after",
+			`
 Capabilities are freeform strings describing what your agent can do.
 Common capabilities: general-chat, scheduling, research, purchases, file-sharing
 You can use any string — these are advertised to peers during discovery.
@@ -51,31 +56,48 @@ Examples:
   tap register --name "Cal" --description "Scheduling assistant" --capabilities "scheduling,general-chat"
   tap register --name "Scout" --description "Web researcher" --capabilities "research,general-chat"
   tap register --name "Shopper" --description "Purchase agent" --capabilities "purchases,general-chat"
-`)
+`,
+		)
 		.requiredOption("--name <name>", "Agent display name")
 		.requiredOption("--description <desc>", "Agent description")
 		.requiredOption("--capabilities <list>", "Comma-separated capabilities")
 		.option("--uri <url>", "Pre-hosted registration file URI (skips IPFS upload)")
 		.option("--pinata-jwt <token>", "Pinata JWT for IPFS upload (or set TAP_PINATA_JWT)")
-		.action(async (cmdOpts: { name: string; description: string; capabilities: string; uri?: string; pinataJwt?: string }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { registerCommand } = await import("./commands/register.js");
-			await registerCommand(cmdOpts, opts);
-		});
+		.action(
+			async (cmdOpts: {
+				name: string;
+				description: string;
+				capabilities: string;
+				uri?: string;
+				pinataJwt?: string;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { registerCommand } = await import("./commands/register.js");
+				await registerCommand(cmdOpts, opts);
+			},
+		);
 
 	register
 		.command("update")
-		.description("Update an existing agent's registration file")
-		.requiredOption("--name <name>", "Agent display name")
+		.description("Update an existing agent's registration URI/manifest")
+		.option("--name <name>", "Agent display name")
 		.option("--description <desc>", "Agent description")
 		.option("--capabilities <list>", "Comma-separated capabilities")
 		.option("--uri <url>", "Pre-hosted registration file URI (skips IPFS upload)")
 		.option("--pinata-jwt <token>", "Pinata JWT for IPFS upload")
-		.action(async (cmdOpts: { name: string; description?: string; capabilities?: string; uri?: string; pinataJwt?: string }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { registerUpdateCommand } = await import("./commands/register.js");
-			await registerUpdateCommand(cmdOpts, opts);
-		});
+		.action(
+			async (cmdOpts: {
+				name?: string;
+				description?: string;
+				capabilities?: string;
+				uri?: string;
+				pinataJwt?: string;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { registerUpdateCommand } = await import("./commands/register.js");
+				await registerUpdateCommand(cmdOpts, opts);
+			},
+		);
 
 	// config
 	const config = program.command("config").description("Manage configuration");
@@ -125,6 +147,16 @@ Examples:
 			}
 			const { identityResolveCommand } = await import("./commands/identity-resolve.js");
 			await identityResolveCommand(parsed, opts, chain);
+		});
+
+	identity
+		.command("resolve-self")
+		.description("Resolve this agent from on-chain registry (includes capabilities)")
+		.argument("[chain]", "Chain override (CAIP-2)")
+		.action(async (chain?: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { identityResolveSelfCommand } = await import("./commands/identity-resolve.js");
+			await identityResolveSelfCommand(opts, chain);
 		});
 
 	// invite

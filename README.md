@@ -120,13 +120,14 @@ Streams incoming messages as JSON lines to stdout. Ctrl+C to stop.
 Setup & Registration
   tap init [--private-key <hex>]        First-time setup (generates or imports wallet)
   tap register [options]                Register on-chain via ERC-8004
-  tap register update [options]         Update registration file
+  tap register update [options]         Update registration URI/manifest
 
 Identity & Config
   tap config show                       Print resolved config (secrets redacted)
   tap config set <key> <value>          Set a config value (supports dot notation: xmtp.env)
   tap identity show                     Show agent ID, chain, and address
   tap identity resolve <agentId> [chain] Resolve a peer from the on-chain registry
+  tap identity resolve-self [chain]     Resolve your own on-chain identity/capabilities
 
 Connections
   tap invite create [--expiry <sec>]    Generate a signed invite link
@@ -152,6 +153,14 @@ Messaging
 | `--capabilities <list>` | Comma-separated capabilities (required) |
 | `--uri <url>` | Pre-hosted registration file (skips IPFS upload) |
 | `--pinata-jwt <token>` | Pinata JWT (or set `TAP_PINATA_JWT` env var) |
+
+### Register Update Options
+
+`tap register update` supports two modes:
+- URI-only update (no upload): `tap register update --uri <url>`
+- Manifest update (auto IPFS upload + on-chain URI update): `tap register update [--name ...] [--description ...] [--capabilities ...]`
+
+When manifest fields are omitted, current on-chain values are preserved.
 
 ## Global Flags
 
