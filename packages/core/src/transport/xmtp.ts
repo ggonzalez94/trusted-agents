@@ -338,10 +338,7 @@ export class XmtpTransport implements TransportProvider {
 				return;
 			}
 
-			this.inboxIdToAddress.set(
-				rawMessage.senderInboxId,
-				expectedSenderAddress as `0x${string}`,
-			);
+			this.inboxIdToAddress.set(rawMessage.senderInboxId, expectedSenderAddress as `0x${string}`);
 			senderId = claimedAgentId;
 		} else {
 			await this.sendJsonRpcError(rawMessage.senderInboxId, request.id, -32001, "Unknown sender");

@@ -1,9 +1,3 @@
-import type { GlobalOptions } from "../types.js";
-import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
-import { error, info, success } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
-import { promptYesNo } from "../lib/prompt.js";
 import {
 	buildConnectionRequest,
 	caip2ToChainId,
@@ -19,6 +13,12 @@ import type {
 	Contact,
 	JsonRpcResponse,
 } from "trusted-agents-core";
+import { loadConfig } from "../lib/config-loader.js";
+import { buildContextWithTransport } from "../lib/context.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { error, info, success } from "../lib/output.js";
+import { promptYesNo } from "../lib/prompt.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function connectCommand(
 	inviteUrl: string,
@@ -96,8 +96,7 @@ export async function connectCommand(
 
 			// Parse response
 			const rpc = response as JsonRpcResponse & { result?: Record<string, unknown> };
-			const accepted =
-				rpc.result?.accepted === true || rpc.result?.status === "accepted";
+			const accepted = rpc.result?.accepted === true || rpc.result?.status === "accepted";
 			const connectionId =
 				(typeof rpc.result?.connectionId === "string" && rpc.result.connectionId) ||
 				generateConnectionId();
@@ -136,4 +135,3 @@ export async function connectCommand(
 		process.exitCode = exitCodeForError(err);
 	}
 }
-

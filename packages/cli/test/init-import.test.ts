@@ -35,10 +35,7 @@ describe("tap init --private-key", () => {
 		const dataDir = join(tmpDir, "data");
 		const knownKey = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-		await initCommand(
-			{ json: true, config: configPath, dataDir },
-			{ privateKey: knownKey },
-		);
+		await initCommand({ json: true, config: configPath, dataDir }, { privateKey: knownKey });
 
 		const keyfile = join(dataDir, "identity", "agent.key");
 		expect(existsSync(keyfile)).toBe(true);
@@ -55,10 +52,7 @@ describe("tap init --private-key", () => {
 		const dataDir = join(tmpDir, "data");
 		const knownKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-		await initCommand(
-			{ json: true, config: configPath, dataDir },
-			{ privateKey: knownKey },
-		);
+		await initCommand({ json: true, config: configPath, dataDir }, { privateKey: knownKey });
 
 		const keyfile = join(dataDir, "identity", "agent.key");
 		const stored = await readFile(keyfile, "utf-8");

@@ -1,11 +1,11 @@
 import { generateConnectionId, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
-import type { AgentIdentifier, ConnectionRequestParams } from "../protocol/types.js";
+import type { ResolvedAgent } from "../identity/types.js";
 import { createJsonRpcError, createJsonRpcResponse } from "../protocol/messages.js";
+import type { AgentIdentifier, ConnectionRequestParams } from "../protocol/types.js";
 import type { ProtocolMessage, ProtocolResponse } from "../transport/interface.js";
 import type { ITrustStore } from "../trust/trust-store.js";
 import type { Contact } from "../trust/types.js";
-import type { ResolvedAgent } from "../identity/types.js";
 
 export interface ConnectionRequestContext {
 	/** The incoming connection/request message (already verified by transport). */
@@ -39,10 +39,7 @@ export async function handleConnectionRequest(
 	// Resolve requester's on-chain identity (cache-first — transport already resolved recently)
 	let resolved: ResolvedAgent;
 	try {
-		resolved = await ctx.resolver.resolveWithCache(
-			params.from.agentId,
-			params.from.chain,
-		);
+		resolved = await ctx.resolver.resolveWithCache(params.from.agentId, params.from.chain);
 	} catch {
 		return createJsonRpcError(ctx.message.id, {
 			code: -32001,
@@ -51,10 +48,7 @@ export async function handleConnectionRequest(
 	}
 
 	// Check if already a contact (idempotency)
-	const existing = await ctx.trustStore.findByAgentId(
-		params.from.agentId,
-		params.from.chain,
-	);
+	const existing = await ctx.trustStore.findByAgentId(params.from.agentId, params.from.chain);
 	if (existing && existing.status === "active") {
 		return createJsonRpcResponse(ctx.message.id, {
 			accepted: true,

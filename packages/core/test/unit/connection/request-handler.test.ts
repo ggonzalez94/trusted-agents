@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleConnectionRequest } from "../../../src/connection/request-handler.js";
-import type { ProtocolMessage } from "../../../src/transport/interface.js";
-import type { ResolvedAgent } from "../../../src/identity/types.js";
-import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
+import type { ResolvedAgent } from "../../../src/identity/types.js";
+import type { ProtocolMessage } from "../../../src/transport/interface.js";
+import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
-import { ALICE, BOB } from "../../fixtures/test-keys.js";
+import { ALICE } from "../../fixtures/test-keys.js";
 
 const ALICE_AGENT: ResolvedAgent = {
 	agentId: 10,
@@ -131,7 +131,9 @@ describe("handleConnectionRequest", () => {
 
 	it("should return error when resolver fails", async () => {
 		const { resolver, trustStore } = makeMocks();
-		(resolver.resolveWithCache as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
+		(resolver.resolveWithCache as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error("not found"),
+		);
 
 		const response = await handleConnectionRequest({
 			message: makeRequest(),

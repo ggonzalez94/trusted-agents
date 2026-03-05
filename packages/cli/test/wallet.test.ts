@@ -1,6 +1,6 @@
+import type { ChainConfig } from "trusted-agents-core";
 import { describe, expect, it } from "vitest";
 import { buildPublicClient, buildWalletClient } from "../src/lib/wallet.js";
-import type { ChainConfig } from "trusted-agents-core";
 
 const TEST_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const TEST_CHAIN: ChainConfig = {

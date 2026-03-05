@@ -20,9 +20,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 		const code = await this.publicClient.getCode({ address: this.registryAddress });
 		if (!code || code === "0x") {
 			throw new IdentityError(
-				`No ERC-8004 registry contract at ${this.registryAddress} on this chain. ` +
-				`Check that the registry address matches the network (testnet vs mainnet). ` +
-				`See https://github.com/erc-8004/erc-8004-contracts for deployed addresses.`,
+				`No ERC-8004 registry contract at ${this.registryAddress} on this chain. Check that the registry address matches the network (testnet vs mainnet). See https://github.com/erc-8004/erc-8004-contracts for deployed addresses.`,
 			);
 		}
 	}

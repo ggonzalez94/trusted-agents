@@ -35,10 +35,7 @@ function createMockClient(opts?: { inboxId?: string }) {
 	const clientInboxId = opts?.inboxId ?? "self-inbox-id";
 	const messageListeners: Array<(msg: MockMessage) => void> = [];
 	const mockConversation = createMockConversation();
-	const inboxIdentifiers = new Map<
-		string,
-		Array<{ identifier: string; identifierKind: number }>
-	>();
+	const inboxIdentifiers = new Map<string, Array<{ identifier: string; identifierKind: number }>>();
 
 	const client = {
 		inboxId: clientInboxId,

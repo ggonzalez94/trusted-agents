@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import YAML from "yaml";
-import type { GlobalOptions } from "../types.js";
-import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { error, info, success } from "../lib/output.js";
-import { generateKeyfile, importKeyfile, loadKeyfile } from "../lib/keyfile.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
 import { privateKeyToAccount } from "viem/accounts";
-import { resolveChainAlias, ALL_CHAINS } from "../lib/chains.js";
+import YAML from "yaml";
+import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
+import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { generateKeyfile, importKeyfile, loadKeyfile } from "../lib/keyfile.js";
+import { error, info, success } from "../lib/output.js";
+import type { GlobalOptions } from "../types.js";
 
 export interface InitOptions {
 	privateKey?: string;
@@ -89,8 +89,8 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 
 		const fundingSteps = [
 			`Fund ${address} on ${chainLabel}:`,
-			`  ETH → for registration gas`,
-			`  USDC on Base mainnet → for IPFS upload via x402 (~0.001 USDC)`,
+			"  ETH → for registration gas",
+			"  USDC on Base mainnet → for IPFS upload via x402 (~0.001 USDC)",
 		];
 
 		const result = {

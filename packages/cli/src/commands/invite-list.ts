@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isExpired } from "trusted-agents-core";
 import type { PendingInvite } from "trusted-agents-core";
-import type { GlobalOptions } from "../types.js";
 import { loadConfig } from "../lib/config-loader.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function inviteListCommand(opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();

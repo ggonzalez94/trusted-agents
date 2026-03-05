@@ -35,9 +35,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 	);
 
 	if (!hasXmtpService) {
-		throw new IdentityError(
-			"Registration file must have an 'xmtp' transport service",
-		);
+		throw new IdentityError("Registration file must have an 'xmtp' transport service");
 	}
 
 	for (const service of obj.services) {
@@ -98,9 +96,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 	if (xmtpService) {
 		const xmtpEndpoint = String(xmtpService.endpoint).toLowerCase();
 		if (xmtpEndpoint !== tap.agentAddress.toLowerCase()) {
-			throw new IdentityError(
-				"XMTP service endpoint must match trustedAgentProtocol.agentAddress",
-			);
+			throw new IdentityError("XMTP service endpoint must match trustedAgentProtocol.agentAddress");
 		}
 	}
 

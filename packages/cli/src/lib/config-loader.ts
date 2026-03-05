@@ -5,8 +5,8 @@ import { DEFAULT_CONFIG } from "trusted-agents-core";
 import type { TrustedAgentsConfig } from "trusted-agents-core";
 import YAML from "yaml";
 import type { GlobalOptions } from "../types.js";
-import { loadKeyfile } from "./keyfile.js";
 import { ALL_CHAINS, resolveChainAlias } from "./chains.js";
+import { loadKeyfile } from "./keyfile.js";
 
 const LEGACY_CONFIG_PATH = join(homedir(), ".config", "trustedagents", "config.yaml");
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "trustedagents");
@@ -32,7 +32,7 @@ interface YamlConfig {
 export function resolveDataDir(opts: GlobalOptions): string {
 	// Priority: CLI flag > env > default
 	if (opts.dataDir) return opts.dataDir;
-	const envDir = process.env["TAP_DATA_DIR"];
+	const envDir = process.env.TAP_DATA_DIR;
 	if (envDir) return envDir;
 	// Use XDG path if it exists, otherwise fallback
 	if (existsSync(DEFAULT_DATA_DIR)) return DEFAULT_DATA_DIR;
@@ -70,7 +70,7 @@ export async function loadConfig(
 	const yaml = loadYamlConfig(configPath);
 
 	// Resolve agent ID: CLI flag > env > yaml > error
-	const agentIdStr = process.env["TAP_AGENT_ID"];
+	const agentIdStr = process.env.TAP_AGENT_ID;
 	const agentId = agentIdStr !== undefined ? Number.parseInt(agentIdStr, 10) : yaml?.agent_id;
 
 	if (requireAgentId) {
@@ -82,12 +82,12 @@ export async function loadConfig(
 	}
 
 	// Resolve chain: CLI flag > env > yaml > default (Base Sepolia)
-	const chainRaw = opts.chain ?? process.env["TAP_CHAIN"] ?? yaml?.chain ?? "base-sepolia";
+	const chainRaw = opts.chain ?? process.env.TAP_CHAIN ?? yaml?.chain ?? "base-sepolia";
 	const chain = resolveChainAlias(chainRaw);
 
 	// Resolve private key: env > keyfile
 	let privateKey: `0x${string}`;
-	const envKey = process.env["TAP_PRIVATE_KEY"];
+	const envKey = process.env.TAP_PRIVATE_KEY;
 	if (envKey) {
 		privateKey = envKey.startsWith("0x") ? (envKey as `0x${string}`) : `0x${envKey}`;
 	} else {

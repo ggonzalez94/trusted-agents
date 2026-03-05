@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,10 +14,10 @@ describe("config-loader", () => {
 	afterEach(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
 		// Clean up env vars
-		delete process.env["TAP_DATA_DIR"];
-		delete process.env["TAP_AGENT_ID"];
-		delete process.env["TAP_CHAIN"];
-		delete process.env["TAP_PRIVATE_KEY"];
+		process.env.TAP_DATA_DIR = undefined;
+		process.env.TAP_AGENT_ID = undefined;
+		process.env.TAP_CHAIN = undefined;
+		process.env.TAP_PRIVATE_KEY = undefined;
 	});
 
 	describe("resolveConfigPath", () => {
@@ -53,13 +53,13 @@ describe("config-loader", () => {
 		});
 
 		it("should use TAP_DATA_DIR env when set", () => {
-			process.env["TAP_DATA_DIR"] = "/env/data";
+			process.env.TAP_DATA_DIR = "/env/data";
 			const dir = resolveDataDir({});
 			expect(dir).toBe("/env/data");
 		});
 
 		it("should prioritize CLI flag over env", () => {
-			process.env["TAP_DATA_DIR"] = "/env/data";
+			process.env.TAP_DATA_DIR = "/env/data";
 			const dir = resolveDataDir({ dataDir: "/flag/data" });
 			expect(dir).toBe("/flag/data");
 		});

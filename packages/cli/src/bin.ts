@@ -8,7 +8,11 @@ program.parseAsync(process.argv).catch((err: Error & { code?: string }) => {
 		process.exit(0);
 	}
 	// Usage errors (missing args, unknown options)
-	if (err.code === "commander.missingArgument" || err.code === "commander.unknownOption" || err.code === "commander.missingMandatoryOptionValue") {
+	if (
+		err.code === "commander.missingArgument" ||
+		err.code === "commander.unknownOption" ||
+		err.code === "commander.missingMandatoryOptionValue"
+	) {
 		process.exit(2);
 	}
 	process.exit(1);

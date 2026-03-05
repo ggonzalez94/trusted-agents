@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import YAML from "yaml";
-import type { GlobalOptions } from "../types.js";
-import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { resolveChainAlias } from "../lib/chains.js";
+import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function configSetCommand(
 	key: string,
