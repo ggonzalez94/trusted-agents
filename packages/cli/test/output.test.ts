@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // We test the output module by capturing stdout/stderr writes
 describe("output", () => {
@@ -85,5 +85,18 @@ describe("output", () => {
 		const { info } = await import("../src/lib/output.js");
 		info("some info", {});
 		expect(stderrWrites[0]).toContain("some info");
+	});
+
+	it("should pretty-print object arrays in plain mode", async () => {
+		const { success } = await import("../src/lib/output.js");
+		success(
+			{
+				id: "conv-1",
+				messages: [{ content: "hello", scope: "message/send" }],
+			},
+			{ plain: true },
+		);
+		expect(stdoutWrites.join("")).toContain('"content": "hello"');
+		expect(stdoutWrites.join("")).not.toContain("[object Object]");
 	});
 });

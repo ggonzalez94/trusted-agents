@@ -103,6 +103,15 @@ function printPlain(data: unknown): void {
 		for (const [key, items] of arrayEntries) {
 			process.stdout.write(`\n${humanizeKey(key)}:\n`);
 			for (const item of items) {
+				if (typeof item === "object" && item !== null) {
+					const lines = JSON.stringify(item, null, 2).split("\n");
+					process.stdout.write(`  - ${lines[0]}\n`);
+					for (const line of lines.slice(1)) {
+						process.stdout.write(`    ${line}\n`);
+					}
+					continue;
+				}
+
 				const str = String(item);
 				// Indented lines are continuation — print as-is; top-level lines get a bullet
 				if (str.startsWith("  ")) {

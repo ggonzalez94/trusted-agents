@@ -1,11 +1,15 @@
 import { CONNECTION_REQUEST, handleConnectionRequest } from "trusted-agents-core";
 import type { ResolvedAgent } from "trusted-agents-core";
-import type { GlobalOptions } from "../types.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
+import {
+	appendConversationLog,
+	findUniqueContactForAgentId,
+} from "../lib/message-conversations.js";
 import { error, info } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
 import { promptYesNo } from "../lib/prompt.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function messageListenCommand(
 	opts: GlobalOptions,
@@ -43,6 +47,17 @@ export async function messageListenCommand(
 				});
 			}
 
+			void (async () => {
+				const contacts = await ctx.trustStore.getContacts();
+				const contact = findUniqueContactForAgentId(contacts, from);
+				if (!contact) {
+					return;
+				}
+
+				await appendConversationLog(ctx.conversationLogger, contact, message, "incoming");
+				await ctx.trustStore.touchContact(contact.connectionId);
+			})().catch(() => {});
+
 			// All other messages: log to stdout
 			const line = JSON.stringify({
 				timestamp: new Date().toISOString(),
@@ -79,4 +94,3 @@ export async function messageListenCommand(
 		process.exitCode = exitCodeForError(err);
 	}
 }
-

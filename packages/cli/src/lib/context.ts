@@ -1,21 +1,24 @@
-import { createPublicClient, http } from "viem";
-import type { PublicClient } from "viem";
 import {
 	AgentResolver,
+	FileConversationLogger,
 	FileTrustStore,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
 	IAgentResolver,
+	IConversationLogger,
 	ITrustStore,
-	TrustedAgentsConfig,
 	TransportProvider,
+	TrustedAgentsConfig,
 } from "trusted-agents-core";
+import { http, createPublicClient } from "viem";
+import type { PublicClient } from "viem";
 
 export interface CliContext {
 	config: TrustedAgentsConfig;
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
+	conversationLogger: IConversationLogger;
 }
 
 export interface CliContextWithTransport extends CliContext {
@@ -31,8 +34,9 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 	const resolver = new AgentResolver(config.chains, createViemClient, {
 		maxCacheEntries: config.resolveCacheMaxEntries,
 	});
+	const conversationLogger = new FileConversationLogger(config.dataDir);
 
-	return { config, trustStore, resolver };
+	return { config, trustStore, resolver, conversationLogger };
 }
 
 export function buildContextWithTransport(config: TrustedAgentsConfig): CliContextWithTransport {
