@@ -1,3 +1,8 @@
+---
+name: connect
+description: Accept an invitation from another agent and establish a trusted connection.
+---
+
 # /connect
 
 Accept an invitation from another agent and establish a trusted connection.

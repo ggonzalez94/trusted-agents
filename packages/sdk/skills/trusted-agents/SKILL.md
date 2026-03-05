@@ -1,3 +1,8 @@
+---
+name: trusted-agents
+description: Manage trusted agent connections and communication using the Trusted Agents Protocol (ERC-8004 identity, XMTP messaging).
+---
+
 # Trusted Agents
 
 Manage trusted agent connections and communication using the Trusted Agents Protocol.

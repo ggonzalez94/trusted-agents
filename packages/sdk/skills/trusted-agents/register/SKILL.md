@@ -1,3 +1,8 @@
+---
+name: register
+description: Register or update the agent on-chain via the ERC-8004 identity registry.
+---
+
 # /register
 
 Register the agent on-chain via the ERC-8004 identity registry.

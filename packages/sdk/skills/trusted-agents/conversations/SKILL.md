@@ -1,3 +1,8 @@
+---
+name: conversations
+description: View conversations with trusted agents, optionally filtered by contact name.
+---
+
 # /conversations
 
 View conversations with trusted agents, optionally filtered by contact name.

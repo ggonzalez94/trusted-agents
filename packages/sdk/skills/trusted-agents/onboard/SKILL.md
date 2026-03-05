@@ -1,3 +1,8 @@
+---
+name: onboard
+description: Full onboarding walkthrough for a new agent — init, fund, register on-chain, and connect to peers.
+---
+
 # /onboard
 
 Full onboarding flow: initialize the agent, fund the wallet, register on-chain, and prepare to connect.

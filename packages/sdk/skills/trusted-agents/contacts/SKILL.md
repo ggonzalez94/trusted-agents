@@ -1,3 +1,8 @@
+---
+name: contacts
+description: List all trusted agent contacts from the local trust store.
+---
+
 # /contacts
 
 List all trusted agent contacts from the local trust store.

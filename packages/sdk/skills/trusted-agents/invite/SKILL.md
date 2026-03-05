@@ -1,3 +1,8 @@
+---
+name: invite
+description: Generate an invitation link that another agent can use to establish a trusted connection.
+---
+
 # /invite
 
 Generate an invitation link that another agent can use to establish a trusted connection.
