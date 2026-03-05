@@ -121,6 +121,7 @@ Setup & Registration
   tap init [--private-key <hex>]        First-time setup (generates or imports wallet)
   tap register [options]                Register on-chain via ERC-8004
   tap register update [options]         Update registration URI/manifest
+  tap balance [chain]                   Show native ETH and USDC balances
 
 Identity & Config
   tap config show                       Print resolved config (secrets redacted)
@@ -161,6 +162,22 @@ Messaging
 - Manifest update (auto IPFS upload + on-chain URI update): `tap register update [--name ...] [--description ...] [--capabilities ...]`
 
 When manifest fields are omitted, current on-chain values are preserved.
+
+### Balance
+
+`tap balance` shows the current wallet balances for this agent on one chain:
+- native ETH balance
+- USDC balance when USDC is configured for that chain
+
+You can pass a chain as either an alias or a CAIP-2 ID:
+- `tap balance`
+- `tap balance base`
+- `tap balance base-sepolia`
+- `tap balance taiko`
+- `tap balance taiko-hoodi`
+- `tap balance eip155:8453`
+
+USDC is currently configured for Base, Base Sepolia, Taiko, and Taiko Hoodi.
 
 ## Global Flags
 

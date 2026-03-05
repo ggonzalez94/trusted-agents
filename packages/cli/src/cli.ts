@@ -99,6 +99,16 @@ Examples:
 			},
 		);
 
+	program
+		.command("balance")
+		.description("Show native ETH and USDC balances for this agent")
+		.argument("[chain]", "Chain override (alias like base or CAIP-2 like eip155:8453)")
+		.action(async (chain?: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { balanceCommand } = await import("./commands/balance.js");
+			await balanceCommand(opts, chain);
+		});
+
 	// config
 	const config = program.command("config").description("Manage configuration");
 
