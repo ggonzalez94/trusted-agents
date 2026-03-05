@@ -1,18 +1,8 @@
+import type { JsonRpcRequest, JsonRpcResponse } from "../protocol/types.js";
 import type { TransportSendOptions } from "./types.js";
 
-export interface ProtocolMessage {
-	jsonrpc: "2.0";
-	method: string;
-	id: string;
-	params?: unknown;
-}
-
-export interface ProtocolResponse {
-	jsonrpc: "2.0";
-	id: string;
-	result?: unknown;
-	error?: { code: number; message: string; data?: unknown };
-}
+export type ProtocolMessage = JsonRpcRequest;
+export type ProtocolResponse = JsonRpcResponse;
 
 export interface TransportProvider {
 	send(
@@ -22,4 +12,6 @@ export interface TransportProvider {
 	): Promise<ProtocolResponse>;
 	onMessage(callback: (from: number, message: ProtocolMessage) => Promise<ProtocolResponse>): void;
 	isReachable(peerId: number): Promise<boolean>;
+	start?(): Promise<void>;
+	stop?(): Promise<void>;
 }

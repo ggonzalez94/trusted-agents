@@ -14,15 +14,15 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:xmtp": "XMTP_INTEGRATION=true vitest run test/integration/xmtp-transport.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "hono": "^4.7.0",
+    "@xmtp/node-sdk": "^5.4.0",
     "uuid": "^11.0.0",
     "viem": "^2.23.0"
   },
   "devDependencies": {
-    "@hono/node-server": "^1.14.0",
     "@types/node": "^25.3.3",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.7.0",

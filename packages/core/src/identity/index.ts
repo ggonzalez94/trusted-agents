@@ -13,4 +13,4 @@ export { ERC8004Registry } from "./registry.js";
 export { fetchRegistrationFile, validateRegistrationFile } from "./registration-file.js";
 
 export type { IAgentResolver } from "./resolver.js";
-export { AgentResolver } from "./resolver.js";
+export { AgentResolver, createAgentResolverFromConfig } from "./resolver.js";

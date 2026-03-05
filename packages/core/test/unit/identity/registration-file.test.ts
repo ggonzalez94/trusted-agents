@@ -5,9 +5,11 @@ import {
 	REGISTRATION_MISSING_PROTOCOL,
 	REGISTRATION_MISSING_SERVICES,
 	REGISTRATION_MISSING_TYPE,
-	REGISTRATION_NO_A2A_SERVICE,
+	REGISTRATION_NO_XMTP_SERVICE,
 	REGISTRATION_WRONG_TYPE,
+	VALID_MIXED_REGISTRATION_FILE,
 	VALID_REGISTRATION_FILE,
+	VALID_XMTP_REGISTRATION_FILE,
 } from "../../fixtures/registration-files.js";
 
 describe("validateRegistrationFile", () => {
@@ -44,8 +46,39 @@ describe("validateRegistrationFile", () => {
 		);
 	});
 
-	it("should throw when no a2a service is present", () => {
-		expect(() => validateRegistrationFile(REGISTRATION_NO_A2A_SERVICE)).toThrow("name 'a2a'");
+	it("should throw when no XMTP transport service is present", () => {
+		expect(() => validateRegistrationFile(REGISTRATION_NO_XMTP_SERVICE)).toThrow(
+			"xmtp",
+		);
+	});
+
+	it("should accept a valid XMTP-only registration file", () => {
+		const result = validateRegistrationFile(VALID_XMTP_REGISTRATION_FILE);
+		expect(result.services).toHaveLength(1);
+		expect(result.services[0].name).toBe("xmtp");
+	});
+
+	it("should accept a registration file with both a2a and xmtp services", () => {
+		const result = validateRegistrationFile(VALID_MIXED_REGISTRATION_FILE);
+		expect(result.services).toHaveLength(2);
+	});
+
+	it("should throw when xmtp service has invalid Ethereum address endpoint", () => {
+		const file = {
+			...VALID_REGISTRATION_FILE,
+			services: [{ name: "xmtp", endpoint: "not-an-address" }],
+		};
+		expect(() => validateRegistrationFile(file)).toThrow("valid Ethereum address");
+	});
+
+	it("should throw when xmtp endpoint does not match trustedAgentProtocol.agentAddress", () => {
+		const file = {
+			...VALID_XMTP_REGISTRATION_FILE,
+			services: [{ name: "xmtp", endpoint: "0x1234567890123456789012345678901234567890" }],
+		};
+		expect(() => validateRegistrationFile(file)).toThrow(
+			"XMTP service endpoint must match trustedAgentProtocol.agentAddress",
+		);
 	});
 
 	it("should throw when trustedAgentProtocol is missing", () => {
@@ -66,12 +99,10 @@ describe("validateRegistrationFile", () => {
 	});
 
 	it("should throw when services contain invalid entries", () => {
-		// An empty service name with name "a2a" won't match because the a2a check
-		// requires name === "a2a", so an empty name service fails the a2a check first
 		const file = {
 			...VALID_REGISTRATION_FILE,
 			services: [
-				{ name: "a2a", endpoint: "https://example.com/a2a" },
+				{ name: "xmtp", endpoint: VALID_REGISTRATION_FILE.services[0].endpoint },
 				{ name: "", endpoint: "https://example.com/other" },
 			],
 		};

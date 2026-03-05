@@ -1,0 +1,53 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import YAML from "yaml";
+import type { GlobalOptions } from "../types.js";
+import { resolveConfigPath } from "../lib/config-loader.js";
+import { resolveChainAlias } from "../lib/chains.js";
+import { error, success } from "../lib/output.js";
+import { exitCodeForError, errorCode } from "../lib/errors.js";
+
+export async function configSetCommand(
+	key: string,
+	value: string,
+	opts: GlobalOptions,
+): Promise<void> {
+	const startTime = Date.now();
+
+	try {
+		const configPath = resolveConfigPath(opts);
+
+		if (!existsSync(configPath)) {
+			throw new Error(`Config file not found at ${configPath}. Run 'tap init' first.`);
+		}
+
+		const content = readFileSync(configPath, "utf-8");
+		const yaml = (YAML.parse(content) as Record<string, unknown>) ?? {};
+
+		// Handle nested keys like xmtp.env
+		const parts = key.split(".");
+		let target: Record<string, unknown> = yaml;
+		for (let i = 0; i < parts.length - 1; i++) {
+			const part = parts[i]!;
+			if (typeof target[part] !== "object" || target[part] === null) {
+				target[part] = {};
+			}
+			target = target[part] as Record<string, unknown>;
+		}
+
+		const leafKey = parts[parts.length - 1]!;
+
+		// Resolve chain aliases when setting the chain key
+		const resolvedValue = leafKey === "chain" ? resolveChainAlias(value) : value;
+
+		// Auto-convert numeric values
+		const numVal = Number(resolvedValue);
+		target[leafKey] = Number.isNaN(numVal) ? resolvedValue : numVal;
+
+		writeFileSync(configPath, YAML.stringify(yaml), "utf-8");
+
+		success({ key, value: target[leafKey], path: configPath }, opts, startTime);
+	} catch (err) {
+		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
+		process.exitCode = exitCodeForError(err);
+	}
+}

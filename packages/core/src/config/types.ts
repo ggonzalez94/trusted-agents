@@ -12,10 +12,11 @@ export interface TrustedAgentsConfig {
 	chain: string;
 	privateKey: `0x${string}`;
 	dataDir: string;
-	port: number;
-	host: string;
 	chains: Record<string, ChainConfig>;
 	inviteExpirySeconds: number;
 	resolveCacheTtlMs: number;
 	resolveCacheMaxEntries: number;
+	xmtpEnv?: "dev" | "production" | "local";
+	xmtpDbPath?: string;
+	xmtpDbEncryptionKey?: `0x${string}`;
 }

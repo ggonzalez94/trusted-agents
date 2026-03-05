@@ -35,6 +35,13 @@ export function validateConfig(
 		}
 	}
 
+	if (
+		partial.xmtpDbEncryptionKey !== undefined &&
+		!/^0x[0-9a-fA-F]{64}$/.test(partial.xmtpDbEncryptionKey)
+	) {
+		throw new ConfigError("xmtpDbEncryptionKey must be a 32-byte hex string prefixed with 0x");
+	}
+
 	return {
 		...DEFAULT_CONFIG,
 		...partial,

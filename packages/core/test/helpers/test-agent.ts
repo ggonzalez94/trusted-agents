@@ -8,7 +8,6 @@ export function createTestContact(overrides: Partial<Contact> = {}): Contact {
 		peerChain: "eip155:1",
 		peerOwnerAddress: BOB.address,
 		peerDisplayName: "Bob's Agent",
-		peerEndpoint: "https://bob-agent.example.com/a2a",
 		peerAgentAddress: BOB.address,
 		permissions: {
 			"general-chat": true,

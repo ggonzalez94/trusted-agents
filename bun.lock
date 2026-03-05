@@ -45,8 +45,8 @@
         "vitest": "^3.0.0",
       },
     },
-    "packages/openclaw-skills": {
-      "name": "trusted-agents-openclaw-skills",
+    "packages/sdk": {
+      "name": "trusted-agents-sdk",
       "version": "0.1.0",
       "dependencies": {
         "trusted-agents-core": "workspace:*",
@@ -352,7 +352,7 @@
 
     "trusted-agents-core": ["trusted-agents-core@workspace:packages/core"],
 
-    "trusted-agents-openclaw-skills": ["trusted-agents-openclaw-skills@workspace:packages/openclaw-skills"],
+    "trusted-agents-sdk": ["trusted-agents-sdk@workspace:packages/sdk"],
 
     "tslib": ["tslib@2.7.0", "", {}, "sha512-gLXCKdN1/j47AiHiOkJN69hJmcbGTHI0ImLmbYLHykhgeN0jVGola9yVjFgzCUklsZQMW55o+dW7IXv3RCXDzA=="],
 

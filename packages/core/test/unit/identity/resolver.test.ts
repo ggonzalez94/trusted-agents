@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentResolver } from "../../../src/identity/resolver.js";
-import { VALID_REGISTRATION_FILE } from "../../fixtures/registration-files.js";
+import { AgentResolver, createAgentResolverFromConfig } from "../../../src/identity/resolver.js";
+import {
+	VALID_MIXED_REGISTRATION_FILE,
+	VALID_REGISTRATION_FILE,
+	VALID_XMTP_REGISTRATION_FILE,
+} from "../../fixtures/registration-files.js";
 import { ALICE } from "../../fixtures/test-keys.js";
 import { createMockPublicClient } from "../../helpers/mock-chain.js";
 
@@ -22,7 +26,6 @@ describe("AgentResolver", () => {
 			ownerAddress: ALICE.address,
 		});
 
-		// Mock the fetch call for the registration file
 		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
 			new Response(JSON.stringify(VALID_REGISTRATION_FILE), {
 				status: 200,
@@ -38,9 +41,52 @@ describe("AgentResolver", () => {
 		expect(result.chain).toBe("eip155:1");
 		expect(result.ownerAddress).toBe(ALICE.address);
 		expect(result.agentAddress).toBe(ALICE.address);
-		expect(result.endpoint).toBe("https://alice-agent.example.com/a2a");
+		expect(result.xmtpEndpoint?.toLowerCase()).toBe(ALICE.address.toLowerCase());
 		expect(result.capabilities).toEqual(["scheduling", "general-chat"]);
 		expect(result.resolvedAt).toBeDefined();
+
+		fetchMock.mockRestore();
+	});
+
+	it("should resolve an agent with XMTP transport", async () => {
+		const mockClient = createMockPublicClient({
+			tokenURI: "https://example.com/agent/2/registration.json",
+			ownerAddress: ALICE.address,
+		});
+
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify(VALID_XMTP_REGISTRATION_FILE), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		const resolver = new AgentResolver(chains, () => mockClient);
+		const result = await resolver.resolve(2, "eip155:1");
+
+		expect(result.xmtpEndpoint?.toLowerCase()).toBe(ALICE.address.toLowerCase());
+		expect(result.agentAddress).toBe(ALICE.address);
+
+		fetchMock.mockRestore();
+	});
+
+	it("should resolve agent with mixed services (XMTP always used)", async () => {
+		const mockClient = createMockPublicClient({
+			tokenURI: "https://example.com/agent/3/registration.json",
+			ownerAddress: ALICE.address,
+		});
+
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify(VALID_MIXED_REGISTRATION_FILE), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		const resolver = new AgentResolver(chains, () => mockClient);
+		const result = await resolver.resolve(3, "eip155:1");
+
+		expect(result.xmtpEndpoint?.toLowerCase()).toBe(ALICE.address.toLowerCase());
 
 		fetchMock.mockRestore();
 	});
@@ -73,6 +119,42 @@ describe("AgentResolver", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(result1.endpoint).toBe(result2.endpoint);
 
+		fetchMock.mockRestore();
+	});
+
+	it("should create a resolver from config", async () => {
+		const mockClient = createMockPublicClient({
+			tokenURI: "https://example.com/agent/5/registration.json",
+			ownerAddress: ALICE.address,
+		});
+
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(JSON.stringify(VALID_REGISTRATION_FILE), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+
+		const configChains = {
+			"eip155:1": {
+				chainId: 1,
+				caip2: "eip155:1",
+				name: "Ethereum",
+				rpcUrl: "https://rpc.example.com",
+				registryAddress: "0x0000000000000000000000000000000000001234" as `0x${string}`,
+			},
+		};
+
+		const resolver = createAgentResolverFromConfig(
+			{
+				chains: configChains,
+				resolveCacheMaxEntries: 200,
+			},
+			() => mockClient,
+		);
+		const result = await resolver.resolve(5, "eip155:1");
+
+		expect(result.agentId).toBe(5);
 		fetchMock.mockRestore();
 	});
 });

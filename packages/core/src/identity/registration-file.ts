@@ -26,17 +26,18 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		throw new IdentityError("Registration file must have at least one service");
 	}
 
-	const hasA2AEndpoint = obj.services.some(
+	const hasXmtpService = obj.services.some(
 		(s: unknown) =>
 			typeof s === "object" &&
 			s !== null &&
-			typeof (s as Record<string, unknown>).name === "string" &&
-			typeof (s as Record<string, unknown>).endpoint === "string" &&
-			(s as Record<string, unknown>).name === "a2a",
+			(s as Record<string, unknown>).name === "xmtp" &&
+			typeof (s as Record<string, unknown>).endpoint === "string",
 	);
 
-	if (!hasA2AEndpoint) {
-		throw new IdentityError("Registration file must have at least one service with name 'a2a'");
+	if (!hasXmtpService) {
+		throw new IdentityError(
+			"Registration file must have an 'xmtp' transport service",
+		);
 	}
 
 	for (const service of obj.services) {
@@ -50,14 +51,22 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		if (typeof svc.endpoint !== "string" || svc.endpoint.length === 0) {
 			throw new IdentityError("Each service must have a non-empty endpoint");
 		}
-		let endpointUrl: URL;
-		try {
-			endpointUrl = new URL(svc.endpoint);
-		} catch {
-			throw new IdentityError(`Invalid service endpoint URL: ${String(svc.endpoint)}`);
-		}
-		if (endpointUrl.protocol !== "https:") {
-			throw new IdentityError(`Service endpoint must use https: ${String(svc.endpoint)}`);
+		if (svc.name === "xmtp") {
+			if (!isEthereumAddress(svc.endpoint)) {
+				throw new IdentityError(
+					`XMTP service endpoint must be a valid Ethereum address: ${String(svc.endpoint)}`,
+				);
+			}
+		} else {
+			let endpointUrl: URL;
+			try {
+				endpointUrl = new URL(svc.endpoint);
+			} catch {
+				throw new IdentityError(`Invalid service endpoint URL: ${String(svc.endpoint)}`);
+			}
+			if (endpointUrl.protocol !== "https:") {
+				throw new IdentityError(`Service endpoint must use https: ${String(svc.endpoint)}`);
+			}
 		}
 	}
 
@@ -77,6 +86,22 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 
 	if (!Array.isArray(tap.capabilities)) {
 		throw new IdentityError("trustedAgentProtocol must have a capabilities array");
+	}
+
+	const xmtpService = obj.services.find(
+		(service) =>
+			typeof service === "object" &&
+			service !== null &&
+			(service as Record<string, unknown>).name === "xmtp",
+	) as Record<string, unknown> | undefined;
+
+	if (xmtpService) {
+		const xmtpEndpoint = String(xmtpService.endpoint).toLowerCase();
+		if (xmtpEndpoint !== tap.agentAddress.toLowerCase()) {
+			throw new IdentityError(
+				"XMTP service endpoint must match trustedAgentProtocol.agentAddress",
+			);
+		}
 	}
 
 	return data as RegistrationFile;

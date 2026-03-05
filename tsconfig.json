@@ -2,6 +2,6 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
-    { "path": "packages/openclaw-skills" }
+    { "path": "packages/sdk" }
   ]
 }

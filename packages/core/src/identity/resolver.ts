@@ -1,7 +1,7 @@
 import type { PublicClient } from "viem";
 import { IdentityError } from "../common/index.js";
 import { nowISO } from "../common/index.js";
-import type { ChainConfig } from "../config/index.js";
+import type { ChainConfig, TrustedAgentsConfig } from "../config/index.js";
 import { fetchRegistrationFile } from "./registration-file.js";
 import { ERC8004Registry } from "./registry.js";
 import type { ResolvedAgent } from "./types.js";
@@ -16,6 +16,10 @@ interface CacheEntry {
 	cachedAt: number;
 }
 
+interface AgentResolverOptions {
+	maxCacheEntries?: number;
+}
+
 export class AgentResolver implements IAgentResolver {
 	private readonly cache = new Map<string, CacheEntry>();
 	private readonly maxCacheEntries: number;
@@ -23,7 +27,7 @@ export class AgentResolver implements IAgentResolver {
 	constructor(
 		private readonly chains: Record<string, ChainConfig>,
 		private readonly createClient: (rpcUrl: string) => PublicClient,
-		options?: { maxCacheEntries?: number },
+		options?: AgentResolverOptions,
 	) {
 		this.maxCacheEntries = options?.maxCacheEntries ?? 1000;
 	}
@@ -44,9 +48,10 @@ export class AgentResolver implements IAgentResolver {
 
 		const registrationFile = await fetchRegistrationFile(tokenURI);
 
-		const a2aService = registrationFile.services.find((s) => s.name === "a2a");
-		if (!a2aService) {
-			throw new IdentityError("Registration file has no a2a service endpoint");
+		const xmtpService = registrationFile.services.find((s) => s.name === "xmtp");
+
+		if (!xmtpService) {
+			throw new IdentityError("Registration file has no XMTP transport service endpoint");
 		}
 
 		return {
@@ -54,7 +59,8 @@ export class AgentResolver implements IAgentResolver {
 			chain,
 			ownerAddress,
 			agentAddress: registrationFile.trustedAgentProtocol.agentAddress,
-			endpoint: a2aService.endpoint,
+			xmtpEndpoint: xmtpService.endpoint as `0x${string}`,
+			endpoint: xmtpService.endpoint,
 			capabilities: registrationFile.trustedAgentProtocol.capabilities,
 			registrationFile,
 			resolvedAt: nowISO(),
@@ -93,4 +99,13 @@ export class AgentResolver implements IAgentResolver {
 			this.cache.delete(first.value);
 		}
 	}
+}
+
+export function createAgentResolverFromConfig(
+	config: Pick<TrustedAgentsConfig, "chains" | "resolveCacheMaxEntries">,
+	createClient: (rpcUrl: string) => PublicClient,
+): AgentResolver {
+	return new AgentResolver(config.chains, createClient, {
+		maxCacheEntries: config.resolveCacheMaxEntries,
+	});
 }

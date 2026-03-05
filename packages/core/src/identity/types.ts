@@ -22,7 +22,8 @@ export interface ResolvedAgent {
 	chain: string;
 	ownerAddress: `0x${string}`;
 	agentAddress: `0x${string}`;
-	endpoint: string;
+	xmtpEndpoint?: `0x${string}`;
+	endpoint?: string;
 	capabilities: string[];
 	registrationFile: RegistrationFile;
 	resolvedAt: string;
