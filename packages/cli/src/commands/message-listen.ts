@@ -47,14 +47,16 @@ export async function messageListenCommand(
 				});
 			}
 
-			const contacts = await ctx.trustStore.getContacts();
-			const contact = findUniqueContactForAgentId(contacts, from);
-			if (contact) {
-				void appendConversationLog(ctx.conversationLogger, contact, message, "incoming").catch(
-					() => {},
-				);
-				void ctx.trustStore.touchContact(contact.connectionId).catch(() => {});
-			}
+			void (async () => {
+				const contacts = await ctx.trustStore.getContacts();
+				const contact = findUniqueContactForAgentId(contacts, from);
+				if (!contact) {
+					return;
+				}
+
+				await appendConversationLog(ctx.conversationLogger, contact, message, "incoming");
+				await ctx.trustStore.touchContact(contact.connectionId);
+			})().catch(() => {});
 
 			// All other messages: log to stdout
 			const line = JSON.stringify({
