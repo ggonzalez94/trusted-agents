@@ -133,8 +133,9 @@ export async function connectCommand(
 				throw new ValidationError("Peer accepted the connection without returning a connectionId");
 			}
 
+			const persistedConnectionId = connectionId ?? generateConnectionId();
 			const contact: Contact = {
-				connectionId: connectionId ?? generateConnectionId(),
+				connectionId: persistedConnectionId,
 				peerAgentId: peerAgent.agentId,
 				peerChain: peerAgent.chain,
 				peerOwnerAddress: peerAgent.ownerAddress,
@@ -170,7 +171,7 @@ export async function connectCommand(
 
 			success(
 				{
-					connection_id: connectionId ?? invite.nonce,
+					connection_id: persistedConnectionId,
 					peer_name: peerAgent.registrationFile.name,
 					peer_agent_id: peerAgent.agentId,
 					status,

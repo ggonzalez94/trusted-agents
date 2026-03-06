@@ -1,11 +1,14 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FileConversationLogger, FileTrustStore, generateInvite } from "trusted-agents-core";
+import type { ProtocolResponse, TransportProvider } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type MessageListenerSession,
 	createMessageListenerSession,
 } from "../src/commands/message-listen.js";
+import { setCliRuntimeOverride } from "../src/lib/runtime-overrides.js";
 import {
 	LoopbackTransportNetwork,
 	StaticAgentResolver,
@@ -409,6 +412,103 @@ describe.sequential("two-agent CLI E2E flow", () => {
 		expect(workerLedger).toContain("grant-request-sent");
 		expect(workerLedger).toContain("transfer-completed");
 		expect(workerLedger).toContain("transfer-rejected");
+	});
+
+	it("reports the persisted connection id for pending connects", async () => {
+		const pendingRoot = await mkdtemp(join(tmpdir(), "tap-cli-pending-"));
+		const pendingConnectorDir = join(pendingRoot, "connector");
+		await mkdir(pendingConnectorDir, { recursive: true });
+
+		const pendingAgentId = 7010;
+		const pendingAgent = createResolvedAgentFixture({
+			agentId: pendingAgentId,
+			chain: CHAIN,
+			privateKey: TREASURY_KEY,
+			name: "PendingPeer",
+			description: "Pending peer agent",
+			capabilities: ["general-chat"],
+		});
+
+		class PendingTransport implements TransportProvider {
+			onMessage(): void {}
+			async start(): Promise<void> {}
+			async stop(): Promise<void> {}
+			async isReachable(): Promise<boolean> {
+				return true;
+			}
+			async send(): Promise<ProtocolResponse> {
+				return {
+					jsonrpc: "2.0",
+					id: "pending-response",
+					result: { accepted: false, status: "pending" },
+				};
+			}
+		}
+
+		try {
+			setCliRuntimeOverride(pendingConnectorDir, {
+				createContext: () => ({
+					trustStore: new FileTrustStore(pendingConnectorDir),
+					resolver: new StaticAgentResolver([pendingAgent]),
+					conversationLogger: new FileConversationLogger(pendingConnectorDir),
+				}),
+				createTransport: () => new PendingTransport(),
+			});
+
+			expect(
+				await runCli([
+					"--plain",
+					"--data-dir",
+					pendingConnectorDir,
+					"init",
+					"--private-key",
+					WORKER_KEY.slice(2),
+				]),
+			).toMatchObject({ exitCode: 0 });
+			expect(
+				await runCli([
+					"--json",
+					"--data-dir",
+					pendingConnectorDir,
+					"config",
+					"set",
+					"agent_id",
+					"7002",
+				]),
+			).toMatchObject({ exitCode: 0 });
+
+			const invite = await generateInvite({
+				agentId: pendingAgentId,
+				chain: CHAIN,
+				privateKey: TREASURY_KEY,
+				expirySeconds: 3600,
+			});
+
+			const connect = await runCli([
+				"--json",
+				"--data-dir",
+				pendingConnectorDir,
+				"connect",
+				invite.url,
+				"--yes",
+			]);
+			expect(connect.exitCode).toBe(0);
+
+			const output = JSON.parse(connect.stdout).data as {
+				connection_id: string;
+				status: string;
+			};
+			expect(output.status).toBe("pending");
+
+			const trustStore = new FileTrustStore(pendingConnectorDir);
+			const storedContacts = await trustStore.getContacts();
+			expect(storedContacts).toHaveLength(1);
+			expect(output.connection_id).toBe(storedContacts[0]?.connectionId);
+			expect(output.connection_id).not.toBe(invite.nonce);
+		} finally {
+			clearLoopbackRuntime(pendingConnectorDir);
+			await rm(pendingRoot, { recursive: true, force: true });
+		}
 	});
 });
 
