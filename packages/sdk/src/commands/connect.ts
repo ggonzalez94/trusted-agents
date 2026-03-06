@@ -3,6 +3,7 @@ import {
 	buildConnectionRequest,
 	caip2ToChainId,
 	createEmptyPermissionState,
+	generateConnectionId,
 	generateNonce,
 	nowISO,
 	parseInviteUrl,
@@ -133,7 +134,7 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 			};
 		}
 
-		const connectionId = acceptance.connectionId ?? requestNonce;
+		const connectionId = acceptance.connectionId ?? generateConnectionId();
 
 		const contact: Contact = {
 			connectionId,

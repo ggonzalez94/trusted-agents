@@ -10,6 +10,7 @@ import {
 	type ProtocolMessage,
 	type ProtocolResponse,
 	type ResolvedAgent,
+	TAP_GRANTS_VERSION,
 	type TrustedAgentsConfig,
 	ValidationError,
 	createGrantSet,
@@ -585,7 +586,7 @@ function parseGrantPublication(
 		params.grantSet === null ||
 		!Array.isArray(params.grantSet.grants) ||
 		typeof params.grantSet.updatedAt !== "string" ||
-		params.grantSet.version !== "tap-grants/v1" ||
+		params.grantSet.version !== TAP_GRANTS_VERSION ||
 		typeof params.timestamp !== "string"
 	) {
 		return null;

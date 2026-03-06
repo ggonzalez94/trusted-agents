@@ -3,6 +3,7 @@ import {
 	buildConnectionRequest,
 	caip2ToChainId,
 	createEmptyPermissionState,
+	generateConnectionId,
 	generateNonce,
 	nowISO,
 	parseInviteUrl,
@@ -133,7 +134,7 @@ export async function connectCommand(
 			}
 
 			const contact: Contact = {
-				connectionId: connectionId ?? invite.nonce,
+				connectionId: connectionId ?? generateConnectionId(),
 				peerAgentId: peerAgent.agentId,
 				peerChain: peerAgent.chain,
 				peerOwnerAddress: peerAgent.ownerAddress,

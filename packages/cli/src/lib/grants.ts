@@ -8,11 +8,6 @@ import {
 	createGrantSet,
 } from "trusted-agents-core";
 
-export interface ConnectionPermissionIntentInput {
-	requestedGrants?: PermissionGrantSet;
-	offeredGrants?: PermissionGrantSet;
-}
-
 export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
 	const raw = await readFile(path, "utf-8");
 	let parsed: unknown;
@@ -65,16 +60,6 @@ export function summarizeGrantSet(grantSet: PermissionGrantSet | undefined): str
 	}
 
 	return grantSet.grants.map(summarizeGrant);
-}
-
-export function buildPermissionState(params?: {
-	grantedByMe?: PermissionGrantSet;
-	grantedByPeer?: PermissionGrantSet;
-}): ContactPermissionState {
-	return {
-		grantedByMe: params?.grantedByMe ?? createGrantSet([]),
-		grantedByPeer: params?.grantedByPeer ?? createGrantSet([]),
-	};
 }
 
 export function replaceGrantedByMe(
