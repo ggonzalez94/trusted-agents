@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IAgentResolver } from "../../src/identity/resolver.js";
+import { createEmptyPermissionState } from "../../src/permissions/types.js";
 import type { ProtocolMessage } from "../../src/transport/interface.js";
 import { XmtpTransport } from "../../src/transport/xmtp.js";
 import { FileTrustStore } from "../../src/trust/file-trust-store.js";
@@ -31,7 +32,7 @@ function contact(args: {
 		peerOwnerAddress: args.peerAddress,
 		peerDisplayName: args.name,
 		peerAgentAddress: args.peerAddress,
-		permissions: { "message/send": true },
+		permissions: createEmptyPermissionState(now),
 		establishedAt: now,
 		lastContactAt: now,
 		status: "active",
@@ -190,7 +191,6 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 					params: {
 						from: { agentId: 42, chain: "eip155:1" },
 						to: { agentId: 2, chain: "eip155:1" },
-						proposedScope: ["message/send"],
 						nonce: "spoof-1",
 						timestamp: new Date().toISOString(),
 					},

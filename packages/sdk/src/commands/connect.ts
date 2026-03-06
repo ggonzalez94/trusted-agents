@@ -2,6 +2,7 @@ import {
 	FileTrustStore,
 	buildConnectionRequest,
 	caip2ToChainId,
+	createEmptyPermissionState,
 	generateConnectionId,
 	generateNonce,
 	nowISO,
@@ -14,6 +15,7 @@ import type {
 	Contact,
 	IAgentResolver,
 	JsonRpcResponse,
+	PermissionGrantSet,
 	TransportProvider,
 } from "trusted-agents-core";
 
@@ -30,8 +32,12 @@ export interface ConnectCommandOptions {
 		peerAgentId: number;
 		chain: string;
 		capabilities: string[];
+		requestedGrants: PermissionGrantSet["grants"];
+		offeredGrants: PermissionGrantSet["grants"];
 	}) => Promise<boolean>;
 	notify?: (message: string) => Promise<void>;
+	requestedGrants?: PermissionGrantSet;
+	offeredGrants?: PermissionGrantSet;
 }
 
 export interface ConnectResult {
@@ -72,6 +78,8 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 				peerAgentId: peerAgent.agentId,
 				chain: peerAgent.chain,
 				capabilities: peerAgent.capabilities,
+				requestedGrants: options.requestedGrants?.grants ?? [],
+				offeredGrants: options.offeredGrants?.grants ?? [],
 			});
 			if (!approved) {
 				return {
@@ -88,7 +96,16 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 		const requestParams: ConnectionRequestParams = {
 			from,
 			to,
-			proposedScope: ["message/send"],
+			...(options.requestedGrants || options.offeredGrants
+				? {
+						permissionIntent: {
+							...(options.requestedGrants
+								? { requestedGrants: options.requestedGrants.grants }
+								: {}),
+							...(options.offeredGrants ? { offeredGrants: options.offeredGrants.grants } : {}),
+						},
+					}
+				: {}),
 			nonce: requestNonce,
 			protocolVersion: "1.0",
 			timestamp: nowISO(),
@@ -110,6 +127,13 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 		}
 
 		const status: "active" | "pending" = acceptance.accepted ? "active" : "pending";
+		if (acceptance.accepted && !acceptance.connectionId) {
+			return {
+				success: false,
+				error: "Peer accepted the connection without returning a connectionId",
+			};
+		}
+
 		const connectionId = acceptance.connectionId ?? generateConnectionId();
 
 		const contact: Contact = {
@@ -119,7 +143,7 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 			peerOwnerAddress: peerAgent.ownerAddress,
 			peerDisplayName: peerAgent.registrationFile.name,
 			peerAgentAddress: peerAgent.agentAddress,
-			permissions: { "message/send": true },
+			permissions: createEmptyPermissionState(),
 			establishedAt: nowISO(),
 			lastContactAt: nowISO(),
 			status,
@@ -179,6 +203,13 @@ function parseAcceptance(response: unknown): {
 				typeof result.connectionId === "string" && result.connectionId.length > 0
 					? result.connectionId
 					: undefined;
+			if (!connectionId) {
+				return {
+					ok: false,
+					accepted: false,
+					error: "Peer accepted the connection without returning a connectionId",
+				};
+			}
 			return { ok: true, accepted: true, connectionId };
 		}
 	}

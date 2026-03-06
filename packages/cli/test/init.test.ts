@@ -84,4 +84,17 @@ describe("tap init", () => {
 		// Key should not be regenerated
 		expect(firstKey).toBe(secondKey);
 	});
+
+	it("should create config inside an explicit data dir without reusing legacy config", async () => {
+		const dataDir = join(tmpDir, "isolated-data");
+
+		await initCommand({
+			json: true,
+			dataDir,
+		});
+
+		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.data.config).toBe(join(dataDir, "config.yaml"));
+	});
 });

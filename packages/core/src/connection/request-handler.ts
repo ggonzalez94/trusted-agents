@@ -1,8 +1,13 @@
 import { generateConnectionId, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import type { ResolvedAgent } from "../identity/types.js";
+import { createEmptyPermissionState } from "../permissions/types.js";
 import { createJsonRpcError, createJsonRpcResponse } from "../protocol/messages.js";
-import type { AgentIdentifier, ConnectionRequestParams } from "../protocol/types.js";
+import type {
+	AgentIdentifier,
+	ConnectionPermissionIntent,
+	ConnectionRequestParams,
+} from "../protocol/types.js";
 import type { ProtocolMessage, ProtocolResponse } from "../transport/interface.js";
 import type { ITrustStore } from "../trust/trust-store.js";
 import type { Contact } from "../trust/types.js";
@@ -20,7 +25,10 @@ export interface ConnectionRequestContext {
 	 * Approval callback — receives the resolved peer identity, returns true to
 	 * accept or false to reject. This is where CLI prompts or SDK delegates.
 	 */
-	approve: (peer: ResolvedAgent) => Promise<boolean>;
+	approve: (
+		peer: ResolvedAgent,
+		permissionIntent: ConnectionPermissionIntent | undefined,
+	) => Promise<boolean>;
 }
 
 export async function handleConnectionRequest(
@@ -33,8 +41,6 @@ export async function handleConnectionRequest(
 			message: "Invalid connection request parameters",
 		});
 	}
-
-	const scope = params.proposedScope ?? [];
 
 	// Resolve requester's on-chain identity (cache-first — transport already resolved recently)
 	let resolved: ResolvedAgent;
@@ -55,14 +61,13 @@ export async function handleConnectionRequest(
 			connectionId: existing.connectionId,
 			from: ctx.ownAgent,
 			to: params.from,
-			acceptedScope: scope,
 			requestNonce: params.nonce,
 			timestamp: nowISO(),
 		});
 	}
 
 	// Ask for approval
-	const approved = await ctx.approve(resolved);
+	const approved = await ctx.approve(resolved, params.permissionIntent);
 	if (!approved) {
 		return createJsonRpcResponse(ctx.message.id, {
 			accepted: false,
@@ -84,7 +89,7 @@ export async function handleConnectionRequest(
 		peerOwnerAddress: resolved.ownerAddress,
 		peerDisplayName: resolved.registrationFile.name,
 		peerAgentAddress: resolved.agentAddress,
-		permissions: Object.fromEntries(scope.map((s) => [s, true])),
+		permissions: createEmptyPermissionState(now),
 		establishedAt: now,
 		lastContactAt: now,
 		status: "active",
@@ -96,7 +101,6 @@ export async function handleConnectionRequest(
 		connectionId,
 		from: ctx.ownAgent,
 		to: params.from,
-		acceptedScope: scope,
 		requestNonce: params.nonce,
 		timestamp: now,
 	});

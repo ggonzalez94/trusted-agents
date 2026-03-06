@@ -18,6 +18,8 @@ export async function contactsListCommand(opts: GlobalOptions): Promise<void> {
 			chain: c.peerChain,
 			status: c.status,
 			connection_id: c.connectionId,
+			granted_by_me: c.permissions.grantedByMe.grants.length,
+			granted_by_peer: c.permissions.grantedByPeer.grants.length,
 			last_contact: c.lastContactAt,
 		}));
 

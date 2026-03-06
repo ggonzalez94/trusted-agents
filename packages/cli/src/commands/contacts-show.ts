@@ -36,9 +36,8 @@ export async function contactsShowCommand(nameOrId: string, opts: GlobalOptions)
 				owner_address: contact.peerOwnerAddress,
 				agent_address: contact.peerAgentAddress,
 				status: contact.status,
-				permissions: Object.entries(contact.permissions)
-					.filter(([, v]) => v)
-					.map(([k]) => k),
+				granted_by_me: contact.permissions.grantedByMe,
+				granted_by_peer: contact.permissions.grantedByPeer,
 				established_at: contact.establishedAt,
 				last_contact: contact.lastContactAt,
 			},

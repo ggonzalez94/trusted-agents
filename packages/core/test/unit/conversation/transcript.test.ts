@@ -90,4 +90,16 @@ describe("generateMarkdownTranscript", () => {
 		// Should still produce the header but no message lines
 		expect(transcript.split("\n").length).toBeGreaterThanOrEqual(2);
 	});
+
+	it("should sort messages by timestamp before rendering", () => {
+		const outOfOrderLog: ConversationLog = {
+			...baseLog,
+			messages: [...baseLog.messages].reverse(),
+		};
+
+		const transcript = generateMarkdownTranscript(outOfOrderLog);
+		expect(transcript.indexOf("Hello there!")).toBeLessThan(
+			transcript.indexOf("Hi! How can I help?"),
+		);
+	});
 });

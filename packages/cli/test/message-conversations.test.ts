@@ -1,16 +1,22 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileConversationLogger, MESSAGE_SEND } from "trusted-agents-core";
+import {
+	FileConversationLogger,
+	MESSAGE_SEND,
+	createEmptyPermissionState,
+} from "trusted-agents-core";
 import type { Contact, ProtocolMessage } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	appendConversationLog,
 	buildConversationLogEntry,
+	buildOutgoingActionRequest,
 	buildOutgoingMessageRequest,
 	findContactForPeer,
 	findUniqueContactForAgentId,
 } from "../src/lib/message-conversations.js";
+import { DEFAULT_MESSAGE_SCOPE } from "../src/lib/scopes.js";
 
 const CONTACT: Contact = {
 	connectionId: "conn-alice-001",
@@ -19,7 +25,7 @@ const CONTACT: Contact = {
 	peerOwnerAddress: "0x1111111111111111111111111111111111111111",
 	peerDisplayName: "Alice",
 	peerAgentAddress: "0x2222222222222222222222222222222222222222",
-	permissions: { "message/send": true },
+	permissions: createEmptyPermissionState("2026-03-05T18:00:00.000Z"),
 	establishedAt: "2026-03-05T18:00:00.000Z",
 	lastContactAt: "2026-03-05T18:00:00.000Z",
 	status: "active",
@@ -74,7 +80,7 @@ describe("message conversation helpers", () => {
 		expect(request.method).toBe(MESSAGE_SEND);
 		expect(metadata.connectionId).toBe(CONTACT.connectionId);
 		expect(metadata.conversationId).toBe(CONTACT.connectionId);
-		expect(metadata.scope).toBe(MESSAGE_SEND);
+		expect(metadata.scope).toBe(DEFAULT_MESSAGE_SCOPE);
 		expect(metadata.requiresHumanApproval).toBe(false);
 	});
 
@@ -90,14 +96,36 @@ describe("message conversation helpers", () => {
 		expect(entry).toEqual({
 			conversationId: CONTACT.connectionId,
 			message: {
+				messageId: expect.any(String),
 				timestamp: "2026-03-05T19:00:00.000Z",
 				direction: "outgoing",
-				scope: MESSAGE_SEND,
+				scope: DEFAULT_MESSAGE_SCOPE,
 				content: "Hello Alice",
 				humanApprovalRequired: false,
 				humanApprovalGiven: null,
 			},
 		});
+	});
+
+	it("builds outgoing action requests with structured data and approval metadata", () => {
+		const request = buildOutgoingActionRequest(
+			CONTACT,
+			"Send funds",
+			{ type: "transfer/request", asset: "native", amount: "0.1" },
+			"transfer/request",
+		);
+		const params = request.params as {
+			message: { parts: Array<{ kind: string }>; metadata?: { trustedAgent?: unknown } };
+		};
+		const metadata = params.message.metadata?.trustedAgent as {
+			scope: string;
+			requiresHumanApproval: boolean;
+		};
+
+		expect(request.method).toBe("message/action-request");
+		expect(params.message.parts).toHaveLength(2);
+		expect(metadata.scope).toBe("transfer/request");
+		expect(metadata.requiresHumanApproval).toBe(true);
 	});
 
 	it("falls back to the connection id when incoming metadata uses an unsafe conversation id", () => {
@@ -132,6 +160,7 @@ describe("message conversation helpers", () => {
 		expect(entry).toEqual({
 			conversationId: CONTACT.connectionId,
 			message: {
+				messageId: "message-unsafe-001",
 				timestamp: "2026-03-05T19:05:00.000Z",
 				direction: "incoming",
 				scope: "general-chat",
@@ -260,5 +289,36 @@ describe("message conversation helpers", () => {
 		expect(conversation!.messages[1]!.content).toBe("Pong from peer");
 		expect(transcript).toContain("Ping from CLI");
 		expect(transcript).toContain("Pong from peer");
+	});
+
+	it("deduplicates repeated logs for the same incoming message id", async () => {
+		const incoming: ProtocolMessage = {
+			jsonrpc: "2.0",
+			id: "msg-duplicate-001",
+			method: MESSAGE_SEND,
+			params: {
+				message: {
+					messageId: "message-duplicate-001",
+					role: "agent",
+					parts: [{ kind: "text", text: "Only once" }],
+					metadata: {
+						trustedAgent: {
+							connectionId: CONTACT.connectionId,
+							conversationId: CONTACT.connectionId,
+							scope: MESSAGE_SEND,
+							requiresHumanApproval: false,
+						},
+					},
+				},
+			},
+		};
+
+		await appendConversationLog(logger, CONTACT, incoming, "incoming", "2026-03-05T19:15:00.000Z");
+		await appendConversationLog(logger, CONTACT, incoming, "incoming", "2026-03-05T19:15:01.000Z");
+
+		const conversation = await logger.getConversation(CONTACT.connectionId);
+		expect(conversation).not.toBeNull();
+		expect(conversation!.messages).toHaveLength(1);
+		expect(conversation!.messages[0]!.messageId).toBe("message-duplicate-001");
 	});
 });

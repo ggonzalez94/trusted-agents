@@ -1,3 +1,5 @@
+import type { ContactPermissionState } from "../permissions/types.js";
+
 export type ConnectionStatus = "active" | "idle" | "stale" | "revoked" | "pending";
 
 export interface Contact {
@@ -7,7 +9,7 @@ export interface Contact {
 	peerOwnerAddress: `0x${string}`;
 	peerDisplayName: string;
 	peerAgentAddress: `0x${string}`;
-	permissions: Record<string, boolean | Record<string, unknown>>;
+	permissions: ContactPermissionState;
 	establishedAt: string;
 	lastContactAt: string;
 	status: ConnectionStatus;

@@ -1,7 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileConversationLogger, FileTrustStore } from "trusted-agents-core";
+import {
+	FileConversationLogger,
+	FileTrustStore,
+	createEmptyPermissionState,
+} from "trusted-agents-core";
 import type { Contact, ConversationMessage } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeConversations } from "../../src/commands/conversations.js";
@@ -96,7 +100,7 @@ describe("executeConversations", () => {
 			peerOwnerAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
 			peerDisplayName: "TravelBot",
 			peerAgentAddress: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-			permissions: { "message/send": true },
+			permissions: createEmptyPermissionState("2025-01-15T10:30:00.000Z"),
 			establishedAt: "2025-01-01T00:00:00.000Z",
 			lastContactAt: "2025-01-15T10:30:00.000Z",
 			status: "active",

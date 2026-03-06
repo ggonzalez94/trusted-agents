@@ -1,0 +1,223 @@
+import { isEthereumAddress } from "trusted-agents-core";
+import type { PermissionGrant, ProtocolMessage } from "trusted-agents-core";
+
+export type TransferAsset = "native" | "usdc";
+
+export interface TransferActionRequest extends Record<string, unknown> {
+	type: "transfer/request";
+	actionId: string;
+	asset: TransferAsset;
+	amount: string;
+	chain: string;
+	toAddress: `0x${string}`;
+	note?: string;
+}
+
+export interface TransferActionResponse extends Record<string, unknown> {
+	type: "transfer/response";
+	actionId: string;
+	asset: TransferAsset;
+	amount: string;
+	chain: string;
+	toAddress: `0x${string}`;
+	status: "completed" | "rejected" | "failed";
+	txHash?: `0x${string}`;
+	error?: string;
+}
+
+export interface PermissionGrantRequestAction extends Record<string, unknown> {
+	type: "permissions/request-grants";
+	actionId: string;
+	grants: PermissionGrant[];
+	note?: string;
+}
+
+export function parseTransferActionRequest(message: ProtocolMessage): TransferActionRequest | null {
+	const data = extractMessageData(message);
+	if (!data || data.type !== "transfer/request") {
+		return null;
+	}
+
+	if (
+		(data.asset !== "native" && data.asset !== "usdc") ||
+		typeof data.actionId !== "string" ||
+		data.actionId.length === 0 ||
+		typeof data.amount !== "string" ||
+		data.amount.length === 0 ||
+		typeof data.chain !== "string" ||
+		data.chain.length === 0 ||
+		typeof data.toAddress !== "string" ||
+		!isEthereumAddress(data.toAddress)
+	) {
+		return null;
+	}
+
+	return {
+		type: "transfer/request",
+		actionId: data.actionId,
+		asset: data.asset,
+		amount: data.amount,
+		chain: data.chain,
+		toAddress: data.toAddress,
+		note: typeof data.note === "string" && data.note.length > 0 ? data.note : undefined,
+	};
+}
+
+export function parseTransferActionResponse(
+	message: ProtocolMessage,
+): TransferActionResponse | null {
+	const data = extractMessageData(message);
+	if (!data || data.type !== "transfer/response") {
+		return null;
+	}
+
+	if (
+		(data.asset !== "native" && data.asset !== "usdc") ||
+		typeof data.actionId !== "string" ||
+		data.actionId.length === 0 ||
+		typeof data.amount !== "string" ||
+		data.amount.length === 0 ||
+		typeof data.chain !== "string" ||
+		data.chain.length === 0 ||
+		typeof data.toAddress !== "string" ||
+		!isEthereumAddress(data.toAddress) ||
+		(data.status !== "completed" && data.status !== "rejected" && data.status !== "failed")
+	) {
+		return null;
+	}
+
+	return {
+		type: "transfer/response",
+		actionId: data.actionId,
+		asset: data.asset,
+		amount: data.amount,
+		chain: data.chain,
+		toAddress: data.toAddress,
+		status: data.status,
+		txHash:
+			typeof data.txHash === "string" && isEthereumAddressLikeHash(data.txHash)
+				? data.txHash
+				: undefined,
+		error: typeof data.error === "string" && data.error.length > 0 ? data.error : undefined,
+	};
+}
+
+export function parsePermissionGrantRequest(
+	message: ProtocolMessage,
+): PermissionGrantRequestAction | null {
+	const data = extractMessageData(message);
+	if (!data || data.type !== "permissions/request-grants") {
+		return null;
+	}
+
+	if (
+		typeof data.actionId !== "string" ||
+		data.actionId.length === 0 ||
+		!Array.isArray(data.grants)
+	) {
+		return null;
+	}
+
+	const grants: PermissionGrant[] = [];
+	for (const input of data.grants) {
+		if (typeof input !== "object" || input === null) {
+			return null;
+		}
+
+		const grant = input as {
+			grantId?: unknown;
+			scope?: unknown;
+			constraints?: unknown;
+			status?: unknown;
+			updatedAt?: unknown;
+		};
+
+		if (
+			typeof grant.grantId !== "string" ||
+			grant.grantId.length === 0 ||
+			typeof grant.scope !== "string" ||
+			grant.scope.length === 0
+		) {
+			return null;
+		}
+
+		grants.push({
+			grantId: grant.grantId,
+			scope: grant.scope,
+			...(grant.constraints &&
+			typeof grant.constraints === "object" &&
+			!Array.isArray(grant.constraints)
+				? { constraints: grant.constraints as Record<string, unknown> }
+				: {}),
+			status: grant.status === "revoked" ? "revoked" : "active",
+			updatedAt:
+				typeof grant.updatedAt === "string" && grant.updatedAt.length > 0
+					? grant.updatedAt
+					: new Date().toISOString(),
+		});
+	}
+
+	return {
+		type: "permissions/request-grants",
+		actionId: data.actionId,
+		grants,
+		note: typeof data.note === "string" && data.note.length > 0 ? data.note : undefined,
+	};
+}
+
+export function buildTransferRequestText(request: TransferActionRequest): string {
+	const assetLabel = request.asset === "native" ? "ETH" : "USDC";
+	const note = request.note ? ` (${request.note})` : "";
+	return `Requesting ${request.amount} ${assetLabel} on ${request.chain} to ${request.toAddress}${note}`;
+}
+
+export function buildTransferResponseText(response: TransferActionResponse): string {
+	const assetLabel = response.asset === "native" ? "ETH" : "USDC";
+	if (response.status === "completed") {
+		return `Transferred ${response.amount} ${assetLabel} on ${response.chain} to ${response.toAddress}`;
+	}
+	if (response.status === "rejected") {
+		return `Transfer request rejected for ${response.amount} ${assetLabel} on ${response.chain}`;
+	}
+	return `Transfer request failed for ${response.amount} ${assetLabel} on ${response.chain}: ${response.error ?? "unknown error"}`;
+}
+
+export function buildPermissionGrantRequestText(request: PermissionGrantRequestAction): string {
+	const summary = request.grants.map((grant) => grant.scope).join(", ");
+	const note = request.note ? ` (${request.note})` : "";
+	return `Requesting grant update for ${summary}${note}`;
+}
+
+function extractMessageData(message: ProtocolMessage): Record<string, unknown> | null {
+	if (typeof message.params !== "object" || message.params === null) {
+		return null;
+	}
+
+	const container = (message.params as { message?: unknown }).message;
+	if (typeof container !== "object" || container === null) {
+		return null;
+	}
+
+	const parts = (container as { parts?: unknown }).parts;
+	if (!Array.isArray(parts)) {
+		return null;
+	}
+
+	for (const part of parts) {
+		if (
+			typeof part === "object" &&
+			part !== null &&
+			(part as { kind?: unknown }).kind === "data" &&
+			typeof (part as { data?: unknown }).data === "object" &&
+			(part as { data?: unknown }).data !== null
+		) {
+			return (part as { data: Record<string, unknown> }).data;
+		}
+	}
+
+	return null;
+}
+
+function isEthereumAddressLikeHash(value: string): value is `0x${string}` {
+	return /^0x[0-9a-fA-F]{64}$/.test(value);
+}
