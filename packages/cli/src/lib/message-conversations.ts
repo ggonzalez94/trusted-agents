@@ -5,7 +5,7 @@ import {
 	MESSAGE_SEND,
 	assertSafeFileComponent,
 	createJsonRpcRequest,
-	createMessage,
+	generateNonce,
 	nowISO,
 } from "trusted-agents-core";
 import type {
@@ -18,6 +18,7 @@ import type {
 	ProtocolMessage,
 	TrustedAgentMetadata,
 } from "trusted-agents-core";
+import { DEFAULT_MESSAGE_SCOPE } from "./scopes.js";
 
 const LOGGABLE_MESSAGE_METHODS = new Set<string>([
 	MESSAGE_SEND,
@@ -45,19 +46,48 @@ export function findUniqueContactForAgentId(
 	return matches.length === 1 ? matches[0] : undefined;
 }
 
-export function buildOutgoingMessageRequest(contact: Contact, text: string): JsonRpcRequest {
-	const conversationId = resolveConversationId(contact);
+export function buildOutgoingMessageRequest(
+	contact: Contact,
+	text: string,
+	scope: string = DEFAULT_MESSAGE_SCOPE,
+): JsonRpcRequest {
+	return buildOutgoingRequest(contact, MESSAGE_SEND, [{ kind: "text", text }], scope, false);
+}
 
-	return createJsonRpcRequest(MESSAGE_SEND, {
-		message: createMessage(text, {
-			trustedAgent: {
-				connectionId: contact.connectionId,
-				conversationId,
-				scope: MESSAGE_SEND,
-				requiresHumanApproval: false,
-			},
-		}),
-	});
+export function buildOutgoingActionRequest(
+	contact: Contact,
+	text: string,
+	data: Record<string, unknown>,
+	scope: string,
+): JsonRpcRequest {
+	return buildOutgoingRequest(
+		contact,
+		MESSAGE_ACTION_REQUEST,
+		[
+			{ kind: "text", text },
+			{ kind: "data", data },
+		],
+		scope,
+		true,
+	);
+}
+
+export function buildOutgoingActionResponse(
+	contact: Contact,
+	text: string,
+	data: Record<string, unknown>,
+	scope: string,
+): JsonRpcRequest {
+	return buildOutgoingRequest(
+		contact,
+		MESSAGE_ACTION_RESPONSE,
+		[
+			{ kind: "text", text },
+			{ kind: "data", data },
+		],
+		scope,
+		false,
+	);
 }
 
 export function buildConversationLogEntry(
@@ -85,6 +115,7 @@ export function buildConversationLogEntry(
 	return {
 		conversationId: resolveConversationId(contact),
 		message: {
+			messageId: extractMessageId(message) ?? String(request.id),
 			timestamp,
 			direction,
 			scope: resolveScope(request, metadata),
@@ -93,6 +124,12 @@ export function buildConversationLogEntry(
 			humanApprovalGiven: null,
 		},
 	};
+}
+
+function extractMessageId(message: Message): string | undefined {
+	return typeof message.messageId === "string" && message.messageId.length > 0
+		? message.messageId
+		: undefined;
 }
 
 export async function appendConversationLog(
@@ -130,6 +167,32 @@ function extractProtocolMessage(request: ProtocolMessage): Message | null {
 	}
 
 	return message as Message;
+}
+
+function buildOutgoingRequest(
+	contact: Contact,
+	method: string,
+	parts: MessagePart[],
+	scope: string,
+	requiresHumanApproval: boolean,
+): JsonRpcRequest {
+	const conversationId = resolveConversationId(contact);
+
+	return createJsonRpcRequest(method, {
+		message: {
+			messageId: generateNonce(),
+			role: "user" as const,
+			parts,
+			metadata: {
+				trustedAgent: {
+					connectionId: contact.connectionId,
+					conversationId,
+					scope,
+					requiresHumanApproval,
+				},
+			},
+		},
+	});
 }
 
 function extractTrustedAgentMetadata(message: Message): Partial<TrustedAgentMetadata> | undefined {

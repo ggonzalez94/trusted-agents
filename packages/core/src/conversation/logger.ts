@@ -47,6 +47,16 @@ export class FileConversationLogger implements IConversationLogger {
 			const log = await this.loadLog(conversationId);
 
 			if (log) {
+				if (
+					typeof message.messageId === "string" &&
+					log.messages.some(
+						(entry) =>
+							entry.messageId === message.messageId && entry.direction === message.direction,
+					)
+				) {
+					return;
+				}
+
 				log.messages.push(message);
 				log.lastMessageAt = message.timestamp;
 				if (context?.topic) {
@@ -95,7 +105,7 @@ export class FileConversationLogger implements IConversationLogger {
 			const filePath = join(this.conversationsDir, entry);
 			try {
 				const raw = await readFile(filePath, "utf-8");
-				const log = JSON.parse(raw) as ConversationLog;
+				const log = normalizeConversationLog(JSON.parse(raw) as ConversationLog);
 				if (filter?.connectionId && log.connectionId !== filter.connectionId) {
 					continue;
 				}
@@ -120,7 +130,7 @@ export class FileConversationLogger implements IConversationLogger {
 		const filePath = this.filePathForConversation(conversationId);
 		try {
 			const raw = await readFile(filePath, "utf-8");
-			return JSON.parse(raw) as ConversationLog;
+			return normalizeConversationLog(JSON.parse(raw) as ConversationLog);
 		} catch (err: unknown) {
 			if (
 				err instanceof Error &&
@@ -150,4 +160,19 @@ export class FileConversationLogger implements IConversationLogger {
 		assertPathWithinBase(this.conversationsDir, filePath, "conversationId");
 		return filePath;
 	}
+}
+
+function normalizeConversationLog(log: ConversationLog): ConversationLog {
+	const messages = [...log.messages].sort((left, right) =>
+		left.timestamp.localeCompare(right.timestamp),
+	);
+	const startedAt = messages[0]?.timestamp ?? log.startedAt;
+	const lastMessageAt = messages[messages.length - 1]?.timestamp ?? log.lastMessageAt;
+
+	return {
+		...log,
+		messages,
+		startedAt,
+		lastMessageAt,
+	};
 }

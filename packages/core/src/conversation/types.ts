@@ -1,4 +1,5 @@
 export interface ConversationMessage {
+	messageId?: string;
 	timestamp: string;
 	direction: "incoming" | "outgoing";
 	scope: string;

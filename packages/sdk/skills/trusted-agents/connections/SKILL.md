@@ -1,50 +1,87 @@
 ---
 name: connections
-description: Create invites, accept connections, and manage trusted contacts.
+description: Create invites, connect agents, and manage directional grants for each peer.
 ---
 
 # /connections
 
-Create invite links, connect to peers, and manage your contact list.
+Use this skill for invites, connections, and permission grants.
+
+## Rules
+
+- `tap connect` establishes trust only.
+- Initial permission intent can be shown during connect with grant files.
+- Published grants are directional:
+  - `grantedByMe`: what the peer may ask this agent to do
+  - `grantedByPeer`: what this agent may ask the peer to do
+- Grant file format: `references/permissions-v1.md`
 
 ## Commands
 
 ### `tap invite create [--expiry <seconds>]`
 
-Generate a signed invite URL. Default expiry is 86400 seconds (24 hours).
+Generate a signed invite URL.
 
 ```bash
-tap invite create
 tap invite create --expiry 3600
 ```
 
-Output includes the invite URL, expiry time, and nonce. Share the URL with the peer agent.
-
 ### `tap invite list`
 
-Show pending (unused, non-expired) invites.
+List unused local invites.
 
 ```bash
 tap invite list
 ```
 
-### `tap connect <invite-url> [--yes]`
+### `tap connect <invite-url> [--yes] [--request-grants-file <path>] [--grant-file <path>]`
 
-Accept a peer's invite and establish a trusted connection.
+Accept an invite. The inviter should be running `tap message listen`.
 
 ```bash
-# Interactive — asks for confirmation
-tap connect "https://trustedagents.link/connect?agentId=15&chain=base-sepolia&nonce=a1b2&expires=1735689600&sig=0xabc..."
-
-# Non-interactive — auto-approve
-tap connect "<invite-url>" --yes
+tap connect "<invite-url>" --yes --request-grants-file ./grants/request.json --grant-file ./grants/offer.json
 ```
 
-This resolves the peer's on-chain identity, verifies the invite signature, sends a `connection/request`, and stores the contact locally.
+During connect, TAP surfaces:
+- what this agent wants to request after connect
+- what this agent plans to publish after connect
+- what the remote peer says it plans to request or publish
+
+### `tap permissions show [peer]`
+
+Show grants for one peer or grant counts for all peers.
+
+```bash
+tap permissions show TreasuryAgent
+```
+
+### `tap permissions grant <peer> --file <path> [--note <text>]`
+
+Publish the grants this agent gives to a peer.
+
+```bash
+tap permissions grant WorkerAgent --file ./grants/worker-allowances.json --note "weekly payment policy"
+```
+
+### `tap permissions request <peer> --file <path> [--note <text>]`
+
+Ask a peer to publish the listed grants to this agent.
+
+```bash
+tap permissions request TreasuryAgent --file ./grants/request-usdc.json --note "need weekly budget"
+```
+
+### `tap permissions revoke <peer> --grant-id <id> [--note <text>]`
+
+Revoke one previously published grant.
+
+```bash
+tap permissions revoke WorkerAgent --grant-id worker-weekly-usdc --note "budget paused"
+```
 
 ### `tap contacts list`
 
-List all contacts with their status.
+List contacts and grant counts.
 
 ```bash
 tap contacts list
@@ -52,25 +89,23 @@ tap contacts list
 
 ### `tap contacts show <name-or-id>`
 
-Show details for a single contact by name or agent ID.
+Show one contact, including `granted_by_me` and `granted_by_peer`.
 
 ```bash
-tap contacts show "TravelBot"
-tap contacts show 15
+tap contacts show WorkerAgent
 ```
 
 ### `tap contacts remove <connectionId>`
 
-Remove a connection from the local trust store.
+Remove one contact from the local trust store.
 
 ```bash
 tap contacts remove 7f8e9d0c-1a2b-3c4d-5e6f-789012345678
 ```
 
-## Errors
+## Common Errors
 
-- `Invalid or expired invite` — the invite URL is malformed, the signature is bad, or it has expired
-- `Agent not found on-chain` — the inviting agent's ID could not be resolved on the registry
-- `Connection rejected` — the peer agent declined the connection request
-- `Contact not found` — name or ID does not match any contact
-- `No pending invites` — all invites have been used or expired
+- `Invalid or expired invite` — the invite URL is malformed, expired, or has a bad signature.
+- `Connection rejected` — the peer declined the trust request.
+- `Peer not found in contacts` — connect first or check the contact name/agent ID.
+- `Grant not found` — the revoke target does not exist in `grantedByMe`.

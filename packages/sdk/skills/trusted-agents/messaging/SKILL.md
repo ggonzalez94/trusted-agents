@@ -1,59 +1,66 @@
 ---
 name: messaging
-description: Send and receive messages with connected agents, and view conversation history.
+description: Send messages, listen for requests, review conversations, and handle transfer requests with runtime judgment.
 ---
 
 # /messaging
 
-Send messages, listen for incoming messages, and browse conversation transcripts.
+Use this skill for agent-to-agent communication after a connection is active.
+
+## Runtime Judgment
+
+- TAP does not hard-block business permissions in the CLI.
+- Keep only one transport-active CLI process per identity. Stop `tap message listen` before sending from that same identity.
+- Before approving a high-impact request, inspect:
+  - `tap permissions show <peer>`
+  - `<dataDir>/notes/permissions-ledger.md`
+- `--yes-actions` skips interactive review and approves incoming actions immediately.
 
 ## Commands
 
-### `tap message send <peer> <text>`
+### `tap message send <peer> <text> [--scope <scope>]`
 
-Send a message to an active contact. `<peer>` is a contact name or agent ID.
+Send a message to an active contact. `--scope` is a semantic label for the conversation.
 
 ```bash
-tap message send "TravelBot" "Book a flight to London next Tuesday"
-tap message send 42 "Hello"
+tap message send WorkerAgent "Status update?" --scope general-chat
 ```
 
-The peer must be an active contact (use `tap contacts list` to check).
+### `tap message request-funds <peer> --asset <native|usdc> --amount <amount> [--chain <chain>] [--to <address>] [--note <text>]`
 
-### `tap message listen [--yes]`
-
-Long-running listener that streams incoming messages as JSON lines to stdout. Also handles incoming connection requests.
+Ask a peer to send ETH or USDC.
 
 ```bash
-# Interactive — prompts on incoming connection requests
-tap message listen
+tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
+```
 
-# Non-interactive — auto-accepts connection requests
+### `tap message listen [--yes] [--yes-actions]`
+
+Run the long-lived XMTP listener. It accepts connection requests, grant updates, messages, and action requests.
+
+```bash
 tap message listen --yes
 ```
 
-Press Ctrl+C to stop. Each incoming message is printed as a JSON object on one line.
-
 ### `tap conversations list [--with <name>]`
 
-Show conversation summaries with message counts and last activity.
+List stored conversation summaries.
 
 ```bash
-tap conversations list
-tap conversations list --with "TravelBot"
+tap conversations list --with TreasuryAgent
 ```
 
 ### `tap conversations show <id>`
 
-Print the full markdown transcript of a conversation.
+Show the full markdown transcript for one conversation.
 
 ```bash
 tap conversations show conv-abc123
 ```
 
-## Errors
+## Common Errors
 
-- `Contact not found` — peer name or ID does not match any contact
-- `Contact is not active` — connection exists but status is not `active`; re-establish with `/connections`
-- `No conversations found` — no message history yet; send a message first
-- `Conversation not found` — the conversation ID does not exist
+- `Peer not found in contacts` — no active contact matches the name or agent ID.
+- `Contact is not active` — re-establish the connection.
+- `Use --yes-actions` — you are running non-interactively and the agent needs a runtime decision.
+- `Conversation not found` — the transcript ID does not exist yet.

@@ -20,7 +20,6 @@ export const SAMPLE_CONNECTION_REQUEST: JsonRpcRequest = {
 	params: {
 		from: { agentId: 1, chain: "eip155:1" },
 		to: { agentId: 2, chain: "eip155:1" },
-		proposedScope: ["general-chat", "scheduling"],
 		nonce: "test-nonce-001",
 		timestamp: "2025-01-01T00:00:00.000Z",
 	},

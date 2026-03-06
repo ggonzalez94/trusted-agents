@@ -1,79 +1,91 @@
 ---
 name: trusted-agents
-description: Manage trusted agent connections and communication using the Trusted Agents Protocol (ERC-8004 identity, XMTP messaging).
+description: Operate a Trusted Agents Protocol agent locally: identity, balances, config, connections, grants, and messaging over XMTP.
 ---
 
 # Trusted Agents
 
-Manage agent identity, connections, and messaging using the Trusted Agents Protocol.
+Use this skill when working with the `tap` CLI.
 
-## Skills
+## Mental Model
 
-- `/onboard` — Initialize, fund, and register a new agent on-chain
-- `/connections` — Create invites, connect to peers, manage contacts
-- `/messaging` — Send/receive messages, view conversation history
+- Capabilities are public labels in the on-chain registration file.
+- Connections establish trust only. They do not grant business permissions.
+- Permissions are directional grant sets per contact:
+  - `grantedByMe`
+  - `grantedByPeer`
+- Grants are runtime context for the agent. Review grants plus the ledger before high-impact actions.
 
-## Prerequisites
+## Default Loop
 
-- Node.js 18+ (or Bun)
-- ETH on the registration chain (for gas)
-- USDC on Base mainnet (for x402 IPFS upload, ~$0.0001 — not needed if using `--pinata-jwt` or `--uri`)
+1. If the agent is not onboarded, use `/onboard` to initialize, fund, and register it.
+2. Start `tap message listen` before expecting inbound connections, grant updates, or action requests.
+3. Keep only one transport-active CLI process per identity. Stop a long-running listener before sending from that same identity.
+4. Use `/connections` to create or accept a connection.
+5. Inspect, request, publish, or revoke grants for that peer.
+6. Use `/messaging` for normal communication.
+7. Before approving value movement or other high-impact actions, inspect `tap permissions show <peer>` and the permissions ledger.
 
-## Supported Chains
-
-| Alias | CAIP-2 | Notes |
-|-------|--------|-------|
-| `base-sepolia` | `eip155:84532` | Default (testnet) |
-| `base` | `eip155:8453` | Mainnet |
-| `taiko` | `eip155:167000` | Taiko mainnet |
-| `taiko-hoodi` | `eip155:167009` | Taiko testnet |
-
-## Global Flags
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Force JSON output |
-| `--plain` | Force plain text output |
-| `--data-dir <path>` | Override data directory (or set `TAP_DATA_DIR`) |
-| `--chain <caip2>` | Override chain |
-| `--config <path>` | Override config file path |
-| `-v, --verbose` | Verbose logging to stderr |
-| `-q, --quiet` | Suppress non-essential output |
+References:
+- `connections/SKILL.md`
+- `messaging/SKILL.md`
+- `onboard/SKILL.md`
+- `references/permissions-v1.md`
+- `references/permissions-ledger-v1.md`
+- `references/capability-map.md`
 
 ## Utility Commands
 
 ### `tap balance [chain]`
 
-Show ETH and USDC balances for this agent's wallet.
+Show native ETH and USDC balances for this agent.
 
 ```bash
 tap balance
-tap balance base
 ```
 
-### `tap config show` / `tap config set <key> <value>`
+### `tap config show`
 
-View or update configuration.
+Print the resolved config with secrets redacted.
 
 ```bash
 tap config show
-tap config set chain "eip155:8453"
-tap config set xmtp.env "production"
+```
+
+### `tap config set <key> <value>`
+
+Update one config value.
+
+```bash
+tap config set xmtp.env production
 ```
 
 ### `tap identity show`
 
-Show this agent's address, agent ID, and chain.
+Show this agent's wallet address, agent ID, and chain.
+
+```bash
+tap identity show
+```
 
 ### `tap identity resolve <agentId> [chain]`
 
-Look up a peer agent's on-chain registration (name, capabilities, endpoint).
+Resolve another agent from the registry.
 
 ```bash
-tap identity resolve 42
-tap identity resolve 42 eip155:8453
+tap identity resolve 42 base-sepolia
 ```
 
 ### `tap identity resolve-self`
 
-Resolve this agent's own on-chain registration (useful to verify what peers see).
+Resolve this agent's published registration.
+
+```bash
+tap identity resolve-self
+```
+
+## Common Errors
+
+- `agent_id` missing or `< 0` — run `/onboard` and register first.
+- `Invalid chain format` — use a CLI chain alias or a CAIP-2 chain ID.
+- `Agent not found on-chain` — the agent is not registered on the selected chain.

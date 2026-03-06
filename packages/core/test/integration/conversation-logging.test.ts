@@ -154,4 +154,39 @@ describe("Conversation logging integration", () => {
 		expect(conv!.messages).toHaveLength(1);
 		expect(conv!.messages[0]!.content).toBe("Persistent message");
 	});
+
+	it("should normalize stored messages into chronological order on read", async () => {
+		await logger.logMessage(
+			"conv-order",
+			{
+				timestamp: "2025-06-15T10:05:00.000Z",
+				direction: "outgoing",
+				scope: "general-chat",
+				content: "Later message",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			context,
+		);
+		await logger.logMessage(
+			"conv-order",
+			{
+				timestamp: "2025-06-15T10:00:00.000Z",
+				direction: "incoming",
+				scope: "general-chat",
+				content: "Earlier message",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			context,
+		);
+
+		const conversation = await logger.getConversation("conv-order");
+		expect(conversation?.messages.map((message) => message.content)).toEqual([
+			"Earlier message",
+			"Later message",
+		]);
+		expect(conversation?.startedAt).toBe("2025-06-15T10:00:00.000Z");
+		expect(conversation?.lastMessageAt).toBe("2025-06-15T10:05:00.000Z");
+	});
 });

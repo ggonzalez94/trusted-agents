@@ -1,9 +1,15 @@
 import { createJsonRpcRequest } from "../protocol/index.js";
-import { CONNECTION_ACCEPT, CONNECTION_REJECT, CONNECTION_REQUEST } from "../protocol/index.js";
+import {
+	CONNECTION_ACCEPT,
+	CONNECTION_REJECT,
+	CONNECTION_REQUEST,
+	CONNECTION_UPDATE_GRANTS,
+} from "../protocol/index.js";
 import type {
 	ConnectionAcceptParams,
 	ConnectionRejectParams,
 	ConnectionRequestParams,
+	ConnectionUpdateGrantsParams,
 	JsonRpcRequest,
 } from "../protocol/index.js";
 
@@ -17,4 +23,8 @@ export function buildConnectionAccept(params: ConnectionAcceptParams): JsonRpcRe
 
 export function buildConnectionReject(params: ConnectionRejectParams): JsonRpcRequest {
 	return createJsonRpcRequest(CONNECTION_REJECT, params);
+}
+
+export function buildConnectionUpdateGrants(params: ConnectionUpdateGrantsParams): JsonRpcRequest {
+	return createJsonRpcRequest(CONNECTION_UPDATE_GRANTS, params);
 }

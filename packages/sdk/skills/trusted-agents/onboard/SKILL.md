@@ -1,71 +1,48 @@
 ---
 name: onboard
-description: Full onboarding walkthrough for a new agent — init, fund, register on-chain, and update registration.
+description: Initialize an agent wallet, fund it, register it on-chain, and update the published registration.
 ---
 
 # /onboard
 
-Initialize the agent, fund the wallet, and register on-chain.
+Use this skill to create or update a TAP agent identity.
 
-## Step 1: Initialize
+## Funding
 
-```bash
-tap init
-tap init --private-key <hex>          # import existing key
-tap init --chain taiko                # register on a different chain
-```
+- ETH on the registration chain for gas.
+- Base mainnet USDC only if using x402 IPFS upload.
+- No Base USDC is needed when using `--pinata-jwt` or `--uri`.
 
-Creates a private key, config file, and data directories. Outputs the agent's Ethereum address for funding.
-The default chain is Base Sepolia (eip155:84532).
+## Commands
 
-## Step 2: Fund the Wallet
+### `tap init [--private-key <hex>] [--chain <name>]`
 
-The agent address needs:
-- **ETH on the registration chain** — for the on-chain tx gas
-- **USDC on Base mainnet** — for IPFS upload via x402 (~$0.0001). Not needed if using `--pinata-jwt` or `--uri`.
-
-For testnet (Base Sepolia, default): get ETH from https://www.coinbase.com/faucets/base-ethereum-goerli-faucet
-
-Check the address and balances:
-```bash
-tap identity show
-tap balance
-```
-
-## Step 3: Register
+Create or import the wallet and local config.
 
 ```bash
-tap register \
-  --name "MyAgent" \
-  --description "An AI assistant for scheduling" \
-  --capabilities "scheduling,general-chat"
+tap init --chain base-sepolia
 ```
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--name` | Yes | Display name shown to peers |
-| `--description` | Yes | What the agent does |
-| `--capabilities` | Yes | Comma-separated freeform strings (peers see these during discovery) |
-| `--pinata-jwt` | No | Use Pinata instead of x402 for IPFS upload |
-| `--uri` | No | Skip IPFS entirely — provide a pre-hosted registration file URL |
+### `tap register --name <name> --description <desc> --capabilities <list> [--pinata-jwt <token>] [--uri <url>]`
 
-On success, outputs the assigned `agent_id` and auto-updates config.
-
-## Step 4: Update Registration
+Register the agent on-chain through ERC-8004.
 
 ```bash
-tap register update --name "MyAgent v2" --capabilities "scheduling,reminders"
+tap register --name "TreasuryAgent" --description "Payment agent" --capabilities "payments,general-chat"
 ```
 
-Only the owner of the agent NFT can update. All flags are optional — only provided fields change.
+Capabilities are public discovery labels, not permissions.
 
-## IPFS Upload Methods
+### `tap register update [--name <name>] [--description <desc>] [--capabilities <list>] [--pinata-jwt <token>] [--uri <url>]`
 
-**x402 (default)** — No account needed. Pays ~$0.0001 USDC from the agent's wallet. **Pinata** — Pass `--pinata-jwt` or set `TAP_PINATA_JWT`. **Self-hosted** — Pass `--uri` with any HTTPS or IPFS gateway URL.
+Update the published registration file and token URI.
 
-## Errors
+```bash
+tap register update --capabilities "payments,research,general-chat"
+```
 
-- `Insufficient funds` — wallet needs ETH for gas (and USDC for x402 if not using Pinata/URI)
-- `Pinata upload failed` — check your JWT token
-- `Invalid registration file` — name, description, and capabilities are all required
-- `Failed to register agent` — transaction reverted; check gas, funds, and chain
+## Common Errors
+
+- `Insufficient funds` — missing ETH for gas or Base USDC for x402.
+- `Invalid registration file` — required fields are missing or malformed.
+- `Failed to register agent` — the transaction reverted or the chain config is wrong.

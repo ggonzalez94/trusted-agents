@@ -14,6 +14,7 @@ export {
 	buildConnectionRequest,
 	buildConnectionAccept,
 	buildConnectionReject,
+	buildConnectionUpdateGrants,
 } from "./handshake.js";
 
 export {

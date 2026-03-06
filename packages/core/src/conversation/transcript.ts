@@ -4,11 +4,14 @@ export function generateMarkdownTranscript(log: ConversationLog): string {
 	const date = log.startedAt.split("T")[0];
 	const topic = log.topic ?? "Conversation";
 	const lines: string[] = [];
+	const messages = [...log.messages].sort((left, right) =>
+		left.timestamp.localeCompare(right.timestamp),
+	);
 
 	lines.push(`## ${log.peerDisplayName} | ${topic} | ${date}`);
 	lines.push("");
 
-	for (const msg of log.messages) {
+	for (const msg of messages) {
 		const time = formatTime(msg.timestamp);
 		const arrow = msg.direction === "outgoing" ? "\u2192" : "\u2190";
 		let header = `**[${time}] ${arrow} ${log.peerDisplayName}:**`;

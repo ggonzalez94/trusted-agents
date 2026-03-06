@@ -1,3 +1,4 @@
+import { PermissionError } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -7,12 +8,14 @@ import {
 	findContactForPeer,
 } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
+import { DEFAULT_MESSAGE_SCOPE } from "../lib/scopes.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function messageSendCommand(
 	peer: string,
 	text: string,
 	opts: GlobalOptions,
+	cmdOpts?: { scope?: string },
 ): Promise<void> {
 	const startTime = Date.now();
 
@@ -30,11 +33,13 @@ export async function messageSendCommand(
 			return;
 		}
 
+		const scope = cmdOpts?.scope?.trim() || DEFAULT_MESSAGE_SCOPE;
+
 		verbose(`Sending message to ${contact.peerDisplayName} (#${contact.peerAgentId})...`, opts);
 
 		await ctx.transport.start?.();
 		try {
-			const request = buildOutgoingMessageRequest(contact, text);
+			const request = buildOutgoingMessageRequest(contact, text, scope);
 			const messageTimestamp = new Date().toISOString();
 
 			let response: Awaited<ReturnType<typeof ctx.transport.send>>;
@@ -56,20 +61,25 @@ export async function messageSendCommand(
 				throw err;
 			}
 
-			void appendConversationLog(
+			await appendConversationLog(
 				ctx.conversationLogger,
 				contact,
 				request,
 				"outgoing",
 				messageTimestamp,
-			).catch(() => {});
-			void ctx.trustStore.touchContact(contact.connectionId).catch(() => {});
+			);
+			await ctx.trustStore.touchContact(contact.connectionId);
+
+			if (response.error) {
+				throw new PermissionError(response.error.message);
+			}
 
 			success(
 				{
 					sent: true,
 					peer: contact.peerDisplayName,
 					agent_id: contact.peerAgentId,
+					scope,
 					response,
 				},
 				opts,
