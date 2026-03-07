@@ -23,4 +23,5 @@ openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"nam
 4. Verify the runtime with `tap_gateway` action `status`.
 5. Use plugin mode only when `status.configured` is `true`, the `identities` list is non-empty, and `status.warnings` is empty.
 6. If more than one identity is configured, include `identity` in each `tap_gateway` tool call.
-7. Use `tap_gateway` for transport-active operations once the plugin is active.
+7. For read-only `tap` CLI inspection in multi-identity mode, use the matching `dataDir` from `status.identities[]` and pass `--data-dir <path>`.
+8. Use `tap_gateway` for transport-active operations once the plugin is active.

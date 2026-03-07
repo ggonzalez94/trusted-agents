@@ -16,5 +16,6 @@ Operational rules:
 
 - Plugin mode: do not run transport-active `tap` CLI commands against the same TAP `dataDir` unless the plugin is stopped.
 - Plugin mode: use `tap_gateway` for connect, send, grant publication, fund requests, and pending approvals. Read-only `tap` CLI commands remain safe.
+- Plugin mode with multiple identities: get the target `dataDir` from `tap_gateway` status for that `identity`, then pass `--data-dir <path>` to read-only `tap` CLI commands.
 - Non-plugin OpenClaw mode: do not rely on shell background jobs to keep `tap message listen` alive.
 - Any mode with streaming: keep periodic sync enabled for reconciliation.
