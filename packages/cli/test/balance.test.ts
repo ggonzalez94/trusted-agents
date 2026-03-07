@@ -1,7 +1,9 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import * as executionLib from "../src/lib/execution.js";
 import * as walletLib from "../src/lib/wallet.js";
 
 describe("tap balance", () => {
@@ -9,12 +11,14 @@ describe("tap balance", () => {
 	let stderrWrites: string[];
 	let origStdoutWrite: typeof process.stdout.write;
 	let origStderrWrite: typeof process.stderr.write;
+	const privateKey = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
+	const address = privateKeyToAccount(privateKey).address;
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: -1,
 			chain: "eip155:84532",
-			privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+			privateKey,
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:8453": {
@@ -51,6 +55,10 @@ describe("tap balance", () => {
 			resolveCacheMaxEntries: 100,
 			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
+			execution: {
+				mode: "eip7702",
+				paymasterProvider: "circle",
+			},
 		};
 	}
 
@@ -69,6 +77,15 @@ describe("tap balance", () => {
 			return true;
 		}) as typeof process.stderr.write;
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
+		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
+			requestedMode: "eip7702",
+			mode: "eip7702",
+			messagingAddress: address,
+			executionAddress: address,
+			fundingAddress: address,
+			paymasterProvider: "candide",
+			warnings: [],
+		});
 	});
 
 	afterEach(() => {
@@ -101,9 +118,12 @@ describe("tap balance", () => {
 			data?: Record<string, unknown>;
 		};
 		expect(output.ok).toBe(true);
+		expect(output.data?.address).toBe(address);
+		expect(output.data?.messaging_address).toBe(address);
+		expect(output.data?.execution_address).toBe(address);
 		expect(output.data?.chain).toBe("eip155:84532");
-		expect(output.data?.native_balance).toBe("1.234");
-		expect(output.data?.usdc_balance).toBe("9.876543");
+		expect(output.data?.execution_native_balance).toBe("1.234");
+		expect(output.data?.execution_usdc_balance).toBe("9.876543");
 	});
 
 	it("accepts a natural-language chain alias", async () => {
@@ -160,7 +180,7 @@ describe("tap balance", () => {
 		};
 		expect(output.data?.chain).toBe("eip155:167000");
 		expect(output.data?.usdc_supported).toBe(true);
-		expect(output.data?.usdc_balance).toBe("7.654321");
+		expect(output.data?.execution_usdc_balance).toBe("7.654321");
 	});
 
 	it("returns native plus USDC balances on Taiko Hoodi", async () => {
@@ -183,7 +203,7 @@ describe("tap balance", () => {
 		};
 		expect(output.data?.chain).toBe("eip155:167013");
 		expect(output.data?.usdc_supported).toBe(true);
-		expect(output.data?.usdc_balance).toBe("0.000333");
+		expect(output.data?.execution_usdc_balance).toBe("0.000333");
 	});
 
 	it("returns a validation error for an unknown chain", async () => {

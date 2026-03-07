@@ -7,6 +7,14 @@ export interface ChainConfig {
 	blockExplorerUrl?: string;
 }
 
+export type ExecutionMode = "eoa" | "eip4337" | "eip7702";
+export type ExecutionPaymasterProvider = "circle" | "candide";
+
+export interface ExecutionConfig {
+	mode?: ExecutionMode;
+	paymasterProvider?: ExecutionPaymasterProvider;
+}
+
 export interface TrustedAgentsConfig {
 	agentId: number;
 	chain: string;
@@ -19,4 +27,5 @@ export interface TrustedAgentsConfig {
 	xmtpEnv?: "dev" | "production" | "local";
 	xmtpDbPath?: string;
 	xmtpDbEncryptionKey?: `0x${string}`;
+	execution?: ExecutionConfig;
 }

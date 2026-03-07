@@ -44,7 +44,7 @@ Supported chains:
 	// register
 	const register = program
 		.command("register")
-		.description("Register agent on-chain via ERC-8004")
+		.description("Manage ERC-8004 registration")
 		.addHelpText(
 			"after",
 			`
@@ -54,10 +54,13 @@ You can use any string — these are advertised to peers during discovery.
 
 Examples:
   tap register --name "Cal" --description "Scheduling assistant" --capabilities "scheduling,general-chat"
-  tap register --name "Scout" --description "Web researcher" --capabilities "research,general-chat"
-  tap register --name "Shopper" --description "Purchase agent" --capabilities "purchases,general-chat"
+  tap register update --description "Updated description"
 `,
-		)
+		);
+
+	register
+		.command("create")
+		.description("Register agent on-chain via ERC-8004")
 		.requiredOption("--name <name>", "Agent display name")
 		.requiredOption("--description <desc>", "Agent description")
 		.requiredOption("--capabilities <list>", "Comma-separated capabilities")

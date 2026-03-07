@@ -42,6 +42,20 @@ export function validateConfig(
 		throw new ConfigError("xmtpDbEncryptionKey must be a 32-byte hex string prefixed with 0x");
 	}
 
+	if (
+		partial.execution?.mode !== undefined &&
+		!["eoa", "eip4337", "eip7702"].includes(partial.execution.mode)
+	) {
+		throw new ConfigError("execution.mode must be eoa, eip4337, or eip7702");
+	}
+
+	if (
+		partial.execution?.paymasterProvider !== undefined &&
+		!["circle", "candide"].includes(partial.execution.paymasterProvider)
+	) {
+		throw new ConfigError("execution.paymasterProvider must be circle or candide");
+	}
+
 	return {
 		...DEFAULT_CONFIG,
 		...partial,

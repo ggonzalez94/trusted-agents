@@ -33,6 +33,8 @@ describe("identity resolve", () => {
 			chains: {
 				"eip155:84532": {
 					name: "Base Sepolia",
+					caip2: "eip155:84532",
+					chainId: 84532,
 					rpcUrl: "https://example.test/rpc",
 					registryAddress: "0x1234567890123456789012345678901234567890",
 				},

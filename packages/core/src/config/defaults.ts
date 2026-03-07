@@ -33,4 +33,8 @@ export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "pr
 	resolveCacheTtlMs: 86400000, // 24 hours
 	resolveCacheMaxEntries: 1000,
 	xmtpEnv: "production",
+	execution: {
+		mode: "eip7702",
+		paymasterProvider: "circle",
+	},
 };

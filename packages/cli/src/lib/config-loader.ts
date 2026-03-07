@@ -2,11 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG } from "trusted-agents-core";
-import type { TrustedAgentsConfig } from "trusted-agents-core";
+import type {
+	ExecutionMode,
+	ExecutionPaymasterProvider,
+	TrustedAgentsConfig,
+} from "trusted-agents-core";
 import YAML from "yaml";
 import type { GlobalOptions } from "../types.js";
-import { loadKeyfile } from "./keyfile.js";
 import { ALL_CHAINS, resolveChainAlias } from "./chains.js";
+import { loadKeyfile } from "./keyfile.js";
 
 const LEGACY_CONFIG_PATH = join(homedir(), ".config", "trustedagents", "config.yaml");
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "trustedagents");
@@ -15,6 +19,10 @@ const FALLBACK_DATA_DIR = join(homedir(), ".trustedagents");
 interface YamlConfig {
 	agent_id?: number;
 	chain?: string;
+	execution?: {
+		mode?: ExecutionMode;
+		paymaster_provider?: ExecutionPaymasterProvider;
+	};
 	xmtp?: {
 		env?: "dev" | "production" | "local";
 		db_encryption_key?: string;
@@ -32,7 +40,7 @@ interface YamlConfig {
 export function resolveDataDir(opts: GlobalOptions): string {
 	// Priority: CLI flag > env > default
 	if (opts.dataDir) return opts.dataDir;
-	const envDir = process.env["TAP_DATA_DIR"];
+	const envDir = process.env.TAP_DATA_DIR;
 	if (envDir) return envDir;
 	// Use XDG path if it exists, otherwise fallback
 	if (existsSync(DEFAULT_DATA_DIR)) return DEFAULT_DATA_DIR;
@@ -44,6 +52,8 @@ export function resolveConfigPath(opts: GlobalOptions, dataDir: string): string 
 	// New default: config lives inside data dir
 	const newPath = join(dataDir, "config.yaml");
 	if (existsSync(newPath)) return newPath;
+	// An explicit data dir must stay isolated from any legacy global config.
+	if (opts.dataDir || process.env.TAP_DATA_DIR) return newPath;
 	// Legacy fallback: ~/.config/trustedagents/config.yaml
 	if (existsSync(LEGACY_CONFIG_PATH)) return LEGACY_CONFIG_PATH;
 	// Default to new path (init will create it here)
@@ -54,6 +64,16 @@ function loadYamlConfig(configPath: string): YamlConfig | undefined {
 	if (!existsSync(configPath)) return undefined;
 	const content = readFileSync(configPath, "utf-8");
 	return YAML.parse(content) as YamlConfig;
+}
+
+export function getDefaultExecutionModeForChain(chain: string): ExecutionMode {
+	return chain === "eip155:8453" || chain === "eip155:84532" ? "eip7702" : "eoa";
+}
+
+export function getDefaultPaymasterProviderForMode(
+	mode: ExecutionMode,
+): ExecutionPaymasterProvider | undefined {
+	return mode === "eoa" ? undefined : (DEFAULT_CONFIG.execution?.paymasterProvider ?? "circle");
 }
 
 interface LoadConfigOptions {
@@ -70,7 +90,7 @@ export async function loadConfig(
 	const yaml = loadYamlConfig(configPath);
 
 	// Resolve agent ID: CLI flag > env > yaml > error
-	const agentIdStr = process.env["TAP_AGENT_ID"];
+	const agentIdStr = process.env.TAP_AGENT_ID;
 	const agentId = agentIdStr !== undefined ? Number.parseInt(agentIdStr, 10) : yaml?.agent_id;
 
 	if (requireAgentId) {
@@ -82,12 +102,22 @@ export async function loadConfig(
 	}
 
 	// Resolve chain: CLI flag > env > yaml > default (Base Sepolia)
-	const chainRaw = opts.chain ?? process.env["TAP_CHAIN"] ?? yaml?.chain ?? "base-sepolia";
+	const chainRaw = opts.chain ?? process.env.TAP_CHAIN ?? yaml?.chain ?? "base-sepolia";
 	const chain = resolveChainAlias(chainRaw);
+	const executionMode =
+		(process.env.TAP_EXECUTION_MODE as ExecutionMode | undefined) ??
+		yaml?.execution?.mode ??
+		getDefaultExecutionModeForChain(chain);
+	const paymasterProvider =
+		executionMode === "eoa"
+			? undefined
+			: ((process.env.TAP_PAYMASTER_PROVIDER as ExecutionPaymasterProvider | undefined) ??
+				yaml?.execution?.paymaster_provider ??
+				getDefaultPaymasterProviderForMode(executionMode));
 
 	// Resolve private key: env > keyfile
 	let privateKey: `0x${string}`;
-	const envKey = process.env["TAP_PRIVATE_KEY"];
+	const envKey = process.env.TAP_PRIVATE_KEY;
 	if (envKey) {
 		privateKey = envKey.startsWith("0x") ? (envKey as `0x${string}`) : `0x${envKey}`;
 	} else {
@@ -122,5 +152,9 @@ export async function loadConfig(
 		resolveCacheMaxEntries: DEFAULT_CONFIG.resolveCacheMaxEntries,
 		xmtpEnv: yaml?.xmtp?.env ?? DEFAULT_CONFIG.xmtpEnv,
 		xmtpDbEncryptionKey: yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined,
+		execution: {
+			mode: executionMode,
+			...(paymasterProvider ? { paymasterProvider } : {}),
+		},
 	};
 }

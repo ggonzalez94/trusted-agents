@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveConfigPath, resolveDataDir } from "../src/lib/config-loader.js";
+import { loadConfig, resolveConfigPath, resolveDataDir } from "../src/lib/config-loader.js";
 
 describe("config-loader", () => {
 	let tmpDir: string;
@@ -14,10 +14,12 @@ describe("config-loader", () => {
 	afterEach(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
 		// Clean up env vars
-		delete process.env["TAP_DATA_DIR"];
-		delete process.env["TAP_AGENT_ID"];
-		delete process.env["TAP_CHAIN"];
-		delete process.env["TAP_PRIVATE_KEY"];
+		Reflect.deleteProperty(process.env, "TAP_DATA_DIR");
+		Reflect.deleteProperty(process.env, "TAP_AGENT_ID");
+		Reflect.deleteProperty(process.env, "TAP_CHAIN");
+		Reflect.deleteProperty(process.env, "TAP_PRIVATE_KEY");
+		Reflect.deleteProperty(process.env, "TAP_EXECUTION_MODE");
+		Reflect.deleteProperty(process.env, "TAP_PAYMASTER_PROVIDER");
 	});
 
 	describe("resolveConfigPath", () => {
@@ -32,6 +34,13 @@ describe("config-loader", () => {
 			await writeFile(join(dataDir, "config.yaml"), "agent_id: 1", "utf-8");
 
 			const path = resolveConfigPath({}, dataDir);
+			expect(path).toBe(join(dataDir, "config.yaml"));
+		});
+
+		it("should keep an explicit data dir isolated from legacy config", () => {
+			const dataDir = join(tmpDir, "isolated-data");
+
+			const path = resolveConfigPath({ dataDir }, dataDir);
 			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 
@@ -53,15 +62,49 @@ describe("config-loader", () => {
 		});
 
 		it("should use TAP_DATA_DIR env when set", () => {
-			process.env["TAP_DATA_DIR"] = "/env/data";
+			process.env.TAP_DATA_DIR = "/env/data";
 			const dir = resolveDataDir({});
 			expect(dir).toBe("/env/data");
 		});
 
 		it("should prioritize CLI flag over env", () => {
-			process.env["TAP_DATA_DIR"] = "/env/data";
+			process.env.TAP_DATA_DIR = "/env/data";
 			const dir = resolveDataDir({ dataDir: "/flag/data" });
 			expect(dir).toBe("/flag/data");
+		});
+	});
+
+	describe("loadConfig", () => {
+		it("defaults Base networks to eip7702 with Circle", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
+			await mkdir(tmpDir, { recursive: true });
+			await writeFile(
+				join(tmpDir, "config.yaml"),
+				"agent_id: 1\nchain: base-sepolia\nxmtp:\n  env: dev\n",
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir: tmpDir });
+
+			expect(config.execution?.mode).toBe("eip7702");
+			expect(config.execution?.paymasterProvider).toBe("circle");
+		});
+
+		it("defaults Taiko networks to eoa with no paymaster provider", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
+			await mkdir(tmpDir, { recursive: true });
+			await writeFile(
+				join(tmpDir, "config.yaml"),
+				"agent_id: 1\nchain: taiko\nxmtp:\n  env: production\n",
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir: tmpDir });
+
+			expect(config.execution?.mode).toBe("eoa");
+			expect(config.execution?.paymasterProvider).toBeUndefined();
 		});
 	});
 });
