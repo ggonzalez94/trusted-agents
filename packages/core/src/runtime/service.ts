@@ -83,6 +83,9 @@ import {
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
 
+const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
+const OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS = 15_000;
+
 export interface TapConnectionApprovalContext {
 	requestId: string;
 	peer: ResolvedAgent;
@@ -629,7 +632,11 @@ export class TapMessagingService {
 				status: "acked",
 			});
 
-			const asyncResult = await this.waitForActionResult(requestId, requestPayload.actionId, 5_000);
+			const asyncResult = await this.waitForActionResult(
+				requestId,
+				requestPayload.actionId,
+				ACTION_RESULT_WAIT_TIMEOUT_MS,
+			);
 			if (!asyncResult) {
 				await this.runReconcile();
 			}
@@ -1009,7 +1016,7 @@ export class TapMessagingService {
 		const peerAddress = outcome.peer.xmtpEndpoint ?? outcome.peer.agentAddress;
 		await this.context.transport.send(outcome.peer.agentId, resultMessage, {
 			peerAddress,
-			timeout: 5_000,
+			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 		});
 		await this.context.requestJournal.putOutbound({
 			requestId: String(resultMessage.id),
@@ -1181,8 +1188,17 @@ export class TapMessagingService {
 			}
 		}
 
-		await this.sendActionResult(contact, String(message.id), response);
 		await this.context.requestJournal.updateStatus(requestId, "completed");
+		try {
+			await this.sendActionResult(contact, String(message.id), response);
+		} catch (error: unknown) {
+			this.log(
+				"error",
+				`Failed to deliver action result ${request.actionId} to ${contact.peerDisplayName}: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
 	}
 
 	private async handleConnectionResult(message: ProtocolMessage): Promise<void> {
@@ -1343,7 +1359,7 @@ export class TapMessagingService {
 
 		await this.context.transport.send(contact.peerAgentId, request, {
 			peerAddress: contact.peerAgentAddress,
-			timeout: 5_000,
+			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 		});
 		await appendConversationLog(this.context.conversationLogger, contact, request, "outgoing");
 		await this.context.trustStore.touchContact(contact.connectionId);
