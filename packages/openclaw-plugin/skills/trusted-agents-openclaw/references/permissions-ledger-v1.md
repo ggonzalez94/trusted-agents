@@ -1,0 +1,1 @@
+../../../../sdk/skills/trusted-agents/references/permissions-ledger-v1.md

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
-	MESSAGE_ACTION_REQUEST,
-	MESSAGE_ACTION_RESPONSE,
+	ACTION_REQUEST,
+	ACTION_RESULT,
 	MESSAGE_SEND,
 	assertSafeFileComponent,
 	createJsonRpcRequest,
@@ -20,11 +20,7 @@ import type {
 } from "trusted-agents-core";
 import { DEFAULT_MESSAGE_SCOPE } from "./scopes.js";
 
-const LOGGABLE_MESSAGE_METHODS = new Set<string>([
-	MESSAGE_SEND,
-	MESSAGE_ACTION_REQUEST,
-	MESSAGE_ACTION_RESPONSE,
-]);
+const LOGGABLE_MESSAGE_METHODS = new Set<string>([MESSAGE_SEND, ACTION_REQUEST, ACTION_RESULT]);
 
 export function findContactForPeer(contacts: Contact[], peer: string): Contact | undefined {
 	const agentIdNum = Number.parseInt(peer, 10);
@@ -62,7 +58,7 @@ export function buildOutgoingActionRequest(
 ): JsonRpcRequest {
 	return buildOutgoingRequest(
 		contact,
-		MESSAGE_ACTION_REQUEST,
+		ACTION_REQUEST,
 		[
 			{ kind: "text", text },
 			{ kind: "data", data },
@@ -72,22 +68,28 @@ export function buildOutgoingActionRequest(
 	);
 }
 
-export function buildOutgoingActionResponse(
+export function buildOutgoingActionResult(
 	contact: Contact,
+	requestId: string,
 	text: string,
 	data: Record<string, unknown>,
 	scope: string,
+	status: "completed" | "rejected" | "failed",
 ): JsonRpcRequest {
-	return buildOutgoingRequest(
-		contact,
-		MESSAGE_ACTION_RESPONSE,
-		[
-			{ kind: "text", text },
-			{ kind: "data", data },
-		],
-		scope,
-		false,
-	);
+	return createJsonRpcRequest(ACTION_RESULT, {
+		requestId,
+		status,
+		timestamp: nowISO(),
+		message: buildProtocolMessage(
+			contact,
+			[
+				{ kind: "text", text },
+				{ kind: "data", data },
+			],
+			scope,
+			false,
+		),
+	});
 }
 
 export function buildConversationLogEntry(
@@ -176,23 +178,32 @@ function buildOutgoingRequest(
 	scope: string,
 	requiresHumanApproval: boolean,
 ): JsonRpcRequest {
+	return createJsonRpcRequest(method, {
+		message: buildProtocolMessage(contact, parts, scope, requiresHumanApproval),
+	});
+}
+
+function buildProtocolMessage(
+	contact: Contact,
+	parts: MessagePart[],
+	scope: string,
+	requiresHumanApproval: boolean,
+): Message {
 	const conversationId = resolveConversationId(contact);
 
-	return createJsonRpcRequest(method, {
-		message: {
-			messageId: generateNonce(),
-			role: "user" as const,
-			parts,
-			metadata: {
-				trustedAgent: {
-					connectionId: contact.connectionId,
-					conversationId,
-					scope,
-					requiresHumanApproval,
-				},
+	return {
+		messageId: generateNonce(),
+		role: "user" as const,
+		parts,
+		metadata: {
+			trustedAgent: {
+				connectionId: contact.connectionId,
+				conversationId,
+				scope,
+				requiresHumanApproval,
 			},
 		},
-	});
+	};
 }
 
 function extractTrustedAgentMetadata(message: Message): Partial<TrustedAgentMetadata> | undefined {

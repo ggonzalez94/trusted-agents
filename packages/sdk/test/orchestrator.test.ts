@@ -2,13 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateInvite } from "trusted-agents-core";
-import type {
-	IAgentResolver,
-	ProtocolMessage,
-	ProtocolResponse,
-	ResolvedAgent,
-	TransportProvider,
-} from "trusted-agents-core";
+import type { IAgentResolver, ResolvedAgent, TransportProvider } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrustedAgentsOrchestrator } from "../src/orchestrator.js";
 
@@ -29,15 +23,16 @@ function createTransportMock(): TransportProvider & {
 	start: ReturnType<typeof vi.fn>;
 	stop: ReturnType<typeof vi.fn>;
 	send: ReturnType<typeof vi.fn>;
-	onMessage: ReturnType<typeof vi.fn>;
+	setHandlers: ReturnType<typeof vi.fn>;
 } {
 	return {
-		send: vi.fn(async (_peerId: number, request: ProtocolMessage) => ({
-			jsonrpc: "2.0",
-			id: request.id,
-			result: { accepted: true, connectionId: "remote-conn-1" },
+		send: vi.fn(async (_peerId, request) => ({
+			received: true,
+			requestId: String(request.id),
+			status: "received" as const,
+			receivedAt: "2026-03-06T00:00:00.000Z",
 		})),
-		onMessage: vi.fn(),
+		setHandlers: vi.fn(),
 		isReachable: vi.fn(async () => true),
 		start: vi.fn(async () => {}),
 		stop: vi.fn(async () => {}),
@@ -77,42 +72,36 @@ describe("TrustedAgentsOrchestrator", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("should register inbound handler and start transport once", async () => {
+	it("should register inbound handlers and start transport once", async () => {
 		const transport = createTransportMock();
-		const resolver = createResolver(resolvedAgent);
 		const orchestrator = new TrustedAgentsOrchestrator({
 			privateKey: CONNECTOR_PRIVATE_KEY,
 			agentId: 2,
 			chain: "eip155:84532",
 			dataDir: tmpDir,
-			resolver,
+			resolver: createResolver(resolvedAgent),
 			transport,
 		});
 
-		const handler = vi.fn(
-			async (): Promise<ProtocolResponse> => ({
-				jsonrpc: "2.0",
-				id: "1",
-				result: { ok: true },
-			}),
-		);
+		const handlers = {
+			onRequest: vi.fn(async () => ({ status: "received" as const })),
+		};
 
-		await orchestrator.start({ onMessage: handler });
-		await orchestrator.start({ onMessage: handler });
+		await orchestrator.start({ handlers });
+		await orchestrator.start({ handlers });
 
-		expect(transport.onMessage).toHaveBeenCalledWith(handler);
+		expect(transport.setHandlers).toHaveBeenCalledWith(handlers);
 		expect(transport.start).toHaveBeenCalledTimes(1);
 	});
 
 	it("should lazily start transport before XMTP connect", async () => {
 		const transport = createTransportMock();
-		const resolver = createResolver(resolvedAgent);
 		const orchestrator = new TrustedAgentsOrchestrator({
 			privateKey: CONNECTOR_PRIVATE_KEY,
 			agentId: 2,
 			chain: "eip155:84532",
 			dataDir: tmpDir,
-			resolver,
+			resolver: createResolver(resolvedAgent),
 			transport,
 		});
 
@@ -126,20 +115,20 @@ describe("TrustedAgentsOrchestrator", () => {
 		const result = await orchestrator.connect(url);
 
 		expect(result.success).toBe(true);
-		expect(result.connectionId).toBe("remote-conn-1");
+		expect(result.status).toBe("pending");
+		expect(result.receiptStatus).toBe("received");
 		expect(transport.start).toHaveBeenCalledTimes(1);
 		expect(transport.send).toHaveBeenCalledTimes(1);
 	});
 
 	it("should stop transport when requested", async () => {
 		const transport = createTransportMock();
-		const resolver = createResolver(resolvedAgent);
 		const orchestrator = new TrustedAgentsOrchestrator({
 			privateKey: CONNECTOR_PRIVATE_KEY,
 			agentId: 2,
 			chain: "eip155:84532",
 			dataDir: tmpDir,
-			resolver,
+			resolver: createResolver(resolvedAgent),
 			transport,
 		});
 

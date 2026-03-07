@@ -1,18 +1,20 @@
 import {
 	AgentResolver,
 	FileConversationLogger,
+	FileRequestJournal,
 	FileTrustStore,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
+	ChainConfig,
 	IAgentResolver,
 	IConversationLogger,
+	IRequestJournal,
 	ITrustStore,
 	TransportProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
-import { http, createPublicClient } from "viem";
-import type { PublicClient } from "viem";
+import { buildChainPublicClient } from "trusted-agents-core";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
 
 export interface CliContext {
@@ -20,14 +22,15 @@ export interface CliContext {
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
+	requestJournal: IRequestJournal;
 }
 
 export interface CliContextWithTransport extends CliContext {
 	transport: TransportProvider;
 }
 
-function createViemClient(rpcUrl: string): PublicClient {
-	return createPublicClient({ transport: http(rpcUrl) }) as PublicClient;
+function createViemClient(chainConfig: ChainConfig) {
+	return buildChainPublicClient(chainConfig);
 }
 
 export function buildContext(config: TrustedAgentsConfig): CliContext {
@@ -41,8 +44,9 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 		maxCacheEntries: config.resolveCacheMaxEntries,
 	});
 	const conversationLogger = new FileConversationLogger(config.dataDir);
+	const requestJournal = new FileRequestJournal(config.dataDir);
 
-	return { config, trustStore, resolver, conversationLogger };
+	return { config, trustStore, resolver, conversationLogger, requestJournal };
 }
 
 export function buildContextWithTransport(config: TrustedAgentsConfig): CliContextWithTransport {

@@ -80,6 +80,10 @@ describe("register update", () => {
 		return JSON.parse(stdoutWrites.join("")) as Record<string, unknown>;
 	}
 
+	function uploadMock(): ReturnType<typeof vi.fn> {
+		return ipfsLib.uploadToIpfsX402 as unknown as ReturnType<typeof vi.fn>;
+	}
+
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-register-update-test-"));
 		stdoutWrites = [];
@@ -226,11 +230,7 @@ describe("register update", () => {
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
 		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
 
-		const uploadPayload = (
-			ipfsLib.uploadToIpfsX402 as unknown as {
-				mock: { calls: unknown[][] };
-			}
-		).mock.calls[0]?.[0] as RegistrationFile;
+		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.name).toBe("Replacement Agent");
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual(["search", "research"]);
 		expect(uploadPayload.trustedAgentProtocol.execution?.mode).toBe("eip4337");
@@ -257,11 +257,7 @@ describe("register update", () => {
 			},
 		});
 
-		const uploadPayload = (
-			ipfsLib.uploadToIpfsX402 as unknown as {
-				mock: { calls: unknown[][] };
-			}
-		).mock.calls[0]?.[0] as RegistrationFile;
+		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual(["search"]);
 	});
 
@@ -274,11 +270,7 @@ describe("register update", () => {
 
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
 
-		const uploadPayload = (
-			ipfsLib.uploadToIpfsX402 as unknown as {
-				mock: { calls: unknown[][] };
-			}
-		).mock.calls[0]?.[0] as RegistrationFile;
+		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual([]);
 	});
 

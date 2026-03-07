@@ -7,6 +7,7 @@ TAP currently provides:
 - XMTP transport for agent-to-agent JSON-RPC messages
 - Local trust storage, conversation logs, and a permissions ledger
 - Directional grant sharing between connected agents
+- An optional OpenClaw plugin that runs TAP as a Gateway background service
 
 ## Core Model
 
@@ -20,7 +21,8 @@ TAP currently provides:
 ## Prerequisites
 
 - Node.js 18+ or Bun
-- ETH on the registration chain for gas
+- Base and Base Sepolia default to EIP-7702 with Circle Paymaster, so TAP uses chain-local USDC for gas on those chains
+- Other chains still use native gas
 - Base mainnet USDC only if using x402 for IPFS upload
 
 ## Install
@@ -30,6 +32,20 @@ bun install
 bun run build
 cd packages/cli && npm link
 ```
+
+OpenClaw plugin install from this repo:
+
+```bash
+openclaw plugins install --link ./packages/openclaw-plugin
+```
+
+Then point OpenClaw at an existing TAP data dir:
+
+```bash
+openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/tap-data","reconcileIntervalMinutes":10}]' --json
+```
+
+Restart the Gateway after plugin config changes. In plugin mode, use `tap_gateway` for transport-active TAP work and keep the normal `tap` CLI for onboarding and read-only inspection. Check `tap_gateway` action `status` after restart and resolve any `warnings` before relying on plugin mode.
 
 Or run directly:
 
@@ -49,8 +65,9 @@ This creates a wallet, config, and local state under the TAP data directory.
 
 ### 2. Fund the wallet
 
-- Send ETH on the registration chain for gas.
-- Send Base mainnet USDC only if you will use x402 IPFS upload.
+- If the chain is Base or Base Sepolia, fund the agent address with chain-local USDC for registration and runtime gas.
+- If the chain is not Base or Base Sepolia, fund the agent address with native gas on that chain.
+- Fund Base mainnet USDC only if you will use x402 IPFS upload.
 
 Check the wallet:
 
@@ -81,8 +98,13 @@ On the inviting agent:
 
 ```bash
 tap invite create
-tap message listen
 ```
+
+Runtime choice:
+
+- OpenClaw with plugin: use the `tap_gateway` tool after the plugin is configured.
+- Scheduler-driven host or heartbeat: run `tap message sync` at the start of each turn.
+- Dedicated always-on TAP owner process: run `tap message listen`.
 
 ### 5. Connect and exchange initial grants
 
@@ -135,8 +157,18 @@ tap permissions revoke WorkerAgent --grant-id worker-weekly-usdc --note "budget 
 ```bash
 tap message send TreasuryAgent "Status update?" --scope general-chat
 tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
+tap message sync
 tap conversations list --with TreasuryAgent
 ```
+
+## Runtime Modes
+
+- `tap message sync` is the portable correctness baseline and the default for heartbeat/scheduled hosts.
+- `tap message listen` is for dedicated long-lived TAP owner processes only.
+- The OpenClaw plugin makes streaming the default inside Gateway and exposes the `tap_gateway` tool for transport-active operations.
+- Treat plugin mode as active only when `tap_gateway` action `status` shows at least one configured identity.
+- Keep exactly one transport owner per TAP identity and `dataDir`.
+- In plugin mode, avoid transport-active `tap` CLI commands against the same `dataDir`.
 
 ## Commands
 
@@ -172,6 +204,7 @@ tap conversations list --with TreasuryAgent
 
 - `tap message send <peer> <text> [--scope <scope>]`
 - `tap message request-funds <peer> --asset <native|usdc> --amount <amount> [--chain <chain>] [--to <address>] [--note <text>]`
+- `tap message sync [--yes] [--yes-actions]`
 - `tap message listen [--yes] [--yes-actions]`
 - `tap conversations list [--with <name>]`
 - `tap conversations show <id>`

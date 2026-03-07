@@ -1,4 +1,5 @@
 import {
+	FileRequestJournal,
 	FileTrustStore,
 	buildConnectionRequest,
 	caip2ToChainId,
@@ -12,11 +13,10 @@ import {
 import type {
 	AgentIdentifier,
 	ConnectionRequestParams,
-	Contact,
 	IAgentResolver,
-	JsonRpcResponse,
 	PermissionGrantSet,
 	TransportProvider,
+	TransportReceipt,
 } from "trusted-agents-core";
 
 export interface ConnectCommandOptions {
@@ -45,6 +45,7 @@ export interface ConnectResult {
 	connectionId?: string;
 	peerName?: string;
 	status?: "active" | "pending";
+	receiptStatus?: TransportReceipt["status"];
 	error?: string;
 }
 
@@ -89,13 +90,26 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 			}
 		}
 
+		const trustStore = new FileTrustStore(dataDir);
+		const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+		if (existing?.status === "active") {
+			return {
+				success: true,
+				connectionId: existing.connectionId,
+				peerName: existing.peerDisplayName,
+				status: "active",
+			};
+		}
+
 		const from: AgentIdentifier = { agentId, chain };
 		const to: AgentIdentifier = { agentId: invite.agentId, chain: invite.chain };
+		const connectionId = existing?.connectionId ?? generateConnectionId();
 		const requestNonce = generateNonce();
-
+		const requestedAt = nowISO();
 		const requestParams: ConnectionRequestParams = {
 			from,
 			to,
+			connectionId,
 			...(options.requestedGrants || options.offeredGrants
 				? {
 						permissionIntent: {
@@ -108,55 +122,58 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 				: {}),
 			nonce: requestNonce,
 			protocolVersion: "1.0",
-			timestamp: nowISO(),
+			timestamp: requestedAt,
 		};
 
 		const rpcRequest = buildConnectionRequest(requestParams);
-
+		const requestId = String(rpcRequest.id);
 		const xmtpAddress = peerAgent.xmtpEndpoint ?? peerAgent.agentAddress;
-		const response = await transport.send(peerAgent.agentId, rpcRequest, {
+		const receipt = await transport.send(peerAgent.agentId, rpcRequest, {
 			peerAddress: xmtpAddress,
 		});
 
-		const acceptance = parseAcceptance(response);
-		if (!acceptance.ok) {
-			return {
-				success: false,
-				error: acceptance.error,
-			};
-		}
-
-		const status: "active" | "pending" = acceptance.accepted ? "active" : "pending";
-		if (acceptance.accepted && !acceptance.connectionId) {
-			return {
-				success: false,
-				error: "Peer accepted the connection without returning a connectionId",
-			};
-		}
-
-		const connectionId = acceptance.connectionId ?? generateConnectionId();
-
-		const contact: Contact = {
+		const nextContact = {
 			connectionId,
 			peerAgentId: peerAgent.agentId,
 			peerChain: peerAgent.chain,
 			peerOwnerAddress: peerAgent.ownerAddress,
 			peerDisplayName: peerAgent.registrationFile.name,
 			peerAgentAddress: peerAgent.agentAddress,
-			permissions: createEmptyPermissionState(),
-			establishedAt: nowISO(),
-			lastContactAt: nowISO(),
-			status,
+			permissions: existing?.permissions ?? createEmptyPermissionState(requestedAt),
+			establishedAt: existing?.establishedAt ?? requestedAt,
+			lastContactAt: requestedAt,
+			status: "pending" as const,
+			pending: {
+				direction: "outbound" as const,
+				requestId,
+				requestNonce,
+				requestedAt,
+				inviteNonce: invite.nonce,
+				initialRequestedGrants: options.requestedGrants,
+				initialOfferedGrants: options.offeredGrants,
+			},
 		};
 
-		const trustStore = new FileTrustStore(dataDir);
-		await trustStore.addContact(contact);
+		if (existing) {
+			await trustStore.updateContact(existing.connectionId, nextContact);
+		} else {
+			await trustStore.addContact(nextContact);
+		}
+
+		const journal = new FileRequestJournal(dataDir);
+		await journal.putOutbound({
+			requestId,
+			requestKey: `outbound:${rpcRequest.method}:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: rpcRequest.method,
+			peerAgentId: peerAgent.agentId,
+			status: "acked",
+		});
 
 		if (options.notify) {
 			await options.notify(
-				status === "active"
-					? `Connected to ${peerAgent.registrationFile.name}`
-					: `Connection request sent to ${peerAgent.registrationFile.name}; awaiting acceptance`,
+				`Connection request sent to ${peerAgent.registrationFile.name}; awaiting offline resolution`,
 			);
 		}
 
@@ -164,7 +181,8 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 			success: true,
 			connectionId,
 			peerName: peerAgent.registrationFile.name,
-			status,
+			status: "pending",
+			receiptStatus: receipt.status,
 		};
 	} catch (error) {
 		return {
@@ -172,49 +190,4 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 			error: error instanceof Error ? error.message : "Connection failed",
 		};
 	}
-}
-
-function parseAcceptance(response: unknown): {
-	ok: boolean;
-	accepted: boolean;
-	connectionId?: string;
-	error?: string;
-} {
-	if (!response || typeof response !== "object") {
-		return { ok: false, accepted: false, error: "Invalid JSON-RPC response payload" };
-	}
-
-	const rpc = response as JsonRpcResponse & { result?: unknown };
-	if (rpc.error) {
-		return {
-			ok: false,
-			accepted: false,
-			error:
-				typeof rpc.error.message === "string"
-					? `Peer rejected connection: ${rpc.error.message}`
-					: "Peer rejected connection",
-		};
-	}
-
-	if (rpc.result && typeof rpc.result === "object") {
-		const result = rpc.result as Record<string, unknown>;
-		if (result.accepted === true || result.status === "accepted") {
-			const connectionId =
-				typeof result.connectionId === "string" && result.connectionId.length > 0
-					? result.connectionId
-					: undefined;
-			if (!connectionId) {
-				return {
-					ok: false,
-					accepted: false,
-					error: "Peer accepted the connection without returning a connectionId",
-				};
-			}
-			return { ok: true, accepted: true, connectionId };
-		}
-	}
-
-	// Valid response without explicit acceptance semantics means request was received,
-	// but the connection is still pending.
-	return { ok: true, accepted: false };
 }

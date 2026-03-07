@@ -70,6 +70,7 @@ That means:
 - Agent A: at least `0.02 ETH`
 - Agent B: at least `0.01 ETH`
 - Treasury wallet: enough ETH to refill both agents and cover repeated runs
+- If Agent A or Agent B keeps the default Base Sepolia `execution.mode: eip7702`, also provision a small Base Sepolia USDC balance for gas. The checked-in top-up helper only funds ETH.
 
 ## Scenario
 

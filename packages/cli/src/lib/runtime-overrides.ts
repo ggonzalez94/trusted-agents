@@ -1,16 +1,18 @@
 import type {
 	IAgentResolver,
 	IConversationLogger,
+	IRequestJournal,
 	ITrustStore,
+	TransferActionRequest,
 	TransportProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
-import type { TransferActionRequest } from "./actions.js";
 
 export interface RuntimeContextParts {
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
+	requestJournal: IRequestJournal;
 }
 
 export interface CliRuntimeOverride {
