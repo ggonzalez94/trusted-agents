@@ -98,4 +98,26 @@ describe("tap init", () => {
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.data.config).toBe(join(dataDir, "config.yaml"));
 	});
+
+	it("reuses the saved chain in output when init is rerun", async () => {
+		const dataDir = join(tmpDir, "existing-chain");
+
+		await initCommand(
+			{
+				json: true,
+				dataDir,
+			},
+			{ chain: "base-sepolia" },
+		);
+
+		stdoutWrites = [];
+		await initCommand({
+			json: true,
+			dataDir,
+		});
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.data.chain).toBe("eip155:84532");
+		expect(output.data.chain_name).toBe("Base Sepolia");
+	});
 });

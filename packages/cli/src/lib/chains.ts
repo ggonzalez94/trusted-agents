@@ -32,7 +32,7 @@ export const ALL_CHAINS: Record<string, ChainConfig> = {
 	"eip155:167013": TAIKO_HOODI,
 };
 
-export const DEFAULT_INIT_CHAIN_ALIAS = "base" as const;
+export const DEFAULT_CHAIN_ALIAS = "base" as const;
 
 /**
  * Human-friendly aliases → CAIP-2 chain IDs.
