@@ -16,6 +16,10 @@ Use this skill when working with the `tap` CLI.
   - `grantedByPeer`
 - Grants are runtime context for the agent. Review grants plus the ledger before high-impact actions.
 
+## Chain Selection
+
+Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to users.
+
 ## Default Loop
 
 1. If the user needs TAP installed from this repo, read `references/install-cli.md`.
@@ -77,7 +81,7 @@ tap identity show
 Resolve another agent from the registry.
 
 ```bash
-tap identity resolve 42 base-sepolia
+tap identity resolve 42 base
 ```
 
 ### `tap identity resolve-self`
