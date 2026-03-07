@@ -387,6 +387,46 @@ describe("execution", () => {
 		expect(result.userOperationHash).toBeUndefined();
 	});
 
+	it("stops eoa multi-call execution on the first reverted transaction", async () => {
+		const sendTransaction = vi
+			.fn()
+			.mockResolvedValueOnce("0xtxhash1")
+			.mockResolvedValueOnce("0xtxhash2");
+		const waitForTransactionReceipt = vi.fn().mockResolvedValueOnce({
+			transactionHash: "0xtxhash1",
+			logs: [],
+			status: "reverted",
+		});
+		buildWalletClient.mockReturnValue({
+			chain: { id: 167000, name: "Taiko" },
+			sendTransaction,
+		});
+		buildPublicClient.mockReturnValue({
+			waitForTransactionReceipt,
+			readContract: vi.fn(),
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+		});
+
+		const { executeContractCalls } = await import("../src/lib/execution.js");
+		const config = buildConfig("eip155:167000", { mode: "eoa" });
+
+		await expect(
+			executeContractCalls(config, config.chains[config.chain]!, [
+				{
+					to: "0x3000000000000000000000000000000000000003",
+					data: "0x",
+				},
+				{
+					to: "0x3000000000000000000000000000000000000004",
+					data: "0x",
+				},
+			]),
+		).rejects.toThrow("Transaction 0xtxhash1 reverted on Taiko");
+
+		expect(sendTransaction).toHaveBeenCalledTimes(1);
+		expect(waitForTransactionReceipt).toHaveBeenCalledTimes(1);
+	});
+
 	it("executes Base 7702 user operations with Circle", async () => {
 		const readContract = vi
 			.fn()

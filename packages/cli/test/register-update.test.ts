@@ -153,11 +153,35 @@ describe("register update", () => {
 
 	it("skips upload and transaction when merged manifest is unchanged", async () => {
 		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+			new Error("should not preflight a no-op update"),
+		);
 
 		await registerUpdateCommand({}, { json: true });
 
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
 		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
+
+		const output = lastJsonOutput() as {
+			ok: boolean;
+			data?: { no_change?: boolean; agent_uri?: string };
+		};
+		expect(output.ok).toBe(true);
+		expect(output.data?.no_change).toBe(true);
+		expect(output.data?.agent_uri).toBe("ipfs://existing-cid");
+	});
+
+	it("skips paymaster preflight when --uri already matches the registry", async () => {
+		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+			new Error("should not preflight a no-op uri update"),
+		);
+
+		await registerUpdateCommand({ uri: "ipfs://existing-cid" }, { json: true });
+
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
 
 		const output = lastJsonOutput() as {
 			ok: boolean;

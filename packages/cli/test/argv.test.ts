@@ -36,4 +36,35 @@ describe("normalizeCliArgv", () => {
 			"create",
 		]);
 	});
+
+	it("rewrites register shorthand after boolean global options", () => {
+		expect(
+			normalizeCliArgv(["node", "tap", "--json", "--verbose", "register", "--name", "Smoke"]),
+		).toEqual(["node", "tap", "--json", "--verbose", "register", "create", "--name", "Smoke"]);
+	});
+
+	it("rewrites register shorthand after value-taking global options", () => {
+		expect(
+			normalizeCliArgv([
+				"node",
+				"tap",
+				"--chain",
+				"eip155:8453",
+				"--data-dir=/tmp/tap",
+				"register",
+				"--name",
+				"Smoke",
+			]),
+		).toEqual([
+			"node",
+			"tap",
+			"--chain",
+			"eip155:8453",
+			"--data-dir=/tmp/tap",
+			"register",
+			"create",
+			"--name",
+			"Smoke",
+		]);
+	});
 });

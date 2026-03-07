@@ -127,6 +127,15 @@ function buildExecutionMetadata(
 	};
 }
 
+function emitExecutionWarnings(
+	preview: Pick<Awaited<ReturnType<typeof getExecutionPreview>>, "warnings">,
+	opts: GlobalOptions,
+): void {
+	for (const warning of preview.warnings) {
+		verbose(warning, opts);
+	}
+}
+
 function extractRegisteredAgentId(
 	receipt: Awaited<ReturnType<typeof executeContractCalls>>["transactionReceipt"],
 	registryAddress: `0x${string}`,
@@ -426,9 +435,7 @@ export async function registerCommand(
 		const executionPreview = await getExecutionPreview(config, chainConfig, {
 			requireProvider: true,
 		});
-		for (const warning of executionPreview.warnings) {
-			verbose(warning, opts);
-		}
+		emitExecutionWarnings(executionPreview, opts);
 		const publicClient = buildPublicClient(chainConfig);
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
@@ -485,9 +492,7 @@ export async function registerCommand(
 				preview: executionPreview,
 			},
 		);
-		for (const warning of executionResult.warnings) {
-			verbose(warning, opts);
-		}
+		emitExecutionWarnings(executionResult, opts);
 		const agentId = extractRegisteredAgentId(
 			executionResult.transactionReceipt,
 			chainConfig.registryAddress,
@@ -567,18 +572,10 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const executionPreview = await getExecutionPreview(config, chainConfig, {
-			requireProvider: true,
-		});
-		for (const warning of executionPreview.warnings) {
-			verbose(warning, opts);
-		}
-
 		const publicClient = buildPublicClient(chainConfig);
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
-		await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
 		const existingAgentURI = await registry.getTokenURI(config.agentId);
 
 		if (cmdOpts.uri) {
@@ -587,6 +584,11 @@ export async function registerUpdateCommand(
 				return;
 			}
 
+			const executionPreview = await getExecutionPreview(config, chainConfig, {
+				requireProvider: true,
+			});
+			emitExecutionWarnings(executionPreview, opts);
+			await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
 			info(`Updating agent #${config.agentId} URI on ${chainConfig.name}...`, opts);
 			const executionResult = await executeContractCalls(
 				config,
@@ -605,9 +607,7 @@ export async function registerUpdateCommand(
 					preview: executionPreview,
 				},
 			);
-			for (const warning of executionResult.warnings) {
-				verbose(warning, opts);
-			}
+			emitExecutionWarnings(executionResult, opts);
 
 			success(
 				{
@@ -628,17 +628,17 @@ export async function registerUpdateCommand(
 
 		const fullReplacement = isFullManifestReplacement(cmdOpts);
 		let currentRegistrationFile: RegistrationFile | null = null;
-		let registrationFile: RegistrationFile;
+		let pendingRegistrationFile: RegistrationFile;
 
 		if (fullReplacement) {
-			registrationFile = buildRegistrationFile(
+			pendingRegistrationFile = buildRegistrationFile(
 				cmdOpts.name!,
 				cmdOpts.description!,
 				parseCapabilities(cmdOpts.capabilities!),
 				agentAddress,
-				buildExecutionMetadata(executionPreview),
+				undefined,
 			);
-			validateRegistrationFile(registrationFile);
+			validateRegistrationFile(pendingRegistrationFile);
 			verbose("Replacement registration file validated", opts);
 
 			try {
@@ -654,10 +654,10 @@ export async function registerUpdateCommand(
 			info(`Fetching current registration for agent #${config.agentId}...`, opts);
 			currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
 
-			registrationFile = buildUpdatedRegistrationFile(
+			pendingRegistrationFile = buildUpdatedRegistrationFile(
 				currentRegistrationFile,
 				agentAddress,
-				buildExecutionMetadata(executionPreview),
+				currentRegistrationFile.trustedAgentProtocol.execution,
 				{
 					name: cmdOpts.name,
 					description: cmdOpts.description,
@@ -667,17 +667,46 @@ export async function registerUpdateCommand(
 							: undefined,
 				},
 			);
-			validateRegistrationFile(registrationFile);
+			validateRegistrationFile(pendingRegistrationFile);
 			verbose("Updated registration file validated", opts);
 		}
 
 		if (
 			currentRegistrationFile &&
-			hasSameRegistrationContent(currentRegistrationFile, registrationFile)
+			hasSameRegistrationContent(currentRegistrationFile, pendingRegistrationFile)
 		) {
 			emitNoChangeResult(config.agentId, existingAgentURI, opts, startTime);
 			return;
 		}
+
+		const executionPreview = await getExecutionPreview(config, chainConfig, {
+			requireProvider: true,
+		});
+		emitExecutionWarnings(executionPreview, opts);
+		await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
+
+		const registrationFile = fullReplacement
+			? buildRegistrationFile(
+					cmdOpts.name!,
+					cmdOpts.description!,
+					parseCapabilities(cmdOpts.capabilities!),
+					agentAddress,
+					buildExecutionMetadata(executionPreview),
+				)
+			: buildUpdatedRegistrationFile(
+					currentRegistrationFile!,
+					agentAddress,
+					buildExecutionMetadata(executionPreview),
+					{
+						name: cmdOpts.name,
+						description: cmdOpts.description,
+						capabilities:
+							cmdOpts.capabilities !== undefined
+								? parseCapabilities(cmdOpts.capabilities)
+								: undefined,
+					},
+				);
+		validateRegistrationFile(registrationFile);
 
 		const result = await resolveAgentURI(
 			{

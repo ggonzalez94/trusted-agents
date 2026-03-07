@@ -672,15 +672,15 @@ async function executeEoaCalls(
 		transactionReceipt = await context.publicClient.waitForTransactionReceipt({
 			hash: transactionHash,
 		});
+		if (transactionReceipt.status === "reverted") {
+			throw new Error(
+				`Transaction ${transactionHash} reverted on ${context.walletClient.chain?.name ?? "this chain"}`,
+			);
+		}
 	}
 
 	if (!transactionHash || !transactionReceipt) {
 		throw new Error("No transaction was sent");
-	}
-	if (transactionReceipt.status === "reverted") {
-		throw new Error(
-			`Transaction ${transactionHash} reverted on ${context.walletClient.chain?.name ?? "this chain"}`,
-		);
 	}
 
 	return {
