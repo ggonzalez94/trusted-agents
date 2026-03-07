@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -124,5 +124,39 @@ describe("FileTrustStore", () => {
 		const contacts = await store2.getContacts();
 		expect(contacts).toHaveLength(1);
 		expect(contacts[0]!.peerDisplayName).toBe("Bob's Agent");
+	});
+
+	it("should normalize legacy permission maps when loading persisted contacts", async () => {
+		await writeFile(
+			join(tmpDir, "contacts.json"),
+			JSON.stringify(
+				{
+					contacts: [
+						{
+							...createTestContact(),
+							permissions: {
+								"message/send": true,
+								"transfer/request": {
+									asset: "native",
+									maxAmount: "0.001",
+								},
+							},
+						},
+					],
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
+
+		const contacts = await store.getContacts();
+		expect(contacts[0]?.permissions.grantedByMe.grants).toHaveLength(0);
+		expect(contacts[0]?.permissions.grantedByPeer.grants).toHaveLength(2);
+		expect(contacts[0]?.permissions.grantedByPeer.grants[0]?.grantId).toBe("legacy:message/send");
+		expect(contacts[0]?.permissions.grantedByPeer.grants[1]?.constraints).toMatchObject({
+			asset: "native",
+			maxAmount: "0.001",
+		});
 	});
 });

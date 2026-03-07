@@ -3,6 +3,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 import { ConnectionError } from "../common/index.js";
+import {
+	type ContactPermissionState,
+	createEmptyPermissionState,
+	createGrantSet,
+} from "../permissions/types.js";
 import type { ITrustStore } from "./trust-store.js";
 import type { Contact, ContactsFile } from "./types.js";
 
@@ -107,7 +112,10 @@ export class FileTrustStore implements ITrustStore {
 	private async load(): Promise<ContactsFile> {
 		try {
 			const raw = await readFile(this.contactsPath, "utf-8");
-			return JSON.parse(raw) as ContactsFile;
+			const parsed = JSON.parse(raw) as ContactsFile;
+			return {
+				contacts: parsed.contacts.map((contact) => normalizeContact(contact)),
+			};
 		} catch (err: unknown) {
 			if (
 				err instanceof Error &&
@@ -129,4 +137,57 @@ export class FileTrustStore implements ITrustStore {
 		});
 		await rename(tmpPath, this.contactsPath);
 	}
+}
+
+function normalizeContact(contact: Contact): Contact {
+	return {
+		...contact,
+		permissions: normalizePermissionState(contact.permissions, contact.lastContactAt),
+	};
+}
+
+function normalizePermissionState(
+	value: Contact["permissions"] | Record<string, boolean | Record<string, unknown>>,
+	timestamp: string,
+): ContactPermissionState {
+	if (isDirectionalPermissionState(value)) {
+		return value;
+	}
+
+	const legacyEntries = Object.entries(value ?? {}).flatMap(([scope, permissionValue]) => {
+		if (permissionValue === false) {
+			return [];
+		}
+
+		return [
+			{
+				grantId: `legacy:${scope}`,
+				scope,
+				...(isConstraintObject(permissionValue) ? { constraints: permissionValue } : {}),
+			},
+		];
+	});
+
+	return {
+		grantedByMe: createEmptyPermissionState(timestamp).grantedByMe,
+		grantedByPeer: createGrantSet(legacyEntries, timestamp),
+	};
+}
+
+function isDirectionalPermissionState(value: unknown): value is ContactPermissionState {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+
+	const candidate = value as {
+		grantedByMe?: { grants?: unknown };
+		grantedByPeer?: { grants?: unknown };
+	};
+	return (
+		Array.isArray(candidate.grantedByMe?.grants) && Array.isArray(candidate.grantedByPeer?.grants)
+	);
+}
+
+function isConstraintObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
