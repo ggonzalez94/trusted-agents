@@ -1,107 +1,126 @@
-import { generateConnectionId, nowISO } from "../common/index.js";
+import { nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import type { ResolvedAgent } from "../identity/types.js";
-import { createEmptyPermissionState } from "../permissions/types.js";
-import { createJsonRpcError, createJsonRpcResponse } from "../protocol/messages.js";
+import { createEmptyPermissionState, createGrantSet } from "../permissions/types.js";
 import type {
 	AgentIdentifier,
 	ConnectionPermissionIntent,
 	ConnectionRequestParams,
+	ConnectionResultParams,
+	JsonRpcRequest,
 } from "../protocol/types.js";
-import type { ProtocolMessage, ProtocolResponse } from "../transport/interface.js";
 import type { ITrustStore } from "../trust/trust-store.js";
 import type { Contact } from "../trust/types.js";
 
 export interface ConnectionRequestContext {
-	/** The incoming connection/request message (already verified by transport). */
-	message: ProtocolMessage;
-	/** Resolver to look up the requester's on-chain identity. */
+	message: JsonRpcRequest;
 	resolver: IAgentResolver;
-	/** Trust store to persist the new contact. */
 	trustStore: ITrustStore;
-	/** This agent's identity. */
 	ownAgent: AgentIdentifier;
-	/**
-	 * Approval callback — receives the resolved peer identity, returns true to
-	 * accept or false to reject. This is where CLI prompts or SDK delegates.
-	 */
 	approve: (
 		peer: ResolvedAgent,
 		permissionIntent: ConnectionPermissionIntent | undefined,
 	) => Promise<boolean>;
 }
 
+export interface ConnectionRequestOutcome {
+	peer: ResolvedAgent;
+	result: ConnectionResultParams;
+	contact: Contact | null;
+}
+
 export async function handleConnectionRequest(
 	ctx: ConnectionRequestContext,
-): Promise<ProtocolResponse> {
+): Promise<ConnectionRequestOutcome> {
 	const params = ctx.message.params as ConnectionRequestParams | undefined;
-	if (!params?.from?.agentId || !params.from.chain) {
-		return createJsonRpcError(ctx.message.id, {
-			code: -32602,
-			message: "Invalid connection request parameters",
-		});
+	if (
+		typeof params?.from?.agentId !== "number" ||
+		params.from.agentId < 0 ||
+		typeof params.from.chain !== "string" ||
+		params.from.chain.length === 0 ||
+		typeof params.connectionId !== "string" ||
+		params.connectionId.length === 0
+	) {
+		throw new Error("Invalid connection request parameters");
 	}
 
-	// Resolve requester's on-chain identity (cache-first — transport already resolved recently)
-	let resolved: ResolvedAgent;
-	try {
-		resolved = await ctx.resolver.resolveWithCache(params.from.agentId, params.from.chain);
-	} catch {
-		return createJsonRpcError(ctx.message.id, {
-			code: -32001,
-			message: "Failed to resolve requester identity",
-		});
-	}
-
-	// Check if already a contact (idempotency)
+	const resolved = await ctx.resolver.resolveWithCache(params.from.agentId, params.from.chain);
 	const existing = await ctx.trustStore.findByAgentId(params.from.agentId, params.from.chain);
 	if (existing && existing.status === "active") {
-		return createJsonRpcResponse(ctx.message.id, {
-			accepted: true,
-			connectionId: existing.connectionId,
-			from: ctx.ownAgent,
-			to: params.from,
-			requestNonce: params.nonce,
-			timestamp: nowISO(),
-		});
+		return {
+			peer: resolved,
+			contact: existing,
+			result: {
+				requestId: String(ctx.message.id),
+				requestNonce: params.nonce,
+				from: ctx.ownAgent,
+				to: params.from,
+				status: "accepted",
+				connectionId: existing.connectionId,
+				timestamp: nowISO(),
+			},
+		};
 	}
 
-	// Ask for approval
 	const approved = await ctx.approve(resolved, params.permissionIntent);
 	if (!approved) {
-		return createJsonRpcResponse(ctx.message.id, {
-			accepted: false,
-			from: ctx.ownAgent,
-			to: params.from,
-			reason: "Connection rejected by agent",
-			nonce: params.nonce,
-			timestamp: nowISO(),
-		});
+		return {
+			peer: resolved,
+			contact: null,
+			result: {
+				requestId: String(ctx.message.id),
+				requestNonce: params.nonce,
+				from: ctx.ownAgent,
+				to: params.from,
+				status: "rejected",
+				reason: "Connection rejected by agent",
+				timestamp: nowISO(),
+			},
+		};
 	}
 
-	// Store contact
-	const connectionId = generateConnectionId();
 	const now = nowISO();
-	const contact: Contact = {
-		connectionId,
+	const basePermissions = existing?.permissions ?? createEmptyPermissionState(now);
+	const nextPermissions =
+		params.permissionIntent?.offeredGrants && params.permissionIntent.offeredGrants.length > 0
+			? {
+					...basePermissions,
+					grantedByPeer: createGrantSet(params.permissionIntent.offeredGrants, now),
+				}
+			: basePermissions;
+	const nextContact: Contact = {
+		connectionId: existing?.connectionId ?? params.connectionId,
 		peerAgentId: resolved.agentId,
 		peerChain: resolved.chain,
 		peerOwnerAddress: resolved.ownerAddress,
 		peerDisplayName: resolved.registrationFile.name,
 		peerAgentAddress: resolved.agentAddress,
-		permissions: createEmptyPermissionState(now),
-		establishedAt: now,
+		permissions: nextPermissions,
+		establishedAt: existing?.establishedAt ?? now,
 		lastContactAt: now,
 		status: "active",
 	};
-	await ctx.trustStore.addContact(contact);
 
-	return createJsonRpcResponse(ctx.message.id, {
-		accepted: true,
-		connectionId,
-		from: ctx.ownAgent,
-		to: params.from,
-		requestNonce: params.nonce,
-		timestamp: now,
-	});
+	if (existing) {
+		await ctx.trustStore.updateContact(existing.connectionId, {
+			...nextContact,
+			pending: undefined,
+		});
+	} else {
+		await ctx.trustStore.addContact(nextContact);
+	}
+
+	return {
+		peer: resolved,
+		contact: nextContact,
+		result: {
+			requestId: String(ctx.message.id),
+			requestNonce: params.nonce,
+			from: ctx.ownAgent,
+			to: params.from,
+			status: "accepted",
+			connectionId: nextContact.connectionId,
+			timestamp: now,
+		},
+	};
 }

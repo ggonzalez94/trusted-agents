@@ -15,27 +15,84 @@ When this file conflicts with code, code wins.
 	- `packages/core`: protocol + storage + transport abstractions
 	- `packages/cli`: executable UX and config/bootstrap behavior
 	- `packages/sdk`: orchestration wrapper for embedding in other runtimes
+	- `packages/openclaw-plugin`: OpenClaw Gateway plugin that owns TAP as a background service
 - Dependency direction:
 	- `cli -> core`
 	- `sdk -> core`
+	- `openclaw-plugin -> core`
 	- `core` has no internal workspace dependencies
+
+## Package Responsibilities
+
+### `packages/core`
+- Source of truth for protocol and runtime behavior.
+- Owns:
+	- protocol methods/types
+	- identity resolution and registration validation
+	- XMTP transport + transport interface
+	- trust/contact persistence
+	- conversation logging
+	- request journal / dedupe / reconciliation state
+	- transport owner lock
+	- `TapMessagingService`
+- If behavior differs between hosts, start by checking whether it should really live here.
+
+### `packages/cli`
+- Human/agent-facing `tap` executable.
+- Host adapter over `core`, not the source of messaging business logic.
+- Owns:
+	- command parsing and output formatting
+	- CLI-specific prompting / approval UX
+	- onboarding commands
+	- local operator workflows
+
+### `packages/sdk`
+- Programmatic embedding surface for non-CLI hosts.
+- Re-exports shared runtime pieces from `core`.
+- Still contains the older `TrustedAgentsOrchestrator`; treat it as a thin wrapper, not the main runtime model.
+- Also contains the canonical repo TAP skill tree under `packages/sdk/skills/trusted-agents/`.
+
+### `packages/openclaw-plugin`
+- OpenClaw-specific host adapter.
+- Owns:
+	- Gateway plugin manifest/config
+	- one long-lived TAP runtime per configured identity inside Gateway
+	- periodic reconcile scheduling inside the plugin host
+	- the `tap_gateway` tool surface
+	- OpenClaw-specific TAP skill docs
+- This is the preferred OpenClaw streaming host. OpenClaw shell background jobs are not.
+
+## Skills Layout
+
+- Generic TAP skills live in `packages/sdk/skills/trusted-agents/`.
+- OpenClaw plugin skills live in `packages/openclaw-plugin/skills/trusted-agents-openclaw/`.
+
+Installation expectations:
+
+- OpenClaw plugin install loads the plugin skill directory from `packages/openclaw-plugin/openclaw.plugin.json`.
+- That plugin install does **not** automatically install the generic TAP skill tree from `packages/sdk/skills/trusted-agents/`.
+- Outside OpenClaw plugin mode, hosts should install the generic TAP skills from `packages/sdk/skills/trusted-agents/` into whatever skill directory that host uses.
+- In this repo, skill files under `packages/*/skills/...` are the canonical source. Any copies under `~/.local/share/...`, `~/.openclaw/...`, or other host-specific paths are installed mirrors, not the source of truth.
 
 ## Read Order For Fast Orientation
 1. `packages/core/src/protocol/*` (wire protocol)
 2. `packages/core/src/identity/*` (on-chain + registration resolution)
 3. `packages/core/src/transport/interface.ts` then `transport/xmtp.ts`
 4. `packages/core/src/trust/*` and `conversation/*` (state persistence)
-5. `packages/cli/src/lib/context.ts` and `commands/*` (runtime composition)
-6. `packages/sdk/src/orchestrator.ts` (programmatic integration path)
+5. `packages/core/src/runtime/*` (`TapMessagingService`, request journal, transport owner lock)
+6. `packages/cli/src/lib/context.ts`, `lib/tap-service.ts`, and `commands/*` (CLI host adapter)
+7. `packages/openclaw-plugin/src/*` (Gateway host adapter)
+8. `packages/sdk/src/orchestrator.ts` (legacy programmatic wrapper)
 
 ## Core Abstractions To Preserve
 
 ### 1) `TransportProvider` (replaceable transport seam)
 File: `packages/core/src/transport/interface.ts`
 - Contract:
-	- `send(peerId, message, options?) -> JsonRpcResponse`
-	- `onMessage(handler)`
+	- `send(peerId, message, options?) -> TransportReceipt`
+	- `setHandlers({ onRequest?, onResult? })`
 	- `isReachable(peerId)`
+	- optional `reconcile(options?)`
 	- optional `start/stop`
 - Architectural intent: transport is swappable.
 - Current implementation: only `XmtpTransport`.
@@ -67,18 +124,16 @@ Files: `packages/sdk/src/notification.ts`, `approval.ts`
 ### JSON-RPC methods (canonical names)
 File: `packages/core/src/protocol/methods.ts`
 - `connection/request`
-- `connection/accept`
-- `connection/reject`
+- `connection/result`
 - `connection/revoke`
-- `connection/update-grants`
+- `permissions/update`
 - `message/send`
-- `message/action-request`
-- `message/action-response`
+- `action/request`
+- `action/result`
 
 `BOOTSTRAP_METHODS` currently contains only:
 - `connection/request`
-- `connection/accept`
-- `connection/reject`
+- `connection/result`
 
 ### Registration file invariants
 File: `packages/core/src/identity/registration-file.ts`
@@ -107,6 +162,7 @@ File: `packages/cli/src/lib/context.ts`
 - Builds:
 	- `FileTrustStore`
 	- `AgentResolver`
+	- `FileRequestJournal`
 	- `XmtpTransport` (when transport is needed)
 - Transport gets resolver injected for bootstrap sender verification.
 
@@ -132,7 +188,8 @@ File: `packages/sdk/src/orchestrator.ts`
 - In `XmtpTransport`, unknown sender can only proceed via `connection/request`
 - Requires `agentResolver` and inbox address verification against resolved `agentAddress`
 
-4. Known senders are still blocked unless contact status is `active`.
+4. Known senders are still blocked unless contact status is `active`, with one exception:
+- `connection/result` is allowed from a pending outbound contact so async connection resolution can complete.
 
 5. Trust store lookup by address can throw:
 - `findByAgentAddress()` throws if multiple active contacts match same address (+ optional chain)
@@ -140,7 +197,8 @@ File: `packages/sdk/src/orchestrator.ts`
 6. File stores are atomic but process-local locked:
 - Uses `AsyncMutex` per instance + `tmp file -> rename`
 - No cross-process lock exists
-- Do not run multiple transport-using CLI processes against the same agent/data dir at once. XMTP replies are process-local, so a long-running listener can race with a short-lived sender for the same identity.
+- `TapMessagingService` adds a `.transport.lock` owner file per `dataDir`
+- Do not run multiple transport-owning TAP processes against the same agent/data dir at once. If a listener or plugin runtime already owns the identity, other transport-active CLI commands should stop that owner first or use the owner process surface instead.
 
 7. `loadConfig()` requires `agent_id` by default:
 - Most commands fail unless `agent_id >= 0`
@@ -154,6 +212,7 @@ File: `packages/sdk/src/orchestrator.ts`
 ├── config.yaml              # agent_id, chain, xmtp.env
 ├── identity/agent.key       # Raw private key hex (chmod 0600)
 ├── contacts.json            # Connected peers (trust store)
+├── request-journal.json     # Durable inbound/outbound TAP request state
 ├── pending-invites.json     # Outstanding invite nonces
 ├── ipfs-cache.json          # Content hash → CID (avoids re-upload)
 ├── conversations/<id>.json  # Per-peer message transcripts
@@ -180,15 +239,25 @@ File: `packages/sdk/src/orchestrator.ts`
 - `PermissionEngine` exists but is not auto-wired into CLI message handling
 - Enforcement is caller responsibility
 
-14. Conversation logging is not automatically wired into CLI send/listen flows:
-- Logger exists, conversation commands read logs
-- Message commands currently send/listen without automatic log writes
+14. Conversation logging is wired into CLI messaging flows:
+- `message send`, `request-funds`, listener processing, and reconciliation append conversation entries
+- Conversation commands read the persisted logs from disk
 
-15. SDK sharp edge:
+15. Async connection and action outcomes are journaled:
+- `connect` persists a pending contact immediately after the transport receipt
+- `message listen` and `message sync` process later `connection/result` and `action/result`
+- `FileRequestJournal` is the dedupe and reconciliation source for inbound/outbound async work
+
+16. OpenClaw plugin mode owns transport inside Gateway:
+- `packages/openclaw-plugin` starts one `TapMessagingService` per configured TAP identity
+- OpenClaw agents should use the `tap_gateway` tool for transport-active operations when the plugin is installed
+- `tap message sync` remains the safe fallback when the plugin is not installed
+
+17. SDK sharp edge:
 - `TrustedAgentsOrchestrator.connect()` uses `this.transport!`
 - If neither `transport` nor `xmtp` config is provided, this will fail at runtime
 
-16. Invite chain value is not strongly validated in invite generation:
+18. Invite chain value is not strongly validated in invite generation:
 - `generateInvite()` signs any chain string given by caller
 - CAIP-2 correctness is enforced at higher layers, not inside invite generation
 
@@ -222,6 +291,7 @@ File: `packages/sdk/src/orchestrator.ts`
 
 ### Adding/changing/removing a CLI command
 - Update the relevant skill file in `packages/sdk/skills/trusted-agents/`
+- If the change is also relevant in OpenClaw plugin mode, update the mirrored skill/reference in `packages/openclaw-plugin/skills/trusted-agents-openclaw/` too.
 - Every CLI command must appear in exactly one skill file as a documented command
 - Skill structure maps to command domains:
   - `SKILL.md` (root): utility commands — `balance`, `config`, `identity`
@@ -231,6 +301,12 @@ File: `packages/sdk/src/orchestrator.ts`
 - Keep skills concise: command syntax + flags + one example + errors. No internal implementation details.
 - Every `SKILL.md` must have YAML frontmatter with `name` and `description`
 - Cross-references between skills (e.g., "use `tap contacts list` to check") are fine; duplicate primary docs are not
+
+### Changing TAP skill/reference semantics
+- The generic TAP skill tree lives in `packages/sdk/skills/trusted-agents/`.
+- The OpenClaw plugin skill tree lives in `packages/openclaw-plugin/skills/trusted-agents-openclaw/`.
+- When there is a meaningful TAP behavior, permission, runtime-mode, install, or operator-guidance change, update both folders if both host modes rely on that guidance.
+- If you intentionally document different behavior between generic TAP and OpenClaw plugin mode, make that divergence explicit instead of allowing the trees to drift silently.
 
 ## Build/Test Commands Agents Should Actually Use
 ```bash

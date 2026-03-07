@@ -1,6 +1,6 @@
 ---
 name: connections
-description: Create invites, connect agents, and manage directional grants for each peer.
+description: Create invites, send async TAP connection requests, and manage directional grants for each peer. Use this skill whenever the user wants to connect agents, inspect pending or active contacts, or exchange permission intent and grant files.
 ---
 
 # /connections
@@ -11,6 +11,7 @@ Use this skill for invites, connections, and permission grants.
 
 - `tap connect` establishes trust only.
 - Initial permission intent can be shown during connect with grant files.
+- If a connect request includes offered grants and the peer accepts, those grants become `grantedByPeer` for the accepting side immediately.
 - Published grants are directional:
   - `grantedByMe`: what the peer may ask this agent to do
   - `grantedByPeer`: what this agent may ask the peer to do
@@ -36,7 +37,7 @@ tap invite list
 
 ### `tap connect <invite-url> [--yes] [--request-grants-file <path>] [--grant-file <path>]`
 
-Accept an invite. The inviter should be running `tap message listen`.
+Send an asynchronous connection request. The remote peer only needs `tap message listen` or `tap message sync` to receive it; acceptance arrives later as `connection/result`.
 
 ```bash
 tap connect "<invite-url>" --yes --request-grants-file ./grants/request.json --grant-file ./grants/offer.json
@@ -44,8 +45,8 @@ tap connect "<invite-url>" --yes --request-grants-file ./grants/request.json --g
 
 During connect, TAP surfaces:
 - what this agent wants to request after connect
-- what this agent plans to publish after connect
-- what the remote peer says it plans to request or publish
+- what this agent plans to offer after connect
+- a local pending contact until the peer resolves the request
 
 ### `tap permissions show [peer]`
 
@@ -106,6 +107,7 @@ tap contacts remove 7f8e9d0c-1a2b-3c4d-5e6f-789012345678
 ## Common Errors
 
 - `Invalid or expired invite` — the invite URL is malformed, expired, or has a bad signature.
-- `Connection rejected` — the peer declined the trust request.
+- `Connection rejected` — the peer declined the trust request when the result arrived.
 - `Peer not found in contacts` — connect first or check the contact name/agent ID.
 - `Grant not found` — the revoke target does not exist in `grantedByMe`.
+- `TransportOwnershipError` — another TAP runtime owns the same identity. In OpenClaw plugin mode, use the plugin tool instead of a transport-active CLI command.

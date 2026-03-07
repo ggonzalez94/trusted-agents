@@ -22,3 +22,19 @@ export type { NotificationAdapter } from "./notification.js";
 
 export { ApprovalHandler } from "./approval.js";
 export type { ApprovalRequest } from "./approval.js";
+
+export {
+	TapMessagingService,
+	TransportOwnershipError,
+	buildDefaultTapRuntimeContext,
+	loadTrustedAgentConfigFromDataDir,
+} from "trusted-agents-core";
+export type {
+	BuildTapRuntimeContextOptions,
+	LoadTrustedAgentConfigOptions,
+	TapServiceHooks,
+	TapServiceOptions,
+	TapServiceStatus,
+	TapSyncReport,
+	TapRuntimeContext,
+} from "trusted-agents-core";

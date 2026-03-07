@@ -37,12 +37,20 @@ const mockAgent: ResolvedAgent = {
 	resolvedAt: new Date().toISOString(),
 };
 
-function createMockTransport(response: unknown): TransportProvider {
+function createMockTransport(
+	status: "received" | "duplicate" | "queued" = "received",
+): TransportProvider {
 	return {
-		send: vi.fn().mockResolvedValue(response),
-		onMessage: vi.fn(),
+		send: vi.fn(async (_peerId, request) => ({
+			received: true,
+			requestId: String(request.id),
+			status,
+			receivedAt: "2026-03-06T00:00:00.000Z",
+		})),
+		setHandlers: vi.fn(),
 		start: vi.fn(),
 		stop: vi.fn(),
+		isReachable: vi.fn(async () => true),
 	};
 }
 
@@ -62,7 +70,7 @@ describe("executeConnect", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("should connect successfully with a valid invite", async () => {
+	it("persists a pending outbound contact for a valid invite", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:84532",
@@ -71,11 +79,7 @@ describe("executeConnect", () => {
 		});
 
 		const resolver = createMockResolver(mockAgent);
-		const transport = createMockTransport({
-			jsonrpc: "2.0",
-			id: "1",
-			result: { accepted: true, connectionId: "remote-conn-001" },
-		});
+		const transport = createMockTransport("received");
 
 		const result = await executeConnect({
 			inviteUrl: url,
@@ -88,13 +92,21 @@ describe("executeConnect", () => {
 		});
 
 		expect(result.success).toBe(true);
-		expect(result.connectionId).toBe("remote-conn-001");
 		expect(result.peerName).toBe("TestAgent");
-		expect(result.status).toBe("active");
+		expect(result.status).toBe("pending");
+		expect(result.receiptStatus).toBe("received");
 		expect(resolver.resolve).toHaveBeenCalledWith(1, "eip155:84532");
+
+		const contacts = await new FileTrustStore(tmpDir).getContacts();
+		expect(contacts).toHaveLength(1);
+		expect(contacts[0]?.connectionId).toBe(result.connectionId);
+		expect(contacts[0]?.status).toBe("pending");
+		expect(contacts[0]?.pending).toMatchObject({
+			direction: "outbound",
+		});
 	});
 
-	it("should fail with an expired invite", async () => {
+	it("fails with an expired invite", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:84532",
@@ -102,54 +114,41 @@ describe("executeConnect", () => {
 			expirySeconds: -1,
 		});
 
-		const resolver = createMockResolver(mockAgent);
-		const transport = createMockTransport({});
-
 		const result = await executeConnect({
 			inviteUrl: url,
 			privateKey: connectorPrivateKey,
 			agentId: 2,
 			chain: "eip155:84532",
 			dataDir: tmpDir,
-			resolver,
-			transport,
+			resolver: createMockResolver(mockAgent),
+			transport: createMockTransport(),
 		});
 
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("expired");
 	});
 
-	it("should fail with an invalid invite URL", async () => {
-		const resolver = createMockResolver(mockAgent);
-		const transport = createMockTransport({});
-
+	it("fails with an invalid invite URL", async () => {
 		const result = await executeConnect({
 			inviteUrl: "https://trustedagents.link/connect?invalid=true",
 			privateKey: connectorPrivateKey,
 			agentId: 2,
 			chain: "eip155:84532",
 			dataDir: tmpDir,
-			resolver,
-			transport,
+			resolver: createMockResolver(mockAgent),
+			transport: createMockTransport(),
 		});
 
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("Invalid invite URL");
 	});
 
-	it("should use remote connectionId when provided by acceptance response", async () => {
+	it("preserves directional permission state on the pending contact", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:84532",
 			privateKey: inviterPrivateKey,
 			expirySeconds: 3600,
-		});
-
-		const resolver = createMockResolver(mockAgent);
-		const transport = createMockTransport({
-			jsonrpc: "2.0",
-			id: "1",
-			result: { accepted: true, connectionId: "remote-conn-123" },
 		});
 
 		const result = await executeConnect({
@@ -158,75 +157,16 @@ describe("executeConnect", () => {
 			agentId: 2,
 			chain: "eip155:84532",
 			dataDir: tmpDir,
-			resolver,
-			transport,
+			resolver: createMockResolver(mockAgent),
+			transport: createMockTransport("queued"),
 		});
 
 		expect(result.success).toBe(true);
-		expect(result.connectionId).toBe("remote-conn-123");
-	});
-
-	it("should fail if the peer accepts without returning a connectionId", async () => {
-		const { url } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:84532",
-			privateKey: inviterPrivateKey,
-			expirySeconds: 3600,
-		});
-
-		const resolver = createMockResolver(mockAgent);
-		const transport = createMockTransport({
-			jsonrpc: "2.0",
-			id: "1",
-			result: { accepted: true },
-		});
-
-		const result = await executeConnect({
-			inviteUrl: url,
-			privateKey: connectorPrivateKey,
-			agentId: 2,
-			chain: "eip155:84532",
-			dataDir: tmpDir,
-			resolver,
-			transport,
-		});
-
-		expect(result.success).toBe(false);
-		expect(result.error).toContain("connectionId");
-	});
-
-	it("should create an empty directional permission state on connect", async () => {
-		const { url } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:84532",
-			privateKey: inviterPrivateKey,
-			expirySeconds: 3600,
-		});
-
-		const resolver = createMockResolver(mockAgent);
-		const transport = createMockTransport({
-			jsonrpc: "2.0",
-			id: "1",
-			result: {
-				accepted: true,
-				connectionId: "remote-conn-scope",
-			},
-		});
-
-		const result = await executeConnect({
-			inviteUrl: url,
-			privateKey: connectorPrivateKey,
-			agentId: 2,
-			chain: "eip155:84532",
-			dataDir: tmpDir,
-			resolver,
-			transport,
-		});
-
-		expect(result.success).toBe(true);
+		expect(result.status).toBe("pending");
+		expect(result.receiptStatus).toBe("queued");
 
 		const store = new FileTrustStore(tmpDir);
-		const contact = await store.getContact("remote-conn-scope");
+		const contact = result.connectionId ? await store.getContact(result.connectionId) : null;
 		expect(contact?.permissions.grantedByMe.grants).toEqual([]);
 		expect(contact?.permissions.grantedByPeer.grants).toEqual([]);
 	});

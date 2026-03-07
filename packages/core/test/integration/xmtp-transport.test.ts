@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,18 +6,17 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IAgentResolver } from "../../src/identity/resolver.js";
 import { createEmptyPermissionState } from "../../src/permissions/types.js";
-import type { ProtocolMessage } from "../../src/transport/interface.js";
+import { CONNECTION_REQUEST } from "../../src/protocol/index.js";
 import { XmtpTransport } from "../../src/transport/xmtp.js";
 import { FileTrustStore } from "../../src/trust/file-trust-store.js";
 import type { Contact } from "../../src/trust/types.js";
-import { ALICE_PRIVATE_KEY, BOB_PRIVATE_KEY } from "../fixtures/test-keys.js";
 
 const XMTP_ENABLED = process.env.XMTP_INTEGRATION === "true";
-const CAROL_PRIVATE_KEY =
-	"0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as const;
-
-const ALICE_ADDRESS = privateKeyToAccount(ALICE_PRIVATE_KEY).address;
-const BOB_ADDRESS = privateKeyToAccount(BOB_PRIVATE_KEY).address;
+let ALICE_PRIVATE_KEY: `0x${string}`;
+let BOB_PRIVATE_KEY: `0x${string}`;
+let CAROL_PRIVATE_KEY: `0x${string}`;
+let ALICE_ADDRESS: `0x${string}`;
+let BOB_ADDRESS: `0x${string}`;
 
 function contact(args: {
 	connectionId: string;
@@ -44,10 +44,15 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 	beforeEach(async () => {
 		testDir = await mkdtemp(join(tmpdir(), "xmtp-transport-int-"));
+		ALICE_PRIVATE_KEY = randomPrivateKey();
+		BOB_PRIVATE_KEY = randomPrivateKey();
+		CAROL_PRIVATE_KEY = randomPrivateKey();
+		ALICE_ADDRESS = privateKeyToAccount(ALICE_PRIVATE_KEY).address;
+		BOB_ADDRESS = privateKeyToAccount(BOB_PRIVATE_KEY).address;
 	});
 
 	afterEach(async () => {
-		await rm(testDir, { recursive: true, force: true });
+		await removeDirWithRetry(testDir);
 	});
 
 	it("should exchange JSON-RPC request/response between two transports", async () => {
@@ -94,11 +99,11 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 		);
 
 		try {
-			bobTransport.onMessage(async (_from: number, message: ProtocolMessage) => ({
-				jsonrpc: "2.0",
-				id: message.id,
-				result: { pong: true },
-			}));
+			bobTransport.setHandlers({
+				onRequest: vi.fn(async () => ({
+					status: "received",
+				})),
+			});
 
 			await Promise.all([aliceTransport.start(), bobTransport.start()]);
 
@@ -113,8 +118,8 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 				{ timeout: 45_000 },
 			);
 
-			expect(response.error).toBeUndefined();
-			expect(response.result).toEqual({ pong: true });
+			expect(response.received).toBe(true);
+			expect(response.status).toBe("received");
 		} finally {
 			await Promise.all([aliceTransport.stop(), bobTransport.stop()]);
 		}
@@ -173,39 +178,57 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 		);
 
 		try {
-			const callback = vi.fn(async (from: number, message: ProtocolMessage) => ({
-				jsonrpc: "2.0",
-				id: message.id,
-				result: { accepted: true, from },
-			}));
-			bobTransport.onMessage(callback);
+			const callback = vi.fn(async () => ({ status: "queued" as const }));
+			bobTransport.setHandlers({ onRequest: callback });
 
 			await Promise.all([bobTransport.start(), carolTransport.start()]);
 
-			const response = await carolTransport.send(
-				999,
-				{
-					jsonrpc: "2.0",
-					method: "connection/request",
-					id: "xmtp-int-spoof-1",
-					params: {
-						from: { agentId: 42, chain: "eip155:1" },
-						to: { agentId: 2, chain: "eip155:1" },
-						nonce: "spoof-1",
-						timestamp: new Date().toISOString(),
+			await expect(
+				carolTransport.send(
+					999,
+					{
+						jsonrpc: "2.0",
+						method: CONNECTION_REQUEST,
+						id: "xmtp-int-spoof-1",
+						params: {
+							from: { agentId: 42, chain: "eip155:1" },
+							to: { agentId: 2, chain: "eip155:1" },
+							connectionId: "spoof-conn-1",
+							nonce: "spoof-1",
+							timestamp: new Date().toISOString(),
+						},
 					},
-				},
-				{
-					peerAddress: BOB_ADDRESS,
-					timeout: 45_000,
-				},
-			);
-
+					{
+						peerAddress: BOB_ADDRESS,
+						timeout: 45_000,
+					},
+				),
+			).rejects.toThrow(/verification failed|verification unavailable/i);
 			expect(callback).not.toHaveBeenCalled();
-			expect(response.error).toBeDefined();
-			expect(response.error?.message).toContain("verification failed");
 		} finally {
 			await Promise.all([bobTransport.stop(), carolTransport.stop()]);
 		}
 	}, 120_000);
 });
+
+function randomPrivateKey(): `0x${string}` {
+	return `0x${randomBytes(32).toString("hex")}` as `0x${string}`;
+}
+
+async function removeDirWithRetry(path: string): Promise<void> {
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		try {
+			await rm(path, { recursive: true, force: true });
+			return;
+		} catch (error: unknown) {
+			const code =
+				error instanceof Error && "code" in error
+					? (error as NodeJS.ErrnoException).code
+					: undefined;
+			if (code !== "ENOTEMPTY" || attempt === 4) {
+				throw error;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		}
+	}
+}

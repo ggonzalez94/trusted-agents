@@ -1,11 +1,21 @@
+import { mkdir } from "node:fs/promises";
 import { Client } from "@xmtp/node-sdk";
 import { hexToBytes, keccak256, toHex } from "viem";
-import { TransportError, isEthereumAddress } from "../common/index.js";
+import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
+import { CONNECTION_REQUEST, CONNECTION_RESULT, isResultMethod } from "../protocol/index.js";
 import type { ConnectionRequestParams } from "../protocol/types.js";
 import type { ITrustStore } from "../trust/trust-store.js";
 import type { Contact } from "../trust/types.js";
-import type { ProtocolMessage, ProtocolResponse, TransportProvider } from "./interface.js";
+import type {
+	ProtocolMessage,
+	TransportAck,
+	TransportHandlers,
+	TransportProvider,
+	TransportReceipt,
+	TransportReconcileOptions,
+	TransportReconcileResult,
+} from "./interface.js";
 import type { TransportSendOptions } from "./types.js";
 import { createXmtpSigner } from "./xmtp-signer.js";
 import type { XmtpTransportConfig } from "./xmtp-types.js";
@@ -18,14 +28,20 @@ const INBOUND_REQUEST_DEDUPE_TTL_MS = 10 * 60 * 1_000;
 const MAX_TRACKED_INBOUND_REQUESTS = 4_096;
 
 interface PendingRequest {
-	resolve: (response: ProtocolResponse) => void;
+	resolve: (receipt: TransportReceipt) => void;
 	reject: (error: Error) => void;
 	timer: NodeJS.Timeout;
 }
 
+interface IncomingTransportMessage {
+	senderInboxId: string;
+	content: unknown;
+	conversationId?: string;
+}
+
 export class XmtpTransport implements TransportProvider {
 	private client: Client | null = null;
-	private messageCallback?: (from: number, message: ProtocolMessage) => Promise<ProtocolResponse>;
+	private handlers: TransportHandlers = {};
 	private readonly pendingRequests = new Map<string, PendingRequest>();
 	private readonly processedIncomingRequests = new Map<string, number>();
 	private running = false;
@@ -42,15 +58,22 @@ export class XmtpTransport implements TransportProvider {
 		this.resolveCacheTtlMs = config.resolveCacheTtlMs ?? 86_400_000;
 	}
 
-	async start(): Promise<void> {
-		const signer = createXmtpSigner(this.config.privateKey);
+	setHandlers(handlers: TransportHandlers): void {
+		this.handlers = { ...handlers };
+	}
 
-		// Derive a deterministic encryption key from the agent's private key so
-		// the XMTP database survives process restarts. Operators can override
-		// with an explicit xmtpDbEncryptionKey config value.
+	async start(): Promise<void> {
+		if (this.running && this.client) {
+			return;
+		}
+
+		const signer = createXmtpSigner(this.config.privateKey);
 		const dbEncryptionKey = this.config.dbEncryptionKey
 			? hexToBytes(this.config.dbEncryptionKey)
 			: hexToBytes(keccak256(toHex(`xmtp-db-encryption:${this.config.privateKey}`)));
+		if (this.config.dbPath) {
+			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
+		}
 
 		this.client = await Client.create(signer, {
 			env: this.config.env ?? "production",
@@ -61,13 +84,7 @@ export class XmtpTransport implements TransportProvider {
 		});
 
 		this.running = true;
-
-		// Pre-populate the inboxId → address cache from existing contacts
-		// so incoming messages from known peers are recognized immediately.
 		await this.populateInboxIdCache();
-
-		// Start listening for messages with automatic reconnection.
-		// Errors in the stream are handled internally and retried.
 		this.listenWithReconnect();
 	}
 
@@ -75,13 +92,11 @@ export class XmtpTransport implements TransportProvider {
 		peerId: number,
 		message: ProtocolMessage,
 		options?: TransportSendOptions,
-	): Promise<ProtocolResponse> {
+	): Promise<TransportReceipt> {
 		if (!this.client) {
 			throw new TransportError("XMTP client not started");
 		}
 
-		// Resolve peer address — either from options (direct addressing for
-		// connection requests) or from the trust store.
 		let peerAddress: `0x${string}`;
 		let connectionId: string | undefined;
 
@@ -98,27 +113,25 @@ export class XmtpTransport implements TransportProvider {
 
 		const inboxId = await this.resolveInboxId(peerAddress);
 		const dm = await this.client.conversations.createDm(inboxId);
-
-		const messageId = String(message.id);
+		const requestId = String(message.id);
 		const timeout = options?.timeout ?? this.config.defaultResponseTimeoutMs ?? 30_000;
 
-		const responsePromise = new Promise<ProtocolResponse>((resolve, reject) => {
+		const receiptPromise = new Promise<TransportReceipt>((resolve, reject) => {
 			const timer = setTimeout(() => {
-				this.pendingRequests.delete(messageId);
-				reject(new TransportError(`Response timeout for message ${messageId}`));
+				this.pendingRequests.delete(requestId);
+				reject(new TransportError(`Response timeout for message ${requestId}`));
 			}, timeout);
 
-			this.pendingRequests.set(messageId, { resolve, reject, timer });
+			this.pendingRequests.set(requestId, { resolve, reject, timer });
 		});
 
 		try {
 			await dm.sendText(JSON.stringify(message));
 		} catch (err) {
-			// Clean up the pending entry if sending fails
-			const pending = this.pendingRequests.get(messageId);
+			const pending = this.pendingRequests.get(requestId);
 			if (pending) {
 				clearTimeout(pending.timer);
-				this.pendingRequests.delete(messageId);
+				this.pendingRequests.delete(requestId);
 			}
 			throw err instanceof TransportError
 				? err
@@ -127,17 +140,42 @@ export class XmtpTransport implements TransportProvider {
 					);
 		}
 
-		const response = await responsePromise;
-
+		const receipt = await receiptPromise;
 		if (connectionId) {
 			this.trustStore.touchContact(connectionId).catch(() => {});
 		}
-
-		return response;
+		return receipt;
 	}
 
-	onMessage(callback: (from: number, message: ProtocolMessage) => Promise<ProtocolResponse>): void {
-		this.messageCallback = callback;
+	async reconcile(options?: TransportReconcileOptions): Promise<TransportReconcileResult> {
+		if (!this.client) {
+			throw new TransportError("XMTP client not started");
+		}
+
+		await this.client.conversations.syncAll(
+			options?.consentStates as Parameters<Client["conversations"]["syncAll"]>[0],
+		);
+
+		let processed = 0;
+		for (const dm of this.client.conversations.listDms()) {
+			const messages = await dm.messages();
+			messages.sort((left, right) => left.sentAt.getTime() - right.sentAt.getTime());
+			for (const message of messages) {
+				const didProcess = await this.processMessage({
+					senderInboxId: message.senderInboxId,
+					content: message.content,
+					conversationId: message.conversationId,
+				});
+				if (didProcess) {
+					processed += 1;
+				}
+			}
+		}
+
+		return {
+			synced: true,
+			processed,
+		};
 	}
 
 	async isReachable(peerId: number): Promise<boolean> {
@@ -161,6 +199,10 @@ export class XmtpTransport implements TransportProvider {
 	}
 
 	async stop(): Promise<void> {
+		if (!this.running) {
+			return;
+		}
+
 		this.running = false;
 
 		try {
@@ -175,32 +217,21 @@ export class XmtpTransport implements TransportProvider {
 		}
 		this.pendingRequests.clear();
 		this.processedIncomingRequests.clear();
-
 		this.client = null;
 	}
 
-	/**
-	 * Pre-populates the inboxId → address cache from all existing contacts
-	 * so that incoming messages from known peers are recognized without
-	 * needing an outbound send() first.
-	 */
 	private async populateInboxIdCache(): Promise<void> {
 		if (!this.client) return;
 		const contacts = await this.trustStore.getContacts();
-		for (const c of contacts) {
+		for (const contact of contacts) {
 			try {
-				await this.resolveInboxId(c.peerAgentAddress);
+				await this.resolveInboxId(contact.peerAgentAddress);
 			} catch {
 				// Skip contacts not registered on XMTP
 			}
 		}
 	}
 
-	/**
-	 * Starts listening for messages with automatic reconnection on error.
-	 * Network hiccups, XMTP node restarts, etc. will cause the stream to
-	 * break and be re-established after a delay.
-	 */
 	private listenWithReconnect(): void {
 		(async () => {
 			while (this.running) {
@@ -210,7 +241,7 @@ export class XmtpTransport implements TransportProvider {
 					// Stream failed — will retry after delay
 				}
 				if (this.running) {
-					await new Promise((r) => setTimeout(r, RECONNECT_DELAY_MS));
+					await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
 				}
 			}
 		})();
@@ -224,156 +255,242 @@ export class XmtpTransport implements TransportProvider {
 
 		for await (const message of stream) {
 			if (!this.running) break;
-			this.processMessage(message).catch(() => {});
+			this.processMessage({
+				senderInboxId: message.senderInboxId,
+				content: message.content,
+				conversationId: message.conversationId,
+			}).catch(() => {});
 		}
 	}
 
-	private async processMessage(message: {
-		senderInboxId: string;
-		content: unknown;
-		conversationId?: string;
-	}): Promise<void> {
-		if (message.senderInboxId === this.client?.inboxId) return;
+	private async processMessage(message: IncomingTransportMessage): Promise<boolean> {
+		if (message.senderInboxId === this.client?.inboxId) {
+			return false;
+		}
 
 		const content = typeof message.content === "string" ? message.content : null;
-		if (!content) return;
+		if (!content) {
+			return false;
+		}
 
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(content);
 		} catch {
+			return false;
+		}
+
+		if (typeof parsed !== "object" || parsed === null) {
+			return false;
+		}
+
+		const payload = parsed as Record<string, unknown>;
+		if (payload.jsonrpc !== "2.0") {
+			return false;
+		}
+
+		if ("result" in payload || "error" in payload) {
+			return this.processIncomingReceipt(payload);
+		}
+
+		if (!("method" in payload)) {
+			return false;
+		}
+
+		const request = payload as unknown as ProtocolMessage;
+		if (this.shouldSkipDuplicateIncomingRequest(message.senderInboxId, request)) {
+			return false;
+		}
+
+		await this.handleIncomingProtocolMessage(message, request);
+		return true;
+	}
+
+	private processIncomingReceipt(payload: Record<string, unknown>): boolean {
+		const requestId = String(payload.id);
+		const pending = this.pendingRequests.get(requestId);
+		if (!pending) {
+			return false;
+		}
+
+		clearTimeout(pending.timer);
+		this.pendingRequests.delete(requestId);
+
+		if ("error" in payload && payload.error && typeof payload.error === "object") {
+			const errorMessage =
+				typeof (payload.error as { message?: unknown }).message === "string"
+					? (payload.error as { message: string }).message
+					: `Peer returned an error for message ${requestId}`;
+			pending.reject(new TransportError(errorMessage));
+			return true;
+		}
+
+		const result = payload.result;
+		if (typeof result !== "object" || result === null) {
+			pending.reject(new TransportError(`Invalid receipt payload for message ${requestId}`));
+			return true;
+		}
+
+		const receipt = result as Record<string, unknown>;
+		if (
+			receipt.received !== true ||
+			typeof receipt.status !== "string" ||
+			(receipt.status !== "received" &&
+				receipt.status !== "duplicate" &&
+				receipt.status !== "queued")
+		) {
+			pending.reject(new TransportError(`Invalid receipt payload for message ${requestId}`));
+			return true;
+		}
+
+		pending.resolve({
+			received: true,
+			requestId:
+				typeof receipt.requestId === "string" && receipt.requestId.length > 0
+					? receipt.requestId
+					: requestId,
+			status: receipt.status,
+			receivedAt:
+				typeof receipt.receivedAt === "string" && receipt.receivedAt.length > 0
+					? receipt.receivedAt
+					: nowISO(),
+		});
+		return true;
+	}
+
+	private async handleIncomingProtocolMessage(
+		rawMessage: IncomingTransportMessage,
+		message: ProtocolMessage,
+	): Promise<void> {
+		if (!this.client) {
 			return;
 		}
 
-		if (typeof parsed !== "object" || parsed === null) return;
-		const msg = parsed as Record<string, unknown>;
-		if (msg.jsonrpc !== "2.0") return;
-
-		if ("result" in msg || "error" in msg) {
-			const msgId = String(msg.id);
-			const pending = this.pendingRequests.get(msgId);
-			if (pending) {
-				clearTimeout(pending.timer);
-				this.pendingRequests.delete(msgId);
-				pending.resolve(msg as unknown as ProtocolResponse);
-			}
-		} else if ("method" in msg) {
-			const request = msg as unknown as ProtocolMessage;
-			if (this.shouldSkipDuplicateIncomingRequest(message.senderInboxId, request)) {
-				return;
-			}
-			await this.handleIncomingRequest(message, request);
-		}
-	}
-
-	private async handleIncomingRequest(
-		rawMessage: { senderInboxId: string; conversationId?: string },
-		request: ProtocolMessage,
-	): Promise<void> {
-		if (!this.messageCallback || !this.client) return;
-
 		const senderAddresses = await this.resolveInboxAddresses(rawMessage.senderInboxId);
 		const senderContact = await this.findContactByAddresses(senderAddresses);
+		const resultMethod = isResultMethod(message.method);
 
 		let senderId: number;
-
 		if (senderContact) {
-			if (senderContact.status !== "active") {
+			if (!this.isContactAllowedForMethod(senderContact, message.method)) {
 				await this.sendJsonRpcError(
 					rawMessage.senderInboxId,
-					request.id,
+					message.id,
 					-32003,
-					"Sender connection is not active",
+					"Sender connection is not active for this method",
 				);
 				return;
 			}
 			senderId = senderContact.peerAgentId;
-		} else if (request.method === "connection/request") {
-			const params = request.params as ConnectionRequestParams | undefined;
-			const claimedAgentId = params?.from?.agentId;
-			const claimedChain = params?.from?.chain;
-
-			if (
-				typeof claimedAgentId !== "number" ||
-				claimedAgentId < 0 ||
-				typeof claimedChain !== "string" ||
-				!claimedChain
-			) {
+		} else if (message.method === CONNECTION_REQUEST) {
+			try {
+				senderId = await this.verifyBootstrapRequest(
+					rawMessage.senderInboxId,
+					senderAddresses,
+					message,
+				);
+			} catch (error) {
 				await this.sendJsonRpcError(
 					rawMessage.senderInboxId,
-					request.id,
+					message.id,
 					-32001,
-					"Invalid bootstrap sender identity",
+					error instanceof Error ? error.message : "Bootstrap sender verification failed",
 				);
 				return;
 			}
-
-			if (!this.agentResolver) {
-				await this.sendJsonRpcError(
-					rawMessage.senderInboxId,
-					request.id,
-					-32001,
-					"Bootstrap sender verification unavailable",
-				);
-				return;
-			}
-
-			const resolved = await this.agentResolver
-				.resolveWithCache(claimedAgentId, claimedChain, this.resolveCacheTtlMs)
-				.catch(() => null);
-			if (!resolved) {
-				await this.sendJsonRpcError(
-					rawMessage.senderInboxId,
-					request.id,
-					-32001,
-					"Failed to resolve bootstrap sender identity",
-				);
-				return;
-			}
-
-			const expectedSenderAddress = resolved.agentAddress.toLowerCase();
-			const verified = senderAddresses.some(
-				(address) => address.toLowerCase() === expectedSenderAddress,
-			);
-
-			if (!verified) {
-				await this.sendJsonRpcError(
-					rawMessage.senderInboxId,
-					request.id,
-					-32001,
-					"Sender identity verification failed",
-				);
-				return;
-			}
-
-			this.inboxIdToAddress.set(rawMessage.senderInboxId, expectedSenderAddress as `0x${string}`);
-			senderId = claimedAgentId;
 		} else {
-			await this.sendJsonRpcError(rawMessage.senderInboxId, request.id, -32001, "Unknown sender");
+			await this.sendJsonRpcError(rawMessage.senderInboxId, message.id, -32001, "Unknown sender");
 			return;
 		}
 
-		let response: ProtocolResponse;
-		try {
-			response = await this.messageCallback(senderId, request);
-		} catch {
-			response = {
-				jsonrpc: "2.0",
-				id: request.id,
-				error: { code: -32603, message: "Internal error" },
-			};
+		const handler = resultMethod ? this.handlers.onResult : this.handlers.onRequest;
+		if (!handler) {
+			await this.sendJsonRpcError(
+				rawMessage.senderInboxId,
+				message.id,
+				-32601,
+				`No transport handler registered for ${resultMethod ? "results" : "requests"}`,
+			);
+			return;
 		}
 
-		const dm = await this.findDmForSender(rawMessage.senderInboxId);
-		if (dm) {
-			await dm.sendText(JSON.stringify(response));
+		let ack: TransportAck;
+		try {
+			ack = await handler({
+				from: senderId,
+				senderInboxId: rawMessage.senderInboxId,
+				message,
+			});
+		} catch (error) {
+			await this.sendJsonRpcError(
+				rawMessage.senderInboxId,
+				message.id,
+				-32603,
+				error instanceof Error ? error.message : "Internal error",
+			);
+			return;
 		}
+
+		await this.sendJsonRpcReceipt(rawMessage.senderInboxId, message.id, String(message.id), ack);
 	}
 
-	/**
-	 * Resolves Ethereum addresses currently authorized for the sender inbox.
-	 * Uses cache first, then refreshes from XMTP network state.
-	 */
+	private isContactAllowedForMethod(contact: Contact, method: string): boolean {
+		if (contact.status === "active") {
+			return true;
+		}
+
+		if (
+			method === CONNECTION_RESULT &&
+			contact.status === "pending" &&
+			contact.pending?.direction === "outbound"
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
+	private async verifyBootstrapRequest(
+		senderInboxId: string,
+		senderAddresses: `0x${string}`[],
+		request: ProtocolMessage,
+	): Promise<number> {
+		const params = request.params as ConnectionRequestParams | undefined;
+		const claimedAgentId = params?.from?.agentId;
+		const claimedChain = params?.from?.chain;
+
+		if (
+			typeof claimedAgentId !== "number" ||
+			claimedAgentId < 0 ||
+			typeof claimedChain !== "string" ||
+			claimedChain.length === 0
+		) {
+			throw new TransportError("Invalid bootstrap sender identity");
+		}
+
+		if (!this.agentResolver) {
+			throw new TransportError("Bootstrap sender verification unavailable");
+		}
+
+		const resolved = await this.agentResolver
+			.resolveWithCache(claimedAgentId, claimedChain, this.resolveCacheTtlMs)
+			.catch(() => null);
+		if (!resolved) {
+			throw new TransportError("Failed to resolve bootstrap sender identity");
+		}
+
+		const expectedSenderAddress = resolved.agentAddress.toLowerCase();
+		const verified = senderAddresses.some(
+			(address) => address.toLowerCase() === expectedSenderAddress,
+		);
+		if (!verified) {
+			throw new TransportError("Sender identity verification failed");
+		}
+
+		this.inboxIdToAddress.set(senderInboxId, expectedSenderAddress as `0x${string}`);
+		return claimedAgentId;
+	}
+
 	private async resolveInboxAddresses(senderInboxId: string): Promise<`0x${string}`[]> {
 		const cached = this.inboxIdToAddress.get(senderInboxId);
 		if (cached) {
@@ -412,6 +529,31 @@ export class XmtpTransport implements TransportProvider {
 		return null;
 	}
 
+	private async sendJsonRpcReceipt(
+		senderInboxId: string,
+		id: ProtocolMessage["id"],
+		requestId: string,
+		ack: TransportAck,
+	): Promise<void> {
+		const dm = await this.findDmForSender(senderInboxId);
+		if (!dm) {
+			return;
+		}
+
+		await dm.sendText(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				id,
+				result: {
+					received: true,
+					requestId,
+					status: ack.status,
+					receivedAt: nowISO(),
+				},
+			}),
+		);
+	}
+
 	private async sendJsonRpcError(
 		senderInboxId: string,
 		id: ProtocolMessage["id"],
@@ -419,18 +561,20 @@ export class XmtpTransport implements TransportProvider {
 		message: string,
 	): Promise<void> {
 		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) return;
+		if (!dm) {
+			return;
+		}
 
-		const errorResponse: ProtocolResponse = {
-			jsonrpc: "2.0",
-			id,
-			error: { code, message },
-		};
-		await dm.sendText(JSON.stringify(errorResponse));
+		await dm.sendText(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				id,
+				error: { code, message },
+			}),
+		);
 	}
 
 	private async resolveInboxId(address: `0x${string}`): Promise<string> {
-		// Check if we already have this address cached (by value, not by key)
 		for (const [cachedInboxId, cachedAddr] of this.inboxIdToAddress) {
 			if (cachedAddr.toLowerCase() === address.toLowerCase()) {
 				return cachedInboxId;
@@ -444,7 +588,7 @@ export class XmtpTransport implements TransportProvider {
 		if (!inboxId) {
 			throw new TransportError(`Peer ${address} not registered on XMTP`);
 		}
-		// Always store the normalized (lowercase) address
+
 		this.inboxIdToAddress.set(inboxId, address.toLowerCase() as `0x${string}`);
 		return inboxId;
 	}
@@ -452,7 +596,10 @@ export class XmtpTransport implements TransportProvider {
 	private async findDmForSender(
 		senderInboxId: string,
 	): Promise<{ sendText: (text: string) => Promise<unknown> } | null> {
-		if (!this.client) return null;
+		if (!this.client) {
+			return null;
+		}
+
 		try {
 			return await this.client.conversations.createDm(senderInboxId);
 		} catch {
@@ -467,7 +614,6 @@ export class XmtpTransport implements TransportProvider {
 		const requestId = String(request.id);
 		const key = `${senderInboxId}:${request.method}:${requestId}`;
 		const now = Date.now();
-
 		this.pruneProcessedIncomingRequests(now);
 
 		if (this.processedIncomingRequests.has(key)) {

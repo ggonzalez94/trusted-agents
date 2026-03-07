@@ -1,5 +1,7 @@
-import { isEthereumAddress } from "trusted-agents-core";
-import type { PermissionGrant, ProtocolMessage } from "trusted-agents-core";
+import { isEthereumAddress } from "../common/index.js";
+import type { PermissionGrant } from "../permissions/types.js";
+import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
+import type { ProtocolMessage } from "../transport/interface.js";
 
 export type TransferAsset = "native" | "usdc";
 
@@ -15,6 +17,7 @@ export interface TransferActionRequest extends Record<string, unknown> {
 
 export interface TransferActionResponse extends Record<string, unknown> {
 	type: "transfer/response";
+	requestId?: string;
 	actionId: string;
 	asset: TransferAsset;
 	amount: string;
@@ -33,6 +36,10 @@ export interface PermissionGrantRequestAction extends Record<string, unknown> {
 }
 
 export function parseTransferActionRequest(message: ProtocolMessage): TransferActionRequest | null {
+	if (message.method !== ACTION_REQUEST) {
+		return null;
+	}
+
 	const data = extractMessageData(message);
 	if (!data || data.type !== "transfer/request") {
 		return null;
@@ -66,7 +73,31 @@ export function parseTransferActionRequest(message: ProtocolMessage): TransferAc
 export function parseTransferActionResponse(
 	message: ProtocolMessage,
 ): TransferActionResponse | null {
-	const data = extractMessageData(message);
+	if (message.method !== ACTION_RESULT) {
+		return null;
+	}
+
+	if (typeof message.params !== "object" || message.params === null) {
+		return null;
+	}
+
+	const params = message.params as {
+		requestId?: unknown;
+		status?: unknown;
+		message?: unknown;
+	};
+	if (
+		typeof params.requestId !== "string" ||
+		params.requestId.length === 0 ||
+		(params.status !== "completed" && params.status !== "rejected" && params.status !== "failed")
+	) {
+		return null;
+	}
+
+	const data = extractMessageData({
+		...message,
+		params: { message: params.message },
+	});
 	if (!data || data.type !== "transfer/response") {
 		return null;
 	}
@@ -80,20 +111,20 @@ export function parseTransferActionResponse(
 		typeof data.chain !== "string" ||
 		data.chain.length === 0 ||
 		typeof data.toAddress !== "string" ||
-		!isEthereumAddress(data.toAddress) ||
-		(data.status !== "completed" && data.status !== "rejected" && data.status !== "failed")
+		!isEthereumAddress(data.toAddress)
 	) {
 		return null;
 	}
 
 	return {
 		type: "transfer/response",
+		requestId: params.requestId,
 		actionId: data.actionId,
 		asset: data.asset,
 		amount: data.amount,
 		chain: data.chain,
 		toAddress: data.toAddress,
-		status: data.status,
+		status: params.status,
 		txHash:
 			typeof data.txHash === "string" && isEthereumAddressLikeHash(data.txHash)
 				? data.txHash
@@ -105,6 +136,10 @@ export function parseTransferActionResponse(
 export function parsePermissionGrantRequest(
 	message: ProtocolMessage,
 ): PermissionGrantRequestAction | null {
+	if (message.method !== ACTION_REQUEST) {
+		return null;
+	}
+
 	const data = extractMessageData(message);
 	if (!data || data.type !== "permissions/request-grants") {
 		return null;

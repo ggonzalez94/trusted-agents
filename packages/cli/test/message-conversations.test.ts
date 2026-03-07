@@ -122,7 +122,7 @@ describe("message conversation helpers", () => {
 			requiresHumanApproval: boolean;
 		};
 
-		expect(request.method).toBe("message/action-request");
+		expect(request.method).toBe("action/request");
 		expect(params.message.parts).toHaveLength(2);
 		expect(metadata.scope).toBe("transfer/request");
 		expect(metadata.requiresHumanApproval).toBe(true);

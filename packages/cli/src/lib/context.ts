@@ -1,12 +1,14 @@
 import {
 	AgentResolver,
 	FileConversationLogger,
+	FileRequestJournal,
 	FileTrustStore,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
 	IAgentResolver,
 	IConversationLogger,
+	IRequestJournal,
 	ITrustStore,
 	TransportProvider,
 	TrustedAgentsConfig,
@@ -20,6 +22,7 @@ export interface CliContext {
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
+	requestJournal: IRequestJournal;
 }
 
 export interface CliContextWithTransport extends CliContext {
@@ -41,8 +44,9 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 		maxCacheEntries: config.resolveCacheMaxEntries,
 	});
 	const conversationLogger = new FileConversationLogger(config.dataDir);
+	const requestJournal = new FileRequestJournal(config.dataDir);
 
-	return { config, trustStore, resolver, conversationLogger };
+	return { config, trustStore, resolver, conversationLogger, requestJournal };
 }
 
 export function buildContextWithTransport(config: TrustedAgentsConfig): CliContextWithTransport {

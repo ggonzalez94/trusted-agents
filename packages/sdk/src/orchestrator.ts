@@ -1,8 +1,7 @@
 import { FileTrustStore, XmtpTransport } from "trusted-agents-core";
 import type {
 	IAgentResolver,
-	ProtocolMessage,
-	ProtocolResponse,
+	TransportHandlers,
 	TransportProvider,
 	XmtpTransportConfig,
 } from "trusted-agents-core";
@@ -41,11 +40,11 @@ export class TrustedAgentsOrchestrator {
 	}
 
 	async start(options?: {
-		onMessage?: (from: number, message: ProtocolMessage) => Promise<ProtocolResponse>;
+		handlers?: TransportHandlers;
 	}): Promise<void> {
 		if (!this.transport) return;
-		if (options?.onMessage) {
-			this.transport.onMessage(options.onMessage);
+		if (options?.handlers) {
+			this.transport.setHandlers(options.handlers);
 		}
 		await this.ensureTransportStarted();
 	}
