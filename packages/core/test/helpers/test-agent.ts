@@ -1,7 +1,9 @@
+import { createEmptyPermissionState } from "../../src/permissions/types.js";
 import type { Contact } from "../../src/trust/types.js";
 import { ALICE, BOB } from "../fixtures/test-keys.js";
 
 export function createTestContact(overrides: Partial<Contact> = {}): Contact {
+	const timestamp = "2025-01-01T12:00:00.000Z";
 	return {
 		connectionId: "test-connection-001",
 		peerAgentId: 2,
@@ -9,13 +11,9 @@ export function createTestContact(overrides: Partial<Contact> = {}): Contact {
 		peerOwnerAddress: BOB.address,
 		peerDisplayName: "Bob's Agent",
 		peerAgentAddress: BOB.address,
-		permissions: {
-			"general-chat": true,
-			scheduling: true,
-			purchases: false,
-		},
+		permissions: createEmptyPermissionState(timestamp),
 		establishedAt: "2025-01-01T00:00:00.000Z",
-		lastContactAt: "2025-01-01T12:00:00.000Z",
+		lastContactAt: timestamp,
 		status: "active",
 		...overrides,
 	};

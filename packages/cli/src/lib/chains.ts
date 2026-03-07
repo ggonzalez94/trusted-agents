@@ -38,18 +38,18 @@ export const ALL_CHAINS: Record<string, ChainConfig> = {
  */
 const CHAIN_ALIASES: Record<string, string> = {
 	// Base
-	"base": "eip155:8453",
+	base: "eip155:8453",
 	"base-mainnet": "eip155:8453",
 	// Base Sepolia
 	"base-sepolia": "eip155:84532",
-	"basesepolia": "eip155:84532",
+	basesepolia: "eip155:84532",
 	// Taiko
-	"taiko": "eip155:167000",
+	taiko: "eip155:167000",
 	"taiko-mainnet": "eip155:167000",
 	// Taiko Hoodi
 	"taiko-hoodi": "eip155:167013",
-	"taikohoodi": "eip155:167013",
-	"hoodi": "eip155:167013",
+	taikohoodi: "eip155:167013",
+	hoodi: "eip155:167013",
 };
 
 /**

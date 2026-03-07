@@ -37,10 +37,16 @@ describe("config-loader", () => {
 			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 
-		it("should keep an explicit data dir isolated from legacy config", () => {
+		it("should keep config inside an explicit --data-dir even when legacy config exists", () => {
 			const dataDir = join(tmpDir, "isolated-data");
-
 			const path = resolveConfigPath({ dataDir }, dataDir);
+			expect(path).toBe(join(dataDir, "config.yaml"));
+		});
+
+		it("should keep config inside TAP_DATA_DIR even when legacy config exists", () => {
+			const dataDir = join(tmpDir, "isolated-env-data");
+			process.env.TAP_DATA_DIR = dataDir;
+			const path = resolveConfigPath({}, dataDir);
 			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 

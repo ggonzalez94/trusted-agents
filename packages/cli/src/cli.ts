@@ -49,12 +49,14 @@ Supported chains:
 			"after",
 			`
 Capabilities are freeform strings describing what your agent can do.
-Common capabilities: general-chat, scheduling, research, purchases, file-sharing
+Common capabilities: general-chat, scheduling, research, payments, file-sharing
 You can use any string — these are advertised to peers during discovery.
 
 Examples:
   tap register --name "Cal" --description "Scheduling assistant" --capabilities "scheduling,general-chat"
   tap register update --description "Updated description"
+  tap register --name "Scout" --description "Web researcher" --capabilities "research,general-chat"
+  tap register --name "Treasury" --description "Payment agent" --capabilities "payments,general-chat"
 `,
 		);
 
@@ -199,10 +201,72 @@ Examples:
 		.command("connect <invite-url>")
 		.description("Accept invite, establish connection")
 		.option("--yes", "Auto-approve connection (no interactive prompt)")
-		.action(async (inviteUrl: string, cmdOpts: { yes?: boolean }) => {
+		.option("--request-grants-file <path>", "JSON file describing grants to request after connect")
+		.option("--grant-file <path>", "JSON file describing grants to publish after connect")
+		.addHelpText(
+			"after",
+			`
+Connection establishes trust only. Business permissions are directional grants exchanged after connect.
+
+Examples:
+  tap connect "<invite-url>" --yes
+  tap connect "<invite-url>" --yes --request-grants-file ./grants/request.json
+  tap connect "<invite-url>" --yes --grant-file ./grants/offer.json
+`,
+		)
+		.action(
+			async (
+				inviteUrl: string,
+				cmdOpts: { yes?: boolean; requestGrantsFile?: string; grantFile?: string },
+			) => {
+				const opts = program.opts<GlobalOptions>();
+				const { connectCommand } = await import("./commands/connect.js");
+				await connectCommand(inviteUrl, !!cmdOpts.yes, cmdOpts, opts);
+			},
+		);
+
+	const permissions = program.command("permissions").description("Manage directional grants");
+
+	permissions
+		.command("show [peer]")
+		.description("Show grants for one peer or list grant counts for all peers")
+		.action(async (peer?: string) => {
 			const opts = program.opts<GlobalOptions>();
-			const { connectCommand } = await import("./commands/connect.js");
-			await connectCommand(inviteUrl, !!cmdOpts.yes, opts);
+			const { permissionsShowCommand } = await import("./commands/permissions-show.js");
+			await permissionsShowCommand(peer, opts);
+		});
+
+	permissions
+		.command("grant <peer>")
+		.description("Publish the grants you give to a peer from a JSON file")
+		.requiredOption("--file <path>", "Path to a JSON grant file")
+		.option("--note <text>", "Optional note recorded in the ledger")
+		.action(async (peer: string, cmdOpts: { file: string; note?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { permissionsGrantCommand } = await import("./commands/permissions-grant.js");
+			await permissionsGrantCommand(peer, cmdOpts.file, opts, { note: cmdOpts.note });
+		});
+
+	permissions
+		.command("request <peer>")
+		.description("Request that a peer grants you permissions from a JSON file")
+		.requiredOption("--file <path>", "Path to a JSON grant file")
+		.option("--note <text>", "Optional note included with the request")
+		.action(async (peer: string, cmdOpts: { file: string; note?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { permissionsRequestCommand } = await import("./commands/permissions-request.js");
+			await permissionsRequestCommand(peer, cmdOpts.file, opts, { note: cmdOpts.note });
+		});
+
+	permissions
+		.command("revoke <peer>")
+		.description("Revoke one grant you previously published to a peer")
+		.requiredOption("--grant-id <id>", "Grant ID to revoke")
+		.option("--note <text>", "Optional note recorded in the ledger")
+		.action(async (peer: string, cmdOpts: { grantId: string; note?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { permissionsRevokeCommand } = await import("./commands/permissions-revoke.js");
+			await permissionsRevokeCommand(peer, cmdOpts.grantId, opts, { note: cmdOpts.note });
 		});
 
 	// contacts
@@ -241,20 +305,41 @@ Examples:
 	message
 		.command("send <peer> <text>")
 		.description("Send message to connected peer")
-		.action(async (peer: string, text: string) => {
+		.option("--scope <scope>", "Semantic message scope", "general-chat")
+		.action(async (peer: string, text: string, cmdOpts: { scope?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageSendCommand } = await import("./commands/message-send.js");
-			await messageSendCommand(peer, text, opts);
+			await messageSendCommand(peer, text, opts, { scope: cmdOpts.scope });
 		});
+
+	message
+		.command("request-funds <peer>")
+		.description("Request native ETH or USDC from a connected peer")
+		.requiredOption("--asset <asset>", "Asset to request: native or usdc")
+		.requiredOption("--amount <amount>", "Human-readable amount to request")
+		.option("--chain <chain>", "Chain alias or CAIP-2 ID (defaults to local config chain)")
+		.option("--to <address>", "Recipient address (defaults to this agent wallet)")
+		.option("--note <text>", "Optional note included with the request")
+		.action(
+			async (
+				peer: string,
+				cmdOpts: { asset: string; amount: string; chain?: string; to?: string; note?: string },
+			) => {
+				const opts = program.opts<GlobalOptions>();
+				const { messageRequestFundsCommand } = await import("./commands/message-request-funds.js");
+				await messageRequestFundsCommand(peer, cmdOpts, opts);
+			},
+		);
 
 	message
 		.command("listen")
 		.description("Stream incoming messages (long-running)")
 		.option("--yes", "Auto-accept incoming connection requests")
-		.action(async (cmdOpts: { yes?: boolean }) => {
+		.option("--yes-actions", "Auto-approve incoming action requests without interactive review")
+		.action(async (cmdOpts: { yes?: boolean; yesActions?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageListenCommand } = await import("./commands/message-listen.js");
-			await messageListenCommand(opts, { yes: cmdOpts.yes });
+			await messageListenCommand(opts, { yes: cmdOpts.yes, yesActions: cmdOpts.yesActions });
 		});
 
 	// conversations

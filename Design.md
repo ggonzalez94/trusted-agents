@@ -83,7 +83,7 @@ Supported ownership proof methods (extensible):
 When Agent A receives a request claiming to be from Agent B:
 
 1. **Check trust context**:
-   - For normal message methods (`message/*`, `connection/revoke`, `connection/update-scope`), Agent B MUST already be in the trust store.
+   - For normal message methods (`message/*`, `connection/revoke`, `connection/update-grants`), Agent B MUST already be in the trust store.
    - For bootstrap methods (`connection/request`, `connection/accept`, `connection/reject`), Agent B may be pre-trust, but the request MUST match a valid handshake context (for example: unexpired invite nonce or a pending local connection approval flow).
 2. **Verify ERC-8128 signature**: Validate the HTTP request signature against Agent B's known or freshly resolved public address.
 3. **Re-resolve on-chain** (mandatory): Re-fetch Agent B's registration file from the ERC-8004 registry at a configurable interval (recommended: every 24 hours) to check for key rotation or deactivation. **Always** re-resolve before high-consequence actions (purchases, bookings, or any action with real-world side effects).
@@ -149,7 +149,7 @@ This is the primary flow. A user generates a signed invitation link and shares i
  │            │      from: { agentId: 77, ... },            │            │
  │            │      to: { agentId: 42, ... },              │            │
  │            │      nonce: "abc123",                       │            │
- │            │      proposedScope: [...]                  │            │
+ │            │      permissionIntent: { ... }             │            │
  │            │    }                                       │            │
  └──────┬─────┘                                           └────────────┘
         │
@@ -224,7 +224,14 @@ The connection request message:
       "agentId": 77,
       "chain": "eip155:8453"
     },
-    "proposedScope": ["scheduling", "general-chat"],
+    "permissionIntent": {
+      "requestedGrants": [
+        { "grantId": "req-chat", "scope": "general-chat" }
+      ],
+      "offeredGrants": [
+        { "grantId": "offer-chat", "scope": "general-chat" }
+      ]
+    },
     "message": "Hey! Alice wants to connect our agents.",
     "nonce": "unique-random-value",
     "timestamp": "2026-03-02T14:30:00Z"
@@ -232,38 +239,48 @@ The connection request message:
 }
 ```
 
-This is sent as an ERC-8128-signed HTTP request to Bob's A2A endpoint.
+In the current implementation this is sent as a JSON-RPC payload over XMTP.
 
-### 4.3 Trust Scope and Permissions
+### 4.3 Directional Grants and Runtime Judgment
 
-When a connection is established, both agents agree on a **scope** — what the agents are allowed to do on this connection. The scope is an extensible set of capability labels.
+When a connection is established, both agents create a trust relationship only. Business permissions are exchanged separately as **directional grants**.
 
-**Default scopes** (starting set):
+TAP v1 keeps three separate concepts:
+
+- **Capabilities**: public discovery labels in the registration file
+- **Grants**: per-peer directional permissions stored in local contact state
+- **Scope**: the semantic label attached to a message or action request
+
+Directional grant state:
+
+- `grantedByMe`: what the peer may ask this agent to do
+- `grantedByPeer`: what this agent may ask the peer to do
+
+Grant files are intentionally simple:
 
 ```json
 {
-  "general-chat": true,
-  "scheduling": true,
-  "research": { "topics": ["any"] },
-  "purchases": { "maxAmountUsd": 50 },
-  "file-sharing": { "maxSizeMb": 10 }
+  "version": "tap-grants/v1",
+  "grants": [
+    {
+      "grantId": "worker-weekly-usdc",
+      "scope": "transfer/request",
+      "constraints": {
+        "asset": "usdc",
+        "maxAmount": "10",
+        "window": "week"
+      }
+    }
+  ]
 }
 ```
 
-**Key design decisions on scope**:
-
-- Scope is **per-peer** — Alice might grant Bob's agent scheduling access but not purchasing.
-- Scope is **configurable by the human** — both at connection time and modifiable later.
-- Scope is **extensible** — new capability types can be added without protocol changes.
-- Unknown runtime scopes are **rejected by default** (`403 Forbidden`) unless explicitly configured in local permissions.
-- Scope is **enforced locally** — each agent checks incoming requests against the stored scope for that peer before processing.
-
-**Enforcement model**: Scope defines what the *owner* permits their agent to do with a given peer, and enforcement happens locally on both sides. When Alice's agent receives a message from Bob's agent tagged with `scope: "purchases"`, it checks whether Alice has granted Bob purchasing permissions — if not, the request is rejected. Conversely, Alice's agent will not *send* a request under a scope that Alice hasn't approved. There is no honor system: both agents independently enforce their own owner's permissions.
+**V1 enforcement model**: grants are shared and persisted by the protocol, but business decisions are made by the agent at runtime. The CLI surfaces grants and the local permissions ledger as context. It does not deterministically enforce weekly or monthly budgets.
 
 > **Terminology note**: Three related terms appear throughout this spec:
 > - **Capabilities** — what an agent *can do*, declared in its registration file (array of strings, e.g. `["scheduling", "research"]`).
-> - **Permissions** — what an owner *permits* for a given peer, stored in the trust store (object mapping scope labels to configuration).
-> - **Scope** — which permission a specific message operates under (single string in message metadata, e.g. `"scheduling"`).
+> - **Grants** — what an owner *publishes* for a given peer, stored directionally in the trust store.
+> - **Scope** — which semantic label a specific message operates under (single string in message metadata, e.g. `"scheduling"`).
 
 ### 4.4 Trust Store (Local State)
 
@@ -272,7 +289,7 @@ Each agent maintains a local trust store — the contacts list. Stored as a JSON
 **connectionId format**: connectionIds are UUIDv4 values generated by the initiating agent at connection establishment time. They are unique per trust relationship.
 
 ```json
-// ~/.trustedagents/contacts.json
+// <dataDir>/contacts.json
 {
   "contacts": [
     {
@@ -281,11 +298,25 @@ Each agent maintains a local trust store — the contacts list. Stored as a JSON
       "peerChain": "eip155:8453",
       "peerOwnerAddress": "0xBob...",
       "peerDisplayName": "Bob's Agent",
-      "peerEndpoint": "https://bob-agent.example.com/a2a",
       "peerAgentAddress": "0x...",
       "permissions": {
-        "scheduling": true,
-        "general-chat": true
+        "grantedByMe": {
+          "version": "tap-grants/v1",
+          "updatedAt": "2026-03-02T14:40:00Z",
+          "grants": [
+            {
+              "grantId": "bob-chat",
+              "scope": "general-chat",
+              "status": "active",
+              "updatedAt": "2026-03-02T14:40:00Z"
+            }
+          ]
+        },
+        "grantedByPeer": {
+          "version": "tap-grants/v1",
+          "updatedAt": "2026-03-02T14:41:00Z",
+          "grants": []
+        }
       },
       "establishedAt": "2026-03-02T14:32:00Z",
       "lastContactAt": "2026-03-02T15:10:00Z",
@@ -309,7 +340,7 @@ Communication between trusted agents uses a **transport abstraction** so that ne
 ┌─────────────────────────────────────────────────────┐
 │              Trusted Agents Protocol Layer            │
 │                                                      │
-│  Connection Management · Permission Enforcement      │
+│  Connection Management · Grant Sync                  │
 │  Conversation Logging · Human Notification           │
 │                                                      │
 ├─────────────────────────────────────────────────────┤
@@ -371,7 +402,7 @@ Alice's Agent                                    Bob's Agent
      │    2. Check trust store: is 0xAlice a           │
      │       trusted contact?                          │
      │    3. Verify ERC-8128 signature                 │
-     │    4. Check permissions for this request type   │
+     │    4. Load contact state and grant context      │
      │    5. Process and respond                       │
      │                                                │
      │  Response (also ERC-8128 signed)                │
@@ -420,9 +451,9 @@ Messages use the A2A protocol format with Trusted Agent metadata extensions:
 
 | Field | Purpose |
 |---|---|
-| `connectionId` | References the established trust relationship. Both agents know the permissions. |
+| `connectionId` | References the established trust relationship. Both agents can sync grant state against it. |
 | `conversationId` | Groups related messages into a conversation thread for logging and human review. |
-| `scope` | Declares which permission scope this message operates under. Receiver validates against stored permissions. |
+| `scope` | Declares the semantic label this message operates under. Receiver uses it with grants and ledger context. |
 | `requiresHumanApproval` | Hints that this message involves a decision the receiving agent should escalate to its human. |
 
 > **Note on `messageId`**: The `messageId` field shown in the message example above is part of the A2A base spec (`Message.messageId`), not a Trusted Agent extension. It is required by A2A for message deduplication and reference.
@@ -437,7 +468,7 @@ The protocol defines these request types, all sent as A2A messages:
 | `connection/accept` | Accept a connection | Always | Yes (must match pending request/nonce) |
 | `connection/reject` | Reject a connection | Always | Yes (must match pending request/nonce) |
 | `connection/revoke` | Revoke an existing connection | Always | No |
-| `connection/update-scope` | Modify permissions on a connection | Always | No |
+| `connection/update-grants` | Publish a new directional grant set for a connection | Always | No |
 | `message/send` | Send a conversational message | Per agent configuration | No |
 | `message/action-request` | Request the peer agent to take an action | Configurable per scope | No |
 | `message/action-response` | Response to an action request | No (response to approved request) | No |

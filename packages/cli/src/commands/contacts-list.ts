@@ -1,8 +1,8 @@
 import { FileTrustStore } from "trusted-agents-core";
-import type { GlobalOptions } from "../types.js";
 import { loadConfig } from "../lib/config-loader.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function contactsListCommand(opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
@@ -18,6 +18,8 @@ export async function contactsListCommand(opts: GlobalOptions): Promise<void> {
 			chain: c.peerChain,
 			status: c.status,
 			connection_id: c.connectionId,
+			granted_by_me: c.permissions.grantedByMe.grants.length,
+			granted_by_peer: c.permissions.grantedByPeer.grants.length,
 			last_contact: c.lastContactAt,
 		}));
 

@@ -1,7 +1,4 @@
-import {
-	FileTrustStore,
-	XmtpTransport,
-} from "trusted-agents-core";
+import { FileTrustStore, XmtpTransport } from "trusted-agents-core";
 import type {
 	IAgentResolver,
 	ProtocolMessage,
@@ -115,7 +112,7 @@ export class TrustedAgentsOrchestrator {
 			dataDir: this.config.dataDir,
 			withName: filter?.withName,
 			conversationId: filter?.conversationId,
-			});
+		});
 	}
 
 	private buildTransport(config: OrchestratorConfig): TransportProvider | undefined {

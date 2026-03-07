@@ -1,3 +1,5 @@
+import type { PermissionGrant, PermissionGrantSet } from "../permissions/types.js";
+
 export type JsonRpcId = string | number | null;
 
 export interface JsonRpcRequest {
@@ -54,11 +56,16 @@ export interface AgentIdentifier {
 	ownerAddress?: `0x${string}`;
 }
 
+export interface ConnectionPermissionIntent {
+	requestedGrants?: PermissionGrant[];
+	offeredGrants?: PermissionGrant[];
+}
+
 export interface ConnectionRequestParams {
 	from: AgentIdentifier;
 	to: AgentIdentifier;
-	proposedScope: string[];
 	message?: string;
+	permissionIntent?: ConnectionPermissionIntent;
 	nonce: string;
 	protocolVersion?: string;
 	timestamp: string;
@@ -68,7 +75,6 @@ export interface ConnectionAcceptParams {
 	connectionId: string;
 	from: AgentIdentifier;
 	to: AgentIdentifier;
-	acceptedScope: string[];
 	requestNonce: string;
 	timestamp: string;
 }
@@ -83,6 +89,14 @@ export interface ConnectionRejectParams {
 
 export interface MessageSendParams {
 	message: Message;
+}
+
+export interface ConnectionUpdateGrantsParams {
+	grantSet: PermissionGrantSet;
+	grantor: AgentIdentifier;
+	grantee: AgentIdentifier;
+	note?: string;
+	timestamp: string;
 }
 
 export interface AgentCard {

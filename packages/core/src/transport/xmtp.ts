@@ -14,6 +14,8 @@ import type { XmtpTransportConfig } from "./xmtp-types.js";
 const IDENTIFIER_KIND_ETHEREUM = 0 as const;
 
 const RECONNECT_DELAY_MS = 5_000;
+const INBOUND_REQUEST_DEDUPE_TTL_MS = 10 * 60 * 1_000;
+const MAX_TRACKED_INBOUND_REQUESTS = 4_096;
 
 interface PendingRequest {
 	resolve: (response: ProtocolResponse) => void;
@@ -25,6 +27,7 @@ export class XmtpTransport implements TransportProvider {
 	private client: Client | null = null;
 	private messageCallback?: (from: number, message: ProtocolMessage) => Promise<ProtocolResponse>;
 	private readonly pendingRequests = new Map<string, PendingRequest>();
+	private readonly processedIncomingRequests = new Map<string, number>();
 	private running = false;
 	private streamCloser?: { return?: (value?: unknown) => Promise<unknown> };
 	private readonly inboxIdToAddress = new Map<string, `0x${string}`>();
@@ -171,6 +174,7 @@ export class XmtpTransport implements TransportProvider {
 			pending.reject(new TransportError("Transport stopped"));
 		}
 		this.pendingRequests.clear();
+		this.processedIncomingRequests.clear();
 
 		this.client = null;
 	}
@@ -254,7 +258,11 @@ export class XmtpTransport implements TransportProvider {
 				pending.resolve(msg as unknown as ProtocolResponse);
 			}
 		} else if ("method" in msg) {
-			await this.handleIncomingRequest(message, msg as unknown as ProtocolMessage);
+			const request = msg as unknown as ProtocolMessage;
+			if (this.shouldSkipDuplicateIncomingRequest(message.senderInboxId, request)) {
+				return;
+			}
+			await this.handleIncomingRequest(message, request);
 		}
 	}
 
@@ -338,10 +346,7 @@ export class XmtpTransport implements TransportProvider {
 				return;
 			}
 
-			this.inboxIdToAddress.set(
-				rawMessage.senderInboxId,
-				expectedSenderAddress as `0x${string}`,
-			);
+			this.inboxIdToAddress.set(rawMessage.senderInboxId, expectedSenderAddress as `0x${string}`);
 			senderId = claimedAgentId;
 		} else {
 			await this.sendJsonRpcError(rawMessage.senderInboxId, request.id, -32001, "Unknown sender");
@@ -452,6 +457,46 @@ export class XmtpTransport implements TransportProvider {
 			return await this.client.conversations.createDm(senderInboxId);
 		} catch {
 			return null;
+		}
+	}
+
+	private shouldSkipDuplicateIncomingRequest(
+		senderInboxId: string,
+		request: ProtocolMessage,
+	): boolean {
+		const requestId = String(request.id);
+		const key = `${senderInboxId}:${request.method}:${requestId}`;
+		const now = Date.now();
+
+		this.pruneProcessedIncomingRequests(now);
+
+		if (this.processedIncomingRequests.has(key)) {
+			return true;
+		}
+
+		this.processedIncomingRequests.set(key, now);
+		return false;
+	}
+
+	private pruneProcessedIncomingRequests(now: number): void {
+		for (const [key, timestamp] of this.processedIncomingRequests) {
+			if (now - timestamp > INBOUND_REQUEST_DEDUPE_TTL_MS) {
+				this.processedIncomingRequests.delete(key);
+			}
+		}
+
+		if (this.processedIncomingRequests.size <= MAX_TRACKED_INBOUND_REQUESTS) {
+			return;
+		}
+
+		const oldestEntries = [...this.processedIncomingRequests.entries()].sort(
+			(left, right) => left[1] - right[1],
+		);
+		for (const [key] of oldestEntries.slice(
+			0,
+			this.processedIncomingRequests.size - MAX_TRACKED_INBOUND_REQUESTS,
+		)) {
+			this.processedIncomingRequests.delete(key);
 		}
 	}
 }

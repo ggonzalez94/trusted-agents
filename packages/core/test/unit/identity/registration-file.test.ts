@@ -47,9 +47,7 @@ describe("validateRegistrationFile", () => {
 	});
 
 	it("should throw when no XMTP transport service is present", () => {
-		expect(() => validateRegistrationFile(REGISTRATION_NO_XMTP_SERVICE)).toThrow(
-			"xmtp",
-		);
+		expect(() => validateRegistrationFile(REGISTRATION_NO_XMTP_SERVICE)).toThrow("xmtp");
 	});
 
 	it("should accept a valid XMTP-only registration file", () => {

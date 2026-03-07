@@ -47,13 +47,17 @@ export function resolveDataDir(opts: GlobalOptions): string {
 	return FALLBACK_DATA_DIR;
 }
 
+function hasExplicitDataDir(opts: GlobalOptions): boolean {
+	return Boolean(opts.dataDir || process.env.TAP_DATA_DIR);
+}
+
 export function resolveConfigPath(opts: GlobalOptions, dataDir: string): string {
 	if (opts.config) return opts.config;
 	// New default: config lives inside data dir
 	const newPath = join(dataDir, "config.yaml");
 	if (existsSync(newPath)) return newPath;
-	// An explicit data dir must stay isolated from any legacy global config.
-	if (opts.dataDir || process.env.TAP_DATA_DIR) return newPath;
+	// Explicit data-dir selection must stay isolated from legacy config.
+	if (hasExplicitDataDir(opts)) return newPath;
 	// Legacy fallback: ~/.config/trustedagents/config.yaml
 	if (existsSync(LEGACY_CONFIG_PATH)) return LEGACY_CONFIG_PATH;
 	// Default to new path (init will create it here)

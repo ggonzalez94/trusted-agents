@@ -70,7 +70,7 @@ File: `packages/core/src/protocol/methods.ts`
 - `connection/accept`
 - `connection/reject`
 - `connection/revoke`
-- `connection/update-scope`
+- `connection/update-grants`
 - `message/send`
 - `message/action-request`
 - `message/action-response`
@@ -140,6 +140,7 @@ File: `packages/sdk/src/orchestrator.ts`
 6. File stores are atomic but process-local locked:
 - Uses `AsyncMutex` per instance + `tmp file -> rename`
 - No cross-process lock exists
+- Do not run multiple transport-using CLI processes against the same agent/data dir at once. XMTP replies are process-local, so a long-running listener can race with a short-lived sender for the same identity.
 
 7. `loadConfig()` requires `agent_id` by default:
 - Most commands fail unless `agent_id >= 0`
@@ -219,6 +220,18 @@ File: `packages/sdk/src/orchestrator.ts`
 - Preserve pending request timeout cleanup to avoid memory leaks
 - Validate both unit tests and optional XMTP integration test
 
+### Adding/changing/removing a CLI command
+- Update the relevant skill file in `packages/sdk/skills/trusted-agents/`
+- Every CLI command must appear in exactly one skill file as a documented command
+- Skill structure maps to command domains:
+  - `SKILL.md` (root): utility commands — `balance`, `config`, `identity`
+  - `onboard/SKILL.md`: `init`, `register`, `register update`
+  - `connections/SKILL.md`: `invite`, `connect`, `contacts`
+  - `messaging/SKILL.md`: `message`, `conversations`
+- Keep skills concise: command syntax + flags + one example + errors. No internal implementation details.
+- Every `SKILL.md` must have YAML frontmatter with `name` and `description`
+- Cross-references between skills (e.g., "use `tap contacts list` to check") are fine; duplicate primary docs are not
+
 ## Build/Test Commands Agents Should Actually Use
 ```bash
 bun install
@@ -228,6 +241,24 @@ bun run test
 # Optional integration:
 XMTP_INTEGRATION=true bun run test:xmtp
 ```
+
+## Deterministic E2E Maintenance
+- The GH-safe two-agent CLI flow test lives at `packages/cli/test/e2e-two-agent-flow.test.ts`.
+- Update this test whenever there is a meaningful behavioral change to the two-agent flow.
+- A change counts as meaningful if it changes any of:
+	- protocol method names or payload fields
+	- CLI command names, flags, or required sequencing for `invite`, `connect`, `permissions`, `message`, `contacts`, or `conversations`
+	- trust/contact persistence shape
+	- directional grant schema or ledger schema
+	- listener approval behavior or action request/response semantics
+	- transfer execution semantics or fake-transfer expectations
+	- multi-agent `dataDir` isolation behavior
+- A change does **not** count as meaningful if it is only:
+	- formatting
+	- comments
+	- copy-only docs with no behavioral change
+	- internal refactors that preserve observable CLI/protocol behavior
+- The live XMTP/testnet smoke runbook is `LIVE_SMOKE_RUNBOOK.md`. Update it when the real-world setup, required secrets, or operational flow changes.
 
 ## Repository Conventions Worth Respecting
 - ESM only; TypeScript imports use `.js` extension in source.

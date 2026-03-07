@@ -74,7 +74,8 @@ export async function uploadToIpfsX402(
 		cid?: string;
 		data?: { cid?: string };
 	};
-	const cid = pinResponse.cid ?? uploadResult.data?.cid ?? uploadResult.IpfsHash ?? uploadResult.cid;
+	const cid =
+		pinResponse.cid ?? uploadResult.data?.cid ?? uploadResult.IpfsHash ?? uploadResult.cid;
 
 	if (!cid) {
 		throw new Error("Could not determine IPFS CID from upload response");
@@ -126,5 +127,5 @@ export async function uploadToIpfsPinata(
 }
 
 export function resolvePinataJwt(flagValue?: string): string | undefined {
-	return flagValue ?? process.env["TAP_PINATA_JWT"];
+	return flagValue ?? (process.env.TAP_PINATA_JWT || undefined);
 }

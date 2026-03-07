@@ -1,8 +1,8 @@
 import { FileTrustStore } from "trusted-agents-core";
-import type { GlobalOptions } from "../types.js";
 import { loadConfig } from "../lib/config-loader.js";
+import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { exitCodeForError, errorCode } from "../lib/errors.js";
+import type { GlobalOptions } from "../types.js";
 
 export async function contactsShowCommand(nameOrId: string, opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
@@ -36,9 +36,8 @@ export async function contactsShowCommand(nameOrId: string, opts: GlobalOptions)
 				owner_address: contact.peerOwnerAddress,
 				agent_address: contact.peerAgentAddress,
 				status: contact.status,
-				permissions: Object.entries(contact.permissions)
-					.filter(([, v]) => v)
-					.map(([k]) => k),
+				granted_by_me: contact.permissions.grantedByMe,
+				granted_by_peer: contact.permissions.grantedByPeer,
 				established_at: contact.establishedAt,
 				last_contact: contact.lastContactAt,
 			},

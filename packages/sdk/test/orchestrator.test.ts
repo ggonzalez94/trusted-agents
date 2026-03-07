@@ -89,11 +89,13 @@ describe("TrustedAgentsOrchestrator", () => {
 			transport,
 		});
 
-		const handler = vi.fn(async (): Promise<ProtocolResponse> => ({
-			jsonrpc: "2.0",
-			id: "1",
-			result: { ok: true },
-		}));
+		const handler = vi.fn(
+			async (): Promise<ProtocolResponse> => ({
+				jsonrpc: "2.0",
+				id: "1",
+				result: { ok: true },
+			}),
+		);
 
 		await orchestrator.start({ onMessage: handler });
 		await orchestrator.start({ onMessage: handler });

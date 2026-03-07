@@ -15,7 +15,6 @@ describe("buildConnectionRequest", () => {
 		const params: ConnectionRequestParams = {
 			from: { agentId: 1, chain: "eip155:1" },
 			to: { agentId: 2, chain: "eip155:1" },
-			proposedScope: ["general-chat", "scheduling"],
 			nonce: "test-nonce",
 			timestamp: "2025-01-01T00:00:00.000Z",
 		};
@@ -35,7 +34,6 @@ describe("buildConnectionAccept", () => {
 			connectionId: "conn-001",
 			from: { agentId: 2, chain: "eip155:1" },
 			to: { agentId: 1, chain: "eip155:1" },
-			acceptedScope: ["general-chat"],
 			requestNonce: "nonce-001",
 			timestamp: "2025-01-01T00:01:00.000Z",
 		};

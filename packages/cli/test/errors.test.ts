@@ -1,4 +1,3 @@
-import { describe, expect, it } from "vitest";
 import {
 	AuthenticationError,
 	ConfigError,
@@ -9,6 +8,7 @@ import {
 	TrustedAgentError,
 	ValidationError,
 } from "trusted-agents-core";
+import { describe, expect, it } from "vitest";
 import {
 	EXIT_GENERAL_ERROR,
 	EXIT_IDENTITY_ERROR,

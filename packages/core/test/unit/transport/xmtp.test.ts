@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import type { ProtocolMessage, ProtocolResponse } from "../../../src/transport/interface.js";
 import type { XmtpTransportConfig } from "../../../src/transport/xmtp-types.js";
 import { XmtpTransport } from "../../../src/transport/xmtp.js";
@@ -35,10 +36,7 @@ function createMockClient(opts?: { inboxId?: string }) {
 	const clientInboxId = opts?.inboxId ?? "self-inbox-id";
 	const messageListeners: Array<(msg: MockMessage) => void> = [];
 	const mockConversation = createMockConversation();
-	const inboxIdentifiers = new Map<
-		string,
-		Array<{ identifier: string; identifierKind: number }>
-	>();
+	const inboxIdentifiers = new Map<string, Array<{ identifier: string; identifierKind: number }>>();
 
 	const client = {
 		inboxId: clientInboxId,
@@ -154,7 +152,7 @@ const BOB_CONTACT: Contact = {
 	peerOwnerAddress: BOB.address,
 	peerDisplayName: "Bob's Agent",
 	peerAgentAddress: BOB.address,
-	permissions: { "message/send": true },
+	permissions: createEmptyPermissionState(),
 	establishedAt: new Date().toISOString(),
 	lastContactAt: new Date().toISOString(),
 	status: "active",
@@ -417,6 +415,38 @@ describe("XmtpTransport", () => {
 			expect(callback).toHaveBeenCalledWith(42, request);
 		});
 
+		it("should ignore duplicate inbound requests with the same sender and request id", async () => {
+			injectMockClient();
+
+			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
+			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+
+			const callback = vi.fn(async (_from: number, _msg: ProtocolMessage) => ({
+				jsonrpc: "2.0" as const,
+				id: _msg.id,
+				result: { handled: true },
+			}));
+			transport.onMessage(callback);
+
+			const request: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "message/send",
+				id: "req-duplicate",
+			};
+
+			await internals(transport).processMessage({
+				senderInboxId: bobInboxId,
+				content: JSON.stringify(request),
+			});
+			await internals(transport).processMessage({
+				senderInboxId: bobInboxId,
+				content: JSON.stringify(request),
+			});
+
+			expect(callback).toHaveBeenCalledTimes(1);
+			expect(mockSetup.mockConversation.sendText).toHaveBeenCalledTimes(1);
+		});
+
 		it("should reject non-bootstrap requests from unknown senders", async () => {
 			injectMockClient();
 
@@ -495,7 +525,6 @@ describe("XmtpTransport", () => {
 				params: {
 					from: { agentId: 99, chain: "eip155:1" },
 					to: { agentId: 1, chain: "eip155:1" },
-					proposedScope: ["message/send"],
 					nonce: "abc",
 					timestamp: new Date().toISOString(),
 				},
@@ -562,7 +591,6 @@ describe("XmtpTransport", () => {
 				params: {
 					from: { agentId: 42, chain: "eip155:1" },
 					to: { agentId: 1, chain: "eip155:1" },
-					proposedScope: ["message/send"],
 					nonce: "spoof",
 					timestamp: new Date().toISOString(),
 				},

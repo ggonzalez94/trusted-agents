@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleConnectionRequest } from "../../../src/connection/request-handler.js";
-import type { ProtocolMessage } from "../../../src/transport/interface.js";
-import type { ResolvedAgent } from "../../../src/identity/types.js";
-import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
+import type { ResolvedAgent } from "../../../src/identity/types.js";
+import type { ProtocolMessage } from "../../../src/transport/interface.js";
+import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
-import { ALICE, BOB } from "../../fixtures/test-keys.js";
+import { ALICE } from "../../fixtures/test-keys.js";
 
 const ALICE_AGENT: ResolvedAgent = {
 	agentId: 10,
@@ -35,7 +35,6 @@ function makeRequest(overrides: Partial<ProtocolMessage> = {}): ProtocolMessage 
 		params: {
 			from: { agentId: 10, chain: "eip155:84532" },
 			to: { agentId: 20, chain: "eip155:84532" },
-			proposedScope: ["message/send"],
 			nonce: "test-nonce",
 			protocolVersion: "1.0",
 			timestamp: "2025-01-01T00:00:00.000Z",
@@ -72,13 +71,14 @@ afterEach(() => {
 describe("handleConnectionRequest", () => {
 	it("should accept a valid connection request", async () => {
 		const { resolver, trustStore } = makeMocks();
+		const approve = vi.fn(async () => true);
 
 		const response = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver,
 			trustStore,
 			ownAgent: { agentId: 20, chain: "eip155:84532" },
-			approve: async () => true,
+			approve,
 		});
 
 		expect(response.error).toBeUndefined();
@@ -86,13 +86,15 @@ describe("handleConnectionRequest", () => {
 		const result = response.result as Record<string, unknown>;
 		expect(result.accepted).toBe(true);
 		expect(result.connectionId).toBeDefined();
-		expect(result.acceptedScope).toEqual(["message/send"]);
+		expect(approve).toHaveBeenCalledWith(ALICE_AGENT, undefined);
 
 		expect(trustStore.addContact).toHaveBeenCalledOnce();
 		const stored = (trustStore.addContact as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Contact;
 		expect(stored.peerAgentId).toBe(10);
 		expect(stored.peerDisplayName).toBe("Alice");
 		expect(stored.status).toBe("active");
+		expect(stored.permissions.grantedByMe.grants).toEqual([]);
+		expect(stored.permissions.grantedByPeer.grants).toEqual([]);
 	});
 
 	it("should reject when approval callback returns false", async () => {
@@ -131,7 +133,9 @@ describe("handleConnectionRequest", () => {
 
 	it("should return error when resolver fails", async () => {
 		const { resolver, trustStore } = makeMocks();
-		(resolver.resolveWithCache as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
+		(resolver.resolveWithCache as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error("not found"),
+		);
 
 		const response = await handleConnectionRequest({
 			message: makeRequest(),
@@ -154,7 +158,18 @@ describe("handleConnectionRequest", () => {
 			peerOwnerAddress: ALICE.address,
 			peerDisplayName: "Alice",
 			peerAgentAddress: ALICE.address,
-			permissions: { "message/send": true },
+			permissions: {
+				grantedByMe: {
+					version: "tap-grants/v1",
+					updatedAt: "2025-01-01T00:00:00.000Z",
+					grants: [],
+				},
+				grantedByPeer: {
+					version: "tap-grants/v1",
+					updatedAt: "2025-01-01T00:00:00.000Z",
+					grants: [],
+				},
+			},
 			establishedAt: "2025-01-01T00:00:00.000Z",
 			lastContactAt: "2025-01-01T00:00:00.000Z",
 			status: "active",
