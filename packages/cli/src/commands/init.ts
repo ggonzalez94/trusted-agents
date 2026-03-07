@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
-import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
+import { ALL_CHAINS, DEFAULT_INIT_CHAIN_ALIAS, resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { generateKeyfile, importKeyfile, loadKeyfile } from "../lib/keyfile.js";
@@ -55,8 +55,8 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			info(`Generated keyfile at ${result.path}`, opts);
 		}
 
-		// Resolve chain — default to Base Sepolia for testnet
-		const chain = resolveChainAlias(cmdOpts?.chain ?? "base-sepolia");
+		// Resolve chain — default to Base mainnet for onboarding
+		const chain = resolveChainAlias(cmdOpts?.chain ?? DEFAULT_INIT_CHAIN_ALIAS);
 		const chainConfig = ALL_CHAINS[chain];
 		const chainLabel = chainConfig?.name ?? chain;
 		const isTestnet = chain !== "eip155:8453" && chain !== "eip155:167000";

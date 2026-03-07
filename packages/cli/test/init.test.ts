@@ -51,7 +51,8 @@ describe("tap init", () => {
 		const configContent = await readFile(configPath, "utf-8");
 		const yaml = YAML.parse(configContent);
 		expect(yaml.agent_id).toBe(-1);
-		expect(yaml.chain).toBe("eip155:84532");
+		expect(yaml.chain).toBe("eip155:8453");
+		expect(yaml.xmtp.env).toBe("production");
 
 		// Keyfile created
 		const keyfile = join(dataDir, "identity", "agent.key");

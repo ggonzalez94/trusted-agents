@@ -32,6 +32,8 @@ export const ALL_CHAINS: Record<string, ChainConfig> = {
 	"eip155:167013": TAIKO_HOODI,
 };
 
+export const DEFAULT_INIT_CHAIN_ALIAS = "base" as const;
+
 /**
  * Human-friendly aliases → CAIP-2 chain IDs.
  * Accepts multiple spellings for convenience.
@@ -82,8 +84,8 @@ export function resolveChainAlias(input: string): string {
 /** List all known aliases for help text. */
 export function chainAliasHelpText(): string {
 	return [
-		"  base-sepolia   Base Sepolia testnet (default)",
-		"  base           Base mainnet",
+		"  base           Base mainnet (default)",
+		"  base-sepolia   Base Sepolia testnet",
 		"  taiko          Taiko mainnet",
 		"  taiko-hoodi    Taiko Hoodi testnet",
 		"  eip155:<id>    Any chain by CAIP-2 ID",
