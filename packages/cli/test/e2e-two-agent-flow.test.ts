@@ -522,6 +522,8 @@ describe("two-agent CLI E2E flow", () => {
 					"--data-dir",
 					pendingConnectorDir,
 					"init",
+					"--chain",
+					"base-sepolia",
 					"--private-key",
 					WORKER_KEY.slice(2),
 				]),
