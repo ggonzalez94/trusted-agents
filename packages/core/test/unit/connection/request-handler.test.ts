@@ -35,6 +35,7 @@ function makeRequest(overrides: Partial<ProtocolMessage> = {}): ProtocolMessage 
 		params: {
 			from: { agentId: 10, chain: "eip155:84532" },
 			to: { agentId: 20, chain: "eip155:84532" },
+			connectionId: "conn-req-1",
 			nonce: "test-nonce",
 			protocolVersion: "1.0",
 			timestamp: "2025-01-01T00:00:00.000Z",
@@ -81,11 +82,10 @@ describe("handleConnectionRequest", () => {
 			approve,
 		});
 
-		expect(response.error).toBeUndefined();
-		expect(response.result).toBeDefined();
-		const result = response.result as Record<string, unknown>;
-		expect(result.accepted).toBe(true);
-		expect(result.connectionId).toBeDefined();
+		expect(response.peer).toEqual(ALICE_AGENT);
+		expect(response.result.status).toBe("accepted");
+		expect(response.result.connectionId).toBe("conn-req-1");
+		expect(response.contact?.connectionId).toBe("conn-req-1");
 		expect(approve).toHaveBeenCalledWith(ALICE_AGENT, undefined);
 
 		expect(trustStore.addContact).toHaveBeenCalledOnce();
@@ -108,10 +108,9 @@ describe("handleConnectionRequest", () => {
 			approve: async () => false,
 		});
 
-		expect(response.error).toBeUndefined();
-		const result = response.result as Record<string, unknown>;
-		expect(result.accepted).toBe(false);
-		expect(result.reason).toBe("Connection rejected by agent");
+		expect(response.result.status).toBe("rejected");
+		expect(response.result.reason).toBe("Connection rejected by agent");
+		expect(response.contact).toBeNull();
 
 		expect(trustStore.addContact).not.toHaveBeenCalled();
 	});
@@ -119,16 +118,15 @@ describe("handleConnectionRequest", () => {
 	it("should return error for invalid params", async () => {
 		const { resolver, trustStore } = makeMocks();
 
-		const response = await handleConnectionRequest({
-			message: makeRequest({ params: {} }),
-			resolver,
-			trustStore,
-			ownAgent: { agentId: 20, chain: "eip155:84532" },
-			approve: async () => true,
-		});
-
-		expect(response.error).toBeDefined();
-		expect(response.error!.code).toBe(-32602);
+		await expect(
+			handleConnectionRequest({
+				message: makeRequest({ params: {} }),
+				resolver,
+				trustStore,
+				ownAgent: { agentId: 20, chain: "eip155:84532" },
+				approve: async () => true,
+			}),
+		).rejects.toThrow("Invalid connection request parameters");
 	});
 
 	it("should return error when resolver fails", async () => {
@@ -137,16 +135,15 @@ describe("handleConnectionRequest", () => {
 			new Error("not found"),
 		);
 
-		const response = await handleConnectionRequest({
-			message: makeRequest(),
-			resolver,
-			trustStore,
-			ownAgent: { agentId: 20, chain: "eip155:84532" },
-			approve: async () => true,
-		});
-
-		expect(response.error).toBeDefined();
-		expect(response.error!.code).toBe(-32001);
+		await expect(
+			handleConnectionRequest({
+				message: makeRequest(),
+				resolver,
+				trustStore,
+				ownAgent: { agentId: 20, chain: "eip155:84532" },
+				approve: async () => true,
+			}),
+		).rejects.toThrow("not found");
 	});
 
 	it("should return accept with existing connectionId for already-connected peers", async () => {
@@ -184,10 +181,9 @@ describe("handleConnectionRequest", () => {
 			approve: async () => true,
 		});
 
-		expect(response.error).toBeUndefined();
-		const result = response.result as Record<string, unknown>;
-		expect(result.accepted).toBe(true);
-		expect(result.connectionId).toBe("existing-conn");
+		expect(response.result.status).toBe("accepted");
+		expect(response.result.connectionId).toBe("existing-conn");
+		expect(response.contact?.connectionId).toBe("existing-conn");
 
 		// Should not add a duplicate contact
 		expect(trustStore.addContact).not.toHaveBeenCalled();

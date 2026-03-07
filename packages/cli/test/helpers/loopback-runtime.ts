@@ -1,10 +1,18 @@
-import { FileConversationLogger, FileTrustStore } from "trusted-agents-core";
+import {
+	ACTION_RESULT,
+	CONNECTION_RESULT,
+	FileConversationLogger,
+	FileRequestJournal,
+	FileTrustStore,
+} from "trusted-agents-core";
 import type {
 	IAgentResolver,
 	ProtocolMessage,
-	ProtocolResponse,
 	ResolvedAgent,
+	TransportAck,
+	TransportHandlers,
 	TransportProvider,
+	TransportReceipt,
 } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import { clearCliRuntimeOverride, setCliRuntimeOverride } from "../../src/lib/runtime-overrides.js";
@@ -16,6 +24,11 @@ export interface TestAgentFixture {
 	name: string;
 	description: string;
 	capabilities: string[];
+}
+
+interface LoopbackEnvelope {
+	from: number;
+	message: ProtocolMessage;
 }
 
 export function createResolvedAgentFixture(fixture: TestAgentFixture): ResolvedAgent {
@@ -71,6 +84,7 @@ export class StaticAgentResolver implements IAgentResolver {
 
 export class LoopbackTransportNetwork {
 	private readonly stacks = new Map<number, LoopbackTransport[]>();
+	private readonly mailboxes = new Map<number, LoopbackEnvelope[]>();
 
 	register(agentId: number, transport: LoopbackTransport): void {
 		const stack = this.stacks.get(agentId) ?? [];
@@ -101,12 +115,29 @@ export class LoopbackTransportNetwork {
 		const stack = this.stacks.get(agentId);
 		return stack?.[stack.length - 1];
 	}
+
+	async deliver(peerId: number, envelope: LoopbackEnvelope): Promise<TransportReceipt> {
+		const peer = this.getActive(peerId);
+		if (!peer) {
+			const queued = this.mailboxes.get(peerId) ?? [];
+			queued.push(structuredClone(envelope));
+			this.mailboxes.set(peerId, queued);
+			return createReceipt(envelope.message, "queued");
+		}
+
+		const ack = await peer.receive(structuredClone(envelope));
+		return createReceipt(envelope.message, ack.status);
+	}
+
+	drain(agentId: number): LoopbackEnvelope[] {
+		const queued = this.mailboxes.get(agentId) ?? [];
+		this.mailboxes.delete(agentId);
+		return queued.map((envelope) => structuredClone(envelope));
+	}
 }
 
 export class LoopbackTransport implements TransportProvider {
-	private handler:
-		| ((from: number, message: ProtocolMessage) => Promise<ProtocolResponse>)
-		| undefined;
+	private handlers: TransportHandlers = {};
 	private started = false;
 
 	constructor(
@@ -114,25 +145,28 @@ export class LoopbackTransport implements TransportProvider {
 		private readonly localAgentId: number,
 	) {}
 
-	async send(peerId: number, message: ProtocolMessage): Promise<ProtocolResponse> {
-		const peer = this.network.getActive(peerId);
-		if (!peer?.handler) {
-			throw new Error(`Peer ${peerId} is not reachable on the loopback network`);
-		}
-
-		const response = await peer.handler(
-			this.localAgentId,
-			structuredClone(message) as ProtocolMessage,
-		);
-		return structuredClone(response) as ProtocolResponse;
+	async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+		return await this.network.deliver(peerId, {
+			from: this.localAgentId,
+			message: structuredClone(message) as ProtocolMessage,
+		});
 	}
 
-	onMessage(callback: (from: number, message: ProtocolMessage) => Promise<ProtocolResponse>): void {
-		this.handler = callback;
+	setHandlers(handlers: TransportHandlers): void {
+		this.handlers = { ...handlers };
 	}
 
 	async isReachable(peerId: number): Promise<boolean> {
 		return this.network.getActive(peerId) !== undefined;
+	}
+
+	async reconcile(): Promise<{ synced: true; processed: number }> {
+		let processed = 0;
+		for (const envelope of this.network.drain(this.localAgentId)) {
+			await this.receive(envelope);
+			processed += 1;
+		}
+		return { synced: true, processed };
 	}
 
 	async start(): Promise<void> {
@@ -150,6 +184,20 @@ export class LoopbackTransport implements TransportProvider {
 		this.network.unregister(this.localAgentId, this);
 		this.started = false;
 	}
+
+	async receive(envelope: LoopbackEnvelope): Promise<TransportAck> {
+		const handler = isResultMethod(envelope.message.method)
+			? this.handlers.onResult
+			: this.handlers.onRequest;
+		if (!handler) {
+			return { status: "received" };
+		}
+		return await handler({
+			from: envelope.from,
+			senderInboxId: `loopback:${envelope.from}`,
+			message: structuredClone(envelope.message) as ProtocolMessage,
+		});
+	}
 }
 
 export function installLoopbackRuntime(params: {
@@ -163,6 +211,7 @@ export function installLoopbackRuntime(params: {
 			trustStore: new FileTrustStore(params.dataDir),
 			resolver: params.resolver,
 			conversationLogger: new FileConversationLogger(params.dataDir),
+			requestJournal: new FileRequestJournal(params.dataDir),
 		}),
 		createTransport: (config) => new LoopbackTransport(params.network, config.agentId),
 		executeTransferAction: async () => ({
@@ -173,6 +222,22 @@ export function installLoopbackRuntime(params: {
 
 export function clearLoopbackRuntime(dataDir: string): void {
 	clearCliRuntimeOverride(dataDir);
+}
+
+function isResultMethod(method: string): boolean {
+	return method === CONNECTION_RESULT || method === ACTION_RESULT;
+}
+
+function createReceipt(
+	message: ProtocolMessage,
+	status: TransportReceipt["status"],
+): TransportReceipt {
+	return {
+		received: true,
+		requestId: String(message.id),
+		status,
+		receivedAt: "2026-03-06T00:00:00.000Z",
+	};
 }
 
 function formatTxHash(seed: string): `0x${string}` {

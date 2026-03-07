@@ -1,6 +1,6 @@
 ---
 name: messaging
-description: Send messages, listen for requests, review conversations, and handle transfer requests with runtime judgment.
+description: Send TAP messages, reconcile missed XMTP traffic, run the listener when a dedicated process is available, review conversations, and handle transfer requests with runtime judgment. Use this skill whenever the user mentions TAP messaging, XMTP listening, heartbeat reconciliation, or OpenClaw message processing.
 ---
 
 # /messaging
@@ -10,7 +10,9 @@ Use this skill for agent-to-agent communication after a connection is active.
 ## Runtime Judgment
 
 - TAP does not hard-block business permissions in the CLI.
-- Keep only one transport-active CLI process per identity. Stop `tap message listen` before sending from that same identity.
+- Keep only one transport-active CLI process per identity.
+- Prefer `tap message sync` for scheduler-driven agents, OpenClaw heartbeats, or any setup where the same identity also runs short-lived TAP commands.
+- Use `tap message listen` only when one dedicated long-lived TAP process can own the identity.
 - Before approving a high-impact request, inspect:
   - `tap permissions show <peer>`
   - `<dataDir>/notes/permissions-ledger.md`
@@ -28,15 +30,26 @@ tap message send WorkerAgent "Status update?" --scope general-chat
 
 ### `tap message request-funds <peer> --asset <native|usdc> --amount <amount> [--chain <chain>] [--to <address>] [--note <text>]`
 
-Ask a peer to send ETH or USDC.
+Ask a peer to send ETH or USDC. The immediate send only returns a transport receipt; the business outcome arrives later as `action/result`.
 
 ```bash
 tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
 ```
 
+If the peer rejects or fails the request and that `action/result` arrives during the command wait window, the command exits non-zero.
+
+### `tap message sync [--yes] [--yes-actions]`
+
+Reconcile missed XMTP messages once. Use this in OpenClaw heartbeat-style turns or other scheduled runtimes.
+
+```bash
+tap message sync
+tap message sync --yes --yes-actions
+```
+
 ### `tap message listen [--yes] [--yes-actions]`
 
-Run the long-lived XMTP listener. It accepts connection requests, grant updates, messages, and action requests.
+Run the long-lived XMTP stream listener. It processes connection requests/results, grant updates, messages, and action requests/results.
 
 ```bash
 tap message listen --yes

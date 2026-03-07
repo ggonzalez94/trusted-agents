@@ -64,6 +64,7 @@ export interface ConnectionPermissionIntent {
 export interface ConnectionRequestParams {
 	from: AgentIdentifier;
 	to: AgentIdentifier;
+	connectionId: string;
 	message?: string;
 	permissionIntent?: ConnectionPermissionIntent;
 	nonce: string;
@@ -71,19 +72,14 @@ export interface ConnectionRequestParams {
 	timestamp: string;
 }
 
-export interface ConnectionAcceptParams {
-	connectionId: string;
-	from: AgentIdentifier;
-	to: AgentIdentifier;
+export interface ConnectionResultParams {
+	requestId: string;
 	requestNonce: string;
-	timestamp: string;
-}
-
-export interface ConnectionRejectParams {
 	from: AgentIdentifier;
 	to: AgentIdentifier;
+	status: "accepted" | "rejected";
+	connectionId?: string;
 	reason?: string;
-	nonce: string;
 	timestamp: string;
 }
 
@@ -91,7 +87,14 @@ export interface MessageSendParams {
 	message: Message;
 }
 
-export interface ConnectionUpdateGrantsParams {
+export interface ActionResultParams {
+	requestId: string;
+	status: "completed" | "rejected" | "failed";
+	message: Message;
+	timestamp: string;
+}
+
+export interface PermissionsUpdateParams {
 	grantSet: PermissionGrantSet;
 	grantor: AgentIdentifier;
 	grantee: AgentIdentifier;

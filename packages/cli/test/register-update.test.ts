@@ -59,6 +59,10 @@ describe("register update", () => {
 		return JSON.parse(stdoutWrites.join("")) as Record<string, unknown>;
 	}
 
+	function uploadMock(): ReturnType<typeof vi.fn> {
+		return ipfsLib.uploadToIpfsX402 as unknown as ReturnType<typeof vi.fn>;
+	}
+
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-register-update-test-"));
 		stdoutWrites = [];
@@ -141,8 +145,7 @@ describe("register update", () => {
 			expect.anything(),
 		);
 
-		const uploadPayload = vi.mocked(ipfsLib.uploadToIpfsX402).mock
-			.calls[0]?.[0] as RegistrationFile;
+		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.name).toBe("Replacement Agent");
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual(["search", "research"]);
 		expect(stderrWrites.join("")).toContain("proceeding with replacement upload");
@@ -156,8 +159,7 @@ describe("register update", () => {
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
 		expect(core.ERC8004Registry.prototype.setAgentURI).toHaveBeenCalledOnce();
 
-		const uploadPayload = vi.mocked(ipfsLib.uploadToIpfsX402).mock
-			.calls[0]?.[0] as RegistrationFile;
+		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual(["search"]);
 	});
 
@@ -170,8 +172,7 @@ describe("register update", () => {
 
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
 
-		const uploadPayload = vi.mocked(ipfsLib.uploadToIpfsX402).mock
-			.calls[0]?.[0] as RegistrationFile;
+		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual([]);
 	});
 

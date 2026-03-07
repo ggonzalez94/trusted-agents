@@ -10,24 +10,27 @@ export type {
 	AgentIdentifier,
 	ConnectionPermissionIntent,
 	ConnectionRequestParams,
-	ConnectionAcceptParams,
-	ConnectionRejectParams,
-	ConnectionUpdateGrantsParams,
+	ConnectionResultParams,
+	PermissionsUpdateParams,
 	MessageSendParams,
+	ActionResultParams,
 	AgentCard,
 } from "./types.js";
 
 export {
 	CONNECTION_REQUEST,
-	CONNECTION_ACCEPT,
-	CONNECTION_REJECT,
+	CONNECTION_RESULT,
 	CONNECTION_REVOKE,
-	CONNECTION_UPDATE_GRANTS,
+	PERMISSIONS_UPDATE,
 	MESSAGE_SEND,
-	MESSAGE_ACTION_REQUEST,
-	MESSAGE_ACTION_RESPONSE,
+	ACTION_REQUEST,
+	ACTION_RESULT,
 	BOOTSTRAP_METHODS,
+	RESULT_METHODS,
+	isResultMethod,
 } from "./methods.js";
+
+export type { ResultMethod } from "./methods.js";
 
 export {
 	parseError,

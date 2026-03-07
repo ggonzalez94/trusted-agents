@@ -33,9 +33,10 @@ When this file conflicts with code, code wins.
 ### 1) `TransportProvider` (replaceable transport seam)
 File: `packages/core/src/transport/interface.ts`
 - Contract:
-	- `send(peerId, message, options?) -> JsonRpcResponse`
-	- `onMessage(handler)`
+	- `send(peerId, message, options?) -> TransportReceipt`
+	- `setHandlers({ onRequest?, onResult? })`
 	- `isReachable(peerId)`
+	- optional `reconcile(options?)`
 	- optional `start/stop`
 - Architectural intent: transport is swappable.
 - Current implementation: only `XmtpTransport`.
@@ -67,18 +68,16 @@ Files: `packages/sdk/src/notification.ts`, `approval.ts`
 ### JSON-RPC methods (canonical names)
 File: `packages/core/src/protocol/methods.ts`
 - `connection/request`
-- `connection/accept`
-- `connection/reject`
+- `connection/result`
 - `connection/revoke`
-- `connection/update-grants`
+- `permissions/update`
 - `message/send`
-- `message/action-request`
-- `message/action-response`
+- `action/request`
+- `action/result`
 
 `BOOTSTRAP_METHODS` currently contains only:
 - `connection/request`
-- `connection/accept`
-- `connection/reject`
+- `connection/result`
 
 ### Registration file invariants
 File: `packages/core/src/identity/registration-file.ts`
@@ -107,6 +106,7 @@ File: `packages/cli/src/lib/context.ts`
 - Builds:
 	- `FileTrustStore`
 	- `AgentResolver`
+	- `FileRequestJournal`
 	- `XmtpTransport` (when transport is needed)
 - Transport gets resolver injected for bootstrap sender verification.
 
@@ -132,7 +132,8 @@ File: `packages/sdk/src/orchestrator.ts`
 - In `XmtpTransport`, unknown sender can only proceed via `connection/request`
 - Requires `agentResolver` and inbox address verification against resolved `agentAddress`
 
-4. Known senders are still blocked unless contact status is `active`.
+4. Known senders are still blocked unless contact status is `active`, with one exception:
+- `connection/result` is allowed from a pending outbound contact so async connection resolution can complete.
 
 5. Trust store lookup by address can throw:
 - `findByAgentAddress()` throws if multiple active contacts match same address (+ optional chain)
@@ -140,7 +141,7 @@ File: `packages/sdk/src/orchestrator.ts`
 6. File stores are atomic but process-local locked:
 - Uses `AsyncMutex` per instance + `tmp file -> rename`
 - No cross-process lock exists
-- Do not run multiple transport-using CLI processes against the same agent/data dir at once. XMTP replies are process-local, so a long-running listener can race with a short-lived sender for the same identity.
+- Do not run multiple transport-using CLI processes against the same agent/data dir at once. Transport receipts are process-local, so a long-running listener can still race with a short-lived sender for the same identity.
 
 7. `loadConfig()` requires `agent_id` by default:
 - Most commands fail unless `agent_id >= 0`
@@ -154,6 +155,7 @@ File: `packages/sdk/src/orchestrator.ts`
 ├── config.yaml              # agent_id, chain, xmtp.env
 ├── identity/agent.key       # Raw private key hex (chmod 0600)
 ├── contacts.json            # Connected peers (trust store)
+├── request-journal.json     # Durable inbound/outbound TAP request state
 ├── pending-invites.json     # Outstanding invite nonces
 ├── ipfs-cache.json          # Content hash → CID (avoids re-upload)
 ├── conversations/<id>.json  # Per-peer message transcripts
@@ -180,15 +182,20 @@ File: `packages/sdk/src/orchestrator.ts`
 - `PermissionEngine` exists but is not auto-wired into CLI message handling
 - Enforcement is caller responsibility
 
-14. Conversation logging is not automatically wired into CLI send/listen flows:
-- Logger exists, conversation commands read logs
-- Message commands currently send/listen without automatic log writes
+14. Conversation logging is wired into CLI messaging flows:
+- `message send`, `request-funds`, listener processing, and reconciliation append conversation entries
+- Conversation commands read the persisted logs from disk
 
-15. SDK sharp edge:
+15. Async connection and action outcomes are journaled:
+- `connect` persists a pending contact immediately after the transport receipt
+- `message listen` and `message sync` process later `connection/result` and `action/result`
+- `FileRequestJournal` is the dedupe and reconciliation source for inbound/outbound async work
+
+16. SDK sharp edge:
 - `TrustedAgentsOrchestrator.connect()` uses `this.transport!`
 - If neither `transport` nor `xmtp` config is provided, this will fail at runtime
 
-16. Invite chain value is not strongly validated in invite generation:
+17. Invite chain value is not strongly validated in invite generation:
 - `generateInvite()` signs any chain string given by caller
 - CAIP-2 correctness is enforced at higher layers, not inside invite generation
 

@@ -1,6 +1,7 @@
 import type {
 	IAgentResolver,
 	IConversationLogger,
+	IRequestJournal,
 	ITrustStore,
 	TransportProvider,
 	TrustedAgentsConfig,
@@ -11,6 +12,7 @@ export interface RuntimeContextParts {
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
+	requestJournal: IRequestJournal;
 }
 
 export interface CliRuntimeOverride {

@@ -194,14 +194,17 @@ Examples:
 	// connect
 	program
 		.command("connect <invite-url>")
-		.description("Accept invite, establish connection")
+		.description("Send an asynchronous connection request from an invite")
 		.option("--yes", "Auto-approve connection (no interactive prompt)")
-		.option("--request-grants-file <path>", "JSON file describing grants to request after connect")
-		.option("--grant-file <path>", "JSON file describing grants to publish after connect")
+		.option(
+			"--request-grants-file <path>",
+			"JSON file describing grants to request in the connect intent",
+		)
+		.option("--grant-file <path>", "JSON file describing grants to offer in the connect intent")
 		.addHelpText(
 			"after",
 			`
-Connection establishes trust only. Business permissions are directional grants exchanged after connect.
+Connect is asynchronous. The peer only needs to receive your request; acceptance or rejection arrives later through listen/sync.
 
 Examples:
   tap connect "<invite-url>" --yes
@@ -328,13 +331,24 @@ Examples:
 
 	message
 		.command("listen")
-		.description("Stream incoming messages (long-running)")
+		.description("Stream incoming messages and process results (long-running)")
 		.option("--yes", "Auto-accept incoming connection requests")
 		.option("--yes-actions", "Auto-approve incoming action requests without interactive review")
 		.action(async (cmdOpts: { yes?: boolean; yesActions?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageListenCommand } = await import("./commands/message-listen.js");
 			await messageListenCommand(opts, { yes: cmdOpts.yes, yesActions: cmdOpts.yesActions });
+		});
+
+	message
+		.command("sync")
+		.description("Reconcile missed XMTP messages and process queued work once")
+		.option("--yes", "Auto-accept incoming connection requests during reconciliation")
+		.option("--yes-actions", "Auto-approve incoming action requests during reconciliation")
+		.action(async (cmdOpts: { yes?: boolean; yesActions?: boolean }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { messageSyncCommand } = await import("./commands/message-sync.js");
+			await messageSyncCommand(opts, { yes: cmdOpts.yes, yesActions: cmdOpts.yesActions });
 		});
 
 	// conversations

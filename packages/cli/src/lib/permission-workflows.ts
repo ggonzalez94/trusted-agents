@@ -1,9 +1,8 @@
 import {
 	type Contact,
-	PermissionError,
 	type PermissionGrantSet,
-	type ProtocolResponse,
-	buildConnectionUpdateGrants,
+	type TransportReceipt,
+	buildPermissionsUpdate,
 	generateNonce,
 	nowISO,
 } from "trusted-agents-core";
@@ -20,12 +19,12 @@ export async function publishGrantSet(params: {
 	contact: Contact;
 	grantSet: PermissionGrantSet;
 	note?: string;
-}): Promise<ProtocolResponse> {
+}): Promise<TransportReceipt> {
 	const { config, ctx, contact, grantSet, note } = params;
 	const updatedPermissions = replaceGrantedByMe(contact.permissions, grantSet);
 	await ctx.trustStore.updateContact(contact.connectionId, { permissions: updatedPermissions });
 
-	const request = buildConnectionUpdateGrants({
+	const request = buildPermissionsUpdate({
 		grantSet,
 		grantor: { agentId: config.agentId, chain: config.chain },
 		grantee: { agentId: contact.peerAgentId, chain: contact.peerChain },
@@ -36,9 +35,6 @@ export async function publishGrantSet(params: {
 	const response = await ctx.transport.send(contact.peerAgentId, request, {
 		peerAddress: contact.peerAgentAddress,
 	});
-	if (response.error) {
-		throw new PermissionError(response.error.message);
-	}
 
 	await appendPermissionLedgerEntry(config.dataDir, {
 		peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
@@ -56,7 +52,7 @@ export async function sendGrantRequest(params: {
 	contact: Contact;
 	grantSet: PermissionGrantSet;
 	note?: string;
-}): Promise<{ response: ProtocolResponse; actionId: string }> {
+}): Promise<{ response: TransportReceipt; actionId: string }> {
 	const { config, ctx, contact, grantSet, note } = params;
 	const action: PermissionGrantRequestAction = {
 		type: "permissions/request-grants",
@@ -78,10 +74,6 @@ export async function sendGrantRequest(params: {
 	});
 	await appendConversationLog(ctx.conversationLogger, contact, request, "outgoing", timestamp);
 	await ctx.trustStore.touchContact(contact.connectionId);
-
-	if (response.error) {
-		throw new PermissionError(response.error.message);
-	}
 
 	await appendPermissionLedgerEntry(config.dataDir, {
 		peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,

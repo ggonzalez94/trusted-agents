@@ -1,6 +1,6 @@
 ---
 name: trusted-agents
-description: Operate a Trusted Agents Protocol agent locally: identity, balances, config, connections, grants, and messaging over XMTP.
+description: Operate a Trusted Agents Protocol agent locally with the `tap` CLI: identity, balances, config, async connections, directional grants, and XMTP messaging. Use this skill whenever the user needs to onboard an agent, connect agents, reconcile missed TAP messages, run TAP inside OpenClaw or another scheduler, or send/receive agent messages.
 ---
 
 # Trusted Agents
@@ -19,12 +19,13 @@ Use this skill when working with the `tap` CLI.
 ## Default Loop
 
 1. If the agent is not onboarded, use `/onboard` to initialize, fund, and register it.
-2. Start `tap message listen` before expecting inbound connections, grant updates, or action requests.
-3. Keep only one transport-active CLI process per identity. Stop a long-running listener before sending from that same identity.
-4. Use `/connections` to create or accept a connection.
-5. Inspect, request, publish, or revoke grants for that peer.
-6. Use `/messaging` for normal communication.
-7. Before approving value movement or other high-impact actions, inspect `tap permissions show <peer>` and the permissions ledger.
+2. If the runtime is scheduler-driven, run `tap message sync` at the start of each turn or heartbeat to reconcile missed XMTP messages.
+3. Use `tap message listen` only when the identity can dedicate one long-lived TAP process to streaming.
+4. Keep only one transport-active CLI process per identity. Prefer `tap message sync` over a background listener when the same identity will also send TAP commands from short-lived processes.
+5. Use `/connections` to create or accept a connection.
+6. Inspect, request, publish, or revoke grants for that peer.
+7. Use `/messaging` for normal communication.
+8. Before approving value movement or other high-impact actions, inspect `tap permissions show <peer>` and the permissions ledger.
 
 References:
 - `connections/SKILL.md`
@@ -33,6 +34,7 @@ References:
 - `references/permissions-v1.md`
 - `references/permissions-ledger-v1.md`
 - `references/capability-map.md`
+- `references/openclaw-heartbeat.md`
 
 ## Utility Commands
 

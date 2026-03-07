@@ -12,9 +12,8 @@ export {
 
 export {
 	buildConnectionRequest,
-	buildConnectionAccept,
-	buildConnectionReject,
-	buildConnectionUpdateGrants,
+	buildConnectionResult,
+	buildPermissionsUpdate,
 } from "./handshake.js";
 
 export {

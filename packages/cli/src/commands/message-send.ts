@@ -1,4 +1,3 @@
-import { PermissionError } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -70,17 +69,13 @@ export async function messageSendCommand(
 			);
 			await ctx.trustStore.touchContact(contact.connectionId);
 
-			if (response.error) {
-				throw new PermissionError(response.error.message);
-			}
-
 			success(
 				{
 					sent: true,
 					peer: contact.peerDisplayName,
 					agent_id: contact.peerAgentId,
 					scope,
-					response,
+					receipt: response,
 				},
 				opts,
 				startTime,

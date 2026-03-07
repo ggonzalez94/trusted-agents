@@ -1,5 +1,4 @@
 import {
-	ValidationError,
 	buildConnectionRequest,
 	caip2ToChainId,
 	createEmptyPermissionState,
@@ -12,8 +11,6 @@ import {
 import type {
 	AgentIdentifier,
 	ConnectionRequestParams,
-	Contact,
-	JsonRpcResponse,
 	PermissionGrantSet,
 } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
@@ -21,7 +18,6 @@ import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { readGrantFile, summarizeGrantSet } from "../lib/grants.js";
 import { error, info, success } from "../lib/output.js";
-import { publishGrantSet, sendGrantRequest } from "../lib/permission-workflows.js";
 import { promptYesNo } from "../lib/prompt.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -46,7 +42,6 @@ export async function connectCommand(
 		}
 
 		const ctx = buildContextWithTransport(config);
-
 		const invite = parseInviteUrl(inviteUrl);
 		const peerAgent = await ctx.resolver.resolve(invite.agentId, invite.chain);
 		const requestedGrants = cmdOpts.requestGrantsFile
@@ -69,22 +64,22 @@ export async function connectCommand(
 		);
 		info(`Capabilities: ${peerAgent.capabilities.join(", ")}`, opts);
 		info(
-			"Connection establishes trust only; grants are directional and exchanged separately.",
+			"Connection is now asynchronous. The peer only needs to receive the request; acceptance arrives later as a separate result.",
 			opts,
 		);
 		printPermissionIntent(requestedGrants, offeredGrants, opts);
 
-		// Approval check
 		if (!autoApprove) {
-			info(`Connect to ${peerAgent.registrationFile.name} (#${peerAgent.agentId})?`, opts);
-			info("Use --yes to auto-approve", opts);
-			// In non-interactive mode (piped), require --yes
+			info(
+				`Send connection request to ${peerAgent.registrationFile.name} (#${peerAgent.agentId})?`,
+				opts,
+			);
+			info("Use --yes to approve in non-interactive mode", opts);
 			if (!process.stdin.isTTY) {
 				error("VALIDATION_ERROR", "Use --yes to approve in non-interactive mode", opts);
 				process.exitCode = 1;
 				return;
 			}
-			// Simple y/n prompt
 			const answer = await promptYesNo("Proceed? [y/N] ");
 			if (!answer) {
 				info("Connection cancelled", opts);
@@ -92,89 +87,97 @@ export async function connectCommand(
 			}
 		}
 
-		// Start transport — ensure cleanup on error
+		const existing = await ctx.trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+		if (existing?.status === "active") {
+			success(
+				{
+					connection_id: existing.connectionId,
+					peer_name: existing.peerDisplayName,
+					peer_agent_id: existing.peerAgentId,
+					status: existing.status,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		const from: AgentIdentifier = { agentId: config.agentId, chain: config.chain };
+		const to: AgentIdentifier = { agentId: invite.agentId, chain: invite.chain };
+		const requestedAt = nowISO();
+		const connectionId = existing?.connectionId ?? generateConnectionId();
+		const requestNonce = generateNonce();
+		const requestParams: ConnectionRequestParams = {
+			from,
+			to,
+			connectionId,
+			...(requestedGrants || offeredGrants
+				? {
+						permissionIntent: {
+							...(requestedGrants ? { requestedGrants: requestedGrants.grants } : {}),
+							...(offeredGrants ? { offeredGrants: offeredGrants.grants } : {}),
+						},
+					}
+				: {}),
+			nonce: requestNonce,
+			protocolVersion: "1.0",
+			timestamp: requestedAt,
+		};
+
+		const rpcRequest = buildConnectionRequest(requestParams);
+		const requestId = String(rpcRequest.id);
+
 		await ctx.transport.start?.();
 		try {
-			const from: AgentIdentifier = { agentId: config.agentId, chain: config.chain };
-			const to: AgentIdentifier = { agentId: invite.agentId, chain: invite.chain };
-
-			const requestParams: ConnectionRequestParams = {
-				from,
-				to,
-				...(requestedGrants || offeredGrants
-					? {
-							permissionIntent: {
-								...(requestedGrants ? { requestedGrants: requestedGrants.grants } : {}),
-								...(offeredGrants ? { offeredGrants: offeredGrants.grants } : {}),
-							},
-						}
-					: {}),
-				nonce: generateNonce(),
-				protocolVersion: "1.0",
-				timestamp: nowISO(),
-			};
-
-			const rpcRequest = buildConnectionRequest(requestParams);
-			const xmtpAddress = peerAgent.xmtpEndpoint ?? peerAgent.agentAddress;
-
-			const response = await ctx.transport.send(peerAgent.agentId, rpcRequest, {
-				peerAddress: xmtpAddress,
+			const receipt = await ctx.transport.send(peerAgent.agentId, rpcRequest, {
+				peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
 			});
 
-			// Parse response
-			const rpc = response as JsonRpcResponse & { result?: Record<string, unknown> };
-			const accepted = rpc.result?.accepted === true || rpc.result?.status === "accepted";
-			const status = accepted ? "active" : "pending";
-			const connectionId =
-				typeof rpc.result?.connectionId === "string" && rpc.result.connectionId.length > 0
-					? rpc.result.connectionId
-					: undefined;
-			if (accepted && !connectionId) {
-				throw new ValidationError("Peer accepted the connection without returning a connectionId");
-			}
-
-			const persistedConnectionId = connectionId ?? generateConnectionId();
-			const contact: Contact = {
-				connectionId: persistedConnectionId,
+			const nextContact = {
+				connectionId,
 				peerAgentId: peerAgent.agentId,
 				peerChain: peerAgent.chain,
 				peerOwnerAddress: peerAgent.ownerAddress,
 				peerDisplayName: peerAgent.registrationFile.name,
 				peerAgentAddress: peerAgent.agentAddress,
-				permissions: createEmptyPermissionState(),
-				establishedAt: nowISO(),
-				lastContactAt: nowISO(),
-				status,
+				permissions: existing?.permissions ?? createEmptyPermissionState(requestedAt),
+				establishedAt: existing?.establishedAt ?? requestedAt,
+				lastContactAt: requestedAt,
+				status: "pending" as const,
+				pending: {
+					direction: "outbound" as const,
+					requestId,
+					requestNonce,
+					requestedAt,
+					inviteNonce: invite.nonce,
+					initialRequestedGrants: requestedGrants,
+					initialOfferedGrants: offeredGrants,
+				},
 			};
 
-			await ctx.trustStore.addContact(contact);
-
-			if (accepted && offeredGrants) {
-				await publishGrantSet({
-					config,
-					ctx,
-					contact,
-					grantSet: offeredGrants,
-					note: "Initial grant publication from connect",
-				});
+			if (existing) {
+				await ctx.trustStore.updateContact(existing.connectionId, nextContact);
+			} else {
+				await ctx.trustStore.addContact(nextContact);
 			}
 
-			if (accepted && requestedGrants) {
-				await sendGrantRequest({
-					config,
-					ctx,
-					contact,
-					grantSet: requestedGrants,
-					note: "Initial grant request from connect",
-				});
-			}
+			await ctx.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${rpcRequest.method}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: rpcRequest.method,
+				peerAgentId: peerAgent.agentId,
+				status: "acked",
+			});
 
 			success(
 				{
-					connection_id: persistedConnectionId,
+					connection_id: connectionId,
 					peer_name: peerAgent.registrationFile.name,
 					peer_agent_id: peerAgent.agentId,
-					status,
+					status: "pending",
+					receipt,
 					requested_grants: requestedGrants?.grants ?? [],
 					offered_grants: offeredGrants?.grants ?? [],
 				},
@@ -196,19 +199,22 @@ function printPermissionIntent(
 	opts: GlobalOptions,
 ): void {
 	if (!requestedGrants && !offeredGrants) {
-		info("No initial grant requests or grant publications will be sent.", opts);
+		info(
+			"No initial grant requests or grant publications will be sent with the connect request.",
+			opts,
+		);
 		return;
 	}
 
 	if (requestedGrants) {
-		info("Will request these grants from the peer after connect:", opts);
+		info("Will include these requested grants in the connection request:", opts);
 		for (const line of summarizeGrantSet(requestedGrants)) {
 			info(`  - ${line}`, opts);
 		}
 	}
 
 	if (offeredGrants) {
-		info("Will publish these grants to the peer after connect:", opts);
+		info("Will include these offered grants in the connection request:", opts);
 		for (const line of summarizeGrantSet(offeredGrants)) {
 			info(`  - ${line}`, opts);
 		}

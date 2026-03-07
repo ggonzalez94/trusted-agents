@@ -1,11 +1,10 @@
 import {
-	MESSAGE_ACTION_RESPONSE,
+	ACTION_RESULT,
 	PermissionError,
 	ValidationError,
 	generateNonce,
 	isEthereumAddress,
 } from "trusted-agents-core";
-import type { JsonRpcResponse, ProtocolMessage } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import type { TransferActionResponse } from "../lib/actions.js";
 import { buildTransferRequestText, parseTransferActionResponse } from "../lib/actions.js";
@@ -18,6 +17,7 @@ import {
 	buildOutgoingActionRequest,
 	findContactForPeer,
 } from "../lib/message-conversations.js";
+import { createMessageRuntime } from "../lib/message-runtime.js";
 import { error, success, verbose } from "../lib/output.js";
 import { appendPermissionLedgerEntry } from "../lib/permission-ledger.js";
 import type { GlobalOptions } from "../types.js";
@@ -52,7 +52,6 @@ export async function messageRequestFundsCommand(
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
 		const ownAddress = privateKeyToAccount(config.privateKey).address;
 		const toAddress = resolveRecipientAddress(cmdOpts.to, ownAddress);
-
 		const requestPayload = {
 			type: "transfer/request" as const,
 			actionId: generateNonce(),
@@ -68,53 +67,34 @@ export async function messageRequestFundsCommand(
 			requestPayload,
 			"transfer/request",
 		);
+		const requestId = String(request.id);
 
 		let asyncResponse: TransferActionResponse | undefined;
-		let resolveAsyncResponse: ((value: TransferActionResponse) => void) | null = null;
+		let resolveAsyncResponse: ((value: TransferActionResponse) => void) | undefined;
 		const asyncResponsePromise = new Promise<TransferActionResponse>((resolve) => {
 			resolveAsyncResponse = resolve;
 		});
 
-		ctx.transport.onMessage(async (from: number, message: ProtocolMessage) => {
-			if (from !== contact.peerAgentId || message.method !== MESSAGE_ACTION_RESPONSE) {
-				return {
-					jsonrpc: "2.0" as const,
-					id: message.id,
-					error: { code: -32601, message: "Unexpected method for request-funds session" },
+		const runtime = createMessageRuntime(config, ctx, opts, {
+			autoApproveConnections: false,
+			autoApproveActions: false,
+			emitEvents: false,
+		});
+		ctx.transport.setHandlers({
+			onRequest: runtime.handlers.onRequest,
+			onResult: async (envelope) => {
+				const ack = (await runtime.handlers.onResult?.(envelope)) ?? {
+					status: "received" as const,
 				};
-			}
-
-			const parsed = parseTransferActionResponse(message);
-			if (!parsed || parsed.actionId !== requestPayload.actionId) {
-				return {
-					jsonrpc: "2.0" as const,
-					id: message.id,
-					error: { code: -32602, message: "Invalid transfer action response payload" },
-				};
-			}
-
-			asyncResponse = parsed;
-			resolveAsyncResponse?.(parsed);
-			await appendConversationLog(ctx.conversationLogger, contact, message, "incoming");
-			await ctx.trustStore.touchContact(contact.connectionId);
-			await appendPermissionLedgerEntry(config.dataDir, {
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				direction: "local",
-				event: `transfer-${parsed.status}`,
-				scope: "transfer/request",
-				asset: parsed.asset,
-				amount: parsed.amount,
-				action_id: parsed.actionId,
-				tx_hash: parsed.txHash,
-				decision: parsed.status,
-				rationale: parsed.error,
-			});
-
-			return {
-				jsonrpc: "2.0" as const,
-				id: message.id,
-				result: { received: true, actionId: parsed.actionId },
-			};
+				if (envelope.from === contact.peerAgentId && envelope.message.method === ACTION_RESULT) {
+					const parsed = parseTransferActionResponse(envelope.message);
+					if (parsed?.requestId === requestId && parsed.actionId === requestPayload.actionId) {
+						asyncResponse = parsed;
+						resolveAsyncResponse?.(parsed);
+					}
+				}
+				return ack;
+			},
 		});
 
 		await ctx.transport.start?.();
@@ -136,10 +116,10 @@ export async function messageRequestFundsCommand(
 				action_id: requestPayload.actionId,
 				note: cmdOpts.note,
 			});
-			const response = await ctx.transport.send(contact.peerAgentId, request, {
+
+			const receipt = await ctx.transport.send(contact.peerAgentId, request, {
 				peerAddress: contact.peerAgentAddress,
 			});
-
 			await appendConversationLog(
 				ctx.conversationLogger,
 				contact,
@@ -148,18 +128,27 @@ export async function messageRequestFundsCommand(
 				requestTimestamp,
 			);
 			await ctx.trustStore.touchContact(contact.connectionId);
-
-			if (response.error) {
-				throw new PermissionError(response.error.message);
-			}
-
-			const result = (
-				response as JsonRpcResponse & {
-					result?: Record<string, unknown>;
-				}
-			).result;
+			await ctx.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${request.method}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: request.method,
+				peerAgentId: contact.peerAgentId,
+				status: "acked",
+			});
 
 			await waitForAsyncResponse(asyncResponsePromise, 5_000).catch(() => undefined);
+			if (asyncResponse === undefined) {
+				await ctx.transport.reconcile?.();
+			}
+			await runtime.drain();
+			if (asyncResponse?.status === "rejected") {
+				throw new PermissionError(asyncResponse.error ?? "Action rejected by agent");
+			}
+			if (asyncResponse?.status === "failed") {
+				throw new Error(asyncResponse.error ?? "Transfer request failed");
+			}
 
 			success(
 				{
@@ -172,14 +161,10 @@ export async function messageRequestFundsCommand(
 					scope: "transfer/request",
 					to_address: toAddress,
 					action_id: requestPayload.actionId,
+					receipt,
 					async_response_received: asyncResponse !== undefined,
-					tx_hash:
-						asyncResponse?.txHash ??
-						(typeof result?.txHash === "string" ? result.txHash : undefined),
-					status:
-						asyncResponse?.status ??
-						(typeof result?.status === "string" ? result.status : undefined),
-					response: result,
+					tx_hash: asyncResponse?.txHash,
+					status: asyncResponse?.status,
 				},
 				opts,
 				startTime,

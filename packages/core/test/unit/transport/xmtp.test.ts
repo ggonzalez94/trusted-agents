@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
-import type { ProtocolMessage, ProtocolResponse } from "../../../src/transport/interface.js";
+import type {
+	InboundRequestEnvelope,
+	ProtocolMessage,
+	TransportAck,
+	TransportReceipt,
+} from "../../../src/transport/interface.js";
 import type { XmtpTransportConfig } from "../../../src/transport/xmtp-types.js";
 import { XmtpTransport } from "../../../src/transport/xmtp.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
@@ -209,24 +214,23 @@ describe("XmtpTransport", () => {
 
 			// Simulate a response arriving after a short delay
 			setTimeout(() => {
-				const responseJson: ProtocolResponse = {
-					jsonrpc: "2.0",
-					id: "msg-1",
-					result: { ok: true },
-				};
 				const pending = internals(transport).pendingRequests.get("msg-1");
 				if (pending) {
 					clearTimeout(pending.timer);
 					internals(transport).pendingRequests.delete("msg-1");
-					pending.resolve(responseJson);
+					pending.resolve({
+						received: true,
+						requestId: "msg-1",
+						status: "received",
+						receivedAt: new Date().toISOString(),
+					});
 				}
 			}, 50);
 
 			const response = await transport.send(42, message);
 
-			expect(response.jsonrpc).toBe("2.0");
-			expect(response.id).toBe("msg-1");
-			expect(response.result).toEqual({ ok: true });
+			expect(response.requestId).toBe("msg-1");
+			expect(response.status).toBe("received");
 			expect(mockSetup.mockConversation.sendText).toHaveBeenCalledWith(JSON.stringify(message));
 		});
 
@@ -257,16 +261,16 @@ describe("XmtpTransport", () => {
 
 			// Simulate a response arriving after a short delay
 			setTimeout(() => {
-				const responseJson: ProtocolResponse = {
-					jsonrpc: "2.0",
-					id: "direct-msg",
-					result: { accepted: true },
-				};
 				const pending = internals(transport).pendingRequests.get("direct-msg");
 				if (pending) {
 					clearTimeout(pending.timer);
 					internals(transport).pendingRequests.delete("direct-msg");
-					pending.resolve(responseJson);
+					pending.resolve({
+						received: true,
+						requestId: "direct-msg",
+						status: "queued",
+						receivedAt: new Date().toISOString(),
+					});
 				}
 			}, 50);
 
@@ -274,7 +278,7 @@ describe("XmtpTransport", () => {
 				peerAddress: "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`,
 			});
 
-			expect(response.result).toEqual({ accepted: true });
+			expect(response.status).toBe("queued");
 			// Should NOT have called findByAgentId since peerAddress was provided
 			expect(trustStore.findByAgentId).not.toHaveBeenCalled();
 		});
@@ -296,12 +300,12 @@ describe("XmtpTransport", () => {
 		it("should skip self-messages", async () => {
 			injectMockClient();
 
-			const callback = vi.fn(async () => ({
-				jsonrpc: "2.0" as const,
-				id: "1",
-				result: {},
-			}));
-			transport.onMessage(callback);
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
 
 			await internals(transport).processMessage({
 				senderInboxId: mockSetup.client.inboxId,
@@ -319,7 +323,7 @@ describe("XmtpTransport", () => {
 			injectMockClient();
 
 			const callback = vi.fn();
-			transport.onMessage(callback);
+			transport.setHandlers({ onRequest: callback });
 
 			await internals(transport).processMessage({
 				senderInboxId: "other-inbox",
@@ -333,7 +337,7 @@ describe("XmtpTransport", () => {
 			injectMockClient();
 
 			const callback = vi.fn();
-			transport.onMessage(callback);
+			transport.setHandlers({ onRequest: callback });
 
 			await internals(transport).processMessage({
 				senderInboxId: "other-inbox",
@@ -347,7 +351,7 @@ describe("XmtpTransport", () => {
 			injectMockClient();
 
 			const callback = vi.fn();
-			transport.onMessage(callback);
+			transport.setHandlers({ onRequest: callback });
 
 			await internals(transport).processMessage({
 				senderInboxId: "other-inbox",
@@ -360,17 +364,22 @@ describe("XmtpTransport", () => {
 		it("should resolve pending request when response arrives", async () => {
 			injectMockClient();
 
-			const responseData: ProtocolResponse = {
+			const responseData = {
 				jsonrpc: "2.0",
 				id: "req-123",
-				result: { data: "test" },
+				result: {
+					received: true,
+					requestId: "req-123",
+					status: "received",
+					receivedAt: "2025-01-01T00:00:00.000Z",
+				},
 			};
 
 			// Set up a pending request
-			let resolved: ProtocolResponse | undefined;
+			let resolved: TransportReceipt | undefined;
 			const timer = setTimeout(() => {}, 30000);
 			internals(transport).pendingRequests.set("req-123", {
-				resolve: (r: ProtocolResponse) => {
+				resolve: (r: TransportReceipt) => {
 					resolved = r;
 				},
 				reject: () => {},
@@ -383,7 +392,7 @@ describe("XmtpTransport", () => {
 			});
 
 			expect(resolved).toBeDefined();
-			expect(resolved!.result).toEqual({ data: "test" });
+			expect(resolved!.status).toBe("received");
 			expect(internals(transport).pendingRequests.has("req-123")).toBe(false);
 		});
 
@@ -394,12 +403,12 @@ describe("XmtpTransport", () => {
 			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
 			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
 
-			const callback = vi.fn(async (_from: number, _msg: ProtocolMessage) => ({
-				jsonrpc: "2.0" as const,
-				id: _msg.id,
-				result: { handled: true },
-			}));
-			transport.onMessage(callback);
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
 
 			const request: ProtocolMessage = {
 				jsonrpc: "2.0",
@@ -412,7 +421,11 @@ describe("XmtpTransport", () => {
 				content: JSON.stringify(request),
 			});
 
-			expect(callback).toHaveBeenCalledWith(42, request);
+			expect(callback).toHaveBeenCalledWith({
+				from: 42,
+				senderInboxId: bobInboxId,
+				message: request,
+			});
 		});
 
 		it("should ignore duplicate inbound requests with the same sender and request id", async () => {
@@ -421,12 +434,12 @@ describe("XmtpTransport", () => {
 			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
 			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
 
-			const callback = vi.fn(async (_from: number, _msg: ProtocolMessage) => ({
-				jsonrpc: "2.0" as const,
-				id: _msg.id,
-				result: { handled: true },
-			}));
-			transport.onMessage(callback);
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
 
 			const request: ProtocolMessage = {
 				jsonrpc: "2.0",
@@ -450,12 +463,12 @@ describe("XmtpTransport", () => {
 		it("should reject non-bootstrap requests from unknown senders", async () => {
 			injectMockClient();
 
-			const callback = vi.fn(async () => ({
-				jsonrpc: "2.0" as const,
-				id: "ignored",
-				result: { ok: true },
-			}));
-			transport.onMessage(callback);
+			const callback = vi.fn(
+				async (): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
 
 			const request: ProtocolMessage = {
 				jsonrpc: "2.0",
@@ -511,12 +524,12 @@ describe("XmtpTransport", () => {
 				{ identifier: BOB.address, identifierKind: 0 },
 			]);
 
-			const callback = vi.fn(async (_from: number, _msg: ProtocolMessage) => ({
-				jsonrpc: "2.0" as const,
-				id: _msg.id,
-				result: { accepted: true },
-			}));
-			transportWithResolver.onMessage(callback);
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "queued",
+				}),
+			);
+			transportWithResolver.setHandlers({ onRequest: callback });
 
 			const request: ProtocolMessage = {
 				jsonrpc: "2.0",
@@ -525,6 +538,7 @@ describe("XmtpTransport", () => {
 				params: {
 					from: { agentId: 99, chain: "eip155:1" },
 					to: { agentId: 1, chain: "eip155:1" },
+					connectionId: "conn-1",
 					nonce: "abc",
 					timestamp: new Date().toISOString(),
 				},
@@ -535,7 +549,11 @@ describe("XmtpTransport", () => {
 				content: JSON.stringify(request),
 			});
 
-			expect(callback).toHaveBeenCalledWith(99, request);
+			expect(callback).toHaveBeenCalledWith({
+				from: 99,
+				senderInboxId: "unknown-inbox",
+				message: request,
+			});
 		});
 
 		it("should reject spoofed bootstrap connection/request sender", async () => {
@@ -577,12 +595,12 @@ describe("XmtpTransport", () => {
 				{ identifier: ALICE.address, identifierKind: 0 },
 			]);
 
-			const callback = vi.fn(async () => ({
-				jsonrpc: "2.0" as const,
-				id: "ignored",
-				result: { accepted: true },
-			}));
-			transportWithResolver.onMessage(callback);
+			const callback = vi.fn(
+				async (): Promise<TransportAck> => ({
+					status: "queued",
+				}),
+			);
+			transportWithResolver.setHandlers({ onRequest: callback });
 
 			const request: ProtocolMessage = {
 				jsonrpc: "2.0",
@@ -591,6 +609,7 @@ describe("XmtpTransport", () => {
 				params: {
 					from: { agentId: 42, chain: "eip155:1" },
 					to: { agentId: 1, chain: "eip155:1" },
+					connectionId: "conn-spoof",
 					nonce: "spoof",
 					timestamp: new Date().toISOString(),
 				},
@@ -618,12 +637,12 @@ describe("XmtpTransport", () => {
 			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
 			internals(transportWithPendingContact).inboxIdToAddress.set(bobInboxId, BOB.address);
 
-			const callback = vi.fn(async () => ({
-				jsonrpc: "2.0" as const,
-				id: "ignored",
-				result: { ok: true },
-			}));
-			transportWithPendingContact.onMessage(callback);
+			const callback = vi.fn(
+				async (): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transportWithPendingContact.setHandlers({ onRequest: callback });
 
 			const request: ProtocolMessage = {
 				jsonrpc: "2.0",
@@ -645,7 +664,7 @@ describe("XmtpTransport", () => {
 		it("should reject all pending requests on stop", async () => {
 			injectMockClient();
 
-			const pendingPromise = new Promise<ProtocolResponse>((resolve, reject) => {
+			const pendingPromise = new Promise<TransportReceipt>((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error("timeout")), 30000);
 				internals(transport).pendingRequests.set("stop-test", { resolve, reject, timer });
 			});
@@ -673,11 +692,11 @@ describe("XmtpTransport", () => {
 		});
 	});
 
-	describe("onMessage", () => {
-		it("should register message callback", () => {
+	describe("setHandlers", () => {
+		it("should register request handlers", () => {
 			const callback = vi.fn();
-			transport.onMessage(callback);
-			expect(internals(transport).messageCallback).toBe(callback);
+			transport.setHandlers({ onRequest: callback });
+			expect(internals(transport).handlers.onRequest).toBe(callback);
 		});
 	});
 });
