@@ -1,17 +1,22 @@
 ---
 name: onboard
-description: Initialize an agent wallet, fund it, register it on-chain, and update the published registration.
+description: Initialize a TAP agent wallet, fund it, register it on-chain, and update the published registration. Use this skill whenever a TAP identity needs a new `dataDir`, wallet, ERC-8004 registration, or registration file update before messaging or OpenClaw plugin setup.
 ---
 
 # /onboard
 
 Use this skill to create or update a TAP agent identity.
 
+Prerequisite:
+
+- If `tap` is not installed yet, read `../references/install-cli.md` first.
+
 ## Funding
 
 - ETH on the registration chain for gas.
 - Base mainnet USDC only if using x402 IPFS upload.
 - No Base USDC is needed when using `--pinata-jwt` or `--uri`.
+- In OpenClaw plugin mode, onboarding still happens with the `tap` CLI before the plugin points at that `dataDir`.
 
 ## Commands
 

@@ -6,6 +6,7 @@ import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 export type RequestJournalDirection = "inbound" | "outbound";
 export type RequestJournalKind = "request" | "result";
 export type RequestJournalStatus = "pending" | "acked" | "completed";
+export type RequestJournalMetadata = Record<string, unknown>;
 
 export interface RequestJournalEntry {
 	requestId: string;
@@ -16,6 +17,7 @@ export interface RequestJournalEntry {
 	peerAgentId: number;
 	correlationId?: string;
 	status: RequestJournalStatus;
+	metadata?: RequestJournalMetadata;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -35,6 +37,7 @@ export interface IRequestJournal {
 	): Promise<RequestJournalEntry>;
 	getByRequestId(requestId: string): Promise<RequestJournalEntry | null>;
 	updateStatus(requestId: string, status: RequestJournalStatus): Promise<void>;
+	updateMetadata(requestId: string, metadata: RequestJournalMetadata | undefined): Promise<void>;
 	listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
 }
 
@@ -115,6 +118,25 @@ export class FileRequestJournal implements IRequestJournal {
 			file.entries[index] = {
 				...file.entries[index]!,
 				status,
+				updatedAt: nowISO(),
+			};
+			await this.save(file);
+		});
+	}
+
+	async updateMetadata(
+		requestId: string,
+		metadata: RequestJournalMetadata | undefined,
+	): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const file = await this.load();
+			const index = file.entries.findIndex((entry) => entry.requestId === requestId);
+			if (index < 0) {
+				return;
+			}
+			file.entries[index] = {
+				...file.entries[index]!,
+				metadata,
 				updatedAt: nowISO(),
 			};
 			await this.save(file);

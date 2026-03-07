@@ -2,9 +2,8 @@ import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
-import { findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
-import { sendGrantRequest } from "../lib/permission-workflows.js";
+import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function permissionsRequestCommand(
@@ -18,43 +17,26 @@ export async function permissionsRequestCommand(
 	try {
 		const config = await loadConfig(opts);
 		const ctx = buildContextWithTransport(config);
-		const contacts = await ctx.trustStore.getContacts();
-		const contact = findContactForPeer(contacts, peer);
-		if (!contact) {
-			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
-			process.exitCode = 1;
-			return;
-		}
-
 		const grantSet = await readGrantFile(file);
-		verbose(`Requesting ${grantSet.grants.length} grants from ${contact.peerDisplayName}...`, opts);
+		verbose(`Requesting ${grantSet.grants.length} grants from ${peer}...`, opts);
+		const service = createCliTapMessagingService(ctx, opts, {
+			ownerLabel: "tap:permissions-request",
+		});
+		const result = await service.requestGrantSet(peer, grantSet, cmdOpts?.note);
 
-		await ctx.transport.start?.();
-		try {
-			const { response, actionId } = await sendGrantRequest({
-				config,
-				ctx,
-				contact,
-				grantSet,
-				note: cmdOpts?.note,
-			});
-
-			success(
-				{
-					requested: true,
-					peer: contact.peerDisplayName,
-					agent_id: contact.peerAgentId,
-					grant_count: grantSet.grants.length,
-					grants: grantSet.grants,
-					action_id: actionId,
-					response,
-				},
-				opts,
-				startTime,
-			);
-		} finally {
-			await ctx.transport.stop?.();
-		}
+		success(
+			{
+				requested: true,
+				peer: result.peerName,
+				agent_id: result.peerAgentId,
+				grant_count: result.grantCount,
+				grants: grantSet.grants,
+				action_id: result.actionId,
+				response: result.receipt,
+			},
+			opts,
+			startTime,
+		);
 	} catch (err) {
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);

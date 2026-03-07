@@ -1,9 +1,8 @@
-import { FileTrustStore } from "trusted-agents-core";
+import { FileTrustStore, getPermissionLedgerPath } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { findContactForPeer } from "../lib/message-conversations.js";
 import { error, success } from "../lib/output.js";
-import { getPermissionLedgerPath } from "../lib/permission-ledger.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function permissionsShowCommand(

@@ -52,7 +52,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 	});
 
 	afterEach(async () => {
-		await rm(testDir, { recursive: true, force: true });
+		await removeDirWithRetry(testDir);
 	});
 
 	it("should exchange JSON-RPC request/response between two transports", async () => {
@@ -213,4 +213,22 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 function randomPrivateKey(): `0x${string}` {
 	return `0x${randomBytes(32).toString("hex")}` as `0x${string}`;
+}
+
+async function removeDirWithRetry(path: string): Promise<void> {
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		try {
+			await rm(path, { recursive: true, force: true });
+			return;
+		} catch (error: unknown) {
+			const code =
+				error instanceof Error && "code" in error
+					? (error as NodeJS.ErrnoException).code
+					: undefined;
+			if (code !== "ENOTEMPTY" || attempt === 4) {
+				throw error;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		}
+	}
 }

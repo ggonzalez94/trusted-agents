@@ -1,5 +1,7 @@
-import { ACTION_REQUEST, ACTION_RESULT, isEthereumAddress } from "trusted-agents-core";
-import type { PermissionGrant, ProtocolMessage } from "trusted-agents-core";
+import { isEthereumAddress } from "../common/index.js";
+import type { PermissionGrant } from "../permissions/types.js";
+import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
+import type { ProtocolMessage } from "../transport/interface.js";
 
 export type TransferAsset = "native" | "usdc";
 

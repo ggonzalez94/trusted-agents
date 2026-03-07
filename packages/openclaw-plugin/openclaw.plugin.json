@@ -1,0 +1,54 @@
+{
+  "id": "trusted-agents-tap",
+  "name": "Trusted Agents TAP",
+  "description": "Run the Trusted Agents Protocol inside OpenClaw Gateway with a background TAP runtime and a TAP Gateway tool.",
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "identities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "dataDir": { "type": "string" },
+            "autoApproveConnections": { "type": "boolean" },
+            "autoApproveActions": { "type": "boolean" },
+            "reconcileIntervalMinutes": { "type": "number", "minimum": 1 }
+          },
+          "required": ["dataDir"]
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "identities": {
+      "label": "TAP Identities",
+      "help": "One or more TAP data directories to run inside Gateway. Each identity gets its own streaming runtime and periodic reconcile loop."
+    },
+    "identities[].name": {
+      "label": "Identity Name",
+      "help": "Optional stable name used when selecting an identity from the TAP Gateway tool."
+    },
+    "identities[].dataDir": {
+      "label": "TAP Data Dir",
+      "help": "Path to the TAP data directory created by `tap init`."
+    },
+    "identities[].autoApproveConnections": {
+      "label": "Auto-Approve Connections",
+      "help": "Accept inbound TAP connection requests automatically."
+    },
+    "identities[].autoApproveActions": {
+      "label": "Auto-Approve Actions",
+      "help": "Approve inbound transfer requests automatically."
+    },
+    "identities[].reconcileIntervalMinutes": {
+      "label": "Reconcile Interval Minutes",
+      "help": "How often the background TAP runtime should run `syncAll` reconciliation.",
+      "advanced": true
+    }
+  }
+}

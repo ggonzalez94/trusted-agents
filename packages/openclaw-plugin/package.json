@@ -1,0 +1,30 @@
+{
+  "name": "trusted-agents-tap",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for running TAP as a Gateway background service",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "bun run --cwd ../core build && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.48",
+    "openclaw": "2026.3.2",
+    "trusted-agents-core": "workspace:*",
+    "viem": "^2.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

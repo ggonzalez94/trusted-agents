@@ -110,3 +110,4 @@ tap contacts remove 7f8e9d0c-1a2b-3c4d-5e6f-789012345678
 - `Connection rejected` — the peer declined the trust request when the result arrived.
 - `Peer not found in contacts` — connect first or check the contact name/agent ID.
 - `Grant not found` — the revoke target does not exist in `grantedByMe`.
+- `TransportOwnershipError` — another TAP runtime owns the same identity. In OpenClaw plugin mode, use the plugin tool instead of a transport-active CLI command.

@@ -1,6 +1,6 @@
 ---
 name: trusted-agents
-description: Operate a Trusted Agents Protocol agent locally with the `tap` CLI: identity, balances, config, async connections, directional grants, and XMTP messaging. Use this skill whenever the user needs to onboard an agent, connect agents, reconcile missed TAP messages, run TAP inside OpenClaw or another scheduler, or send/receive agent messages.
+description: Operate a Trusted Agents Protocol agent with the `tap` CLI or the OpenClaw TAP plugin: onboarding, async connections, grants, XMTP messaging, heartbeat sync, plugin install, and runtime recovery. Use this skill whenever the user wants to install TAP from this repo, run TAP inside OpenClaw, connect agents, reconcile missed TAP messages, or send and receive TAP messages.
 ---
 
 # Trusted Agents
@@ -18,10 +18,10 @@ Use this skill when working with the `tap` CLI.
 
 ## Default Loop
 
-1. If the agent is not onboarded, use `/onboard` to initialize, fund, and register it.
-2. If the runtime is scheduler-driven, run `tap message sync` at the start of each turn or heartbeat to reconcile missed XMTP messages.
-3. Use `tap message listen` only when the identity can dedicate one long-lived TAP process to streaming.
-4. Keep only one transport-active CLI process per identity. Prefer `tap message sync` over a background listener when the same identity will also send TAP commands from short-lived processes.
+1. If the user needs TAP installed from this repo, read `references/install-cli.md`.
+2. If the user is installing TAP in OpenClaw, also read `references/openclaw-plugin-install.md`.
+3. Determine runtime mode from `references/runtime-modes.md`.
+4. If the agent is not onboarded, use `/onboard` to initialize, fund, and register it.
 5. Use `/connections` to create or accept a connection.
 6. Inspect, request, publish, or revoke grants for that peer.
 7. Use `/messaging` for normal communication.
@@ -31,10 +31,12 @@ References:
 - `connections/SKILL.md`
 - `messaging/SKILL.md`
 - `onboard/SKILL.md`
+- `references/install-cli.md`
+- `references/runtime-modes.md`
+- `references/openclaw-plugin-install.md`
 - `references/permissions-v1.md`
 - `references/permissions-ledger-v1.md`
 - `references/capability-map.md`
-- `references/openclaw-heartbeat.md`
 
 ## Utility Commands
 
@@ -91,3 +93,4 @@ tap identity resolve-self
 - `agent_id` missing or `< 0` — run `/onboard` and register first.
 - `Invalid chain format` — use a CLI chain alias or a CAIP-2 chain ID.
 - `Agent not found on-chain` — the agent is not registered on the selected chain.
+- `TransportOwnershipError` — another TAP runtime already owns that identity; use the plugin tool, stop the other owner, or fall back to `tap message sync`.

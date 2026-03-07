@@ -1,6 +1,6 @@
 ---
 name: messaging
-description: Send TAP messages, reconcile missed XMTP traffic, run the listener when a dedicated process is available, review conversations, and handle transfer requests with runtime judgment. Use this skill whenever the user mentions TAP messaging, XMTP listening, heartbeat reconciliation, or OpenClaw message processing.
+description: Send TAP messages, reconcile missed XMTP traffic, run the listener only when one process owns the identity, review conversations, and handle transfer requests with runtime judgment. Use this skill whenever the user mentions TAP messaging, XMTP listening, heartbeat reconciliation, OpenClaw TAP plugin mode, or transport owner conflicts.
 ---
 
 # /messaging
@@ -10,6 +10,7 @@ Use this skill for agent-to-agent communication after a connection is active.
 ## Runtime Judgment
 
 - TAP does not hard-block business permissions in the CLI.
+- If the OpenClaw TAP plugin is installed, prefer the `tap_gateway` tool over transport-active CLI commands.
 - Keep only one transport-active CLI process per identity.
 - Prefer `tap message sync` for scheduler-driven agents, OpenClaw heartbeats, or any setup where the same identity also runs short-lived TAP commands.
 - Use `tap message listen` only when one dedicated long-lived TAP process can own the identity.
@@ -77,3 +78,4 @@ tap conversations show conv-abc123
 - `Contact is not active` — re-establish the connection.
 - `Use --yes-actions` — you are running non-interactively and the agent needs a runtime decision.
 - `Conversation not found` — the transcript ID does not exist yet.
+- `TransportOwnershipError` — another TAP runtime already owns this identity; use the plugin tool, stop the other owner, or use `tap message sync` instead of a second streaming process.

@@ -225,6 +225,9 @@ describe("two-agent CLI E2E flow", () => {
 			["treasury-chat-from-worker"],
 		);
 
+		await treasuryListener.stop();
+		treasuryListener = undefined;
+
 		const requestMore = await runCli([
 			"--plain",
 			"--data-dir",
@@ -277,6 +280,9 @@ describe("two-agent CLI E2E flow", () => {
 			{ id: "worker-native-budget", status: "active" },
 		]);
 
+		await workerListener.stop();
+		workerListener = undefined;
+
 		const sendWorkerToTreasury = await runCli([
 			"--plain",
 			"--data-dir",
@@ -290,6 +296,12 @@ describe("two-agent CLI E2E flow", () => {
 		]);
 		expect(sendWorkerToTreasury.exitCode).toBe(0);
 		expect(sendWorkerToTreasury.stdout).toContain("Sent:      true");
+
+		workerListener = await createMessageListenerSession(
+			{ plain: true, dataDir: workerDir },
+			{ yes: true },
+			{},
+		);
 
 		const sendTreasuryToWorker = await runCli([
 			"--plain",
@@ -307,6 +319,14 @@ describe("two-agent CLI E2E flow", () => {
 
 		await workerListener.stop();
 		workerListener = undefined;
+
+		treasuryListener = await createMessageListenerSession(
+			{ plain: true, dataDir: treasuryDir },
+			{ yes: true },
+			{
+				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
+			},
+		);
 
 		const approvedFundsRequest = await runCli([
 			"--plain",
@@ -329,6 +349,9 @@ describe("two-agent CLI E2E flow", () => {
 		expect(approvedFundsRequest.stdout).toContain(
 			"0xa100000000000000000000000000000000000000000000000000000000000000",
 		);
+
+		await treasuryListener.stop();
+		treasuryListener = undefined;
 
 		workerListener = await createMessageListenerSession(
 			{ plain: true, dataDir: workerDir },
@@ -365,6 +388,14 @@ describe("two-agent CLI E2E flow", () => {
 
 		await workerListener.stop();
 		workerListener = undefined;
+
+		treasuryListener = await createMessageListenerSession(
+			{ plain: true, dataDir: treasuryDir },
+			{ yes: true },
+			{
+				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
+			},
+		);
 
 		const rejectedFundsRequest = await runCli([
 			"--plain",

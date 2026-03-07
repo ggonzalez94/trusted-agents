@@ -15,9 +15,11 @@ When this file conflicts with code, code wins.
 	- `packages/core`: protocol + storage + transport abstractions
 	- `packages/cli`: executable UX and config/bootstrap behavior
 	- `packages/sdk`: orchestration wrapper for embedding in other runtimes
+	- `packages/openclaw-plugin`: OpenClaw Gateway plugin that owns TAP as a background service
 - Dependency direction:
 	- `cli -> core`
 	- `sdk -> core`
+	- `openclaw-plugin -> core`
 	- `core` has no internal workspace dependencies
 
 ## Read Order For Fast Orientation
@@ -25,8 +27,10 @@ When this file conflicts with code, code wins.
 2. `packages/core/src/identity/*` (on-chain + registration resolution)
 3. `packages/core/src/transport/interface.ts` then `transport/xmtp.ts`
 4. `packages/core/src/trust/*` and `conversation/*` (state persistence)
-5. `packages/cli/src/lib/context.ts` and `commands/*` (runtime composition)
-6. `packages/sdk/src/orchestrator.ts` (programmatic integration path)
+5. `packages/core/src/runtime/*` (`TapMessagingService`, request journal, transport owner lock)
+6. `packages/cli/src/lib/context.ts`, `lib/tap-service.ts`, and `commands/*` (CLI host adapter)
+7. `packages/openclaw-plugin/src/*` (Gateway host adapter)
+8. `packages/sdk/src/orchestrator.ts` (legacy programmatic wrapper)
 
 ## Core Abstractions To Preserve
 
@@ -141,7 +145,8 @@ File: `packages/sdk/src/orchestrator.ts`
 6. File stores are atomic but process-local locked:
 - Uses `AsyncMutex` per instance + `tmp file -> rename`
 - No cross-process lock exists
-- Do not run multiple transport-using CLI processes against the same agent/data dir at once. Transport receipts are process-local, so a long-running listener can still race with a short-lived sender for the same identity.
+- `TapMessagingService` adds a `.transport.lock` owner file per `dataDir`
+- Do not run multiple transport-owning TAP processes against the same agent/data dir at once. If a listener or plugin runtime already owns the identity, other transport-active CLI commands should stop that owner first or use the owner process surface instead.
 
 7. `loadConfig()` requires `agent_id` by default:
 - Most commands fail unless `agent_id >= 0`
@@ -191,11 +196,16 @@ File: `packages/sdk/src/orchestrator.ts`
 - `message listen` and `message sync` process later `connection/result` and `action/result`
 - `FileRequestJournal` is the dedupe and reconciliation source for inbound/outbound async work
 
-16. SDK sharp edge:
+16. OpenClaw plugin mode owns transport inside Gateway:
+- `packages/openclaw-plugin` starts one `TapMessagingService` per configured TAP identity
+- OpenClaw agents should use the `tap_gateway` tool for transport-active operations when the plugin is installed
+- `tap message sync` remains the safe fallback when the plugin is not installed
+
+17. SDK sharp edge:
 - `TrustedAgentsOrchestrator.connect()` uses `this.transport!`
 - If neither `transport` nor `xmtp` config is provided, this will fail at runtime
 
-17. Invite chain value is not strongly validated in invite generation:
+18. Invite chain value is not strongly validated in invite generation:
 - `generateInvite()` signs any chain string given by caller
 - CAIP-2 correctness is enforced at higher layers, not inside invite generation
 

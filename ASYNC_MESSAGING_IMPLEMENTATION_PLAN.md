@@ -1,5 +1,7 @@
 # Async Messaging Implementation Plan
 
+Status note: this document is now historical for the OpenClaw host strategy. The current OpenClaw-native plan is implemented through `packages/openclaw-plugin`; see `OPENCLAW_PLUGIN_DEPLOYMENT_PLAN.md` for the up-to-date Gateway plugin deployment model.
+
 Date: 2026-03-06
 
 ## Goal
@@ -28,7 +30,7 @@ Combine the best parts of the two research docs while keeping TAP simple:
    - `action/result`
 6. Add a minimal durable TAP request journal for idempotency.
 7. Use `syncAll` on startup and on periodic reconciliation.
-8. For OpenClaw deployments, integrate through installed CLI + skills + heartbeat configuration, not by assuming TAP code runs inside the OpenClaw Gateway process.
+8. For OpenClaw deployments without the plugin, integrate through installed CLI + skills + heartbeat configuration.
 
 ## Why This Is The Simplest Path
 
@@ -483,7 +485,7 @@ This keeps the codebase simple and matches what we actually control.
 - `tap message sync`
 - updated TAP skills
 - an OpenClaw setup reference file, for example:
-  - `packages/sdk/skills/trusted-agents/references/openclaw-heartbeat.md`
+- `packages/sdk/skills/trusted-agents/references/runtime-modes.md`
 - README/runbook snippets showing:
   - OpenClaw heartbeat config
   - example `HEARTBEAT.md`
@@ -532,7 +534,7 @@ Do not update shipped skill docs until the related code lands.
 - `packages/sdk/skills/trusted-agents/SKILL.md`
 - `packages/sdk/skills/trusted-agents/connections/SKILL.md`
 - `packages/sdk/skills/trusted-agents/messaging/SKILL.md`
-- `packages/sdk/skills/trusted-agents/references/openclaw-heartbeat.md` (new)
+- `packages/sdk/skills/trusted-agents/references/runtime-modes.md`
 
 ### Root skill changes
 
