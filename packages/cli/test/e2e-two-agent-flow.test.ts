@@ -27,6 +27,15 @@ const CHAIN = "eip155:84532";
 const TREASURY_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const WORKER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
 
+interface PermissionSnapshot {
+	granted_by_me: {
+		grants: Array<{ grantId: string; status: string }>;
+	};
+	granted_by_peer: {
+		grants: Array<{ grantId: string; status: string }>;
+	};
+}
+
 describe("two-agent CLI E2E flow", () => {
 	let tempRoot: string;
 	let treasuryDir: string;
@@ -217,13 +226,12 @@ describe("two-agent CLI E2E flow", () => {
 		const contacts = await runCli(["--json", "--data-dir", treasuryDir, "contacts", "list"]);
 		expect(JSON.parse(contacts.stdout).data.contacts).toHaveLength(1);
 
-		const initialTreasuryPermissions = JSON.parse(
-			(await runCli(["--json", "--data-dir", treasuryDir, "permissions", "show", "WorkerAgent"]))
-				.stdout,
-		).data as {
-			granted_by_me: { grants: unknown[] };
-			granted_by_peer: { grants: Array<{ grantId: string }> };
-		};
+		const initialTreasuryPermissions = await waitForPermissions(
+			treasuryDir,
+			"WorkerAgent",
+			(data) =>
+				data.granted_by_peer.grants.some((grant) => grant.grantId === "treasury-chat-from-worker"),
+		);
 		expect(initialTreasuryPermissions.granted_by_me.grants).toEqual([]);
 		expect(initialTreasuryPermissions.granted_by_peer.grants.map((grant) => grant.grantId)).toEqual(
 			["treasury-chat-from-worker"],
@@ -268,12 +276,14 @@ describe("two-agent CLI E2E flow", () => {
 		expect(grant.exitCode).toBe(0);
 		expect(grant.stdout).toContain("Published:    true");
 
-		const workerPermissions = JSON.parse(
-			(await runCli(["--json", "--data-dir", workerDir, "permissions", "show", "TreasuryAgent"]))
-				.stdout,
-		).data as {
-			granted_by_peer: { grants: Array<{ grantId: string; status: string }> };
-		};
+		const workerPermissions = await waitForPermissions(
+			workerDir,
+			"TreasuryAgent",
+			(data) =>
+				data.granted_by_peer.grants.some(
+					(grant) => grant.grantId === "worker-chat-from-treasury",
+				) && data.granted_by_peer.grants.some((grant) => grant.grantId === "worker-native-budget"),
+		);
 		expect(
 			workerPermissions.granted_by_peer.grants.map((grant) => ({
 				id: grant.grantId,
@@ -378,12 +388,11 @@ describe("two-agent CLI E2E flow", () => {
 		expect(revoke.exitCode).toBe(0);
 		expect(revoke.stdout).toContain("Revoked:   true");
 
-		const revokedPermissions = JSON.parse(
-			(await runCli(["--json", "--data-dir", workerDir, "permissions", "show", "TreasuryAgent"]))
-				.stdout,
-		).data as {
-			granted_by_peer: { grants: Array<{ grantId: string; status: string }> };
-		};
+		const revokedPermissions = await waitForPermissions(workerDir, "TreasuryAgent", (data) =>
+			data.granted_by_peer.grants.some(
+				(grant) => grant.grantId === "worker-native-budget" && grant.status === "revoked",
+			),
+		);
 		expect(
 			revokedPermissions.granted_by_peer.grants.find(
 				(grant) => grant.grantId === "worker-native-budget",
@@ -568,4 +577,31 @@ async function writeJsonFile(dir: string, name: string, value: unknown): Promise
 	const path = join(dir, name);
 	await writeFile(path, JSON.stringify(value, null, 2), "utf-8");
 	return path;
+}
+
+async function waitForPermissions(
+	dataDir: string,
+	peer: string,
+	predicate: (data: PermissionSnapshot) => boolean,
+	timeoutMs = 2_000,
+): Promise<PermissionSnapshot> {
+	const deadline = Date.now() + timeoutMs;
+	let lastSnapshot: PermissionSnapshot | undefined;
+
+	while (Date.now() < deadline) {
+		const result = await runCli(["--json", "--data-dir", dataDir, "permissions", "show", peer]);
+		if (result.exitCode === 0) {
+			const data = JSON.parse(result.stdout).data as PermissionSnapshot;
+			lastSnapshot = data;
+			if (predicate(data)) {
+				return data;
+			}
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+
+	throw new Error(
+		`Timed out waiting for permissions for ${peer}: ${JSON.stringify(lastSnapshot ?? null)}`,
+	);
 }
