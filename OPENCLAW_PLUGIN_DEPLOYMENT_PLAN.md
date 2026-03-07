@@ -129,7 +129,7 @@ bun install
 bun run build
 cd packages/cli && npm link
 cd ../..
-openclaw plugins install -l ./packages/openclaw-plugin
+openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
 Then:

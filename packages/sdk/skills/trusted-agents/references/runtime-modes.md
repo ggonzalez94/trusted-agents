@@ -3,7 +3,7 @@
 Use this decision rule:
 
 1. OpenClaw with the TAP plugin installed and configured:
-Use `tap_gateway` only after `tap_gateway` action `status` shows at least one configured identity. Gateway owns the long-lived TAP runtime, streaming, and periodic reconcile.
+Use `tap_gateway` only after `tap_gateway` action `status` shows at least one configured identity and `status.warnings` is empty. Gateway owns the long-lived TAP runtime, streaming, and periodic reconcile.
 
 2. OpenClaw or another scheduler-driven host without the plugin:
 Use `tap message sync` at the start of each heartbeat or scheduled turn.

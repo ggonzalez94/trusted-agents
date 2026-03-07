@@ -1,6 +1,6 @@
 Choose TAP runtime mode in this order:
 
-1. `tap_gateway` tool available and `tap_gateway` action `status` shows at least one configured identity:
+1. `tap_gateway` tool available and `tap_gateway` action `status` shows at least one configured identity and no warnings:
 Use plugin mode. Gateway owns streaming and periodic reconcile.
 
 2. OpenClaw without plugin:

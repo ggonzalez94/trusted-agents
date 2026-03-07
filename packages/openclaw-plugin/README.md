@@ -9,7 +9,7 @@ bun install
 bun run build
 cd packages/cli && npm link
 cd ../..
-openclaw plugins install -l ./packages/openclaw-plugin
+openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
 ## Configure
@@ -27,6 +27,7 @@ Restart the Gateway after plugin config changes.
 - Gateway owns the long-lived TAP transport.
 - `tap_gateway` is the preferred surface for TAP connect/send/request operations in plugin mode.
 - Use `tap_gateway` action `status` to confirm at least one identity is configured before treating plugin mode as active.
+- If `status.warnings` is non-empty, resolve those warnings before relying on plugin mode.
 - If more than one identity is configured, pass `identity` in each `tap_gateway` tool call.
 - Periodic reconcile still runs even when streaming is healthy.
 - Read-only `tap` CLI commands remain safe for contacts, permissions inspection, and conversation history.

@@ -7,7 +7,7 @@ bun install
 bun run build
 cd packages/cli && npm link
 cd ../..
-openclaw plugins install -l ./packages/openclaw-plugin
+openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
 Use `--link` for repo installs so OpenClaw loads the plugin directly from this checkout.
@@ -23,6 +23,6 @@ openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"nam
 
 3. Restart the Gateway so the linked plugin config is applied.
 4. Verify plugin mode with `tap_gateway` action `status`.
-5. Treat plugin mode as active only when `status.configured` is `true` and `status.identities` is not empty.
+5. Treat plugin mode as active only when `status.configured` is `true`, `status.identities` is not empty, and `status.warnings` is empty.
 6. In plugin mode, prefer `tap_gateway` for transport-active work. Use read-only `tap` CLI commands for contacts, permissions inspection, and conversation history.
 7. If multiple identities are configured, include `identity` in every `tap_gateway` tool call.

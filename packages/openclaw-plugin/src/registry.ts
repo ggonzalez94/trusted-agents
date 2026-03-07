@@ -76,6 +76,7 @@ export class OpenClawTapRegistry {
 	async status(identity?: string): Promise<{
 		configured: boolean;
 		configuredIdentities: string[];
+		warnings: string[];
 		identities: Array<{
 			identity: string;
 			dataDir: string;
@@ -120,6 +121,7 @@ export class OpenClawTapRegistry {
 		return {
 			configured: this.pluginConfig.identities.length > 0,
 			configuredIdentities: this.listConfiguredIdentities(),
+			warnings: this.buildWarnings(identities),
 			identities,
 		};
 	}
@@ -302,7 +304,9 @@ export class OpenClawTapRegistry {
 
 	private async startAll(): Promise<void> {
 		if (this.pluginConfig.identities.length === 0) {
-			this.logger.info("[trusted-agents-tap] No TAP identities configured for the OpenClaw plugin");
+			this.logger.warn(
+				"[trusted-agents-tap] No TAP identities are configured. Set plugins.entries.trusted-agents-tap.config.identities and restart Gateway.",
+			);
 			return;
 		}
 
@@ -449,6 +453,35 @@ export class OpenClawTapRegistry {
 			);
 		}
 		return this.pluginConfig.identities[0]!.name;
+	}
+
+	private buildWarnings(
+		identities: Array<{
+			identity: string;
+			running: boolean;
+			lastError?: string;
+		}>,
+	): string[] {
+		const warnings: string[] = [];
+		if (this.pluginConfig.identities.length === 0) {
+			warnings.push(
+				"No TAP identities are configured. Set plugins.entries.trusted-agents-tap.config.identities and restart Gateway.",
+			);
+		}
+
+		for (const identity of identities) {
+			if (identity.lastError) {
+				warnings.push(`TAP identity "${identity.identity}" is degraded: ${identity.lastError}`);
+				continue;
+			}
+			if (!identity.running) {
+				warnings.push(
+					`TAP identity "${identity.identity}" is stopped. Use tap_gateway action "restart" or restart Gateway.`,
+				);
+			}
+		}
+
+		return warnings;
 	}
 }
 

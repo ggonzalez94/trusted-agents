@@ -35,7 +35,7 @@ cd packages/cli && npm link
 OpenClaw plugin install from this repo:
 
 ```bash
-openclaw plugins install -l ./packages/openclaw-plugin
+openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
 Then point OpenClaw at an existing TAP data dir:
@@ -44,7 +44,7 @@ Then point OpenClaw at an existing TAP data dir:
 openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/tap-data","reconcileIntervalMinutes":10}]' --json
 ```
 
-Restart the Gateway after plugin config changes. In plugin mode, use `tap_gateway` for transport-active TAP work and keep the normal `tap` CLI for onboarding and read-only inspection.
+Restart the Gateway after plugin config changes. In plugin mode, use `tap_gateway` for transport-active TAP work and keep the normal `tap` CLI for onboarding and read-only inspection. Check `tap_gateway` action `status` after restart and resolve any `warnings` before relying on plugin mode.
 
 Or run directly:
 

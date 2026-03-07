@@ -22,6 +22,58 @@ When this file conflicts with code, code wins.
 	- `openclaw-plugin -> core`
 	- `core` has no internal workspace dependencies
 
+## Package Responsibilities
+
+### `packages/core`
+- Source of truth for protocol and runtime behavior.
+- Owns:
+	- protocol methods/types
+	- identity resolution and registration validation
+	- XMTP transport + transport interface
+	- trust/contact persistence
+	- conversation logging
+	- request journal / dedupe / reconciliation state
+	- transport owner lock
+	- `TapMessagingService`
+- If behavior differs between hosts, start by checking whether it should really live here.
+
+### `packages/cli`
+- Human/agent-facing `tap` executable.
+- Host adapter over `core`, not the source of messaging business logic.
+- Owns:
+	- command parsing and output formatting
+	- CLI-specific prompting / approval UX
+	- onboarding commands
+	- local operator workflows
+
+### `packages/sdk`
+- Programmatic embedding surface for non-CLI hosts.
+- Re-exports shared runtime pieces from `core`.
+- Still contains the older `TrustedAgentsOrchestrator`; treat it as a thin wrapper, not the main runtime model.
+- Also contains the canonical repo TAP skill tree under `packages/sdk/skills/trusted-agents/`.
+
+### `packages/openclaw-plugin`
+- OpenClaw-specific host adapter.
+- Owns:
+	- Gateway plugin manifest/config
+	- one long-lived TAP runtime per configured identity inside Gateway
+	- periodic reconcile scheduling inside the plugin host
+	- the `tap_gateway` tool surface
+	- OpenClaw-specific TAP skill docs
+- This is the preferred OpenClaw streaming host. OpenClaw shell background jobs are not.
+
+## Skills Layout
+
+- Generic TAP skills live in `packages/sdk/skills/trusted-agents/`.
+- OpenClaw plugin skills live in `packages/openclaw-plugin/skills/trusted-agents-openclaw/`.
+
+Installation expectations:
+
+- OpenClaw plugin install loads the plugin skill directory from `packages/openclaw-plugin/openclaw.plugin.json`.
+- That plugin install does **not** automatically install the generic TAP skill tree from `packages/sdk/skills/trusted-agents/`.
+- Outside OpenClaw plugin mode, hosts should install the generic TAP skills from `packages/sdk/skills/trusted-agents/` into whatever skill directory that host uses.
+- In this repo, skill files under `packages/*/skills/...` are the canonical source. Any copies under `~/.local/share/...`, `~/.openclaw/...`, or other host-specific paths are installed mirrors, not the source of truth.
+
 ## Read Order For Fast Orientation
 1. `packages/core/src/protocol/*` (wire protocol)
 2. `packages/core/src/identity/*` (on-chain + registration resolution)

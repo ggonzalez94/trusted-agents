@@ -9,7 +9,7 @@ Use this skill when working inside OpenClaw and TAP may be installed as a Gatewa
 
 ## Decision Rule
 
-1. Use plugin mode only when `tap_gateway` is available and `tap_gateway` action `status` reports at least one configured identity.
+1. Use plugin mode only when `tap_gateway` is available, `tap_gateway` action `status` reports at least one configured identity, and `status.warnings` is empty.
 2. In plugin mode, use `tap_gateway` for TAP status, sync, connect, messaging, grant updates, fund requests, and pending request resolution.
 3. If the plugin is not installed or not configured yet, fall back to the normal `tap` CLI workflow and run `tap message sync` on heartbeat.
 4. Do not run `tap message listen` in OpenClaw shell background jobs as the primary runtime.
@@ -21,12 +21,13 @@ bun install
 bun run build
 cd packages/cli && npm link
 cd ../..
-openclaw plugins install -l ./packages/openclaw-plugin
+openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
 ## Runtime Tasks
 
 - Check runtime health: `tap_gateway` with `action: "status"`
+- Treat any non-empty `warnings` in the `status` result as setup or runtime problems to fix before relying on plugin mode.
 - Force reconciliation: `tap_gateway` with `action: "sync"`
 - Restart a stopped runtime: `tap_gateway` with `action: "restart"`
 - Review queued approvals: `tap_gateway` with `action: "list_pending"`
