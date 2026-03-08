@@ -38,27 +38,10 @@ describe("config-loader", () => {
 			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 
-		it("should keep config inside an explicit --data-dir even when legacy config exists", () => {
-			const dataDir = join(tmpDir, "isolated-data");
-			const path = resolveConfigPath({ dataDir }, dataDir);
-			expect(path).toBe(join(dataDir, "config.yaml"));
-		});
-
-		it("should keep config inside TAP_DATA_DIR even when legacy config exists", () => {
-			const dataDir = join(tmpDir, "isolated-env-data");
-			process.env.TAP_DATA_DIR = dataDir;
-			const path = resolveConfigPath({}, dataDir);
-			expect(path).toBe(join(dataDir, "config.yaml"));
-		});
-
 		it("should return <dataDir>/config.yaml as default path", () => {
-			// When neither dataDir nor legacy has a config, returns the new default
 			const dataDir = join(tmpDir, "fresh-data-no-config");
-			// Note: if legacy ~/.config/trustedagents/config.yaml exists on this
-			// machine, the function will return that instead. This test verifies the
-			// return value ends with config.yaml in either case.
 			const path = resolveConfigPath({}, dataDir);
-			expect(path).toMatch(/config\.yaml$/);
+			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 	});
 

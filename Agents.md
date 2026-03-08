@@ -218,8 +218,8 @@ File: `packages/sdk/src/orchestrator.ts`
 ├── conversations/<id>.json  # Per-peer message transcripts
 └── xmtp/<inboxId>.db3       # XMTP client DB (encrypted)
 ```
-- Resolution order: `--data-dir` flag > `TAP_DATA_DIR` env > `~/.local/share/trustedagents` (if exists) > `~/.trustedagents`
-- Config resolution: `--config` flag > `<dataDir>/config.yaml` > legacy `~/.config/trustedagents/config.yaml`
+- Resolution order: `--data-dir` flag > `TAP_DATA_DIR` env > `~/.trustedagents`
+- Config resolution: `--config` flag > `<dataDir>/config.yaml`
 - This means setting `TAP_DATA_DIR` alone fully isolates an agent (useful for running multiple agents on one machine)
 
 10. Chain support differs between layers:
