@@ -4,12 +4,19 @@ Run TAP inside OpenClaw Gateway as a supervised background service.
 
 ## Install From This Repo
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
-cd ../..
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 ## Configure
@@ -17,7 +24,7 @@ openclaw plugins install --link ./packages/openclaw-plugin
 Add one or more TAP identities to the plugin config. Each identity points at an existing TAP `dataDir`.
 
 ```bash
-openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/agent-data","autoApproveConnections":false,"autoApproveActions":false,"reconcileIntervalMinutes":10}]' --json
+openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/agent-data","autoApproveConnections":false,"unsafeApproveActions":false,"reconcileIntervalMinutes":10}]' --json
 ```
 
 Restart the Gateway after plugin config changes.

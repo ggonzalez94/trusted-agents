@@ -6,7 +6,9 @@ import * as core from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerUpdateCommand } from "../src/commands/register.js";
+import { getUsdcAsset } from "../src/lib/assets.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import * as executionLib from "../src/lib/execution.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
 import * as walletLib from "../src/lib/wallet.js";
 
@@ -26,8 +28,18 @@ describe("register update", () => {
 			privateKey,
 			dataDir: tmpDir,
 			chains: {
+				"eip155:8453": {
+					name: "Base",
+					caip2: "eip155:8453",
+					chainId: 8453,
+					rpcUrl: "https://example.test/base-mainnet",
+					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+					blockExplorerUrl: "https://example.test/base-explorer",
+				},
 				"eip155:84532": {
 					name: "Base Sepolia",
+					caip2: "eip155:84532",
+					chainId: 84532,
 					rpcUrl: "https://example.test/rpc",
 					registryAddress: "0x1234567890123456789012345678901234567890",
 					blockExplorerUrl: "https://example.test/explorer",
@@ -38,6 +50,10 @@ describe("register update", () => {
 			resolveCacheMaxEntries: 100,
 			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
+			execution: {
+				mode: "eip7702",
+				paymasterProvider: "circle",
+			},
 		};
 	}
 
@@ -51,6 +67,11 @@ describe("register update", () => {
 				version: "1.0",
 				agentAddress,
 				capabilities,
+				execution: {
+					mode: "eip4337",
+					address: "0x00000000000000000000000000000000000000aa",
+					paymaster: "candide",
+				},
 			},
 		};
 	}
@@ -80,16 +101,41 @@ describe("register update", () => {
 		}) as typeof process.stderr.write;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({} as never);
-		vi.spyOn(walletLib, "buildWalletClient").mockReturnValue({
-			account: { address: agentAddress },
-			chain: { id: 84532 },
+		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+			readContract: vi.fn().mockResolvedValue(100_000n),
 		} as never);
 		vi.spyOn(core.ERC8004Registry.prototype, "verifyDeployed").mockResolvedValue();
 		vi.spyOn(core.ERC8004Registry.prototype, "getTokenURI").mockResolvedValue(
 			"ipfs://existing-cid",
 		);
-		vi.spyOn(core.ERC8004Registry.prototype, "setAgentURI").mockResolvedValue();
+		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
+			requestedMode: "eip4337",
+			mode: "eip4337",
+			messagingAddress: agentAddress,
+			executionAddress: "0x00000000000000000000000000000000000000aa",
+			fundingAddress: "0x00000000000000000000000000000000000000aa",
+			paymasterProvider: "candide",
+			warnings: [],
+		});
+		vi.spyOn(executionLib, "ensureExecutionReady").mockResolvedValue();
+		vi.spyOn(executionLib, "executeContractCalls").mockResolvedValue({
+			requestedMode: "eip4337",
+			mode: "eip4337",
+			messagingAddress: agentAddress,
+			executionAddress: "0x00000000000000000000000000000000000000aa",
+			fundingAddress: "0x00000000000000000000000000000000000000aa",
+			paymasterProvider: "candide",
+			warnings: [],
+			entryPointAddress: "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+			entryPointVersion: "0.7",
+			gasPaymentMode: "erc20-usdc",
+			transactionHash: "0xabc",
+			userOperationHash: "0xdef",
+			transactionReceipt: {
+				transactionHash: "0xabc",
+				logs: [],
+			},
+		} as never);
 		vi.spyOn(ipfsLib, "resolvePinataJwt").mockReturnValue(undefined);
 		vi.spyOn(ipfsLib, "uploadToIpfsPinata").mockResolvedValue({
 			cid: "pinata-cid",
@@ -111,11 +157,15 @@ describe("register update", () => {
 
 	it("skips upload and transaction when merged manifest is unchanged", async () => {
 		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+			new Error("should not preflight a no-op update"),
+		);
 
 		await registerUpdateCommand({}, { json: true });
 
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
-		expect(core.ERC8004Registry.prototype.setAgentURI).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
 
 		const output = lastJsonOutput() as {
 			ok: boolean;
@@ -124,6 +174,45 @@ describe("register update", () => {
 		expect(output.ok).toBe(true);
 		expect(output.data?.no_change).toBe(true);
 		expect(output.data?.agent_uri).toBe("ipfs://existing-cid");
+	});
+
+	it("skips paymaster preflight when --uri already matches the registry", async () => {
+		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+			new Error("should not preflight a no-op uri update"),
+		);
+
+		await registerUpdateCommand({ uri: "ipfs://existing-cid" }, { json: true });
+
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
+
+		const output = lastJsonOutput() as {
+			ok: boolean;
+			data?: { no_change?: boolean; agent_uri?: string };
+		};
+		expect(output.ok).toBe(true);
+		expect(output.data?.no_change).toBe(true);
+		expect(output.data?.agent_uri).toBe("ipfs://existing-cid");
+	});
+
+	it("fails before x402 upload when execution preflight fails", async () => {
+		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+			new Error("Circle permit preflight failed"),
+		);
+
+		await registerUpdateCommand({ description: "Updated" }, { json: true });
+
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+
+		const output = lastJsonOutput() as {
+			ok: boolean;
+			error?: { message?: string };
+		};
+		expect(output.ok).toBe(false);
+		expect(output.error?.message).toContain("Circle permit preflight failed");
 	});
 
 	it("proceeds with full replacement even when the current manifest cannot be fetched", async () => {
@@ -139,15 +228,12 @@ describe("register update", () => {
 		);
 
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
-		expect(core.ERC8004Registry.prototype.setAgentURI).toHaveBeenCalledWith(
-			7,
-			"ipfs://uploaded-cid",
-			expect.anything(),
-		);
+		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
 
 		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.name).toBe("Replacement Agent");
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual(["search", "research"]);
+		expect(uploadPayload.trustedAgentProtocol.execution?.mode).toBe("eip4337");
 		expect(stderrWrites.join("")).toContain("proceeding with replacement upload");
 	});
 
@@ -157,7 +243,19 @@ describe("register update", () => {
 		await registerUpdateCommand({ capabilities: "search" }, { json: true });
 
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
-		expect(core.ERC8004Registry.prototype.setAgentURI).toHaveBeenCalledOnce();
+		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
+		expect(
+			(
+				executionLib.executeContractCalls as unknown as {
+					mock: { calls: unknown[][] };
+				}
+			).mock.calls[0]?.[3],
+		).toMatchObject({
+			preview: {
+				mode: "eip4337",
+				paymasterProvider: "candide",
+			},
+		});
 
 		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual(["search"]);
@@ -187,6 +285,7 @@ describe("register update", () => {
 
 		expect(walletLib.buildPublicClient).not.toHaveBeenCalled();
 		expect(core.ERC8004Registry.prototype.getTokenURI).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
 		expect(process.exitCode).toBe(2);
 
 		const output = lastJsonOutput() as {
@@ -195,5 +294,56 @@ describe("register update", () => {
 		};
 		expect(output.ok).toBe(false);
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
+	});
+
+	it("tops up the messaging identity from the Base execution account before x402 upload", async () => {
+		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+
+		const readContract = vi.fn().mockResolvedValueOnce(0n).mockResolvedValueOnce(50_000n);
+		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+			readContract,
+		} as never);
+		vi.spyOn(executionLib, "getExecutionPreview").mockImplementation(
+			async (_config, chainConfig) => {
+				if (chainConfig.caip2 === "eip155:8453") {
+					return {
+						requestedMode: "eip4337",
+						mode: "eip4337",
+						messagingAddress: agentAddress,
+						executionAddress: "0x00000000000000000000000000000000000000bb",
+						fundingAddress: "0x00000000000000000000000000000000000000bb",
+						paymasterProvider: "candide",
+						warnings: [],
+					};
+				}
+
+				return {
+					requestedMode: "eip4337",
+					mode: "eip4337",
+					messagingAddress: agentAddress,
+					executionAddress: "0x00000000000000000000000000000000000000aa",
+					fundingAddress: "0x00000000000000000000000000000000000000aa",
+					paymasterProvider: "candide",
+					warnings: [],
+				};
+			},
+		);
+
+		await registerUpdateCommand({ capabilities: "search" }, { json: true });
+
+		expect(executionLib.executeContractCalls).toHaveBeenCalledTimes(2);
+		const topUpCall = (
+			executionLib.executeContractCalls as unknown as { mock: { calls: unknown[][] } }
+		).mock.calls[0];
+		const updateCall = (
+			executionLib.executeContractCalls as unknown as { mock: { calls: unknown[][] } }
+		).mock.calls[1];
+
+		expect(topUpCall?.[1]).toMatchObject({ caip2: "eip155:8453" });
+		expect(topUpCall?.[2]).toHaveLength(1);
+		expect((topUpCall?.[2] as Array<{ to: string }>)[0]?.to).toBe(
+			getUsdcAsset("eip155:8453")?.address,
+		);
+		expect(updateCall?.[1]).toMatchObject({ caip2: "eip155:84532" });
 	});
 });

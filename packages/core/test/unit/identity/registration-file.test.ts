@@ -106,4 +106,37 @@ describe("validateRegistrationFile", () => {
 		};
 		expect(() => validateRegistrationFile(file)).toThrow("non-empty name");
 	});
+
+	it("should accept execution metadata when it is well-formed", () => {
+		const file = {
+			...VALID_REGISTRATION_FILE,
+			trustedAgentProtocol: {
+				...VALID_REGISTRATION_FILE.trustedAgentProtocol,
+				execution: {
+					mode: "eip7702",
+					address: VALID_REGISTRATION_FILE.trustedAgentProtocol.agentAddress,
+					paymaster: "circle",
+				},
+			},
+		};
+
+		const result = validateRegistrationFile(file);
+		expect(result.trustedAgentProtocol.execution?.mode).toBe("eip7702");
+		expect(result.trustedAgentProtocol.execution?.paymaster).toBe("circle");
+	});
+
+	it("should reject execution metadata with an invalid address", () => {
+		const file = {
+			...VALID_REGISTRATION_FILE,
+			trustedAgentProtocol: {
+				...VALID_REGISTRATION_FILE.trustedAgentProtocol,
+				execution: {
+					mode: "eip7702",
+					address: "not-an-address",
+				},
+			},
+		};
+
+		expect(() => validateRegistrationFile(file)).toThrow("execution.address");
+	});
 });

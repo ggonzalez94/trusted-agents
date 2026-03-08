@@ -44,6 +44,15 @@ References:
 
 ## Utility Commands
 
+### `tap install [--runtime <name>] [--source-dir <path>] [--skip-skills]`
+
+Install TAP runtime integrations after the CLI is built.
+
+```bash
+tap install
+tap install --runtime openclaw
+```
+
 ### `tap balance [chain]`
 
 Show native ETH and USDC balances for this agent.

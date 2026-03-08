@@ -4,13 +4,22 @@ import { join } from "node:path";
 import YAML from "yaml";
 import { resolveDataDir } from "../common/index.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
-import type { ChainConfig, TrustedAgentsConfig } from "./types.js";
+import type {
+	ChainConfig,
+	ExecutionMode,
+	ExecutionPaymasterProvider,
+	TrustedAgentsConfig,
+} from "./types.js";
 
 const KEYFILE_NAME = "agent.key";
 
 interface StoredYamlConfig {
 	agent_id?: number;
 	chain?: string;
+	execution?: {
+		mode?: ExecutionMode;
+		paymaster_provider?: ExecutionPaymasterProvider;
+	};
 	xmtp?: {
 		env?: "dev" | "production" | "local";
 		db_encryption_key?: string;
@@ -32,10 +41,24 @@ export interface LoadTrustedAgentConfigOptions {
 	privateKey?: `0x${string}`;
 	configPath?: string;
 	extraChains?: Record<string, ChainConfig>;
+	executionMode?: ExecutionMode;
+	paymasterProvider?: ExecutionPaymasterProvider;
 }
 
 export function resolveTrustedAgentConfigPath(dataDir: string): string {
 	return join(resolveDataDir(dataDir), "config.yaml");
+}
+
+export function getDefaultExecutionModeForChain(chain: string): ExecutionMode {
+	return ["base", "base-sepolia", "eip155:8453", "eip155:84532"].includes(chain)
+		? "eip7702"
+		: "eoa";
+}
+
+export function getDefaultPaymasterProviderForMode(
+	mode: ExecutionMode,
+): ExecutionPaymasterProvider | undefined {
+	return mode === "eoa" ? undefined : (DEFAULT_CONFIG.execution?.paymasterProvider ?? "circle");
 }
 
 export async function loadTrustedAgentConfigFromDataDir(
@@ -57,6 +80,14 @@ export async function loadTrustedAgentConfigFromDataDir(
 
 	const privateKey = options.privateKey ?? (await loadKeyfile(resolvedDataDir));
 	const chain = options.chain ?? yaml?.chain ?? "eip155:84532";
+	const executionMode =
+		options.executionMode ?? yaml?.execution?.mode ?? getDefaultExecutionModeForChain(chain);
+	const paymasterProvider =
+		executionMode === "eoa"
+			? undefined
+			: (options.paymasterProvider ??
+				yaml?.execution?.paymaster_provider ??
+				getDefaultPaymasterProviderForMode(executionMode));
 	const chains = {
 		...DEFAULT_CONFIG.chains,
 		...(options.extraChains ?? {}),
@@ -88,6 +119,10 @@ export async function loadTrustedAgentConfigFromDataDir(
 		resolveCacheMaxEntries: DEFAULT_CONFIG.resolveCacheMaxEntries,
 		xmtpEnv: yaml?.xmtp?.env ?? DEFAULT_CONFIG.xmtpEnv,
 		xmtpDbEncryptionKey: yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined,
+		execution: {
+			mode: executionMode,
+			...(paymasterProvider ? { paymasterProvider } : {}),
+		},
 	};
 }
 

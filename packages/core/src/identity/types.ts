@@ -3,10 +3,17 @@ export interface RegistrationFileService {
 	endpoint: string;
 }
 
+export interface RegistrationFileExecution {
+	mode: "eoa" | "eip4337" | "eip7702";
+	address: `0x${string}`;
+	paymaster?: string;
+}
+
 export interface RegistrationFileTrustedAgentProtocol {
 	version: string;
 	agentAddress: `0x${string}`;
 	capabilities: string[];
+	execution?: RegistrationFileExecution;
 }
 
 export interface RegistrationFile {
@@ -23,6 +30,9 @@ export interface ResolvedAgent {
 	ownerAddress: `0x${string}`;
 	agentAddress: `0x${string}`;
 	xmtpEndpoint?: `0x${string}`;
+	executionAddress?: `0x${string}`;
+	executionMode?: "eoa" | "eip4337" | "eip7702";
+	paymasterProvider?: string;
 	endpoint?: string;
 	capabilities: string[];
 	registrationFile: RegistrationFile;

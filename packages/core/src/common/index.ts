@@ -25,3 +25,10 @@ export {
 export { AsyncMutex } from "./mutex.js";
 
 export { resolveDataDir, assertSafeFileComponent, assertPathWithinBase } from "./paths.js";
+
+export {
+	buildChainPublicClient,
+	buildChainTransport,
+	buildChainWalletClient,
+	getViemChain,
+} from "./viem.js";

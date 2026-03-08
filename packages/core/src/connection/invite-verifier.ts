@@ -40,6 +40,13 @@ export function parseInviteUrl(url: string): InviteData {
 	};
 }
 
+export function isSelfInvite(
+	invite: InviteData,
+	localAgent: { agentId: number; chain: string },
+): boolean {
+	return invite.agentId === localAgent.agentId && invite.chain === localAgent.chain;
+}
+
 export async function verifyInvite(
 	invite: InviteData,
 	options?: { expectedSignerAddress?: `0x${string}` },

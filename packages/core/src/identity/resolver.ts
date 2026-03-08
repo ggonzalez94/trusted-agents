@@ -26,7 +26,7 @@ export class AgentResolver implements IAgentResolver {
 
 	constructor(
 		private readonly chains: Record<string, ChainConfig>,
-		private readonly createClient: (rpcUrl: string) => PublicClient,
+		private readonly createClient: (chainConfig: ChainConfig) => PublicClient,
 		options?: AgentResolverOptions,
 	) {
 		this.maxCacheEntries = options?.maxCacheEntries ?? 1000;
@@ -38,7 +38,7 @@ export class AgentResolver implements IAgentResolver {
 			throw new IdentityError(`Unknown chain: ${chain}`);
 		}
 
-		const client = this.createClient(chainConfig.rpcUrl);
+		const client = this.createClient(chainConfig);
 		const registry = new ERC8004Registry(client, chainConfig.registryAddress);
 
 		const [tokenURI, ownerAddress] = await Promise.all([
@@ -60,6 +60,9 @@ export class AgentResolver implements IAgentResolver {
 			ownerAddress,
 			agentAddress: registrationFile.trustedAgentProtocol.agentAddress,
 			xmtpEndpoint: xmtpService.endpoint as `0x${string}`,
+			executionAddress: registrationFile.trustedAgentProtocol.execution?.address,
+			executionMode: registrationFile.trustedAgentProtocol.execution?.mode,
+			paymasterProvider: registrationFile.trustedAgentProtocol.execution?.paymaster,
 			endpoint: xmtpService.endpoint,
 			capabilities: registrationFile.trustedAgentProtocol.capabilities,
 			registrationFile,
@@ -103,7 +106,7 @@ export class AgentResolver implements IAgentResolver {
 
 export function createAgentResolverFromConfig(
 	config: Pick<TrustedAgentsConfig, "chains" | "resolveCacheMaxEntries">,
-	createClient: (rpcUrl: string) => PublicClient,
+	createClient: (chainConfig: ChainConfig) => PublicClient,
 ): AgentResolver {
 	return new AgentResolver(config.chains, createClient, {
 		maxCacheEntries: config.resolveCacheMaxEntries,

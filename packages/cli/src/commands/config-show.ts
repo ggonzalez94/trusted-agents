@@ -15,6 +15,10 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 			private_key: "***redacted***",
 			data_dir: config.dataDir,
 			invite_expiry_seconds: config.inviteExpirySeconds,
+			execution: {
+				mode: config.execution?.mode,
+				paymaster_provider: config.execution?.paymasterProvider,
+			},
 			xmtp_env: config.xmtpEnv ?? "production",
 			chains: Object.fromEntries(
 				Object.entries(config.chains).map(([k, v]) => [

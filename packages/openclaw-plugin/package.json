@@ -15,7 +15,7 @@
     "@sinclair/typebox": "^0.34.48",
     "openclaw": "2026.3.2",
     "trusted-agents-core": "workspace:*",
-    "viem": "^2.23.0"
+    "viem": "2.46.3"
   },
   "devDependencies": {
     "@types/node": "^25.3.3",

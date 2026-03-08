@@ -1,6 +1,5 @@
-import { http, createPublicClient } from "viem";
-import type { PublicClient } from "viem";
-import type { TrustedAgentsConfig } from "../config/types.js";
+import { buildChainPublicClient } from "../common/index.js";
+import type { ChainConfig, TrustedAgentsConfig } from "../config/types.js";
 import { FileConversationLogger, type IConversationLogger } from "../conversation/logger.js";
 import { AgentResolver, type IAgentResolver } from "../identity/resolver.js";
 import type { TransportProvider } from "../transport/interface.js";
@@ -26,8 +25,8 @@ export interface BuildTapRuntimeContextOptions {
 	transport?: TransportProvider;
 }
 
-function createViemClient(rpcUrl: string): PublicClient {
-	return createPublicClient({ transport: http(rpcUrl) }) as PublicClient;
+function createViemClient(chainConfig: ChainConfig) {
+	return buildChainPublicClient(chainConfig);
 }
 
 export function buildDefaultTapRuntimeContext(

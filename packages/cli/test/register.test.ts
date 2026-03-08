@@ -89,9 +89,14 @@ describe("register — registration file construction", () => {
 		};
 
 		const nextAddress = "0x0000000000000000000000000000000000000001" as const;
-		const updated = buildUpdatedRegistrationFile(current, nextAddress, {
-			description: "Updated Description",
-		});
+		const updated = buildUpdatedRegistrationFile(
+			current,
+			nextAddress,
+			{ mode: "eip4337", address: "0x0000000000000000000000000000000000000002" },
+			{
+				description: "Updated Description",
+			},
+		);
 
 		expect(updated.name).toBe("Existing Name");
 		expect(updated.description).toBe("Updated Description");
@@ -102,6 +107,7 @@ describe("register — registration file construction", () => {
 		});
 		expect(updated.services).toContainEqual({ name: "xmtp", endpoint: nextAddress });
 		expect(updated.trustedAgentProtocol.agentAddress).toBe(nextAddress);
+		expect(updated.trustedAgentProtocol.execution?.mode).toBe("eip4337");
 		expect(() => validateRegistrationFile(updated)).not.toThrow();
 	});
 
@@ -118,11 +124,17 @@ describe("register — registration file construction", () => {
 			},
 		};
 
-		const updated = buildUpdatedRegistrationFile(current, agentAddress, {
-			capabilities: ["scheduling", "calendar"],
-		});
+		const updated = buildUpdatedRegistrationFile(
+			current,
+			agentAddress,
+			{ mode: "eip7702", address: agentAddress },
+			{
+				capabilities: ["scheduling", "calendar"],
+			},
+		);
 
 		expect(updated.trustedAgentProtocol.capabilities).toEqual(["scheduling", "calendar"]);
+		expect(updated.trustedAgentProtocol.execution?.mode).toBe("eip7702");
 		expect(() => validateRegistrationFile(updated)).not.toThrow();
 	});
 });

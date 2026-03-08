@@ -48,6 +48,42 @@ describe("AgentResolver", () => {
 		fetchMock.mockRestore();
 	});
 
+	it("should surface execution metadata from the registration file", async () => {
+		const mockClient = createMockPublicClient({
+			tokenURI: "https://example.com/agent/1/registration.json",
+			ownerAddress: ALICE.address,
+		});
+
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					...VALID_REGISTRATION_FILE,
+					trustedAgentProtocol: {
+						...VALID_REGISTRATION_FILE.trustedAgentProtocol,
+						execution: {
+							mode: "eip7702",
+							address: "0x00000000000000000000000000000000000000aa",
+							paymaster: "circle",
+						},
+					},
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			),
+		);
+
+		const resolver = new AgentResolver(chains, () => mockClient);
+		const result = await resolver.resolve(1, "eip155:1");
+
+		expect(result.executionMode).toBe("eip7702");
+		expect(result.executionAddress).toBe("0x00000000000000000000000000000000000000aa");
+		expect(result.paymasterProvider).toBe("circle");
+
+		fetchMock.mockRestore();
+	});
+
 	it("should resolve an agent with XMTP transport", async () => {
 		const mockClient = createMockPublicClient({
 			tokenURI: "https://example.com/agent/2/registration.json",

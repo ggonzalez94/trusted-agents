@@ -18,6 +18,9 @@ describe("config-loader", () => {
 		unsetEnv("TAP_AGENT_ID");
 		unsetEnv("TAP_CHAIN");
 		unsetEnv("TAP_PRIVATE_KEY");
+		unsetEnv("TAP_RPC_URL");
+		unsetEnv("TAP_EXECUTION_MODE");
+		unsetEnv("TAP_PAYMASTER_PROVIDER");
 	});
 
 	describe("resolveConfigPath", () => {
@@ -35,27 +38,10 @@ describe("config-loader", () => {
 			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 
-		it("should keep config inside an explicit --data-dir even when legacy config exists", () => {
-			const dataDir = join(tmpDir, "isolated-data");
-			const path = resolveConfigPath({ dataDir }, dataDir);
-			expect(path).toBe(join(dataDir, "config.yaml"));
-		});
-
-		it("should keep config inside TAP_DATA_DIR even when legacy config exists", () => {
-			const dataDir = join(tmpDir, "isolated-env-data");
-			process.env.TAP_DATA_DIR = dataDir;
-			const path = resolveConfigPath({}, dataDir);
-			expect(path).toBe(join(dataDir, "config.yaml"));
-		});
-
 		it("should return <dataDir>/config.yaml as default path", () => {
-			// When neither dataDir nor legacy has a config, returns the new default
 			const dataDir = join(tmpDir, "fresh-data-no-config");
-			// Note: if legacy ~/.config/trustedagents/config.yaml exists on this
-			// machine, the function will return that instead. This test verifies the
-			// return value ends with config.yaml in either case.
 			const path = resolveConfigPath({}, dataDir);
-			expect(path).toMatch(/config\.yaml$/);
+			expect(path).toBe(join(dataDir, "config.yaml"));
 		});
 	});
 
@@ -79,6 +65,38 @@ describe("config-loader", () => {
 	});
 
 	describe("loadConfig", () => {
+		it("defaults Base networks to eip7702 with Circle", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
+			await mkdir(tmpDir, { recursive: true });
+			await writeFile(
+				join(tmpDir, "config.yaml"),
+				"agent_id: 1\nchain: base-sepolia\nxmtp:\n  env: dev\n",
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir: tmpDir });
+
+			expect(config.execution?.mode).toBe("eip7702");
+			expect(config.execution?.paymasterProvider).toBe("circle");
+		});
+
+		it("defaults Taiko networks to eoa with no paymaster provider", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
+			await mkdir(tmpDir, { recursive: true });
+			await writeFile(
+				join(tmpDir, "config.yaml"),
+				"agent_id: 1\nchain: taiko\nxmtp:\n  env: production\n",
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir: tmpDir });
+
+			expect(config.execution?.mode).toBe("eoa");
+			expect(config.execution?.paymasterProvider).toBeUndefined();
+		});
+
 		it("defaults to Base mainnet when no config file exists", async () => {
 			const dataDir = join(tmpDir, "mainnet-default");
 			await mkdir(join(dataDir, "identity"), { recursive: true });
@@ -109,9 +127,29 @@ describe("config-loader", () => {
 			const config = await loadConfig({ dataDir }, { requireAgentId: false });
 			expect(config.chain).toBe("eip155:84532");
 		});
+
+		it("overrides the selected chain RPC URL from CLI or env", async () => {
+			const dataDir = join(tmpDir, "rpc-override");
+			await mkdir(join(dataDir, "identity"), { recursive: true });
+			await writeFile(
+				join(dataDir, "identity", "agent.key"),
+				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+				"utf-8",
+			);
+			await writeFile(
+				join(dataDir, "config.yaml"),
+				["agent_id: 1", "chain: eip155:8453", "xmtp:", "  env: production", ""].join("\n"),
+				"utf-8",
+			);
+
+			process.env.TAP_RPC_URL = "https://example.test/base-override";
+			const config = await loadConfig({ dataDir });
+
+			expect(config.chains["eip155:8453"]?.rpcUrl).toBe("https://example.test/base-override");
+		});
 	});
 });
 
-function unsetEnv(key: "TAP_DATA_DIR" | "TAP_AGENT_ID" | "TAP_CHAIN" | "TAP_PRIVATE_KEY"): void {
+function unsetEnv(key: string): void {
 	Reflect.deleteProperty(process.env, key);
 }

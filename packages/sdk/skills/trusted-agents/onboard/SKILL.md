@@ -22,7 +22,8 @@ Do not suggest or use testnets (`base-sepolia`, `taiko-hoodi`) when onboarding u
 
 ## Funding
 
-- ETH on the registration chain for gas.
+- Base and Base Sepolia default to EIP-7702 with Circle Paymaster, so TAP uses chain-local USDC for gas on those chains.
+- Other chains use native gas.
 - Base mainnet USDC only if using x402 IPFS upload.
 - No Base USDC is needed when using `--pinata-jwt` or `--uri`.
 - In OpenClaw plugin mode, onboarding still happens with the `tap` CLI before the plugin points at that `dataDir`.
@@ -57,6 +58,6 @@ tap register update --capabilities "payments,research,general-chat"
 
 ## Common Errors
 
-- `Insufficient funds` — missing ETH for gas or Base USDC for x402.
+- `Insufficient funds` — missing chain-local gas funding for the selected execution mode, or Base mainnet USDC for x402.
 - `Invalid registration file` — required fields are missing or malformed.
 - `Failed to register agent` — the transaction reverted or the chain config is wrong.

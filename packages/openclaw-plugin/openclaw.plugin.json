@@ -16,7 +16,7 @@
             "name": { "type": "string" },
             "dataDir": { "type": "string" },
             "autoApproveConnections": { "type": "boolean" },
-            "autoApproveActions": { "type": "boolean" },
+            "unsafeApproveActions": { "type": "boolean" },
             "reconcileIntervalMinutes": { "type": "number", "minimum": 1 }
           },
           "required": ["dataDir"]
@@ -41,9 +41,9 @@
       "label": "Auto-Approve Connections",
       "help": "Accept inbound TAP connection requests automatically."
     },
-    "identities[].autoApproveActions": {
-      "label": "Auto-Approve Actions",
-      "help": "Approve inbound transfer requests automatically."
+    "identities[].unsafeApproveActions": {
+      "label": "Unsafe Approve Actions",
+      "help": "Unsafely approve inbound transfer requests without grant checks."
     },
     "identities[].reconcileIntervalMinutes": {
       "label": "Reconcile Interval Minutes",

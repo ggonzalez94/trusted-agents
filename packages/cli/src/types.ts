@@ -4,6 +4,7 @@ export interface GlobalOptions {
 	config?: string;
 	dataDir?: string;
 	chain?: string;
+	rpcUrl?: string;
 	verbose?: boolean;
 	quiet?: boolean;
 }

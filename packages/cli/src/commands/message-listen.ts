@@ -17,7 +17,7 @@ export interface MessageListenerSession {
 
 export async function messageListenCommand(
 	opts: GlobalOptions,
-	cmdOpts?: { yes?: boolean; yesActions?: boolean },
+	cmdOpts?: { yes?: boolean; unsafeApproveActions?: boolean },
 ): Promise<void> {
 	try {
 		const session = await createMessageListenerSession(opts, cmdOpts);
@@ -40,14 +40,14 @@ export async function messageListenCommand(
 
 export async function createMessageListenerSession(
 	opts: GlobalOptions,
-	cmdOpts?: { yes?: boolean; yesActions?: boolean },
+	cmdOpts?: { yes?: boolean; unsafeApproveActions?: boolean },
 	hooks?: MessageListenerHooks,
 ): Promise<MessageListenerSession> {
 	const config = await loadConfig(opts);
 	const ctx = buildContextWithTransport(config);
 	const service = createCliTapMessagingService(ctx, opts, {
 		autoApproveConnections: cmdOpts?.yes ?? false,
-		autoApproveActions: cmdOpts?.yesActions ?? false,
+		unsafeAutoApproveActions: cmdOpts?.unsafeApproveActions ?? false,
 		emitEvents: true,
 		ownerLabel: "tap:listen",
 		hooks,

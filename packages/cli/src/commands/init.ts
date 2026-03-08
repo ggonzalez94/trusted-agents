@@ -4,7 +4,12 @@ import { dirname, join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { ALL_CHAINS, DEFAULT_CHAIN_ALIAS, resolveChainAlias } from "../lib/chains.js";
-import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
+import {
+	getDefaultExecutionModeForChain,
+	getDefaultPaymasterProviderForMode,
+	resolveConfigPath,
+	resolveDataDir,
+} from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { generateKeyfile, importKeyfile, loadKeyfile } from "../lib/keyfile.js";
 import { error, info, success } from "../lib/output.js";
@@ -66,6 +71,8 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 		const chainLabel = chainConfig?.name ?? chain;
 		const isTestnet = chain !== "eip155:8453" && chain !== "eip155:167000";
 		const xmtpEnv = isTestnet ? "dev" : "production";
+		const executionMode = getDefaultExecutionModeForChain(chain);
+		const paymasterProvider = getDefaultPaymasterProviderForMode(executionMode);
 
 		// Write config file if it doesn't exist
 		if (!existsSync(configPath)) {
@@ -81,6 +88,10 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			const yamlConfig: Record<string, unknown> = {
 				agent_id: -1,
 				chain,
+				execution: {
+					mode: executionMode,
+					...(paymasterProvider ? { paymaster_provider: paymasterProvider } : {}),
+				},
 				xmtp: { env: xmtpEnv },
 			};
 			if (Object.keys(chainsYaml).length > 0) {
@@ -92,11 +103,27 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			info(`Created config at ${configPath}`, opts);
 		}
 
-		const fundingSteps = [
-			`Fund ${address} on ${chainLabel}:`,
-			"  ETH → for registration gas",
-			"  USDC on Base mainnet → for IPFS upload via x402 (~0.001 USDC)",
-		];
+		const fundingSteps =
+			executionMode === "eip7702"
+				? chain === "eip155:8453"
+					? [
+							`Agent address: ${address}`,
+							"Base defaults to EIP-7702 with Circle Paymaster.",
+							"Fund this same address with Base mainnet USDC.",
+							"That single Base mainnet USDC balance covers registration gas and x402 IPFS uploads.",
+						]
+					: [
+							`Agent address: ${address}`,
+							"Base Sepolia defaults to EIP-7702 with Circle Paymaster.",
+							"Fund this address with Base Sepolia USDC for registration transactions.",
+							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
+						]
+				: [
+						`Agent address: ${address}`,
+						`${chainLabel} currently uses direct EOA transactions in this CLI.`,
+						`Fund this address with native gas on ${chainLabel}.`,
+						"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
+					];
 
 		const result = {
 			address,

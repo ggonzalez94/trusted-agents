@@ -1,4 +1,16 @@
 export {
+	getUsdcAsset,
+	type Erc20Asset,
+} from "./assets.js";
+export {
+	ensureExecutionReady,
+	executeContractCalls,
+	getExecutionPreview,
+	type ExecutionCall,
+	type ExecutionPreview,
+	type ExecutionSendResult,
+} from "./execution.js";
+export {
 	FileRequestJournal,
 	type IRequestJournal,
 	type RequestJournalDirection,

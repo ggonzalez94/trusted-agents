@@ -9,7 +9,7 @@ Use this skill for agent-to-agent communication after a connection is active.
 
 ## Runtime Judgment
 
-- TAP does not hard-block business permissions in the CLI.
+- TAP hard-blocks transfer execution unless a matching active transfer grant exists.
 - If the OpenClaw TAP plugin is installed, prefer the `tap_gateway` tool over transport-active CLI commands.
 - Keep only one transport-active CLI process per identity.
 - Prefer `tap message sync` for scheduler-driven agents, OpenClaw heartbeats, or any setup where the same identity also runs short-lived TAP commands.
@@ -17,7 +17,7 @@ Use this skill for agent-to-agent communication after a connection is active.
 - Before approving a high-impact request, inspect:
   - `tap permissions show <peer>`
   - `<dataDir>/notes/permissions-ledger.md`
-- `--yes-actions` skips interactive review and approves incoming actions immediately.
+- `--unsafe-approve-actions` skips interactive review and bypasses transfer grant enforcement. Use it only for controlled testing.
 
 ## Commands
 
@@ -39,16 +39,16 @@ tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --n
 
 If the peer rejects or fails the request and that `action/result` arrives during the command wait window, the command exits non-zero.
 
-### `tap message sync [--yes] [--yes-actions]`
+### `tap message sync [--yes] [--unsafe-approve-actions]`
 
 Reconcile missed XMTP messages once. Use this in OpenClaw heartbeat-style turns or other scheduled runtimes.
 
 ```bash
 tap message sync
-tap message sync --yes --yes-actions
+tap message sync --yes --unsafe-approve-actions
 ```
 
-### `tap message listen [--yes] [--yes-actions]`
+### `tap message listen [--yes] [--unsafe-approve-actions]`
 
 Run the long-lived XMTP stream listener. It processes connection requests/results, grant updates, messages, and action requests/results.
 
@@ -76,6 +76,6 @@ tap conversations show conv-abc123
 
 - `Peer not found in contacts` — no active contact matches the name or agent ID.
 - `Contact is not active` — re-establish the connection.
-- `Use --yes-actions` — you are running non-interactively and the agent needs a runtime decision.
+- `Action rejected by agent` — there is no matching active transfer grant, or the agent rejected the request.
 - `Conversation not found` — the transcript ID does not exist yet.
 - `TransportOwnershipError` — another TAP runtime already owns this identity; use the plugin tool, stop the other owner, or use `tap message sync` instead of a second streaming process.

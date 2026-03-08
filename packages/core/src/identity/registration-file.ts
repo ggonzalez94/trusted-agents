@@ -86,6 +86,34 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		throw new IdentityError("trustedAgentProtocol must have a capabilities array");
 	}
 
+	if (tap.execution !== undefined) {
+		if (typeof tap.execution !== "object" || tap.execution === null) {
+			throw new IdentityError("trustedAgentProtocol.execution must be an object");
+		}
+
+		const execution = tap.execution as Record<string, unknown>;
+		if (execution.mode !== "eoa" && execution.mode !== "eip4337" && execution.mode !== "eip7702") {
+			throw new IdentityError(
+				"trustedAgentProtocol.execution.mode must be eoa, eip4337, or eip7702",
+			);
+		}
+
+		if (typeof execution.address !== "string" || !isEthereumAddress(execution.address)) {
+			throw new IdentityError(
+				"trustedAgentProtocol.execution.address must be a valid Ethereum address",
+			);
+		}
+
+		if (
+			execution.paymaster !== undefined &&
+			(typeof execution.paymaster !== "string" || execution.paymaster.length === 0)
+		) {
+			throw new IdentityError(
+				"trustedAgentProtocol.execution.paymaster must be a non-empty string",
+			);
+		}
+	}
+
 	const xmtpService = obj.services.find(
 		(service) =>
 			typeof service === "object" &&

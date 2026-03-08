@@ -1,4 +1,5 @@
 export type {
+	RegistrationFileExecution,
 	RegistrationFile,
 	RegistrationFileService,
 	RegistrationFileTrustedAgentProtocol,

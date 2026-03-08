@@ -1,5 +1,7 @@
+import { parseEther, parseUnits } from "viem";
 import {
 	PermissionError,
+	TransportError,
 	ValidationError,
 	caip2ToChainId,
 	generateConnectionId,
@@ -12,6 +14,7 @@ import {
 	buildConnectionResult,
 	buildPermissionsUpdate,
 	handleConnectionRequest,
+	isSelfInvite,
 	parseInviteUrl,
 	verifyInvite,
 } from "../connection/index.js";
@@ -55,6 +58,7 @@ import {
 	parseTransferActionRequest,
 	parseTransferActionResponse,
 } from "./actions.js";
+import { getUsdcAsset } from "./assets.js";
 import type { TapRuntimeContext } from "./default-context.js";
 import {
 	findActiveGrantsByScope,
@@ -82,6 +86,9 @@ import {
 	TransportOwnerLock,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+
+const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
+const OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS = 15_000;
 
 export interface TapConnectionApprovalContext {
 	requestId: string;
@@ -148,7 +155,7 @@ export interface TapServiceHooks {
 
 export interface TapServiceOptions {
 	autoApproveConnections?: boolean;
-	autoApproveActions?: boolean;
+	unsafeAutoApproveActions?: boolean;
 	ownerLabel?: string;
 	hooks?: TapServiceHooks;
 }
@@ -223,7 +230,7 @@ export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
 	private readonly autoApproveConnections: boolean;
-	private readonly autoApproveActions: boolean;
+	private readonly unsafeAutoApproveActions: boolean;
 	private readonly ownerLock: TransportOwnerLock;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
@@ -240,7 +247,7 @@ export class TapMessagingService {
 		this.context = context;
 		this.hooks = options.hooks ?? {};
 		this.autoApproveConnections = options.autoApproveConnections ?? false;
-		this.autoApproveActions = options.autoApproveActions ?? false;
+		this.unsafeAutoApproveActions = options.unsafeAutoApproveActions ?? false;
 		this.ownerLock = new TransportOwnerLock(
 			context.config.dataDir,
 			options.ownerLabel ?? `tap:${process.pid}`,
@@ -346,21 +353,28 @@ export class TapMessagingService {
 		requestedGrants?: PermissionGrantSet;
 		offeredGrants?: PermissionGrantSet;
 	}): Promise<TapConnectResult> {
-		return await this.withTransportSession(async () => {
-			const { config, resolver, trustStore, requestJournal, transport } = this.context;
-			const chainId = caip2ToChainId(config.chain);
-			if (chainId === null) {
-				throw new ValidationError(`Invalid local chain format: ${config.chain}`);
-			}
+		const { config, resolver } = this.context;
+		const chainId = caip2ToChainId(config.chain);
+		if (chainId === null) {
+			throw new ValidationError(`Invalid local chain format: ${config.chain}`);
+		}
 
-			const invite = parseInviteUrl(params.inviteUrl);
-			const peerAgent = await resolver.resolve(invite.agentId, invite.chain);
-			const verification = await verifyInvite(invite, {
-				expectedSignerAddress: peerAgent.agentAddress,
-			});
-			if (!verification.valid) {
-				throw new ValidationError(verification.error ?? "Invite verification failed");
-			}
+		const invite = parseInviteUrl(params.inviteUrl);
+		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
+			throw new ValidationError(
+				"Cannot connect to your own invite. Switch to a different TAP identity or --data-dir before accepting it.",
+			);
+		}
+		const peerAgent = await resolver.resolve(invite.agentId, invite.chain);
+		const verification = await verifyInvite(invite, {
+			expectedSignerAddress: peerAgent.agentAddress,
+		});
+		if (!verification.valid) {
+			throw new ValidationError(verification.error ?? "Invite verification failed");
+		}
+
+		return await this.withTransportSession(async () => {
+			const { trustStore, requestJournal, transport } = this.context;
 
 			const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
 			if (existing?.status === "active") {
@@ -629,7 +643,11 @@ export class TapMessagingService {
 				status: "acked",
 			});
 
-			const asyncResult = await this.waitForActionResult(requestId, requestPayload.actionId, 5_000);
+			const asyncResult = await this.waitForActionResult(
+				requestId,
+				requestPayload.actionId,
+				ACTION_RESULT_WAIT_TIMEOUT_MS,
+			);
 			if (!asyncResult) {
 				await this.runReconcile();
 			}
@@ -1007,21 +1025,31 @@ export class TapMessagingService {
 		});
 		const resultMessage = buildConnectionResult(outcome.result);
 		const peerAddress = outcome.peer.xmtpEndpoint ?? outcome.peer.agentAddress;
-		await this.context.transport.send(outcome.peer.agentId, resultMessage, {
-			peerAddress,
-			timeout: 5_000,
-		});
-		await this.context.requestJournal.putOutbound({
-			requestId: String(resultMessage.id),
-			requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
-			direction: "outbound",
-			kind: "result",
-			method: resultMessage.method,
-			peerAgentId: outcome.peer.agentId,
-			correlationId: outcome.result.requestId,
-			status: "completed",
-		});
-		await this.context.requestJournal.updateStatus(requestId, "completed");
+		try {
+			await this.context.transport.send(outcome.peer.agentId, resultMessage, {
+				peerAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+			await this.context.requestJournal.updateStatus(requestId, "completed");
+			await this.context.requestJournal.putOutbound({
+				requestId: String(resultMessage.id),
+				requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: resultMessage.method,
+				peerAgentId: outcome.peer.agentId,
+				correlationId: outcome.result.requestId,
+				status: "completed",
+			});
+		} catch (error: unknown) {
+			// On timeout the message may have been delivered, so mark completed to
+			// avoid duplicate processing. For other transport errors, keep pending
+			// so reconciliation can retry.
+			if (error instanceof TransportError && /timeout/i.test(error.message)) {
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+			}
+			this.logConnectionResultDeliveryFailure(outcome.peer, outcome.result.status, error);
+		}
 
 		if (outcome.result.status === "rejected") {
 			const pendingContact = await this.context.trustStore.findByAgentId(
@@ -1181,8 +1209,14 @@ export class TapMessagingService {
 			}
 		}
 
-		await this.sendActionResult(contact, String(message.id), response);
+		// The on-chain transfer is irreversible at this point, so always mark the
+		// request as completed regardless of result delivery outcome.
 		await this.context.requestJournal.updateStatus(requestId, "completed");
+		try {
+			await this.sendActionResult(contact, String(message.id), response);
+		} catch (error: unknown) {
+			this.logActionResultDeliveryFailure(contact, request.actionId, error);
+		}
 	}
 
 	private async handleConnectionResult(message: ProtocolMessage): Promise<void> {
@@ -1303,19 +1337,32 @@ export class TapMessagingService {
 		contact: Contact,
 		request: TransferActionRequest,
 	): Promise<boolean | null> {
+		const transferGrants = findApplicableTransferGrants(contact.permissions.grantedByMe, request);
 		const override = this.decisionOverrides.transfers.get(requestId);
-		if (override !== undefined) {
-			return override;
+		if (override === false) {
+			return false;
 		}
 
-		if (this.autoApproveActions) {
+		if (this.unsafeAutoApproveActions) {
+			this.log(
+				"warn",
+				`Unsafely auto-approving action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			);
 			return true;
 		}
 
-		const transferGrants = findActiveGrantsByScope(
-			contact.permissions.grantedByMe,
-			"transfer/request",
-		);
+		if (transferGrants.length === 0) {
+			this.log(
+				"warn",
+				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,
+			);
+			return false;
+		}
+
+		if (override === true) {
+			return true;
+		}
+
 		return (
 			(await this.hooks.approveTransfer?.({
 				requestId,
@@ -1343,7 +1390,7 @@ export class TapMessagingService {
 
 		await this.context.transport.send(contact.peerAgentId, request, {
 			peerAddress: contact.peerAgentAddress,
-			timeout: 5_000,
+			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 		});
 		await appendConversationLog(this.context.conversationLogger, contact, request, "outgoing");
 		await this.context.trustStore.touchContact(contact.connectionId);
@@ -1357,6 +1404,42 @@ export class TapMessagingService {
 			correlationId: requestId,
 			status: "completed",
 		});
+	}
+
+	private logConnectionResultDeliveryFailure(
+		peer: ResolvedAgent,
+		status: "accepted" | "rejected",
+		error: unknown,
+	): void {
+		this.logResultDeliveryFailure(
+			`${status === "accepted" ? "Accepted" : "Rejected"} connection result`,
+			`${peer.registrationFile.name} (#${peer.agentId})`,
+			error,
+		);
+	}
+
+	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
+		this.logResultDeliveryFailure(
+			`Action result ${actionId}`,
+			`${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			error,
+		);
+	}
+
+	private logResultDeliveryFailure(subject: string, peerLabel: string, error: unknown): void {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		if (isTransportReceiptTimeout(error)) {
+			this.log(
+				"warn",
+				`${subject} to ${peerLabel} timed out waiting for a delivery receipt; the peer may still receive it during a later sync (${errorMessage})`,
+			);
+			return;
+		}
+
+		this.log(
+			"error",
+			`Failed to deliver ${subject.toLowerCase()} to ${peerLabel}: ${errorMessage}`,
+		);
 	}
 
 	private async requireContact(peer: string): Promise<Contact> {
@@ -1546,6 +1629,66 @@ function serializePendingRequestDetails(
 	details: TapPendingRequestDetails,
 ): Record<string, unknown> {
 	return details as unknown as Record<string, unknown>;
+}
+
+function findApplicableTransferGrants(
+	grantSet: PermissionGrantSet,
+	request: TransferActionRequest,
+) {
+	return findActiveGrantsByScope(grantSet, "transfer/request").filter((grant) =>
+		matchesTransferGrantRequest(grant, request),
+	);
+}
+
+function matchesTransferGrantRequest(
+	grant: PermissionGrantSet["grants"][number],
+	request: TransferActionRequest,
+): boolean {
+	const constraints = grant.constraints;
+	if (!constraints) {
+		return true;
+	}
+
+	if (typeof constraints.asset === "string" && constraints.asset !== request.asset) {
+		return false;
+	}
+
+	if (typeof constraints.chain === "string" && constraints.chain !== request.chain) {
+		return false;
+	}
+
+	if (
+		typeof constraints.toAddress === "string" &&
+		constraints.toAddress.toLowerCase() !== request.toAddress.toLowerCase()
+	) {
+		return false;
+	}
+
+	if (typeof constraints.maxAmount === "string") {
+		try {
+			const maxAmount =
+				request.asset === "native"
+					? parseEther(constraints.maxAmount)
+					: parseUnits(constraints.maxAmount, getUsdcAsset(request.chain)?.decimals ?? 6);
+			const requestedAmount =
+				request.asset === "native"
+					? parseEther(request.amount)
+					: parseUnits(request.amount, getUsdcAsset(request.chain)?.decimals ?? 6);
+			if (requestedAmount > maxAmount) {
+				return false;
+			}
+		} catch {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+function isTransportReceiptTimeout(error: unknown): error is TransportError {
+	return (
+		error instanceof TransportError && error.message.startsWith("Response timeout for message ")
+	);
 }
 
 async function findContactForMessage(
