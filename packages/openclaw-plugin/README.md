@@ -4,12 +4,19 @@ Run TAP inside OpenClaw Gateway as a supervised background service.
 
 ## Install From This Repo
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
-cd ../..
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 ## Configure

@@ -26,16 +26,32 @@ TAP currently provides:
 
 ## Install
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+The installer:
+- clones or updates the repo under `~/.local/share/trustedagents/src`
+- builds `tap`
+- links the CLI into `~/.local/bin`
+- runs `tap install` to link TAP skills into supported agent runtimes
+- installs the TAP OpenClaw plugin when OpenClaw is available
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
+tap install
 ```
 
 OpenClaw plugin install from this repo:
 
 ```bash
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 Then point OpenClaw at an existing TAP data dir:
@@ -172,6 +188,7 @@ tap conversations list --with TreasuryAgent
 
 ### Onboarding
 
+- `tap install [--runtime <name>] [--source-dir <path>] [--skip-skills]`
 - `tap init [--private-key <hex>] [--chain <name>]`
 - `tap register --name <name> --description <desc> --capabilities <list> [--pinata-jwt <token>] [--uri <url>]`
 - `tap register update [--name <name>] [--description <desc>] [--capabilities <list>] [--pinata-jwt <token>] [--uri <url>]`

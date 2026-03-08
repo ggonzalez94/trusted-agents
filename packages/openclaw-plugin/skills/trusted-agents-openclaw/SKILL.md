@@ -28,12 +28,19 @@ Use this skill when working inside OpenClaw and TAP may be installed as a Gatewa
 
 ## Install From This Repo
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
-cd ../..
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 ## tap_gateway Actions
