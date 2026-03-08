@@ -16,6 +16,7 @@ export function createCli(): Command {
 		.option("--config <path>", "Override config file path")
 		.option("--data-dir <path>", "Override data directory")
 		.option("--chain <caip2>", "Override chain (e.g. eip155:8453)")
+		.option("--rpc-url <url>", "Override the RPC URL for the selected chain")
 		.option("-v, --verbose", "Verbose logging to stderr")
 		.option("-q, --quiet", "Suppress non-essential output");
 
@@ -338,22 +339,34 @@ Examples:
 		.command("listen")
 		.description("Stream incoming messages and process results (long-running)")
 		.option("--yes", "Auto-accept incoming connection requests")
-		.option("--yes-actions", "Auto-approve incoming action requests without interactive review")
-		.action(async (cmdOpts: { yes?: boolean; yesActions?: boolean }) => {
+		.option(
+			"--unsafe-approve-actions",
+			"Unsafely approve incoming action requests without interactive review or grant checks",
+		)
+		.action(async (cmdOpts: { yes?: boolean; unsafeApproveActions?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageListenCommand } = await import("./commands/message-listen.js");
-			await messageListenCommand(opts, { yes: cmdOpts.yes, yesActions: cmdOpts.yesActions });
+			await messageListenCommand(opts, {
+				yes: cmdOpts.yes,
+				unsafeApproveActions: cmdOpts.unsafeApproveActions,
+			});
 		});
 
 	message
 		.command("sync")
 		.description("Reconcile missed XMTP messages and process queued work once")
 		.option("--yes", "Auto-accept incoming connection requests during reconciliation")
-		.option("--yes-actions", "Auto-approve incoming action requests during reconciliation")
-		.action(async (cmdOpts: { yes?: boolean; yesActions?: boolean }) => {
+		.option(
+			"--unsafe-approve-actions",
+			"Unsafely approve incoming action requests during reconciliation without grant checks",
+		)
+		.action(async (cmdOpts: { yes?: boolean; unsafeApproveActions?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageSyncCommand } = await import("./commands/message-sync.js");
-			await messageSyncCommand(opts, { yes: cmdOpts.yes, yesActions: cmdOpts.yesActions });
+			await messageSyncCommand(opts, {
+				yes: cmdOpts.yes,
+				unsafeApproveActions: cmdOpts.unsafeApproveActions,
+			});
 		});
 
 	// conversations

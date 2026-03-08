@@ -4,7 +4,7 @@ export interface TapOpenClawIdentityConfig {
 	name: string;
 	dataDir: string;
 	autoApproveConnections: boolean;
-	autoApproveActions: boolean;
+	unsafeApproveActions: boolean;
 	reconcileIntervalMinutes: number;
 }
 
@@ -31,9 +31,9 @@ const UI_HINTS = {
 		label: "Auto-Approve Connections",
 		help: "Accept inbound TAP connection requests automatically.",
 	},
-	"identities[].autoApproveActions": {
-		label: "Auto-Approve Actions",
-		help: "Approve inbound transfer requests automatically.",
+	"identities[].unsafeApproveActions": {
+		label: "Unsafe Approve Actions",
+		help: "Unsafely approve inbound transfer requests without grant checks.",
 	},
 	"identities[].reconcileIntervalMinutes": {
 		label: "Reconcile Interval Minutes",
@@ -55,7 +55,7 @@ const JSON_SCHEMA = {
 					name: { type: "string" },
 					dataDir: { type: "string" },
 					autoApproveConnections: { type: "boolean" },
-					autoApproveActions: { type: "boolean" },
+					unsafeApproveActions: { type: "boolean" },
 					reconcileIntervalMinutes: { type: "number", minimum: 1 },
 				},
 				required: ["dataDir"],
@@ -108,7 +108,7 @@ function parseIdentityConfig(value: unknown, index: number): TapOpenClawIdentity
 		name?: unknown;
 		dataDir?: unknown;
 		autoApproveConnections?: unknown;
-		autoApproveActions?: unknown;
+		unsafeApproveActions?: unknown;
 		reconcileIntervalMinutes?: unknown;
 	};
 
@@ -133,7 +133,7 @@ function parseIdentityConfig(value: unknown, index: number): TapOpenClawIdentity
 		name,
 		dataDir: input.dataDir.trim(),
 		autoApproveConnections: input.autoApproveConnections === true,
-		autoApproveActions: input.autoApproveActions === true,
+		unsafeApproveActions: input.unsafeApproveActions === true,
 		reconcileIntervalMinutes,
 	};
 }

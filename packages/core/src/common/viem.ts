@@ -15,8 +15,13 @@ const RPC_TIMEOUT_MS = 15_000;
 const RPC_RETRY_COUNT = 3;
 const RPC_RETRY_DELAY_MS = 300;
 const RPC_FALLBACK_URLS: Partial<Record<number, string[]>> = {
-	8453: ["https://mainnet-preconf.base.org"],
-	84532: ["https://sepolia-preconf.base.org"],
+	8453: [
+		"https://base-rpc.publicnode.com",
+		"https://base.drpc.org",
+		"https://base.llamarpc.com",
+		"https://mainnet-preconf.base.org",
+	],
+	84532: ["https://base-sepolia-rpc.publicnode.com", "https://sepolia-preconf.base.org"],
 };
 
 export function getViemChain(chainConfig: ChainConfig): Chain {

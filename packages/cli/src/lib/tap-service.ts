@@ -24,7 +24,7 @@ export interface CliTapServiceHooks {
 
 export interface CliTapServiceOptions {
 	autoApproveConnections?: boolean;
-	autoApproveActions?: boolean;
+	unsafeAutoApproveActions?: boolean;
 	emitEvents?: boolean;
 	ownerLabel?: string;
 	hooks?: CliTapServiceHooks;
@@ -39,7 +39,7 @@ export function createCliTapMessagingService(
 
 	return new TapMessagingService(context, {
 		autoApproveConnections: options.autoApproveConnections ?? false,
-		autoApproveActions: options.autoApproveActions ?? false,
+		unsafeAutoApproveActions: options.unsafeAutoApproveActions ?? false,
 		ownerLabel: options.ownerLabel,
 		hooks: {
 			approveConnection: async (approvalContext) => {
@@ -138,7 +138,7 @@ function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalO
 		info(`Note: ${request.note}`, opts);
 	}
 
-	info("Published transfer grants to this peer:", opts);
+	info("Matching active transfer grants for this request:", opts);
 	if (activeTransferGrants.length === 0) {
 		info("  - (none)", opts);
 	} else {

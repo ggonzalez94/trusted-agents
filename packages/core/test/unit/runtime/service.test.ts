@@ -1,21 +1,30 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TransportError } from "../../../src/common/errors.js";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
+import { buildConnectionRequest } from "../../../src/connection/handshake.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
+import type { ResolvedAgent } from "../../../src/identity/types.js";
+import { createEmptyPermissionState } from "../../../src/permissions/types.js";
+import {
+	buildOutgoingActionRequest,
+	parseTransferActionResponse,
+} from "../../../src/runtime/index.js";
 import type { FileRequestJournal } from "../../../src/runtime/request-journal.js";
 import { FileRequestJournal as FileRequestJournalImpl } from "../../../src/runtime/request-journal.js";
 import { TapMessagingService } from "../../../src/runtime/service.js";
 import type {
+	ProtocolMessage,
 	TransportHandlers,
 	TransportProvider,
 	TransportReceipt,
 } from "../../../src/transport/interface.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
-import { ALICE } from "../../fixtures/test-keys.js";
+import { ALICE, BOB } from "../../fixtures/test-keys.js";
 
 const tempDirs: string[] = [];
 
@@ -29,8 +38,11 @@ class FakeTransport implements TransportProvider {
 		private readonly options: {
 			reconcileProcessed?: number;
 			failOnStart?: boolean;
+			sendError?: Error;
 		} = {},
 	) {}
+
+	public readonly sentMessages: Array<{ peerId: number; message: ProtocolMessage }> = [];
 
 	setHandlers(handlers: TransportHandlers): void {
 		this.handlers = handlers;
@@ -59,37 +71,98 @@ class FakeTransport implements TransportProvider {
 		};
 	}
 
-	async send(): Promise<TransportReceipt> {
+	async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+		this.sentMessages.push({
+			peerId,
+			message,
+		});
+		if (this.options.sendError) {
+			throw this.options.sendError;
+		}
 		return {
 			received: true,
-			requestId: "req-1",
+			requestId: String(message.id),
 			status: "received",
 			receivedAt: "2026-03-07T00:00:00.000Z",
 		};
 	}
 }
 
-function createNoopTrustStore(): ITrustStore {
+const PEER_AGENT: ResolvedAgent = {
+	agentId: 10,
+	chain: "eip155:84532",
+	ownerAddress: BOB.address,
+	agentAddress: BOB.address,
+	capabilities: ["chat", "payments"],
+	registrationFile: {
+		type: "eip-8004-registration-v1",
+		name: "Bob",
+		description: "Peer agent",
+		services: [{ name: "xmtp", endpoint: BOB.address }],
+		trustedAgentProtocol: {
+			version: "1.0",
+			agentAddress: BOB.address,
+			capabilities: ["chat", "payments"],
+		},
+	},
+	resolvedAt: "2026-03-07T00:00:00.000Z",
+};
+
+function cloneContact<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
+	const contacts = new Map(
+		initialContacts.map((contact) => [contact.connectionId, cloneContact(contact)]),
+	);
 	return {
-		getContacts: async () => [],
-		getContact: async (_connectionId: string) => null,
-		findByAgentAddress: async (_address: `0x${string}`, _chain?: string) => null,
-		findByAgentId: async (_agentId: number, _chain: string) => null,
-		addContact: async (_contact: Contact) => {},
-		updateContact: async (_connectionId: string, _updates: Partial<Contact>) => {},
-		removeContact: async (_connectionId: string) => {},
-		touchContact: async (_connectionId: string) => {},
+		getContacts: async () => [...contacts.values()].map((contact) => cloneContact(contact)),
+		getContact: async (connectionId: string) => cloneContact(contacts.get(connectionId) ?? null),
+		findByAgentAddress: async (address: `0x${string}`, chain?: string) =>
+			cloneContact(
+				[...contacts.values()].find(
+					(contact) =>
+						contact.peerAgentAddress.toLowerCase() === address.toLowerCase() &&
+						(chain === undefined || contact.peerChain === chain),
+				) ?? null,
+			),
+		findByAgentId: async (agentId: number, chain: string) =>
+			cloneContact(
+				[...contacts.values()].find(
+					(contact) => contact.peerAgentId === agentId && contact.peerChain === chain,
+				) ?? null,
+			),
+		addContact: async (contact: Contact) => {
+			contacts.set(contact.connectionId, cloneContact(contact));
+		},
+		updateContact: async (connectionId: string, updates: Partial<Contact>) => {
+			const existing = contacts.get(connectionId);
+			if (!existing) {
+				return;
+			}
+			contacts.set(connectionId, cloneContact({ ...existing, ...updates }));
+		},
+		removeContact: async (connectionId: string) => {
+			contacts.delete(connectionId);
+		},
+		touchContact: async (connectionId: string) => {
+			const existing = contacts.get(connectionId);
+			if (!existing) {
+				return;
+			}
+			contacts.set(connectionId, {
+				...cloneContact(existing),
+				lastContactAt: "2026-03-08T00:00:00.000Z",
+			});
+		},
 	};
 }
 
-function createNoopResolver(): IAgentResolver {
+function createStaticResolver(agent: ResolvedAgent = PEER_AGENT): IAgentResolver {
 	return {
-		resolve: async (_agentId: number, _chain: string) => {
-			throw new Error("resolver should not be used in this test");
-		},
-		resolveWithCache: async (_agentId: number, _chain: string, _maxAgeMs?: number) => {
-			throw new Error("resolver should not be used in this test");
-		},
+		resolve: async (_agentId: number, _chain: string) => agent,
+		resolveWithCache: async (_agentId: number, _chain: string, _maxAgeMs?: number) => agent,
 	};
 }
 
@@ -106,6 +179,17 @@ async function createService(
 	options: {
 		reconcileProcessed?: number;
 		failOnStart?: boolean;
+		sendError?: Error;
+	} = {},
+	dependencies: {
+		trustStore?: ITrustStore;
+		resolver?: IAgentResolver;
+		transport?: FakeTransport;
+		hooks?: ConstructorParameters<typeof TapMessagingService>[1]["hooks"];
+		serviceOptions?: Omit<
+			ConstructorParameters<typeof TapMessagingService>[1],
+			"hooks" | "ownerLabel"
+		>;
 	} = {},
 ): Promise<{
 	service: TapMessagingService;
@@ -128,17 +212,21 @@ async function createService(
 		xmtpEnv: "dev",
 	};
 	const requestJournal = new FileRequestJournalImpl(dataDir);
-	const transport = new FakeTransport(options);
+	const transport = dependencies.transport ?? new FakeTransport(options);
 	const service = new TapMessagingService(
 		{
 			config,
-			trustStore: createNoopTrustStore(),
-			resolver: createNoopResolver(),
+			trustStore: dependencies.trustStore ?? createMemoryTrustStore(),
+			resolver: dependencies.resolver ?? createStaticResolver(),
 			conversationLogger: createNoopConversationLogger(),
 			requestJournal,
 			transport,
 		},
-		{ ownerLabel: "tap:test-service" },
+		{
+			ownerLabel: "tap:test-service",
+			hooks: dependencies.hooks,
+			...(dependencies.serviceOptions ?? {}),
+		},
 	);
 
 	return { service, transport, requestJournal, dataDir };
@@ -211,5 +299,168 @@ describe("TapMessagingService", () => {
 		const status = await service.getStatus();
 		expect(status.running).toBe(false);
 		expect(status.lock).toBeNull();
+	});
+
+	it("completes inbound connection requests even when the result receipt times out", async () => {
+		const transport = new FakeTransport({
+			sendError: new TransportError("Response timeout for message result-1"),
+		});
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				serviceOptions: { autoApproveConnections: true },
+			},
+		);
+
+		await service.start();
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			to: { agentId: 1, chain: "eip155:84532" },
+			connectionId: "conn-timeout-1",
+			nonce: "nonce-timeout-1",
+			protocolVersion: "1.0",
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-1",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await service.stop();
+
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-1",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "duplicate" });
+	});
+
+	it("rejects transfer approvals without a matching grant before consulting hooks", async () => {
+		const contact: Contact = {
+			connectionId: "conn-transfer-1",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const approveTransfer = vi.fn(async () => true);
+		const executeTransfer = vi.fn(async () => ({
+			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
+		}));
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { approveTransfer, executeTransfer },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "transfer-action-1",
+				asset: "native",
+				amount: "0.1",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-2",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await service.stop();
+
+		expect(approveTransfer).not.toHaveBeenCalled();
+		expect(executeTransfer).not.toHaveBeenCalled();
+		const result = parseTransferActionResponse(transport.sentMessages[0]!.message);
+		expect(transport.sentMessages[0]?.message.method).toBe("action/result");
+		expect(result?.status).toBe("rejected");
+	});
+
+	it("allows unsafe transfer auto-approval without matching grants", async () => {
+		const contact: Contact = {
+			connectionId: "conn-transfer-2",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const executeTransfer = vi.fn(async () => ({
+			txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const,
+		}));
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { executeTransfer },
+				serviceOptions: { unsafeAutoApproveActions: true },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "transfer-action-2",
+				asset: "usdc",
+				amount: "1",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-3",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await service.stop();
+
+		expect(executeTransfer).toHaveBeenCalledOnce();
+		expect(transport.sentMessages[0]?.message.method).toBe("action/result");
+		expect(parseTransferActionResponse(transport.sentMessages[0]!.message)?.status).toBe(
+			"completed",
+		);
 	});
 });

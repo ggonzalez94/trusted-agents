@@ -78,6 +78,7 @@ export async function loadConfig(
 	const paymasterProvider = process.env.TAP_PAYMASTER_PROVIDER as
 		| ExecutionPaymasterProvider
 		| undefined;
+	const rpcUrl = opts.rpcUrl ?? process.env.TAP_RPC_URL;
 
 	const config = await loadTrustedAgentConfigFromDataDir(dataDir, {
 		requireAgentId,
@@ -91,5 +92,25 @@ export async function loadConfig(
 	});
 
 	const normalizedChain = resolveChainAlias(config.chain);
-	return normalizedChain === config.chain ? config : { ...config, chain: normalizedChain };
+	const normalizedConfig =
+		normalizedChain === config.chain ? config : { ...config, chain: normalizedChain };
+	if (!rpcUrl) {
+		return normalizedConfig;
+	}
+
+	const selectedChain = normalizedConfig.chains[normalizedConfig.chain];
+	if (!selectedChain) {
+		return normalizedConfig;
+	}
+
+	return {
+		...normalizedConfig,
+		chains: {
+			...normalizedConfig.chains,
+			[normalizedConfig.chain]: {
+				...selectedChain,
+				rpcUrl,
+			},
+		},
+	};
 }

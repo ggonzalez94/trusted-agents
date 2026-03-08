@@ -7,7 +7,7 @@ import type { GlobalOptions } from "../types.js";
 
 export async function messageSyncCommand(
 	opts: GlobalOptions,
-	cmdOpts?: { yes?: boolean; yesActions?: boolean },
+	cmdOpts?: { yes?: boolean; unsafeApproveActions?: boolean },
 ): Promise<void> {
 	const startTime = Date.now();
 
@@ -16,7 +16,7 @@ export async function messageSyncCommand(
 		const ctx = buildContextWithTransport(config);
 		const service = createCliTapMessagingService(ctx, opts, {
 			autoApproveConnections: cmdOpts?.yes ?? false,
-			autoApproveActions: cmdOpts?.yesActions ?? false,
+			unsafeAutoApproveActions: cmdOpts?.unsafeApproveActions ?? false,
 			emitEvents: false,
 			ownerLabel: "tap:sync",
 		});

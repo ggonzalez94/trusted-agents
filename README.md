@@ -1,29 +1,21 @@
-# tap
+# TAP — Trusted Agents Protocol
 
-Local-first CLI and SDK for the Trusted Agent Protocol.
+You run an AI agent (e.g. OpenClaw). Your friend runs one too. There is no standard way for your agent to find theirs, verify it belongs to your friend, and start collaborating.
+**Trusted Agents** answers: how does my AI agent connect to my friend's AI agent, in a way that both of us trust?
 
-TAP currently provides:
-- ERC-8004 on-chain agent identity
-- XMTP transport for agent-to-agent JSON-RPC messages
-- Local trust storage, conversation logs, and a permissions ledger
-- Directional grant sharing between connected agents
-- An optional OpenClaw plugin that runs TAP as a Gateway background service
+TAP is a local-first protocol for personal AI agents to discover each other, establish trust, and communicate securely on behalf of their human owners. Think contacts list, not marketplace — TAP is built for **personal trust between known humans**, mediated through their agents.
 
-## Core Model
+## How It Works
 
-- Capabilities are public labels in the on-chain registration file.
-- `tap connect` establishes trust only.
-- Business permissions are directional grants stored per contact:
-  - `grantedByMe`
-  - `grantedByPeer`
-- Grants are context for runtime agent judgment. TAP does not hard-enforce business rules in the CLI.
+1. **On-chain identity** — Each agent gets a verifiable identity via [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004), an NFT that points to the agent's public profile (name, capabilities, endpoint).
 
-## Prerequisites
+2. **Invite-based connections** — Agents connect through signed invitation links shared over any channel (text, email, QR code). No centralized directory needed.
 
-- Node.js 18+ or Bun
-- Base and Base Sepolia default to EIP-7702 with Circle Paymaster, so TAP uses chain-local USDC for gas on those chains
-- Other chains still use native gas
-- Base mainnet USDC only if using x402 for IPFS upload
+3. **Secure messaging** — Connected agents communicate over [XMTP](https://xmtp.org/) using JSON-RPC. Every message is tied to a trust relationship. Humans can review all conversations.
+
+4. **Directional permissions** — Owners control what each peer agent is allowed to ask for. Grants are scoped (e.g. "can request up to 10 USDC per week") and stored locally.
+
+5. **Account abstraction using EIP-7702** - Your agent only needs USDC and he can register in the 8004 registry, pay for his own transactions, and do anything on-chain.
 
 ## Install
 
@@ -33,98 +25,64 @@ bun run build
 cd packages/cli && npm link
 ```
 
-OpenClaw plugin install from this repo:
+This gives you the `tap` command globally.
 
-```bash
-openclaw plugins install --link ./packages/openclaw-plugin
-```
+### Prerequisites
 
-Then point OpenClaw at an existing TAP data dir:
-
-```bash
-openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/tap-data","reconcileIntervalMinutes":10}]' --json
-```
-
-Restart the Gateway after plugin config changes. In plugin mode, use `tap_gateway` for transport-active TAP work and keep the normal `tap` CLI for onboarding and read-only inspection. Check `tap_gateway` action `status` after restart and resolve any `warnings` before relying on plugin mode.
-
-Or run directly:
-
-```bash
-node packages/cli/dist/bin.js <command>
-```
+- Node.js 18+ or Bun
+- Base Sepolia USDC for gas on testnet (Base and Base Sepolia use EIP-7702 with Circle Paymaster)
+- Native gas tokens for other supported chains
 
 ## Quick Start
 
-### 1. Initialize an agent
+### Initialize and register an agent
 
 ```bash
 tap init
-```
-
-This creates a wallet, config, and local state under the TAP data directory.
-
-### 2. Fund the wallet
-
-- If the chain is Base or Base Sepolia, fund the agent address with chain-local USDC for registration and runtime gas.
-- If the chain is not Base or Base Sepolia, fund the agent address with native gas on that chain.
-- Fund Base mainnet USDC only if you will use x402 IPFS upload.
-
-Check the wallet:
-
-```bash
-tap identity show
-tap balance
-```
-
-### 3. Register on-chain
-
-```bash
+tap balance                    # check wallet funding
 tap register \
-  --name "TreasuryAgent" \
-  --description "Payment agent" \
-  --capabilities "payments,general-chat"
+  --name "MyAgent" \
+  --description "Personal assistant" \
+  --capabilities "general-chat,scheduling"
 ```
 
-Alternatives:
+### Connect two agents
 
-```bash
-tap register --name "TreasuryAgent" --description "Payment agent" --capabilities "payments,general-chat" --pinata-jwt "$TAP_PINATA_JWT"
-tap register --name "TreasuryAgent" --description "Payment agent" --capabilities "payments,general-chat" --uri "https://example.com/agent.json"
-```
-
-### 4. Create an invite
-
-On the inviting agent:
-
+On agent A:
 ```bash
 tap invite create
+# Share the invite link with agent B's owner
 ```
 
-Runtime choice:
-
-- OpenClaw with plugin: use the `tap_gateway` tool after the plugin is configured.
-- Scheduler-driven host or heartbeat: run `tap message sync` at the start of each turn.
-- Dedicated always-on TAP owner process: run `tap message listen`.
-
-### 5. Connect and exchange initial grants
-
-On the joining agent:
-
+On agent B:
 ```bash
 tap connect "<invite-url>" --yes
 ```
 
-Optional initial grant exchange:
-
+Optionally exchange permissions during connection:
 ```bash
-tap connect "<invite-url>" \
-  --yes \
-  --request-grants-file ./grants/request.json \
-  --grant-file ./grants/offer.json
+tap connect "<invite-url>" --yes \
+  --grant-file ./grants/offer.json \
+  --request-grants-file ./grants/request.json
 ```
 
-Example grant file:
+### Send messages
 
+```bash
+tap message send PeerAgent "What's on the agenda today?" --scope general-chat
+tap message sync                         # pull incoming messages
+tap conversations list --with PeerAgent  # review the conversation
+```
+
+### Manage permissions
+
+```bash
+tap permissions show PeerAgent
+tap permissions grant PeerAgent --file ./grants/budget.json --note "weekly budget"
+tap permissions revoke PeerAgent --grant-id weekly-usdc --note "paused"
+```
+
+A grant file looks like this:
 ```json
 {
   "version": "tap-grants/v1",
@@ -132,120 +90,88 @@ Example grant file:
     {
       "grantId": "worker-weekly-usdc",
       "scope": "transfer/request",
-      "constraints": {
-        "asset": "usdc",
-        "maxAmount": "10",
-        "window": "week"
-      }
+      "constraints": { "asset": "usdc", "maxAmount": "10", "window": "week" }
     }
   ]
 }
 ```
 
-### 6. Inspect or update grants later
+## Telling Your Agent About TAP
+
+If your agent runs on [OpenClaw](https://openclaw.ai), install the plugin:
 
 ```bash
-tap permissions show
-tap permissions show TreasuryAgent
-tap permissions request TreasuryAgent --file ./grants/request.json --note "need weekly budget"
-tap permissions grant WorkerAgent --file ./grants/offer.json --note "approved weekly budget"
-tap permissions revoke WorkerAgent --grant-id worker-weekly-usdc --note "budget paused"
+openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
-### 7. Send messages and value requests
-
-```bash
-tap message send TreasuryAgent "Status update?" --scope general-chat
-tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
-tap message sync
-tap conversations list --with TreasuryAgent
-```
+For other agent frameworks, point them at the [TAP skill files](./packages/sdk/skills/trusted-agents/) which describe available commands, expected inputs, and error handling — everything an LLM needs to use `tap` effectively.
 
 ## Runtime Modes
 
-- `tap message sync` is the portable correctness baseline and the default for heartbeat/scheduled hosts.
-- `tap message listen` is for dedicated long-lived TAP owner processes only.
-- The OpenClaw plugin makes streaming the default inside Gateway and exposes the `tap_gateway` tool for transport-active operations.
-- Treat plugin mode as active only when `tap_gateway` action `status` shows at least one configured identity.
-- Keep exactly one transport owner per TAP identity and `dataDir`.
-- In plugin mode, avoid transport-active `tap` CLI commands against the same `dataDir`.
+| Mode | Use case |
+|---|---|
+| `tap message sync` | Portable baseline. Run at the start of each agent turn or on a schedule. |
+| `tap message listen` | Long-lived listener for dedicated TAP processes. |
+| OpenClaw plugin | Streaming default inside Gateway. Use the `tap_gateway` tool. |
 
-## Commands
+Keep exactly one transport owner per TAP identity — don't run `listen` and the plugin against the same data directory.
 
-### Onboarding
+## All Commands
 
-- `tap init [--private-key <hex>] [--chain <name>]`
-- `tap register --name <name> --description <desc> --capabilities <list> [--pinata-jwt <token>] [--uri <url>]`
-- `tap register update [--name <name>] [--description <desc>] [--capabilities <list>] [--pinata-jwt <token>] [--uri <url>]`
-- `tap balance [chain]`
+| Domain | Commands |
+|---|---|
+| **Onboarding** | `init`, `register`, `register update`, `balance` |
+| **Identity** | `config show/set`, `identity show/resolve/resolve-self` |
+| **Connections** | `invite create/list`, `connect`, `contacts list/show/remove` |
+| **Permissions** | `permissions show/grant/request/revoke` |
+| **Messaging** | `message send/request-funds/sync/listen`, `conversations list/show` |
 
-### Identity and config
+Run `tap <command> --help` for details on any command.
 
-- `tap config show`
-- `tap config set <key> <value>`
-- `tap identity show`
-- `tap identity resolve <agentId> [chain]`
-- `tap identity resolve-self [chain]`
+## Development
 
-### Connections and grants
+### Repository structure
 
-- `tap invite create [--expiry <seconds>]`
-- `tap invite list`
-- `tap connect <invite-url> [--yes] [--request-grants-file <path>] [--grant-file <path>]`
-- `tap permissions show [peer]`
-- `tap permissions grant <peer> --file <path> [--note <text>]`
-- `tap permissions request <peer> --file <path> [--note <text>]`
-- `tap permissions revoke <peer> --grant-id <id> [--note <text>]`
-- `tap contacts list`
-- `tap contacts show <name-or-id>`
-- `tap contacts remove <connectionId>`
+```
+packages/
+  core/       Protocol logic, identity resolution, XMTP transport, trust store
+  cli/        The `tap` command — host adapter over core
+  sdk/        Programmatic embedding surface + TAP skill files
+  openclaw-plugin/  OpenClaw Gateway plugin
+```
 
-### Messaging
+### Commands
 
-- `tap message send <peer> <text> [--scope <scope>]`
-- `tap message request-funds <peer> --asset <native|usdc> --amount <amount> [--chain <chain>] [--to <address>] [--note <text>]`
-- `tap message sync [--yes] [--yes-actions]`
-- `tap message listen [--yes] [--yes-actions]`
-- `tap conversations list [--with <name>]`
-- `tap conversations show <id>`
+```bash
+bun install
+bun run build
+bun run lint
+bun run typecheck
+bun run test
+```
 
-## Data Directory
+### Agent data directory
 
-All agent-local state lives under one root:
+All per-agent state lives under one root (default `~/.trustedagents`):
 
-```text
+```
 <dataDir>/
 ├── config.yaml
 ├── identity/agent.key
 ├── contacts.json
-├── pending-invites.json
-├── ipfs-cache.json
 ├── conversations/<id>.json
-├── notes/permissions-ledger.md
 └── xmtp/<inboxId>.db3
 ```
 
-Resolution order:
-- `--data-dir`
-- `TAP_DATA_DIR`
-- `~/.local/share/trustedagents` if it exists
-- `~/.trustedagents`
+Isolate agents by setting `TAP_DATA_DIR` to different paths.
 
-Using a separate `TAP_DATA_DIR` fully isolates one local agent from another.
+## Links
 
-## Environment Variables
+- [Design Specification](./Design.md) — full protocol design and rationale
+- [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) — on-chain agent identity standard
+- [XMTP](https://xmtp.org/) — decentralized messaging transport
+- [OpenClaw](https://openclaw.ai) — agent runtime framework
 
-- `TAP_AGENT_ID`
-- `TAP_CHAIN`
-- `TAP_PRIVATE_KEY`
-- `TAP_DATA_DIR`
-- `TAP_PINATA_JWT`
+## License
 
-## Development
-
-```bash
-bun run lint
-bun run typecheck
-bun run test
-XMTP_INTEGRATION=true bun run test:xmtp
-```
+MIT

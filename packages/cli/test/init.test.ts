@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
+import { runCli } from "./helpers/run-cli.js";
 
 describe("tap init", () => {
 	let tmpDir: string;
@@ -119,5 +120,15 @@ describe("tap init", () => {
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.data.chain).toBe("eip155:84532");
 		expect(output.data.chain_name).toBe("Base Sepolia");
+	});
+
+	it("respects the init --chain flag through the CLI entrypoint", async () => {
+		const dataDir = join(tmpDir, "cli-entrypoint");
+		const result = await runCli(["--json", "--data-dir", dataDir, "init", "--chain", "base"]);
+
+		expect(result.exitCode).toBe(0);
+		const output = JSON.parse(result.stdout);
+		expect(output.data.chain).toBe("eip155:8453");
+		expect(output.data.chain_name).toBe("Base");
 	});
 });

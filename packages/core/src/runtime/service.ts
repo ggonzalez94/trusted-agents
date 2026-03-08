@@ -1,5 +1,7 @@
+import { parseEther, parseUnits } from "viem";
 import {
 	PermissionError,
+	TransportError,
 	ValidationError,
 	caip2ToChainId,
 	generateConnectionId,
@@ -55,6 +57,7 @@ import {
 	parseTransferActionRequest,
 	parseTransferActionResponse,
 } from "./actions.js";
+import { getUsdcAsset } from "./assets.js";
 import type { TapRuntimeContext } from "./default-context.js";
 import {
 	findActiveGrantsByScope,
@@ -151,7 +154,7 @@ export interface TapServiceHooks {
 
 export interface TapServiceOptions {
 	autoApproveConnections?: boolean;
-	autoApproveActions?: boolean;
+	unsafeAutoApproveActions?: boolean;
 	ownerLabel?: string;
 	hooks?: TapServiceHooks;
 }
@@ -226,7 +229,7 @@ export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
 	private readonly autoApproveConnections: boolean;
-	private readonly autoApproveActions: boolean;
+	private readonly unsafeAutoApproveActions: boolean;
 	private readonly ownerLock: TransportOwnerLock;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
@@ -243,7 +246,7 @@ export class TapMessagingService {
 		this.context = context;
 		this.hooks = options.hooks ?? {};
 		this.autoApproveConnections = options.autoApproveConnections ?? false;
-		this.autoApproveActions = options.autoApproveActions ?? false;
+		this.unsafeAutoApproveActions = options.unsafeAutoApproveActions ?? false;
 		this.ownerLock = new TransportOwnerLock(
 			context.config.dataDir,
 			options.ownerLabel ?? `tap:${process.pid}`,
@@ -1012,23 +1015,27 @@ export class TapMessagingService {
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
 			approve: async () => decision,
 		});
+		await this.context.requestJournal.updateStatus(requestId, "completed");
 		const resultMessage = buildConnectionResult(outcome.result);
 		const peerAddress = outcome.peer.xmtpEndpoint ?? outcome.peer.agentAddress;
-		await this.context.transport.send(outcome.peer.agentId, resultMessage, {
-			peerAddress,
-			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-		});
-		await this.context.requestJournal.putOutbound({
-			requestId: String(resultMessage.id),
-			requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
-			direction: "outbound",
-			kind: "result",
-			method: resultMessage.method,
-			peerAgentId: outcome.peer.agentId,
-			correlationId: outcome.result.requestId,
-			status: "completed",
-		});
-		await this.context.requestJournal.updateStatus(requestId, "completed");
+		try {
+			await this.context.transport.send(outcome.peer.agentId, resultMessage, {
+				peerAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+			await this.context.requestJournal.putOutbound({
+				requestId: String(resultMessage.id),
+				requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: resultMessage.method,
+				peerAgentId: outcome.peer.agentId,
+				correlationId: outcome.result.requestId,
+				status: "completed",
+			});
+		} catch (error: unknown) {
+			this.logConnectionResultDeliveryFailure(outcome.peer, outcome.result.status, error);
+		}
 
 		if (outcome.result.status === "rejected") {
 			const pendingContact = await this.context.trustStore.findByAgentId(
@@ -1192,12 +1199,7 @@ export class TapMessagingService {
 		try {
 			await this.sendActionResult(contact, String(message.id), response);
 		} catch (error: unknown) {
-			this.log(
-				"error",
-				`Failed to deliver action result ${request.actionId} to ${contact.peerDisplayName}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
+			this.logActionResultDeliveryFailure(contact, request.actionId, error);
 		}
 	}
 
@@ -1319,19 +1321,32 @@ export class TapMessagingService {
 		contact: Contact,
 		request: TransferActionRequest,
 	): Promise<boolean | null> {
+		const transferGrants = findApplicableTransferGrants(contact.permissions.grantedByMe, request);
 		const override = this.decisionOverrides.transfers.get(requestId);
-		if (override !== undefined) {
-			return override;
+		if (override === false) {
+			return false;
 		}
 
-		if (this.autoApproveActions) {
+		if (this.unsafeAutoApproveActions) {
+			this.log(
+				"warn",
+				`Unsafely auto-approving action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			);
 			return true;
 		}
 
-		const transferGrants = findActiveGrantsByScope(
-			contact.permissions.grantedByMe,
-			"transfer/request",
-		);
+		if (transferGrants.length === 0) {
+			this.log(
+				"warn",
+				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,
+			);
+			return false;
+		}
+
+		if (override === true) {
+			return true;
+		}
+
 		return (
 			(await this.hooks.approveTransfer?.({
 				requestId,
@@ -1373,6 +1388,42 @@ export class TapMessagingService {
 			correlationId: requestId,
 			status: "completed",
 		});
+	}
+
+	private logConnectionResultDeliveryFailure(
+		peer: ResolvedAgent,
+		status: "accepted" | "rejected",
+		error: unknown,
+	): void {
+		this.logResultDeliveryFailure(
+			`${status === "accepted" ? "Accepted" : "Rejected"} connection result`,
+			`${peer.registrationFile.name} (#${peer.agentId})`,
+			error,
+		);
+	}
+
+	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
+		this.logResultDeliveryFailure(
+			`Action result ${actionId}`,
+			`${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			error,
+		);
+	}
+
+	private logResultDeliveryFailure(subject: string, peerLabel: string, error: unknown): void {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		if (isTransportReceiptTimeout(error)) {
+			this.log(
+				"warn",
+				`${subject} to ${peerLabel} timed out waiting for a delivery receipt; the peer may still receive it during a later sync (${errorMessage})`,
+			);
+			return;
+		}
+
+		this.log(
+			"error",
+			`Failed to deliver ${subject.toLowerCase()} to ${peerLabel}: ${errorMessage}`,
+		);
 	}
 
 	private async requireContact(peer: string): Promise<Contact> {
@@ -1562,6 +1613,66 @@ function serializePendingRequestDetails(
 	details: TapPendingRequestDetails,
 ): Record<string, unknown> {
 	return details as unknown as Record<string, unknown>;
+}
+
+function findApplicableTransferGrants(
+	grantSet: PermissionGrantSet,
+	request: TransferActionRequest,
+) {
+	return findActiveGrantsByScope(grantSet, "transfer/request").filter((grant) =>
+		matchesTransferGrantRequest(grant, request),
+	);
+}
+
+function matchesTransferGrantRequest(
+	grant: PermissionGrantSet["grants"][number],
+	request: TransferActionRequest,
+): boolean {
+	const constraints = grant.constraints;
+	if (!constraints) {
+		return true;
+	}
+
+	if (typeof constraints.asset === "string" && constraints.asset !== request.asset) {
+		return false;
+	}
+
+	if (typeof constraints.chain === "string" && constraints.chain !== request.chain) {
+		return false;
+	}
+
+	if (
+		typeof constraints.toAddress === "string" &&
+		constraints.toAddress.toLowerCase() !== request.toAddress.toLowerCase()
+	) {
+		return false;
+	}
+
+	if (typeof constraints.maxAmount === "string") {
+		try {
+			const maxAmount =
+				request.asset === "native"
+					? parseEther(constraints.maxAmount)
+					: parseUnits(constraints.maxAmount, getUsdcAsset(request.chain)?.decimals ?? 6);
+			const requestedAmount =
+				request.asset === "native"
+					? parseEther(request.amount)
+					: parseUnits(request.amount, getUsdcAsset(request.chain)?.decimals ?? 6);
+			if (requestedAmount > maxAmount) {
+				return false;
+			}
+		} catch {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+function isTransportReceiptTimeout(error: unknown): error is TransportError {
+	return (
+		error instanceof TransportError && error.message.startsWith("Response timeout for message ")
+	);
 }
 
 async function findContactForMessage(
