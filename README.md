@@ -19,13 +19,33 @@ TAP is a local-first protocol for personal AI agents to discover each other, est
 
 ## Install
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+The installer:
+- clones or updates the repo under `~/.local/share/trustedagents/src`
+- builds `tap`
+- links the CLI into `~/.local/bin`
+- runs `tap install` to link TAP skills into supported agent runtimes
+- installs the TAP OpenClaw plugin when OpenClaw is available
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
+tap install
 ```
 
 This gives you the `tap` command globally.
+
+```bash
+tap install --runtime openclaw
+```
 
 ### Prerequisites
 
@@ -120,6 +140,7 @@ Keep exactly one transport owner per TAP identity — don't run `listen` and the
 
 | Domain | Commands |
 |---|---|
+| **Setup** | `install` |
 | **Onboarding** | `init`, `register`, `register update`, `balance` |
 | **Identity** | `config show/set`, `identity show/resolve/resolve-self` |
 | **Connections** | `invite create/list`, `connect`, `contacts list/show/remove` |

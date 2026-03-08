@@ -32,12 +32,19 @@ Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to
 
 ## Install From This Repo
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
-cd ../..
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 ## tap_gateway Actions

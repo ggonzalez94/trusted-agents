@@ -2,12 +2,19 @@
 
 Install TAP from this repository into OpenClaw like this:
 
+Recommended:
+
+```bash
+bash scripts/install.sh
+```
+
+Manual equivalent:
+
 ```bash
 bun install
 bun run build
 cd packages/cli && npm link
-cd ../..
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 Use `--link` for repo installs so OpenClaw loads the plugin directly from this checkout.

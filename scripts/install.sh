@@ -13,8 +13,6 @@ BIN_DIR="${TAP_BIN_DIR:-${HOME}/.local/bin}"
 SKIP_SKILLS=false
 UNINSTALL=false
 
-SKILL_SOURCE_REL="packages/sdk/skills/trusted-agents"
-SKILL_LINK_NAME="trusted-agents"
 RUNTIMES=("claude" "codex" "openclaw")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,11 +43,11 @@ usage() {
   cat <<'USAGE'
 Usage: install.sh [OPTIONS]
 
-Install the Trusted Agents Protocol CLI (tap) and skill files.
+Install the Trusted Agents Protocol CLI (tap), skill files, and runtime integrations.
 
 Options:
   --uninstall       Remove tap binary and skill symlinks
-  --skip-skills     Skip linking skill files into agent runtimes
+  --skip-skills     Skip linking generic TAP skill files into agent runtimes
   --repo-url URL    Git repository URL (default: GitHub)
   --branch BRANCH   Git branch to clone (default: main)
   --bin-dir DIR     Binary install directory (default: ~/.local/bin)
@@ -137,43 +135,20 @@ install_binary() {
   info "Linked tap -> ${bin_target}"
 }
 
-# ── Skill linking ─────────────────────────────────────────────────────────────
+# ── Product install ───────────────────────────────────────────────────────────
 
-detect_and_link_skills() {
+run_product_install() {
+  local tap_bin="${SOURCE_DIR}/packages/cli/dist/bin.js"
+  chmod +x "$tap_bin" 2>/dev/null || true
+  [[ -x "$tap_bin" ]] || die "tap binary not found at ${tap_bin}"
+
+  info "Running TAP runtime install..."
+  local args=("install" "--source-dir" "$SOURCE_DIR")
   if [[ "$SKIP_SKILLS" == true ]]; then
-    info "Skipping skill linking (--skip-skills)"
-    return
+    args+=("--skip-skills")
   fi
 
-  local skill_source="${SOURCE_DIR}/${SKILL_SOURCE_REL}"
-  [[ -d "$skill_source" ]] || { warn "Skill directory not found at ${skill_source} — skipping"; return; }
-
-  local linked=0
-  for runtime in "${RUNTIMES[@]}"; do
-    local runtime_dir="${HOME}/.${runtime}"
-    # Skip runtimes whose parent directory doesn't exist
-    [[ -d "$runtime_dir" ]] || continue
-
-    local skills_dir="${runtime_dir}/skills"
-    local link_path="${skills_dir}/${SKILL_LINK_NAME}"
-
-    # Create skills/ if it doesn't exist
-    mkdir -p "$skills_dir"
-
-    # Safety: never clobber a regular file or directory
-    if [[ -e "$link_path" && ! -L "$link_path" ]]; then
-      warn "${link_path} exists and is not a symlink — skipping"
-      continue
-    fi
-
-    ln -sf "$skill_source" "$link_path"
-    info "Linked ${link_path} -> ${skill_source}"
-    linked=$((linked + 1))
-  done
-
-  if [[ $linked -eq 0 ]]; then
-    warn "No agent runtimes detected (looked for ~/.claude, ~/.codex, ~/.openclaw)"
-  fi
+  "$tap_bin" "${args[@]}" || die "TAP runtime install failed"
 }
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -188,7 +163,7 @@ print_summary() {
   fi
 
   for runtime in "${RUNTIMES[@]}"; do
-    local link_path="${HOME}/.${runtime}/skills/${SKILL_LINK_NAME}"
+    local link_path="${HOME}/.${runtime}/skills/trusted-agents"
     if [[ -L "$link_path" ]]; then
       echo "  Skills: ${link_path}"
     fi
@@ -278,7 +253,7 @@ main() {
   setup_source
   build_project
   install_binary
-  detect_and_link_skills
+  run_product_install
   print_summary
 }
 
