@@ -51,7 +51,8 @@ describe("tap init", () => {
 		const configContent = await readFile(configPath, "utf-8");
 		const yaml = YAML.parse(configContent);
 		expect(yaml.agent_id).toBe(-1);
-		expect(yaml.chain).toBe("eip155:84532");
+		expect(yaml.chain).toBe("eip155:8453");
+		expect(yaml.xmtp.env).toBe("production");
 
 		// Keyfile created
 		const keyfile = join(dataDir, "identity", "agent.key");
@@ -96,5 +97,27 @@ describe("tap init", () => {
 		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.data.config).toBe(join(dataDir, "config.yaml"));
+	});
+
+	it("reuses the saved chain in output when init is rerun", async () => {
+		const dataDir = join(tmpDir, "existing-chain");
+
+		await initCommand(
+			{
+				json: true,
+				dataDir,
+			},
+			{ chain: "base-sepolia" },
+		);
+
+		stdoutWrites = [];
+		await initCommand({
+			json: true,
+			dataDir,
+		});
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.data.chain).toBe("eip155:84532");
+		expect(output.data.chain_name).toBe("Base Sepolia");
 	});
 });

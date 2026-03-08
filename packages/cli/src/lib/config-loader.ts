@@ -10,7 +10,7 @@ import {
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
-import { ALL_CHAINS, resolveChainAlias } from "./chains.js";
+import { ALL_CHAINS, DEFAULT_CHAIN_ALIAS, resolveChainAlias } from "./chains.js";
 
 const LEGACY_CONFIG_PATH = join(homedir(), ".config", "trustedagents", "config.yaml");
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "trustedagents");
@@ -65,7 +65,10 @@ export async function loadConfig(
 	const configPath = resolveConfigPath(opts, dataDir);
 	const agentIdStr = process.env.TAP_AGENT_ID;
 	const agentId = agentIdStr !== undefined ? Number.parseInt(agentIdStr, 10) : undefined;
-	const chainRaw = opts.chain ?? process.env.TAP_CHAIN;
+	const chainRaw =
+		opts.chain ??
+		process.env.TAP_CHAIN ??
+		(!existsSync(configPath) ? DEFAULT_CHAIN_ALIAS : undefined);
 	const chain = chainRaw ? resolveChainAlias(chainRaw) : undefined;
 	const envKey = process.env.TAP_PRIVATE_KEY;
 	const privateKey = envKey

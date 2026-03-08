@@ -14,12 +14,12 @@ describe("config-loader", () => {
 	afterEach(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
 		// Clean up env vars
-		Reflect.deleteProperty(process.env, "TAP_DATA_DIR");
-		Reflect.deleteProperty(process.env, "TAP_AGENT_ID");
-		Reflect.deleteProperty(process.env, "TAP_CHAIN");
-		Reflect.deleteProperty(process.env, "TAP_PRIVATE_KEY");
-		Reflect.deleteProperty(process.env, "TAP_EXECUTION_MODE");
-		Reflect.deleteProperty(process.env, "TAP_PAYMASTER_PROVIDER");
+		unsetEnv("TAP_DATA_DIR");
+		unsetEnv("TAP_AGENT_ID");
+		unsetEnv("TAP_CHAIN");
+		unsetEnv("TAP_PRIVATE_KEY");
+		unsetEnv("TAP_EXECUTION_MODE");
+		unsetEnv("TAP_PAYMASTER_PROVIDER");
 	});
 
 	describe("resolveConfigPath", () => {
@@ -112,5 +112,48 @@ describe("config-loader", () => {
 			expect(config.execution?.mode).toBe("eoa");
 			expect(config.execution?.paymasterProvider).toBeUndefined();
 		});
+
+		it("defaults to Base mainnet when no config file exists", async () => {
+			const dataDir = join(tmpDir, "mainnet-default");
+			await mkdir(join(dataDir, "identity"), { recursive: true });
+			await writeFile(
+				join(dataDir, "identity", "agent.key"),
+				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir }, { requireAgentId: false });
+			expect(config.chain).toBe("eip155:8453");
+		});
+
+		it("preserves the saved chain when config.yaml already exists", async () => {
+			const dataDir = join(tmpDir, "existing-config");
+			await mkdir(join(dataDir, "identity"), { recursive: true });
+			await writeFile(
+				join(dataDir, "identity", "agent.key"),
+				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+				"utf-8",
+			);
+			await writeFile(
+				join(dataDir, "config.yaml"),
+				["agent_id: -1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir }, { requireAgentId: false });
+			expect(config.chain).toBe("eip155:84532");
+		});
 	});
 });
+
+function unsetEnv(
+	key:
+		| "TAP_DATA_DIR"
+		| "TAP_AGENT_ID"
+		| "TAP_CHAIN"
+		| "TAP_PRIVATE_KEY"
+		| "TAP_EXECUTION_MODE"
+		| "TAP_PAYMASTER_PROVIDER",
+): void {
+	Reflect.deleteProperty(process.env, key);
+}
