@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { chainAliasHelpText } from "./lib/chains.js";
 import { errorCode, exitCodeForError } from "./lib/errors.js";
 import { error } from "./lib/output.js";
 import type { GlobalOptions } from "./types.js";
@@ -23,22 +24,21 @@ export function createCli(): Command {
 		.command("init")
 		.description("First-time setup wizard")
 		.option("--private-key <hex>", "Import an existing private key instead of generating one")
-		.option("--chain <name>", "Chain to register on (alias or CAIP-2)", "base-sepolia")
+		.option("--chain <name>", "Chain to register on (alias or CAIP-2)")
 		.addHelpText(
 			"after",
 			`
 Supported chains:
-  base-sepolia   Base Sepolia testnet (default)
-  base           Base mainnet
-  taiko          Taiko mainnet
-  taiko-hoodi    Taiko Hoodi testnet
-  eip155:<id>    Any chain by CAIP-2 ID
+${chainAliasHelpText()}
 `,
 		)
 		.action(async (cmdOpts: { privateKey?: string; chain?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { initCommand } = await import("./commands/init.js");
-			await initCommand(opts, { privateKey: cmdOpts.privateKey, chain: cmdOpts.chain });
+			await initCommand(opts, {
+				privateKey: cmdOpts.privateKey,
+				chain: opts.chain ?? cmdOpts.chain,
+			});
 		});
 
 	// register

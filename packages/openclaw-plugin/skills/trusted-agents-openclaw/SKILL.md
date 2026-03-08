@@ -19,6 +19,10 @@ Use this skill when working inside OpenClaw and TAP may be installed as a Gatewa
 - Ledger format details: `references/permissions-ledger-v1.md`
 - Capability-to-scope mapping: `references/capability-map.md`
 
+## Chain Selection
+
+Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to users.
+
 ## Decision Rule
 
 1. Use plugin mode only when `tap_gateway` is available, `tap_gateway` action `status` reports at least one configured identity, and `status.warnings` is empty.

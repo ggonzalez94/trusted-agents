@@ -11,6 +11,15 @@ Prerequisite:
 
 - If `tap` is not installed yet, read `../references/install-cli.md` first.
 
+## Supported Chains
+
+Always onboard on a mainnet chain. Supported mainnets:
+
+- `base` (Base mainnet) — default and recommended
+- `taiko` (Taiko mainnet)
+
+Do not suggest or use testnets (`base-sepolia`, `taiko-hoodi`) when onboarding users. Testnet infrastructure is incomplete and not suitable for production use.
+
 ## Funding
 
 - ETH on the registration chain for gas.
@@ -25,7 +34,7 @@ Prerequisite:
 Create or import the wallet and local config.
 
 ```bash
-tap init --chain base-sepolia
+tap init --chain base
 ```
 
 ### `tap register --name <name> --description <desc> --capabilities <list> [--pinata-jwt <token>] [--uri <url>]`
