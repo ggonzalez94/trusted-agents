@@ -81,10 +81,7 @@ async function seedSourceTree(sourceDir: string): Promise<void> {
 
 async function writeFakeOpenClaw(binDir: string, logPath: string): Promise<void> {
 	const scriptPath = join(binDir, "openclaw");
-	await writeFile(
-		scriptPath,
-		`#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logPath}"\n`,
-	);
+	await writeFile(scriptPath, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logPath}"\n`);
 	await chmod(scriptPath, 0o755);
 }
 

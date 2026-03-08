@@ -1023,7 +1023,6 @@ export class TapMessagingService {
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
 			approve: async () => decision,
 		});
-		await this.context.requestJournal.updateStatus(requestId, "completed");
 		const resultMessage = buildConnectionResult(outcome.result);
 		const peerAddress = outcome.peer.xmtpEndpoint ?? outcome.peer.agentAddress;
 		try {
@@ -1031,6 +1030,7 @@ export class TapMessagingService {
 				peerAddress,
 				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 			});
+			await this.context.requestJournal.updateStatus(requestId, "completed");
 			await this.context.requestJournal.putOutbound({
 				requestId: String(resultMessage.id),
 				requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
@@ -1042,6 +1042,12 @@ export class TapMessagingService {
 				status: "completed",
 			});
 		} catch (error: unknown) {
+			// On timeout the message may have been delivered, so mark completed to
+			// avoid duplicate processing. For other transport errors, keep pending
+			// so reconciliation can retry.
+			if (error instanceof TransportError && /timeout/i.test(error.message)) {
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+			}
 			this.logConnectionResultDeliveryFailure(outcome.peer, outcome.result.status, error);
 		}
 
@@ -1203,6 +1209,8 @@ export class TapMessagingService {
 			}
 		}
 
+		// The on-chain transfer is irreversible at this point, so always mark the
+		// request as completed regardless of result delivery outcome.
 		await this.context.requestJournal.updateStatus(requestId, "completed");
 		try {
 			await this.sendActionResult(contact, String(message.id), response);

@@ -1,4 +1,4 @@
-const GLOBAL_OPTIONS_WITH_VALUE = new Set(["--config", "--data-dir", "--chain"]);
+const GLOBAL_OPTIONS_WITH_VALUE = new Set(["--config", "--data-dir", "--chain", "--rpc-url"]);
 const GLOBAL_OPTIONS = new Set([
 	"--json",
 	"--plain",

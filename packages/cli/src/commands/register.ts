@@ -631,16 +631,6 @@ export async function registerUpdateCommand(
 		let pendingRegistrationFile: RegistrationFile;
 
 		if (fullReplacement) {
-			pendingRegistrationFile = buildRegistrationFile(
-				cmdOpts.name!,
-				cmdOpts.description!,
-				parseCapabilities(cmdOpts.capabilities!),
-				agentAddress,
-				undefined,
-			);
-			validateRegistrationFile(pendingRegistrationFile);
-			verbose("Replacement registration file validated", opts);
-
 			try {
 				currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
 			} catch (err) {
@@ -650,6 +640,16 @@ export async function registerUpdateCommand(
 					opts,
 				);
 			}
+
+			pendingRegistrationFile = buildRegistrationFile(
+				cmdOpts.name!,
+				cmdOpts.description!,
+				parseCapabilities(cmdOpts.capabilities!),
+				agentAddress,
+				currentRegistrationFile?.trustedAgentProtocol.execution,
+			);
+			validateRegistrationFile(pendingRegistrationFile);
+			verbose("Replacement registration file validated", opts);
 		} else {
 			info(`Fetching current registration for agent #${config.agentId}...`, opts);
 			currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);

@@ -31,20 +31,18 @@ export function createCli(): Command {
 		)
 		.option("--source-dir <path>", "Override the TAP source checkout directory")
 		.option("--skip-skills", "Skip linking the generic TAP skill tree")
-		.action(
-			async (cmdOpts: { runtime?: string[]; sourceDir?: string; skipSkills?: boolean }) => {
-				const opts = program.opts<GlobalOptions>();
-				const { installCommand } = await import("./commands/install.js");
-				await installCommand(
-					{
-						runtimes: cmdOpts.runtime,
-						sourceDir: cmdOpts.sourceDir,
-						skipSkills: cmdOpts.skipSkills,
-					},
-					opts,
-				);
-			},
-		);
+		.action(async (cmdOpts: { runtime?: string[]; sourceDir?: string; skipSkills?: boolean }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { installCommand } = await import("./commands/install.js");
+			await installCommand(
+				{
+					runtimes: cmdOpts.runtime,
+					sourceDir: cmdOpts.sourceDir,
+					skipSkills: cmdOpts.skipSkills,
+				},
+				opts,
+			);
+		});
 
 	// init
 	program

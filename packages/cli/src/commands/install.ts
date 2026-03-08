@@ -31,10 +31,7 @@ interface RuntimeInstallResult {
 	notes: string[];
 }
 
-export async function installCommand(
-	cmdOpts: InstallOptions,
-	opts: GlobalOptions,
-): Promise<void> {
+export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
 	try {
@@ -85,7 +82,8 @@ export async function installCommand(
 				{
 					source_dir: sourceDir,
 					installed: false,
-					reason: "No supported runtimes detected. Looked for ~/.claude, ~/.codex, ~/.openclaw, and the openclaw CLI.",
+					reason:
+						"No supported runtimes detected. Looked for ~/.claude, ~/.codex, ~/.openclaw, and the openclaw CLI.",
 					next_steps: [
 						"Create the target runtime directory or pass --runtime <name> to install explicitly.",
 					],
@@ -136,7 +134,9 @@ function validateSourceDir(sourceDir: string): void {
 	const pluginSource = join(sourceDir, "packages", "openclaw-plugin", "openclaw.plugin.json");
 
 	if (!existsSync(cliBin)) {
-		throw new Error(`TAP source dir is missing the built CLI at ${cliBin}. Run the repo build first.`);
+		throw new Error(
+			`TAP source dir is missing the built CLI at ${cliBin}. Run the repo build first.`,
+		);
 	}
 	if (!existsSync(skillSource)) {
 		throw new Error(`TAP source dir is missing the generic skill tree at ${skillSource}.`);
@@ -158,17 +158,12 @@ function parseRuntime(value: string): SupportedRuntime {
 	const normalized = value.trim().toLowerCase();
 	const match = SUPPORTED_RUNTIMES.find((runtime) => runtime === normalized);
 	if (!match) {
-		throw new Error(
-			`Unsupported runtime: ${value}. Use one of: ${SUPPORTED_RUNTIMES.join(", ")}`,
-		);
+		throw new Error(`Unsupported runtime: ${value}. Use one of: ${SUPPORTED_RUNTIMES.join(", ")}`);
 	}
 	return match;
 }
 
-async function ensureSkillLink(
-	runtimeDir: string,
-	skillSource: string,
-): Promise<string> {
+async function ensureSkillLink(runtimeDir: string, skillSource: string): Promise<string> {
 	const skillsDir = join(runtimeDir, "skills");
 	const linkPath = join(skillsDir, "trusted-agents");
 	await mkdir(skillsDir, { recursive: true });
@@ -221,7 +216,7 @@ async function commandExists(command: string): Promise<boolean> {
 			await access(candidate);
 			return true;
 		} catch {
-			continue;
+			// try next PATH entry
 		}
 	}
 	return false;
