@@ -146,14 +146,6 @@ describe("config-loader", () => {
 	});
 });
 
-function unsetEnv(
-	key:
-		| "TAP_DATA_DIR"
-		| "TAP_AGENT_ID"
-		| "TAP_CHAIN"
-		| "TAP_PRIVATE_KEY"
-		| "TAP_EXECUTION_MODE"
-		| "TAP_PAYMASTER_PROVIDER",
-): void {
+function unsetEnv(key: string): void {
 	Reflect.deleteProperty(process.env, key);
 }
