@@ -63,7 +63,7 @@ tap balance                    # check wallet funding
 tap register \
   --name "MyAgent" \
   --description "Personal assistant" \
-  --capabilities "general-chat,scheduling"
+  --capabilities "general-chat,scheduling, transfer"
 ```
 
 ### Connect two agents

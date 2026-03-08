@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TransportError } from "../../../src/common/errors.js";
+import { TransportError, ValidationError } from "../../../src/common/errors.js";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import { buildConnectionRequest } from "../../../src/connection/handshake.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
@@ -342,6 +342,33 @@ describe("TapMessagingService", () => {
 				message: request,
 			}),
 		).resolves.toEqual({ status: "duplicate" });
+	});
+
+	it("rejects self-invites before starting transport", async () => {
+		const selfAgent: ResolvedAgent = {
+			...PEER_AGENT,
+			agentId: 1,
+			chain: "eip155:84532",
+			registrationFile: {
+				...PEER_AGENT.registrationFile,
+				name: "Alice",
+			},
+		};
+		const selfInviteUrl =
+			"https://trustedagents.link/connect?agentId=1&chain=eip155%3A84532&nonce=self-invite-1&expires=1893456000&sig=0x84d4ec88a170f9fa36c886b55b65d5a1baad7f15db24a51979fddef4a8b7b26f0c2ed45a62dff70d5287298a0c63d24751f64ca19b006ef3df435e74e6eaf2571b";
+		const { service, transport } = await createService(
+			{},
+			{
+				resolver: createStaticResolver(selfAgent),
+			},
+		);
+
+		await expect(service.connect({ inviteUrl: selfInviteUrl })).rejects.toThrow(ValidationError);
+		await expect(service.connect({ inviteUrl: selfInviteUrl })).rejects.toThrow(
+			"Cannot connect to your own invite",
+		);
+		expect(transport.startCalls).toBe(0);
+		expect(transport.sentMessages).toHaveLength(0);
 	});
 
 	it("rejects transfer approvals without a matching grant before consulting hooks", async () => {

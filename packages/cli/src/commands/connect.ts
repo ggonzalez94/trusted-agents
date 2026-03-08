@@ -1,4 +1,10 @@
-import { caip2ToChainId, parseInviteUrl, verifyInvite } from "trusted-agents-core";
+import {
+	ValidationError,
+	caip2ToChainId,
+	isSelfInvite,
+	parseInviteUrl,
+	verifyInvite,
+} from "trusted-agents-core";
 import type { PermissionGrantSet } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
@@ -31,6 +37,11 @@ export async function connectCommand(
 
 		const ctx = buildContextWithTransport(config);
 		const invite = parseInviteUrl(inviteUrl);
+		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
+			throw new ValidationError(
+				"Cannot connect to your own invite. Switch to a different TAP identity or --data-dir before accepting it.",
+			);
+		}
 		const peerAgent = await ctx.resolver.resolve(invite.agentId, invite.chain);
 		const requestedGrants = cmdOpts.requestGrantsFile
 			? await readGrantFile(cmdOpts.requestGrantsFile)

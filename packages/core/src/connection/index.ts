@@ -2,7 +2,7 @@ export type { InviteData, InviteStatus, PendingInvite } from "./types.js";
 
 export { generateInvite } from "./invite.js";
 
-export { parseInviteUrl, verifyInvite } from "./invite-verifier.js";
+export { isSelfInvite, parseInviteUrl, verifyInvite } from "./invite-verifier.js";
 
 export {
 	PendingInviteStore,

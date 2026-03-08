@@ -14,6 +14,7 @@ import {
 	buildConnectionResult,
 	buildPermissionsUpdate,
 	handleConnectionRequest,
+	isSelfInvite,
 	parseInviteUrl,
 	verifyInvite,
 } from "../connection/index.js";
@@ -352,21 +353,28 @@ export class TapMessagingService {
 		requestedGrants?: PermissionGrantSet;
 		offeredGrants?: PermissionGrantSet;
 	}): Promise<TapConnectResult> {
-		return await this.withTransportSession(async () => {
-			const { config, resolver, trustStore, requestJournal, transport } = this.context;
-			const chainId = caip2ToChainId(config.chain);
-			if (chainId === null) {
-				throw new ValidationError(`Invalid local chain format: ${config.chain}`);
-			}
+		const { config, resolver } = this.context;
+		const chainId = caip2ToChainId(config.chain);
+		if (chainId === null) {
+			throw new ValidationError(`Invalid local chain format: ${config.chain}`);
+		}
 
-			const invite = parseInviteUrl(params.inviteUrl);
-			const peerAgent = await resolver.resolve(invite.agentId, invite.chain);
-			const verification = await verifyInvite(invite, {
-				expectedSignerAddress: peerAgent.agentAddress,
-			});
-			if (!verification.valid) {
-				throw new ValidationError(verification.error ?? "Invite verification failed");
-			}
+		const invite = parseInviteUrl(params.inviteUrl);
+		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
+			throw new ValidationError(
+				"Cannot connect to your own invite. Switch to a different TAP identity or --data-dir before accepting it.",
+			);
+		}
+		const peerAgent = await resolver.resolve(invite.agentId, invite.chain);
+		const verification = await verifyInvite(invite, {
+			expectedSignerAddress: peerAgent.agentAddress,
+		});
+		if (!verification.valid) {
+			throw new ValidationError(verification.error ?? "Invite verification failed");
+		}
+
+		return await this.withTransportSession(async () => {
+			const { trustStore, requestJournal, transport } = this.context;
 
 			const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
 			if (existing?.status === "active") {
