@@ -1,9 +1,10 @@
-import { lstat, readFile, readdir, rm } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	type TransportOwnerInfo,
 	TransportOwnerLock,
+	isProcessAlive,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
@@ -71,7 +72,10 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 					paths_to_remove: plan.pathsToRemove,
 					live_transport_owner: plan.liveTransportOwner,
 					blocking_reasons: plan.blockingReasons,
-					can_remove: plan.liveTransportOwner === null && plan.blockingReasons.length === 0,
+					can_remove:
+						plan.liveTransportOwner === null &&
+						plan.blockingReasons.length === 0 &&
+						plan.pathsToRemove.length > 0,
 					warnings: plan.warnings,
 				},
 				opts,
@@ -174,7 +178,7 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 }
 
 export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> {
-	const dataDir = resolveAbsoluteDataDir(resolveCliDataDir(opts));
+	const dataDir = await resolveRemoveDataDir(opts);
 	const configPath = resolveRemoveConfigPath(opts, dataDir);
 	const warnings = [
 		"This only removes local TAP agent data. It does not unregister the ERC-8004 agent or notify peers.",
@@ -222,6 +226,20 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 		liveTransportOwner,
 		blockingReasons,
 	};
+}
+
+async function resolveRemoveDataDir(opts: GlobalOptions): Promise<string> {
+	const configuredPath = resolveAbsoluteDataDir(resolveCliDataDir(opts));
+	try {
+		return await realpath(configuredPath);
+	} catch (error: unknown) {
+		const code =
+			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+		if (code === "ENOENT") {
+			return configuredPath;
+		}
+		throw error;
+	}
 }
 
 function resolveRemoveConfigPath(opts: GlobalOptions, dataDir: string): string {
@@ -356,19 +374,4 @@ async function collectRemovalPaths(targetPath: string): Promise<string[]> {
 
 function isInteractiveSession(): boolean {
 	return Boolean(process.stdin.isTTY);
-}
-
-function isProcessAlive(pid: number): boolean {
-	if (!Number.isInteger(pid) || pid <= 0) {
-		return false;
-	}
-
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		return code === "EPERM";
-	}
 }

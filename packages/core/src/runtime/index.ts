@@ -80,6 +80,7 @@ export {
 } from "./service.js";
 export { executeOnchainTransfer } from "./transfer-executor.js";
 export {
+	isProcessAlive,
 	TransportOwnerLock,
 	type TransportOwnerInfo,
 	TransportOwnershipError,

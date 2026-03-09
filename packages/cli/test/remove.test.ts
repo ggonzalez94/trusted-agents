@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -52,17 +52,20 @@ describe("tap remove", () => {
 	});
 
 	it("wires the CLI entrypoint and reports the local removal plan in dry-run mode", async () => {
+		const resolvedDataDir = await realpath(dataDir);
 		const result = await runCli(["--json", "--data-dir", dataDir, "remove", "--dry-run"]);
 
 		expect(result.exitCode).toBe(0);
 		const output = JSON.parse(result.stdout);
 		expect(output.data.dry_run).toBe(true);
-		expect(output.data.data_dir).toBe(dataDir);
-		expect(output.data.config_path).toBe(join(dataDir, "config.yaml"));
+		expect(output.data.data_dir).toBe(resolvedDataDir);
+		expect(output.data.config_path).toBe(join(resolvedDataDir, "config.yaml"));
 		expect(output.data.agent_id).toBe(42);
 		expect(output.data.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
-		expect(output.data.paths_to_remove).toContain(join(dataDir, "contacts.json"));
-		expect(output.data.paths_to_remove).toContain(join(dataDir, "conversations", "peer-1.json"));
+		expect(output.data.paths_to_remove).toContain(join(resolvedDataDir, "contacts.json"));
+		expect(output.data.paths_to_remove).toContain(
+			join(resolvedDataDir, "conversations", "peer-1.json"),
+		);
 		expect(output.data.blocking_reasons).toEqual([]);
 		expect(output.data.warnings).toContain(
 			"This only removes local TAP agent data. It does not unregister the ERC-8004 agent or notify peers.",
@@ -147,30 +150,29 @@ describe("tap remove", () => {
 	});
 
 	it("removes the entire data dir in non-interactive mode when explicitly confirmed", async () => {
+		const resolvedDataDir = await realpath(dataDir);
 		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
 		expect(output.data.removed).toBe(true);
-		expect(output.data.removed_paths).toContain(join(dataDir, "config.yaml"));
-		expect(output.data.removed_paths).toContain(join(dataDir, "identity", "agent.key"));
+		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "config.yaml"));
+		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "identity", "agent.key"));
 		expect(existsSync(dataDir)).toBe(false);
 	});
 
-	it("treats an empty directory as having no local TAP data to remove", async () => {
+	it("reports can_remove false for an empty directory in dry-run mode", async () => {
 		const emptyDataDir = join(tmpDir, "empty-agent");
 		await mkdir(emptyDataDir, { recursive: true });
 		stdoutWrites = [];
 
-		await removeCommand(
-			{ unsafeWipeDataDir: true, yes: true },
-			{ json: true, dataDir: emptyDataDir },
-		);
+		await removeCommand({ dryRun: true }, { json: true, dataDir: emptyDataDir });
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
-		expect(output.data.removed).toBe(false);
-		expect(output.data.removed_paths).toEqual([]);
+		expect(output.data.dry_run).toBe(true);
+		expect(output.data.paths_to_remove).toEqual([]);
+		expect(output.data.can_remove).toBe(false);
 		expect(existsSync(emptyDataDir)).toBe(true);
 	});
 
@@ -205,6 +207,26 @@ describe("tap remove", () => {
 		expect(blocked.error.message).toContain("non-TAP top-level entries");
 		expect(existsSync(join(dataDir, "keep.txt"))).toBe(true);
 		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
+	});
+
+	it("resolves symlinked data dirs to the real TAP directory before removing", async () => {
+		const actualDataDir = join(tmpDir, "actual-agent");
+		const linkedDataDir = join(tmpDir, "linked-agent");
+		await seedAgentData(actualDataDir);
+		await symlink(actualDataDir, linkedDataDir);
+		const resolvedActualDataDir = await realpath(actualDataDir);
+		stdoutWrites = [];
+
+		await removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir: linkedDataDir },
+		);
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.ok).toBe(true);
+		expect(output.data.data_dir).toBe(resolvedActualDataDir);
+		expect(output.data.removed_paths).toContain(join(resolvedActualDataDir, "config.yaml"));
+		expect(existsSync(actualDataDir)).toBe(false);
 	});
 });
 
