@@ -215,9 +215,7 @@ async function commandExists(command: string): Promise<boolean> {
 		try {
 			await access(candidate);
 			return true;
-		} catch {
-			// try next PATH entry
-		}
+		} catch {}
 	}
 	return false;
 }

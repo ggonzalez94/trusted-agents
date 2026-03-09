@@ -14,6 +14,7 @@ SKIP_SKILLS=false
 UNINSTALL=false
 
 RUNTIMES=("claude" "codex" "openclaw")
+SKILL_LINK_NAME="trusted-agents"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -190,12 +191,13 @@ print_summary() {
 
 uninstall() {
   info "Uninstalling Trusted Agents Protocol..."
+  local managed_prefix="${SOURCE_DIR%/}/"
 
   # Remove binary symlink (only if it points into our source)
   if [[ -L "${BIN_DIR}/tap" ]]; then
     local target
     target=$(readlink "${BIN_DIR}/tap")
-    if [[ "$target" == *"trustedagents/src/"* ]]; then
+    if [[ "$target" == "${managed_prefix}"* ]]; then
       rm "${BIN_DIR}/tap"
       info "Removed ${BIN_DIR}/tap"
     else
@@ -209,7 +211,7 @@ uninstall() {
     if [[ -L "$link_path" ]]; then
       local target
       target=$(readlink "$link_path")
-      if [[ "$target" == *"trustedagents/src/"* ]]; then
+      if [[ "$target" == "${managed_prefix}"* ]]; then
         rm "$link_path"
         info "Removed ${link_path}"
       else

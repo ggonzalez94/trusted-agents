@@ -19,11 +19,19 @@ TAP is a local-first protocol for personal AI agents to discover each other, est
 
 ## Install
 
-Recommended:
+From GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
+```
+
+From a local clone:
 
 ```bash
 bash scripts/install.sh
 ```
+
+TAP is installed from GitHub or a local checkout, not from npm.
 
 The installer:
 - clones or updates the repo under `~/.local/share/trustedagents/src`
@@ -185,13 +193,6 @@ All per-agent state lives under one root (default `~/.trustedagents`):
 ```
 
 Isolate agents by setting `TAP_DATA_DIR` to different paths.
-
-## Links
-
-- [Design Specification](./Design.md) — full protocol design and rationale
-- [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) — on-chain agent identity standard
-- [XMTP](https://xmtp.org/) — decentralized messaging transport
-- [OpenClaw](https://openclaw.ai) — agent runtime framework
 
 ## License
 
