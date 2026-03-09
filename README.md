@@ -25,6 +25,8 @@ From GitHub:
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
+Or just tell your agent: "install and configure github.com/ggonzalez94/trusted-agents"
+
 From a local clone:
 
 ```bash
