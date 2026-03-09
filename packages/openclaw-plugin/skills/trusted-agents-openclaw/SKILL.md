@@ -47,6 +47,10 @@ cd packages/cli && npm link
 tap install --runtime openclaw
 ```
 
+## Local Teardown
+
+Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `tap remove --unsafe-wipe-data-dir --yes --data-dir <path>` to wipe one TAP data dir outside plugin mode. This only removes local TAP files. It does not unregister the agent on-chain, notify peers, or clean up OpenClaw plugin identity config that still references that `dataDir`. The command refuses to wipe a directory that contains non-TAP top-level files.
+
 ## tap_gateway Actions
 
 ### Health and Recovery

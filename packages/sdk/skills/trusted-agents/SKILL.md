@@ -53,6 +53,15 @@ tap install
 tap install --runtime openclaw
 ```
 
+### `tap remove [--dry-run] [--unsafe-wipe-data-dir] [--yes]`
+
+Remove local TAP agent data from the resolved `dataDir`. This is local only: it does not unregister the ERC-8004 agent, notify peers, or update external host config that still references the same `dataDir`. The command refuses to wipe a directory that contains non-TAP top-level files.
+
+```bash
+tap remove --dry-run
+tap remove --unsafe-wipe-data-dir --yes --data-dir ~/.trustedagents
+```
+
 ### `tap balance [chain]`
 
 Show native ETH and USDC balances for this agent.
@@ -107,3 +116,4 @@ tap identity resolve-self
 - `Invalid chain format` — use a CLI chain alias or a CAIP-2 chain ID.
 - `Agent not found on-chain` — the agent is not registered on the selected chain.
 - `TransportOwnershipError` — another TAP runtime already owns that identity; use the plugin tool, stop the other owner, or fall back to `tap message sync`.
+- `tap remove` blocked by a live transport owner lock — stop the active TAP runtime first; the command will not bypass a running owner.
