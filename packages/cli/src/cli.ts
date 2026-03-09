@@ -44,6 +44,33 @@ export function createCli(): Command {
 			);
 		});
 
+	program
+		.command("remove")
+		.description("Remove local TAP agent data")
+		.option("--dry-run", "Show the local TAP files and directories that would be removed")
+		.option("--unsafe-wipe-data-dir", "Delete the entire resolved TAP data dir after confirmation")
+		.option(
+			"--yes",
+			"Required for non-interactive removal; interactive sessions still prompt for confirmation",
+		)
+		.addHelpText(
+			"after",
+			`
+This only removes local TAP state under the resolved data dir. It does not unregister the agent on-chain, notify peers, or update external host config that still points at the same data dir.
+The command also refuses to wipe a directory that contains non-TAP top-level files.
+
+Examples:
+  tap remove --dry-run
+  tap remove --unsafe-wipe-data-dir
+  tap remove --unsafe-wipe-data-dir --yes --data-dir /path/to/agent
+`,
+		)
+		.action(async (cmdOpts: { dryRun?: boolean; unsafeWipeDataDir?: boolean; yes?: boolean }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { removeCommand } = await import("./commands/remove.js");
+			await removeCommand(cmdOpts, opts);
+		});
+
 	// init
 	program
 		.command("init")

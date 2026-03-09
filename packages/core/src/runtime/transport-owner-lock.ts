@@ -118,7 +118,7 @@ export class TransportOwnerLock {
 	}
 }
 
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
 	if (!Number.isInteger(pid) || pid <= 0) {
 		return false;
 	}
