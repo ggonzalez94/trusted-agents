@@ -23,7 +23,7 @@ Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to
 ## Default Loop
 
 1. If the user needs TAP installed from this repo, read `references/install-cli.md`.
-2. If the user is installing TAP in OpenClaw, also read `references/openclaw-plugin-install.md`.
+2. If the user is installing TAP in OpenClaw, defer to `references/openclaw-plugin-install.md`.
 3. Determine runtime mode from `references/runtime-modes.md`.
 4. If the agent is not onboarded, use `/onboard` to initialize, fund, and register it.
 5. Use `/connections` to create or accept a connection.

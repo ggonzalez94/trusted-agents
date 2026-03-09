@@ -11,6 +11,14 @@ Prerequisite:
 
 - If `tap` is not installed yet, read `../references/install-cli.md` first.
 
+## Happy Path
+
+1. `tap init` — create wallet and local config
+2. Ask the user to fund the wallet with USDC on Base (show the wallet address from `tap init` output)
+3. `tap balance` — confirm funding arrived
+4. Ask the user for name, description, and capabilities (see Registration Inputs below)
+5. `tap register` — register on-chain
+
 ## Supported Chains
 
 Always onboard on a mainnet chain. Supported mainnets:
@@ -22,11 +30,31 @@ Do not suggest or use testnets (`base-sepolia`, `taiko-hoodi`) when onboarding u
 
 ## Funding
 
-- Base and Base Sepolia default to EIP-7702 with Circle Paymaster, so TAP uses chain-local USDC for gas on those chains.
-- Other chains use native gas.
-- Base mainnet USDC only if using x402 IPFS upload.
-- No Base USDC is needed when using `--pinata-jwt` or `--uri`.
+On Base (default), the agent only needs **USDC**. No ETH is required — gas is covered by EIP-7702 with Circle Paymaster.
+
+- Other chains (Taiko) use native gas tokens instead.
+- The default IPFS upload method (x402) also pays with Base mainnet USDC — no extra token needed.
+- No USDC is needed when using `--pinata-jwt` or `--uri` for registration upload.
 - In OpenClaw plugin mode, onboarding still happens with the `tap` CLI before the plugin points at that `dataDir`.
+
+## Registration Inputs
+
+Before running `tap register`, ask the user for these inputs:
+
+- **Name**: the agent's display name (freeform, e.g. "TreasuryAgent")
+- **Description**: short phrase describing the agent's purpose (e.g. "Payment and expense agent")
+- **Capabilities**: comma-separated public discovery labels that tell other agents what this one can do
+
+See `../references/capability-map.md` for the recommended capability list.
+
+Example capability sets for common agent archetypes:
+
+| Archetype | Suggested capabilities |
+|---|---|
+| General assistant | `general-chat` |
+| Payment / treasury | `transfer,general-chat` |
+| Research agent | `research,general-chat` |
+| Full-featured | `transfer,research,general-chat` |
 
 ## Commands
 

@@ -21,14 +21,13 @@ Use this skill when working inside OpenClaw and TAP may be installed as a Gatewa
 
 ## Chain Selection
 
-Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to users.
+Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to users unless they explicitely ask for it.
 
 ## Decision Rule
 
-1. Use plugin mode only when `tap_gateway` is available, `tap_gateway` action `status` reports at least one configured identity, and `status.warnings` is empty.
-2. In plugin mode, use `tap_gateway` for TAP status, sync, connect, messaging, grant updates, fund requests, and pending request resolution.
-3. If the plugin is not installed or not configured yet, fall back to the normal `tap` CLI workflow and run `tap message sync` on heartbeat.
-4. Do not run `tap message listen` in OpenClaw shell background jobs as the primary runtime.
+1. In plugin mode, use `tap_gateway` for TAP status, sync, connect, messaging, grant updates, fund requests, and pending request resolution.
+2. If the plugin is not installed or not configured yet, fall back to the normal `tap` CLI workflow and run `tap message sync` on heartbeat.
+3. Do not run `tap message listen` in OpenClaw shell background jobs as the primary runtime.
 
 ## Install From This Repo
 

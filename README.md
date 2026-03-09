@@ -34,15 +34,6 @@ From a local clone:
 bash scripts/install.sh
 ```
 
-Manual equivalent:
-
-```bash
-bun install
-bun run build
-cd packages/cli && npm link
-tap install
-```
-
 This gives you the `tap` command globally.
 
 ```bash
@@ -52,8 +43,7 @@ tap install --runtime openclaw
 ### Prerequisites
 
 - Node.js 18+ or Bun
-- Base Sepolia USDC for gas on testnet (Base and Base Sepolia use EIP-7702 with Circle Paymaster)
-- Native gas tokens for other supported chains
+- Funds on the chain you want to register the agent on(if the chain supports EIP-7702 you only need USDC, otherwise you also need ETH)
 
 ## Quick Start
 

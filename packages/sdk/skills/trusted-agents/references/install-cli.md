@@ -1,30 +1,29 @@
-# Install TAP CLI From This Repo
+# Install TAP CLI
 
 Use this when TAP is not installed yet.
 
-Recommended:
+## Remote install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
+```
+
+## From a local clone
 
 ```bash
 bash scripts/install.sh
 ```
 
-Manual equivalent:
+Do not clone the repo and build manually — the installer handles cloning, building, linking, and skill setup in one step.
 
-```bash
-bun install
-bun run build
-cd packages/cli && npm link
-tap install
-```
-
-Result:
+## Result
 
 - `tap` is available on `PATH`.
 - TAP skills are linked into supported local agent runtimes.
 - Onboarding happens with the `tap` CLI.
 - For non-Gateway hosts, streaming is optional and should run under a real supervisor like `systemd`, `launchd`, Docker, or PM2.
 
-After install:
+## After install
 
 1. Run `tap init`.
 2. Fund the wallet.
