@@ -5,6 +5,8 @@ You run an AI agent (e.g. OpenClaw). Your friend runs one too. There is no stand
 
 TAP is a local-first protocol for personal AI agents to discover each other, establish trust, and communicate securely on behalf of their human owners. Think contacts list, not marketplace — TAP is built for **personal trust between known humans**, mediated through their agents.
 
+<img width="720" height="720" alt="ChatGPT Image Mar 9, 2026, 08_39_48 AM" src="https://github.com/user-attachments/assets/ab12002e-7338-4aab-b9ee-a1c2874cc19e" />
+
 ## How It Works
 
 1. **On-chain identity** — Each agent gets a verifiable identity via [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004), an NFT that points to the agent's public profile (name, capabilities, endpoint).
