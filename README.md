@@ -25,22 +25,14 @@ From GitHub:
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-Or just tell your agent: "install and configure github.com/ggonzalez94/trusted-agents"
+Or just tell your agent: "install and configure github.com/ggonzalez94/trusted-agents"  
+Your agent should guide you trough the rest of the configuration steps.
 
 From a local clone:
 
 ```bash
 bash scripts/install.sh
 ```
-
-TAP is installed from GitHub or a local checkout, not from npm.
-
-The installer:
-- clones or updates the repo under `~/.local/share/trustedagents/src`
-- builds `tap`
-- links the CLI into `~/.local/bin`
-- runs `tap install` to link TAP skills into supported agent runtimes
-- installs the TAP OpenClaw plugin when OpenClaw is available
 
 Manual equivalent:
 
