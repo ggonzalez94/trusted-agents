@@ -53,3 +53,48 @@ Grant fields:
 - `permissions/request-grants`
 
 Use stable scope names and put budgets, assets, time windows, or policy details inside `constraints`.
+
+## Common Grant Templates
+
+### Chat only
+
+```json
+[{ "grantId": "<peer>-chat", "scope": "general-chat" }]
+```
+
+### Chat + research
+
+```json
+[
+  { "grantId": "<peer>-chat", "scope": "general-chat" },
+  { "grantId": "<peer>-research", "scope": "research" }
+]
+```
+
+### USDC weekly budget
+
+```json
+[
+  {
+    "grantId": "<peer>-weekly-usdc",
+    "scope": "transfer/request",
+    "constraints": { "asset": "usdc", "maxAmount": "50", "window": "week" }
+  }
+]
+```
+
+### Native ETH with chain constraint
+
+```json
+[
+  {
+    "grantId": "<peer>-eth-base",
+    "scope": "transfer/request",
+    "constraints": { "asset": "native", "maxAmount": "0.1", "chain": "eip155:8453" }
+  }
+]
+```
+
+### Grant ID convention
+
+Use `<peer>-<purpose>` (e.g. `treasury-weekly-usdc`, `worker-chat`). Keep IDs stable — they are the revocation handle.

@@ -7,6 +7,21 @@ description: Create invites, send async TAP connection requests, and manage dire
 
 Use this skill for invites, connections, and permission grants.
 
+## Contact Lifecycle
+
+States: **pending** → **active**
+
+Two-agent connection dance:
+1. Agent A creates an invite: `tap invite create`
+2. Agent B connects using the invite: `tap connect "<invite-url>" --yes`
+3. Agent B now has a **pending** contact for A
+4. Agent A syncs to receive the request and auto-accept: `tap message sync --yes`
+5. Agent A now has an **active** contact for B (and sends `connection/result` back)
+6. Agent B syncs to receive the result: `tap message sync --yes`
+7. Agent B's contact for A is now **active**
+
+Key: both agents may need `tap message sync --yes` if neither was listening. The `--yes` flag is required for non-interactive AI agents to auto-approve connection requests.
+
 ## Rules
 
 - `tap connect` establishes trust only.

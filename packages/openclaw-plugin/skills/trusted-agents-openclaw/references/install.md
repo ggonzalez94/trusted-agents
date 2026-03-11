@@ -15,7 +15,13 @@ cd packages/cli && npm link
 tap install --runtime openclaw
 ```
 
-Use `--link` for repo installs so OpenClaw loads the plugin directly from this checkout.
+`tap install --runtime openclaw` is the convenience wrapper for the canonical OpenClaw plugin install:
+
+```bash
+openclaw plugins install --link ./packages/openclaw-plugin
+```
+
+OpenClaw uses the plugin-bundled skill tree. This path does not install the generic TAP skill tree into `~/.openclaw/skills`.
 
 After install:
 

@@ -19,7 +19,8 @@ Do not clone the repo and build manually — the installer handles cloning, buil
 ## Result
 
 - `tap` is available on `PATH`.
-- TAP skills are linked into supported local agent runtimes.
+- For `claude` and `codex`, the generic TAP skill tree is linked into the host skill directory.
+- For OpenClaw, use the plugin install flow; `tap install --runtime openclaw` installs the plugin-backed OpenClaw surface and does not link `~/.openclaw/skills/trusted-agents`.
 - Onboarding happens with the `tap` CLI.
 - For non-Gateway hosts, streaming is optional and should run under a real supervisor like `systemd`, `launchd`, Docker, or PM2.
 

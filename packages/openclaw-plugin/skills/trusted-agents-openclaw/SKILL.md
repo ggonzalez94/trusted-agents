@@ -1,27 +1,13 @@
 ---
 name: trusted-agents-openclaw
-description: Operate Trusted Agents Protocol inside OpenClaw when the TAP plugin is installed. Use this skill whenever OpenClaw has the `tap_gateway` tool available, or when the user wants to install TAP from this repo into OpenClaw Gateway, configure TAP identities, check runtime status, reconcile TAP messages, or recover a stopped TAP background runtime.
+description: Runtime adapter for Trusted Agents Protocol inside OpenClaw Gateway. Use this skill when the TAP plugin is installed and the `tap_gateway` tool is available, or when installing/configuring the TAP plugin in OpenClaw.
 ---
 
 # Trusted Agents OpenClaw
 
 Use this skill when working inside OpenClaw and TAP may be installed as a Gateway plugin.
 
-## Mental Model
-
-- Capabilities are public discovery labels in the on-chain registration file. They are hints, not permissions.
-- Connections establish trust only. They do not grant business permissions.
-- Permissions are directional grant sets per contact:
-  - `grantedByMe`: what the peer may ask this agent to do
-  - `grantedByPeer`: what this agent may ask the peer to do
-- Before approving high-impact actions, check grants via `tap permissions show <peer>` and the permissions ledger at `<dataDir>/notes/permissions-ledger.md`.
-- Grant format details: `references/permissions-v1.md`
-- Ledger format details: `references/permissions-ledger-v1.md`
-- Capability-to-scope mapping: `references/capability-map.md`
-
-## Chain Selection
-
-Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to users unless they explicitely ask for it.
+Shared TAP skills cover onboarding, CLI commands, connection lifecycle, grant format details, and permissions. This skill covers OpenClaw plugin runtime specifics only.
 
 ## Decision Rule
 
@@ -32,20 +18,7 @@ Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to
 
 ## Install From This Repo
 
-Recommended:
-
-```bash
-bash scripts/install.sh
-```
-
-Manual equivalent:
-
-```bash
-bun install
-bun run build
-cd packages/cli && npm link
-tap install --runtime openclaw
-```
+See `references/install.md` for full install and configuration steps.
 
 ## Local Teardown
 
@@ -75,7 +48,7 @@ Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `t
 
 ### Fund Requests
 
-- **request_funds**: Ask a peer to send ETH or USDC. Params: `peer` (required), `asset` (`native` or `usdc`), `amount` (required), `chain` (optional CAIP-2 override), `toAddress` (optional — defaults to this agent's address), `note` (optional).
+- **request_funds**: Ask a peer to send ETH or USDC. TAP hard-blocks this action unless the peer has published a matching active `transfer/request` grant to this agent. Params: `peer` (required), `asset` (`native` or `usdc`), `amount` (required), `chain` (optional CAIP-2 override), `toAddress` (optional — defaults to this agent's address), `note` (optional).
 
 ### Pending Approvals
 

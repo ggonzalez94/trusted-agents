@@ -1,24 +1,38 @@
 ---
 name: messaging
-description: Send TAP messages, reconcile missed XMTP traffic, run the listener only when one process owns the identity, review conversations, and handle transfer requests with runtime judgment. Use this skill whenever the user mentions TAP messaging, XMTP listening, heartbeat reconciliation, OpenClaw TAP plugin mode, or transport owner conflicts.
+description: Send TAP messages, reconcile missed XMTP traffic, run the listener only when one process owns the identity, review conversations, and handle transfer requests with runtime judgment. Use this skill whenever the user mentions TAP messaging, XMTP listening, heartbeat reconciliation, or transport owner conflicts.
 ---
 
 # /messaging
 
 Use this skill for agent-to-agent communication after a connection is active and for converging asynchronous connection/results traffic.
 
+## When To Use Sync vs Listen
+
+- **`tap message sync`** — default for AI agents. One-shot reconciliation, safe for episodic or scheduled runtimes. Use this when other processes may also need the identity, or in scheduler-driven setups.
+- **`tap message listen`** — long-lived XMTP stream. Use only when one dedicated daemon can exclusively own the identity for the entire session. Do not use in short-lived scripts or alongside other transport-active processes.
+
 ## Runtime Judgment
 
 - TAP hard-blocks transfer execution unless a matching active transfer grant exists.
-- If the OpenClaw TAP plugin is installed, prefer the `tap_gateway` tool over transport-active CLI commands.
 - Keep only one transport-active CLI process per identity.
 - Most transport-active CLI commands now queue behind an already-running TAP owner for the same `dataDir` instead of failing immediately.
-- Prefer `tap message sync` for scheduler-driven agents, OpenClaw heartbeats, or any setup where the same identity also runs short-lived TAP commands.
-- Use `tap message listen` only when one dedicated long-lived TAP process can own the identity.
 - Before approving a high-impact request, inspect:
   - `tap permissions show <peer>`
   - `<dataDir>/notes/permissions-ledger.md`
-- `--unsafe-approve-actions` skips interactive review and bypasses transfer grant enforcement. Use it only for controlled testing.
+- `--unsafe-approve-actions` skips interactive review **and** bypasses transfer grant enforcement. Use it only for controlled testing — never in production.
+
+## Transfer Request Lifecycle
+
+Prerequisites:
+- An **active** connection with the peer
+- The peer has published a `transfer/request` grant to this agent (visible in `grantedByPeer`)
+
+Flow:
+1. Send: `tap message request-funds <peer> --asset usdc --amount 5`
+2. TAP checks for a matching active transfer grant from the peer — hard-blocks if none exists
+3. The peer receives the request via sync or listener and decides to approve or reject
+4. The `action/result` arrives on this agent's next sync or via the listener
 
 ## Commands
 

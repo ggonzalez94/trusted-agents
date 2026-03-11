@@ -7,7 +7,11 @@ description: Initialize a TAP agent wallet, fund it, register it on-chain, and u
 
 Use this skill to create or update a TAP agent identity.
 
-Prerequisite:
+## Already Onboarded?
+
+Run `tap config show` first. If the output contains `agent_id` >= 0, the agent is already registered — skip to /connections.
+
+## Prerequisites
 
 - If `tap` is not installed yet, read `../references/install-cli.md` first.
 
@@ -18,6 +22,11 @@ Prerequisite:
 3. `tap balance` — confirm funding arrived
 4. Ask the user for name, description, and capabilities (see Registration Inputs below)
 5. `tap register` — register on-chain
+
+## State Transitions
+
+- After `tap init`: `config.yaml` exists with `agent_id: -1`, keyfile created. Most commands will fail until registration.
+- After `tap register`: uploads registration file to IPFS (Base USDC via x402), registers ERC-8004 on-chain, auto-updates `agent_id` in config. The agent is now fully onboarded.
 
 ## Supported Chains
 
