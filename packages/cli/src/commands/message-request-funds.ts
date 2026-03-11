@@ -5,6 +5,12 @@ import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
+import {
+	isQueuedTapCommandPending,
+	queuedTapCommandPendingFields,
+	queuedTapCommandResultFields,
+	runOrQueueTapCommand,
+} from "../lib/queued-commands.js";
 import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -36,18 +42,51 @@ export async function messageRequestFundsCommand(
 
 		verbose(`Requesting ${cmdOpts.amount} ${asset.toUpperCase()} from ${peer}...`, opts);
 
-		const result = await service.requestFunds({
+		const requestInput = {
 			peer,
 			asset,
 			amount: cmdOpts.amount,
 			chain,
 			toAddress,
 			note: cmdOpts.note,
-		});
+		};
+		const outcome = await runOrQueueTapCommand(
+			config.dataDir,
+			{
+				type: "request-funds",
+				payload: {
+					input: requestInput,
+				},
+			},
+			async () => await service.requestFunds(requestInput),
+			{
+				requestedBy: "tap:request-funds",
+			},
+		);
+
+		if (isQueuedTapCommandPending(outcome)) {
+			success(
+				{
+					...queuedTapCommandPendingFields(outcome),
+					peer,
+					asset,
+					amount: cmdOpts.amount,
+					chain,
+					scope: "transfer/request",
+					to_address: toAddress,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		const result = outcome.result;
 
 		success(
 			{
 				requested: true,
+				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				asset: result.asset,

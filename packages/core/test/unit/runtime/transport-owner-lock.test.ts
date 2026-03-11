@@ -88,4 +88,27 @@ describe("TransportOwnerLock", () => {
 			}),
 		);
 	});
+
+	it("reclaims copied lock files that point at a different data dir", async () => {
+		const originalDir = await createDataDir();
+		const copiedDir = await createDataDir();
+		const original = new TransportOwnerLock(originalDir, "tap:original");
+
+		await original.acquire();
+		await writeFile(
+			join(copiedDir, ".transport.lock"),
+			await readFile(join(originalDir, ".transport.lock"), "utf-8"),
+			"utf-8",
+		);
+
+		const replacement = new TransportOwnerLock(copiedDir, "tap:copied");
+		await replacement.acquire();
+
+		expect(await replacement.inspect()).toEqual(
+			expect.objectContaining({
+				pid: process.pid,
+				owner: "tap:copied",
+			}),
+		);
+	});
 });

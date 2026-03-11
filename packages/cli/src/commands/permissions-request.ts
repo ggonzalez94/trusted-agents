@@ -3,6 +3,12 @@ import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
 import { error, success, verbose } from "../lib/output.js";
+import {
+	isQueuedTapCommandPending,
+	queuedTapCommandPendingFields,
+	queuedTapCommandResultFields,
+	runOrQueueTapCommand,
+} from "../lib/queued-commands.js";
 import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -22,11 +28,42 @@ export async function permissionsRequestCommand(
 		const service = createCliTapMessagingService(ctx, opts, {
 			ownerLabel: "tap:permissions-request",
 		});
-		const result = await service.requestGrantSet(peer, grantSet, cmdOpts?.note);
+		const outcome = await runOrQueueTapCommand(
+			config.dataDir,
+			{
+				type: "request-grant-set",
+				payload: {
+					peer,
+					grantSet,
+					note: cmdOpts?.note,
+				},
+			},
+			async () => await service.requestGrantSet(peer, grantSet, cmdOpts?.note),
+			{
+				requestedBy: "tap:permissions-request",
+			},
+		);
+
+		if (isQueuedTapCommandPending(outcome)) {
+			success(
+				{
+					...queuedTapCommandPendingFields(outcome),
+					peer,
+					grant_count: grantSet.grants.length,
+					grants: grantSet.grants,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		const result = outcome.result;
 
 		success(
 			{
 				requested: true,
+				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				grant_count: result.grantCount,

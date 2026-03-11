@@ -1,4 +1,4 @@
-import { open, readFile, rm } from "node:fs/promises";
+import { open, readFile, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveDataDir } from "../common/index.js";
 
@@ -6,6 +6,7 @@ export interface TransportOwnerInfo {
 	pid: number;
 	owner: string;
 	acquiredAt: string;
+	dataDirRealpath?: string;
 }
 
 export class TransportOwnershipError extends Error {
@@ -20,13 +21,16 @@ export class TransportOwnershipError extends Error {
 
 export class TransportOwnerLock {
 	private readonly lockPath: string;
+	private readonly dataDirRealpathPromise: Promise<string>;
 	private held = false;
 
 	constructor(
 		dataDir: string,
 		private readonly owner: string,
 	) {
-		this.lockPath = join(resolveDataDir(dataDir), ".transport.lock");
+		const resolvedDataDir = resolveDataDir(dataDir);
+		this.lockPath = join(resolvedDataDir, ".transport.lock");
+		this.dataDirRealpathPromise = realpath(resolvedDataDir).catch(() => resolvedDataDir);
 	}
 
 	async acquire(): Promise<void> {
@@ -34,7 +38,8 @@ export class TransportOwnerLock {
 			return;
 		}
 
-		for (let attempt = 0; attempt < 2; attempt += 1) {
+		const dataDirRealpath = await this.dataDirRealpathPromise;
+		for (let attempt = 0; attempt < 3; attempt += 1) {
 			try {
 				const handle = await open(this.lockPath, "wx", 0o600);
 				try {
@@ -42,6 +47,7 @@ export class TransportOwnerLock {
 						pid: process.pid,
 						owner: this.owner,
 						acquiredAt: new Date().toISOString(),
+						dataDirRealpath,
 					};
 					await handle.writeFile(JSON.stringify(payload, null, "\t"), "utf-8");
 					this.held = true;
@@ -59,6 +65,10 @@ export class TransportOwnerLock {
 				}
 
 				const currentOwner = await this.readOwner();
+				if (currentOwner?.dataDirRealpath && currentOwner.dataDirRealpath !== dataDirRealpath) {
+					await rm(this.lockPath, { force: true });
+					continue;
+				}
 				if (currentOwner && isProcessAlive(currentOwner.pid)) {
 					throw new TransportOwnershipError(
 						`TAP transport is already owned by ${currentOwner.owner} (pid ${currentOwner.pid}) for this data dir`,
@@ -67,6 +77,9 @@ export class TransportOwnerLock {
 				}
 
 				await rm(this.lockPath, { force: true });
+				if (attempt < 2) {
+					await new Promise((resolve) => setTimeout(resolve, 25));
+				}
 			}
 		}
 
@@ -102,6 +115,8 @@ export class TransportOwnerLock {
 					pid: parsed.pid,
 					owner: parsed.owner,
 					acquiredAt: parsed.acquiredAt,
+					dataDirRealpath:
+						typeof parsed.dataDirRealpath === "string" ? parsed.dataDirRealpath : undefined,
 				};
 			}
 			return null;

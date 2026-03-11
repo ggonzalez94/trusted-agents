@@ -3,6 +3,12 @@ import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
+import {
+	isQueuedTapCommandPending,
+	queuedTapCommandPendingFields,
+	queuedTapCommandResultFields,
+	runOrQueueTapCommand,
+} from "../lib/queued-commands.js";
 import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -50,15 +56,42 @@ export async function permissionsRevokeCommand(
 		const service = createCliTapMessagingService(ctx, opts, {
 			ownerLabel: "tap:permissions-revoke",
 		});
-		const result = await service.publishGrantSet(
-			peer,
-			grantSet,
-			cmdOpts?.note ?? `Revoked ${grantId}`,
+		const note = cmdOpts?.note ?? `Revoked ${grantId}`;
+		const outcome = await runOrQueueTapCommand(
+			config.dataDir,
+			{
+				type: "publish-grant-set",
+				payload: {
+					peer,
+					grantSet,
+					note,
+				},
+			},
+			async () => await service.publishGrantSet(peer, grantSet, note),
+			{
+				requestedBy: "tap:permissions-revoke",
+			},
 		);
+
+		if (isQueuedTapCommandPending(outcome)) {
+			success(
+				{
+					...queuedTapCommandPendingFields(outcome),
+					peer: contact.peerDisplayName,
+					grant: match,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		const result = outcome.result;
 
 		success(
 			{
 				revoked: true,
+				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				grant: match,

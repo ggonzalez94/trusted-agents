@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { buildChainPublicClient } from "../common/index.js";
 import type { ChainConfig, TrustedAgentsConfig } from "../config/types.js";
 import { FileConversationLogger, type IConversationLogger } from "../conversation/logger.js";
@@ -49,6 +50,7 @@ export function buildDefaultTapRuntimeContext(
 				privateKey: config.privateKey,
 				chain: config.chain,
 				env: config.xmtpEnv,
+				dbPath: join(config.dataDir, "xmtp"),
 				dbEncryptionKey: config.xmtpDbEncryptionKey,
 				agentResolver: resolver,
 				resolveCacheTtlMs: config.resolveCacheTtlMs,

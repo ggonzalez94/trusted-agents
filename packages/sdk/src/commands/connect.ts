@@ -1,18 +1,12 @@
 import {
+	FileConversationLogger,
 	FileRequestJournal,
 	FileTrustStore,
-	buildConnectionRequest,
-	caip2ToChainId,
-	createEmptyPermissionState,
-	generateConnectionId,
-	generateNonce,
-	nowISO,
+	TapMessagingService,
 	parseInviteUrl,
 	verifyInvite,
 } from "trusted-agents-core";
 import type {
-	AgentIdentifier,
-	ConnectionRequestParams,
 	IAgentResolver,
 	PermissionGrantSet,
 	TransportProvider,
@@ -51,15 +45,7 @@ export interface ConnectResult {
 
 export async function executeConnect(options: ConnectCommandOptions): Promise<ConnectResult> {
 	try {
-		const { inviteUrl, agentId, chain, dataDir, resolver, transport } = options;
-		const chainId = caip2ToChainId(chain);
-		if (chainId === null) {
-			return {
-				success: false,
-				error: `Invalid local chain format: ${chain}`,
-			};
-		}
-
+		const { inviteUrl, agentId, chain, dataDir, resolver, transport, privateKey } = options;
 		const invite = parseInviteUrl(inviteUrl);
 		const peerAgent = await resolver.resolve(invite.agentId, invite.chain);
 
@@ -90,85 +76,33 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 			}
 		}
 
-		const trustStore = new FileTrustStore(dataDir);
-		const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-		if (existing?.status === "active") {
-			return {
-				success: true,
-				connectionId: existing.connectionId,
-				peerName: existing.peerDisplayName,
-				status: "active",
-			};
-		}
-
-		const from: AgentIdentifier = { agentId, chain };
-		const to: AgentIdentifier = { agentId: invite.agentId, chain: invite.chain };
-		const connectionId = existing?.connectionId ?? generateConnectionId();
-		const requestNonce = generateNonce();
-		const requestedAt = nowISO();
-		const requestParams: ConnectionRequestParams = {
-			from,
-			to,
-			connectionId,
-			...(options.requestedGrants || options.offeredGrants
-				? {
-						permissionIntent: {
-							...(options.requestedGrants
-								? { requestedGrants: options.requestedGrants.grants }
-								: {}),
-							...(options.offeredGrants ? { offeredGrants: options.offeredGrants.grants } : {}),
-						},
-					}
-				: {}),
-			nonce: requestNonce,
-			protocolVersion: "1.0",
-			timestamp: requestedAt,
-		};
-
-		const rpcRequest = buildConnectionRequest(requestParams);
-		const requestId = String(rpcRequest.id);
-		const xmtpAddress = peerAgent.xmtpEndpoint ?? peerAgent.agentAddress;
-		const receipt = await transport.send(peerAgent.agentId, rpcRequest, {
-			peerAddress: xmtpAddress,
-		});
-
-		const nextContact = {
-			connectionId,
-			peerAgentId: peerAgent.agentId,
-			peerChain: peerAgent.chain,
-			peerOwnerAddress: peerAgent.ownerAddress,
-			peerDisplayName: peerAgent.registrationFile.name,
-			peerAgentAddress: peerAgent.agentAddress,
-			permissions: existing?.permissions ?? createEmptyPermissionState(requestedAt),
-			establishedAt: existing?.establishedAt ?? requestedAt,
-			lastContactAt: requestedAt,
-			status: "pending" as const,
-			pending: {
-				direction: "outbound" as const,
-				requestId,
-				requestNonce,
-				requestedAt,
-				inviteNonce: invite.nonce,
-				initialRequestedGrants: options.requestedGrants,
-				initialOfferedGrants: options.offeredGrants,
+		const service = new TapMessagingService(
+			{
+				config: {
+					agentId,
+					chain,
+					privateKey,
+					dataDir,
+					chains: {},
+					inviteExpirySeconds: 86_400,
+					resolveCacheTtlMs: 60_000,
+					resolveCacheMaxEntries: 128,
+					xmtpEnv: "production",
+				},
+				trustStore: new FileTrustStore(dataDir),
+				resolver,
+				conversationLogger: new FileConversationLogger(dataDir),
+				requestJournal: new FileRequestJournal(dataDir),
+				transport,
 			},
-		};
-
-		if (existing) {
-			await trustStore.updateContact(existing.connectionId, nextContact);
-		} else {
-			await trustStore.addContact(nextContact);
-		}
-
-		const journal = new FileRequestJournal(dataDir);
-		await journal.putOutbound({
-			requestId,
-			requestKey: `outbound:${rpcRequest.method}:${requestId}`,
-			direction: "outbound",
-			kind: "request",
-			method: rpcRequest.method,
-			peerAgentId: peerAgent.agentId,
-			status: "acked",
+			{
+				ownerLabel: "tap:sdk-connect",
+			},
+		);
+		const result = await service.connect({
+			inviteUrl,
+			requestedGrants: options.requestedGrants,
+			offeredGrants: options.offeredGrants,
 		});
 
 		if (options.notify) {
@@ -179,10 +113,10 @@ export async function executeConnect(options: ConnectCommandOptions): Promise<Co
 
 		return {
 			success: true,
-			connectionId,
-			peerName: peerAgent.registrationFile.name,
-			status: "pending",
-			receiptStatus: receipt.status,
+			connectionId: result.connectionId,
+			peerName: result.peerName,
+			status: result.status,
+			receiptStatus: result.receipt?.status,
 		};
 	} catch (error) {
 		return {

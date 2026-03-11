@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import type {
@@ -25,6 +28,17 @@ interface MockMessage {
 	senderInboxId: string;
 	content: unknown;
 	conversationId?: string;
+	id?: string;
+	sentAtNs?: bigint;
+}
+
+interface StoredMockMessage {
+	senderInboxId: string;
+	content: unknown;
+	conversationId: string;
+	id: string;
+	sentAtNs: bigint;
+	sentAt: Date;
 }
 
 function createMockConversation() {
@@ -42,11 +56,56 @@ function createMockClient(opts?: { inboxId?: string }) {
 	const messageListeners: Array<(msg: MockMessage) => void> = [];
 	const mockConversation = createMockConversation();
 	const inboxIdentifiers = new Map<string, Array<{ identifier: string; identifierKind: number }>>();
+	const streamOptions: unknown[] = [];
+	const conversationMessages = new Map<string, StoredMockMessage[]>();
+
+	const normalizeMessage = (message: MockMessage): StoredMockMessage => {
+		const conversationId = message.conversationId ?? "dm-default";
+		const sentAtNs = message.sentAtNs ?? BigInt(Date.now()) * 1_000_000n;
+		return {
+			senderInboxId: message.senderInboxId,
+			content: message.content,
+			conversationId,
+			id: message.id ?? `${conversationId}-${String(sentAtNs)}`,
+			sentAtNs,
+			sentAt: new Date(Number(sentAtNs / 1_000_000n)),
+		};
+	};
+
+	const readConversationMessages = (
+		conversationId: string,
+		options?: { sentAfterNs?: bigint; direction?: number },
+	) => {
+		const messages = [...(conversationMessages.get(conversationId) ?? [])].filter((message) => {
+			if (options?.sentAfterNs !== undefined && message.sentAtNs <= options.sentAfterNs) {
+				return false;
+			}
+			return true;
+		});
+		messages.sort((left, right) =>
+			options?.direction === 1
+				? Number(right.sentAtNs - left.sentAtNs)
+				: Number(left.sentAtNs - right.sentAtNs),
+		);
+		return messages;
+	};
+
+	const createDmRecord = (conversationId: string) => ({
+		id: conversationId,
+		messages: vi.fn(async (options?: { sentAfterNs?: bigint; direction?: number }) =>
+			readConversationMessages(conversationId, options),
+		),
+		lastMessage: vi.fn(async () => {
+			const messages = conversationMessages.get(conversationId) ?? [];
+			return messages[messages.length - 1];
+		}),
+	});
 
 	const client = {
 		inboxId: clientInboxId,
 		conversations: {
-			streamAllDmMessages: vi.fn(async () => {
+			streamAllDmMessages: vi.fn(async (options?: unknown) => {
+				streamOptions.push(options ?? null);
 				const queue: MockMessage[] = [];
 				let resolver: ((value: IteratorResult<MockMessage>) => void) | null = null;
 				let done = false;
@@ -85,6 +144,12 @@ function createMockClient(opts?: { inboxId?: string }) {
 					},
 				};
 			}),
+			syncAll: vi.fn(async () => ({ numEligible: 0, numSynced: 0 })),
+			listDms: vi.fn(() =>
+				[...conversationMessages.keys()]
+					.sort()
+					.map((conversationId) => createDmRecord(conversationId)),
+			),
 			createDm: vi.fn(async (_inboxId: string) => mockConversation),
 		},
 		fetchInboxIdByIdentifier: vi.fn(async (identifier: { identifier: string }) => {
@@ -116,11 +181,20 @@ function createMockClient(opts?: { inboxId?: string }) {
 		) => {
 			inboxIdentifiers.set(inboxId, identifiers);
 		},
+		setConversationMessages: (conversationId: string, messages: MockMessage[]) => {
+			conversationMessages.set(
+				conversationId,
+				messages
+					.map(normalizeMessage)
+					.sort((left, right) => Number(left.sentAtNs - right.sentAtNs)),
+			);
+		},
 		pushMessage: (msg: MockMessage) => {
 			for (const listener of messageListeners) {
 				listener(msg);
 			}
 		},
+		streamOptions,
 	};
 }
 
@@ -167,10 +241,18 @@ describe("XmtpTransport", () => {
 	let transport: XmtpTransport;
 	let trustStore: ITrustStore;
 	let mockSetup: ReturnType<typeof createMockClient>;
+	let testDir: string;
 
-	beforeEach(() => {
+	beforeEach(async () => {
+		testDir = await mkdtemp(join(tmpdir(), "xmtp-transport-unit-"));
 		trustStore = createMockTrustStore([BOB_CONTACT]);
-		transport = new XmtpTransport(TEST_CONFIG, trustStore);
+		transport = new XmtpTransport(
+			{
+				...TEST_CONFIG,
+				dbPath: join(testDir, "xmtp"),
+			},
+			trustStore,
+		);
 		mockSetup = createMockClient();
 	});
 
@@ -180,6 +262,7 @@ describe("XmtpTransport", () => {
 		} catch {
 			// already stopped
 		}
+		await rm(testDir, { recursive: true, force: true });
 	});
 
 	function injectMockClient(t: XmtpTransport = transport) {
@@ -660,6 +743,142 @@ describe("XmtpTransport", () => {
 		});
 	});
 
+	describe("reconcile", () => {
+		it("baselines existing DM history on first reconcile and only processes later messages", async () => {
+			injectMockClient();
+
+			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
+			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
+
+			mockSetup.setConversationMessages("dm-1", [
+				{
+					id: "old-msg",
+					sentAtNs: 1_000n,
+					senderInboxId: bobInboxId,
+					conversationId: "dm-1",
+					content: JSON.stringify({
+						jsonrpc: "2.0",
+						method: "message/send",
+						id: "old-msg",
+					}),
+				},
+			]);
+
+			await expect(transport.reconcile()).resolves.toEqual({
+				synced: true,
+				processed: 0,
+			});
+			expect(callback).not.toHaveBeenCalled();
+
+			mockSetup.setConversationMessages("dm-1", [
+				{
+					id: "old-msg",
+					sentAtNs: 1_000n,
+					senderInboxId: bobInboxId,
+					conversationId: "dm-1",
+					content: JSON.stringify({
+						jsonrpc: "2.0",
+						method: "message/send",
+						id: "old-msg",
+					}),
+				},
+				{
+					id: "new-msg",
+					sentAtNs: 2_000n,
+					senderInboxId: bobInboxId,
+					conversationId: "dm-1",
+					content: JSON.stringify({
+						jsonrpc: "2.0",
+						method: "message/send",
+						id: "new-msg",
+					}),
+				},
+			]);
+
+			await expect(transport.reconcile()).resolves.toEqual({
+				synced: true,
+				processed: 1,
+			});
+			expect(callback).toHaveBeenCalledTimes(1);
+			expect(callback).toHaveBeenCalledWith({
+				from: 42,
+				senderInboxId: bobInboxId,
+				message: {
+					jsonrpc: "2.0",
+					method: "message/send",
+					id: "new-msg",
+				},
+			});
+		});
+
+		it("processes the first message from conversations created after the baseline", async () => {
+			injectMockClient();
+
+			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
+			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
+
+			mockSetup.setConversationMessages("dm-existing", [
+				{
+					id: "existing-msg",
+					sentAtNs: 1_000n,
+					senderInboxId: bobInboxId,
+					conversationId: "dm-existing",
+					content: JSON.stringify({
+						jsonrpc: "2.0",
+						method: "message/send",
+						id: "existing-msg",
+					}),
+				},
+			]);
+
+			await transport.reconcile();
+			expect(callback).not.toHaveBeenCalled();
+
+			mockSetup.setConversationMessages("dm-new", [
+				{
+					id: "first-msg",
+					sentAtNs: 2_000n,
+					senderInboxId: bobInboxId,
+					conversationId: "dm-new",
+					content: JSON.stringify({
+						jsonrpc: "2.0",
+						method: "message/send",
+						id: "first-msg",
+					}),
+				},
+			]);
+
+			await expect(transport.reconcile()).resolves.toEqual({
+				synced: true,
+				processed: 1,
+			});
+			expect(callback).toHaveBeenCalledTimes(1);
+			expect(callback).toHaveBeenCalledWith({
+				from: 42,
+				senderInboxId: bobInboxId,
+				message: {
+					jsonrpc: "2.0",
+					method: "message/send",
+					id: "first-msg",
+				},
+			});
+		});
+	});
+
 	describe("stop", () => {
 		it("should reject all pending requests on stop", async () => {
 			injectMockClient();
@@ -697,6 +916,20 @@ describe("XmtpTransport", () => {
 			const callback = vi.fn();
 			transport.setHandlers({ onRequest: callback });
 			expect(internals(transport).handlers.onRequest).toBe(callback);
+		});
+	});
+
+	describe("streaming", () => {
+		it("starts the DM stream without an implicit sync", async () => {
+			injectMockClient();
+
+			const listenPromise = internals(transport).listenForMessages();
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(mockSetup.client.conversations.streamAllDmMessages).toHaveBeenCalledTimes(1);
+			await transport.stop();
+			await listenPromise;
+
+			expect(mockSetup.streamOptions).toEqual([{ disableSync: true }]);
 		});
 	});
 });

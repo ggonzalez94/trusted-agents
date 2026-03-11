@@ -19,6 +19,17 @@ export {
 	type RequestJournalStatus,
 } from "./request-journal.js";
 export {
+	FileTapCommandOutbox,
+	type ClaimNextJobOptions,
+	type ProcessingTapCommandJob,
+	type RecoverOutboxOptions,
+	type TapCommandJob,
+	type TapCommandJobResult,
+	type TapCommandJobResultPayload,
+	type TapCommandJobType,
+	type TapCommandOutboxStats,
+} from "./command-outbox.js";
+export {
 	buildDefaultTapRuntimeContext,
 	type BuildTapRuntimeContextOptions,
 	type TapRuntimeContext,

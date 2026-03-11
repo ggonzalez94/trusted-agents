@@ -36,6 +36,7 @@ export interface IRequestJournal {
 		entry: Omit<RequestJournalEntry, "createdAt" | "updatedAt">,
 	): Promise<RequestJournalEntry>;
 	getByRequestId(requestId: string): Promise<RequestJournalEntry | null>;
+	delete(requestId: string): Promise<void>;
 	updateStatus(requestId: string, status: RequestJournalStatus): Promise<void>;
 	updateMetadata(requestId: string, metadata: RequestJournalMetadata | undefined): Promise<void>;
 	listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
@@ -106,6 +107,17 @@ export class FileRequestJournal implements IRequestJournal {
 	async getByRequestId(requestId: string): Promise<RequestJournalEntry | null> {
 		const file = await this.load();
 		return file.entries.find((entry) => entry.requestId === requestId) ?? null;
+	}
+
+	async delete(requestId: string): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const file = await this.load();
+			const filtered = file.entries.filter((entry) => entry.requestId !== requestId);
+			if (filtered.length === file.entries.length) {
+				return;
+			}
+			await this.save({ entries: filtered });
+		});
 	}
 
 	async updateStatus(requestId: string, status: RequestJournalStatus): Promise<void> {

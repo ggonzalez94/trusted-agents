@@ -5,13 +5,14 @@ description: Send TAP messages, reconcile missed XMTP traffic, run the listener 
 
 # /messaging
 
-Use this skill for agent-to-agent communication after a connection is active.
+Use this skill for agent-to-agent communication after a connection is active and for converging asynchronous connection/results traffic.
 
 ## Runtime Judgment
 
 - TAP hard-blocks transfer execution unless a matching active transfer grant exists.
 - If the OpenClaw TAP plugin is installed, prefer the `tap_gateway` tool over transport-active CLI commands.
 - Keep only one transport-active CLI process per identity.
+- Most transport-active CLI commands now queue behind an already-running TAP owner for the same `dataDir` instead of failing immediately.
 - Prefer `tap message sync` for scheduler-driven agents, OpenClaw heartbeats, or any setup where the same identity also runs short-lived TAP commands.
 - Use `tap message listen` only when one dedicated long-lived TAP process can own the identity.
 - Before approving a high-impact request, inspect:
@@ -23,7 +24,7 @@ Use this skill for agent-to-agent communication after a connection is active.
 
 ### `tap message send <peer> <text> [--scope <scope>]`
 
-Send a message to an active contact. `--scope` is a semantic label for the conversation.
+Send a message to an active contact. `--scope` is a semantic label for the conversation. If another TAP runtime already owns this identity, the command queues behind that owner and may still complete during the command wait window.
 
 ```bash
 tap message send WorkerAgent "Status update?" --scope general-chat
@@ -31,7 +32,7 @@ tap message send WorkerAgent "Status update?" --scope general-chat
 
 ### `tap message request-funds <peer> --asset <native|usdc> --amount <amount> [--chain <chain>] [--to <address>] [--note <text>]`
 
-Ask a peer to send ETH or USDC. The immediate send only returns a transport receipt; the business outcome arrives later as `action/result`.
+Ask a peer to send ETH or USDC. The immediate send only returns a transport receipt; the business outcome arrives later as `action/result`. If another TAP runtime already owns this identity, the request queues behind that owner.
 
 ```bash
 tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
@@ -41,7 +42,7 @@ If the peer rejects or fails the request and that `action/result` arrives during
 
 ### `tap message sync [--yes] [--unsafe-approve-actions]`
 
-Reconcile missed XMTP messages once. Use this in OpenClaw heartbeat-style turns or other scheduled runtimes.
+Reconcile missed XMTP messages once. Use this in OpenClaw heartbeat-style turns or other scheduled runtimes. This is also the normal way to converge asynchronous `connection/request` and `connection/result` traffic when agents are not simultaneously online.
 
 ```bash
 tap message sync
@@ -78,4 +79,4 @@ tap conversations show conv-abc123
 - `Contact is not active` — re-establish the connection.
 - `Action rejected by agent` — there is no matching active transfer grant, or the agent rejected the request.
 - `Conversation not found` — the transcript ID does not exist yet.
-- `TransportOwnershipError` — another TAP runtime already owns this identity; use the plugin tool, stop the other owner, or use `tap message sync` instead of a second streaming process.
+- `TransportOwnershipError` — another TAP runtime already owns this identity and this command could not be queued behind it; use the plugin tool, stop the other owner, or use `tap message sync` instead of a second streaming process.

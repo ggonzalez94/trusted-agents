@@ -115,5 +115,5 @@ tap identity resolve-self
 - `agent_id` missing or `< 0` — run `/onboard` and register first.
 - `Invalid chain format` — use a CLI chain alias or a CAIP-2 chain ID.
 - `Agent not found on-chain` — the agent is not registered on the selected chain.
-- `TransportOwnershipError` — another TAP runtime already owns that identity; use the plugin tool, stop the other owner, or fall back to `tap message sync`.
+- `TransportOwnershipError` — another TAP runtime already owns that identity. Most transport-active commands now queue behind that owner automatically; if one still errors, use the plugin tool, stop the other owner, or fall back to `tap message sync`.
 - `tap remove` blocked by a live transport owner lock — stop the active TAP runtime first; the command will not bypass a running owner.

@@ -1,7 +1,9 @@
 import { parseEther, parseUnits } from "viem";
 import {
+	AsyncMutex,
 	PermissionError,
 	TransportError,
+	TrustedAgentError,
 	ValidationError,
 	caip2ToChainId,
 	generateConnectionId,
@@ -10,6 +12,7 @@ import {
 } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
 import {
+	FilePendingInviteStore,
 	buildConnectionRequest,
 	buildConnectionResult,
 	buildPermissionsUpdate,
@@ -59,6 +62,11 @@ import {
 	parseTransferActionResponse,
 } from "./actions.js";
 import { getUsdcAsset } from "./assets.js";
+import {
+	FileTapCommandOutbox,
+	type ProcessingTapCommandJob,
+	type TapCommandJobResultPayload,
+} from "./command-outbox.js";
 import type { TapRuntimeContext } from "./default-context.js";
 import {
 	findActiveGrantsByScope,
@@ -88,7 +96,12 @@ import {
 } from "./transport-owner-lock.js";
 
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
+const CONNECT_RECEIPT_TIMEOUT_MS = 5_000;
 const OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS = 15_000;
+const OUTBOX_POLL_INTERVAL_MS = 1_000;
+const OUTBOX_RESULT_RETENTION_MS = 60 * 60 * 1000;
+const OUTBOX_RESULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const OUTBOX_STALE_LEASE_MS = 60_000;
 
 export interface TapConnectionApprovalContext {
 	requestId: string;
@@ -157,6 +170,10 @@ export interface TapServiceOptions {
 	autoApproveConnections?: boolean;
 	unsafeAutoApproveActions?: boolean;
 	ownerLabel?: string;
+	commandOutbox?: FileTapCommandOutbox;
+	outboxPollIntervalMs?: number;
+	outboxResultRetentionMs?: number;
+	outboxStaleLeaseMs?: number;
 	hooks?: TapServiceHooks;
 }
 
@@ -231,7 +248,14 @@ export class TapMessagingService {
 	private readonly hooks: TapServiceHooks;
 	private readonly autoApproveConnections: boolean;
 	private readonly unsafeAutoApproveActions: boolean;
+	private readonly ownerLabel: string;
 	private readonly ownerLock: TransportOwnerLock;
+	private readonly pendingInviteStore: FilePendingInviteStore;
+	private readonly executionMutex = new AsyncMutex();
+	private readonly commandOutbox: FileTapCommandOutbox;
+	private readonly outboxPollIntervalMs: number;
+	private readonly outboxResultRetentionMs: number;
+	private readonly outboxStaleLeaseMs: number;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
 	private readonly decisionOverrides = {
@@ -242,16 +266,23 @@ export class TapMessagingService {
 	private readonly handlers: TransportHandlers;
 	private running = false;
 	private lastSyncAt: string | undefined;
+	private lastOutboxCleanupAt = 0;
+	private outboxPoller: ReturnType<typeof setInterval> | null = null;
+	private outboxPollInFlight = false;
+	private transportSessionReentryDepth = 0;
 
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
 		this.context = context;
 		this.hooks = options.hooks ?? {};
 		this.autoApproveConnections = options.autoApproveConnections ?? false;
 		this.unsafeAutoApproveActions = options.unsafeAutoApproveActions ?? false;
-		this.ownerLock = new TransportOwnerLock(
-			context.config.dataDir,
-			options.ownerLabel ?? `tap:${process.pid}`,
-		);
+		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
+		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
+		this.pendingInviteStore = new FilePendingInviteStore(context.config.dataDir);
+		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
+		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
+		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
+		this.outboxStaleLeaseMs = options.outboxStaleLeaseMs ?? OUTBOX_STALE_LEASE_MS;
 		this.handlers = {
 			onRequest: async (envelope) => await this.onRequest(envelope),
 			onResult: async (envelope) => await this.onResult(envelope),
@@ -272,8 +303,10 @@ export class TapMessagingService {
 			this.context.transport.setHandlers(this.handlers);
 			await this.context.transport.start?.();
 			this.running = true;
-			await this.runReconcile();
+			await this.executionMutex.runExclusive(async () => await this.runMaintenanceCycle(true));
+			this.installOutboxPoller();
 		} catch (error) {
+			this.clearOutboxPoller();
 			this.running = false;
 			await this.ownerLock.release().catch(() => {});
 			throw error;
@@ -286,6 +319,7 @@ export class TapMessagingService {
 		}
 
 		try {
+			this.clearOutboxPoller();
 			await this.drain();
 			await this.context.transport.stop?.();
 		} finally {
@@ -295,8 +329,16 @@ export class TapMessagingService {
 	}
 
 	async syncOnce(): Promise<TapSyncReport> {
-		const processed = await this.withTransportSession(async () => await this.runReconcile());
+		const processed = await this.executionMutex.runExclusive(
+			async () => await this.withTransportSession(async () => await this.runMaintenanceCycle(true)),
+		);
 		return await this.buildSyncReport(processed);
+	}
+
+	async processOutboxOnce(): Promise<number> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.withTransportSession(async () => await this.processOutboxInternal()),
+		);
 	}
 
 	async getStatus(): Promise<TapServiceStatus> {
@@ -349,6 +391,14 @@ export class TapMessagingService {
 	}
 
 	async connect(params: {
+		inviteUrl: string;
+		requestedGrants?: PermissionGrantSet;
+		offeredGrants?: PermissionGrantSet;
+	}): Promise<TapConnectResult> {
+		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
+	}
+
+	private async connectInternal(params: {
 		inviteUrl: string;
 		requestedGrants?: PermissionGrantSet;
 		offeredGrants?: PermissionGrantSet;
@@ -408,16 +458,13 @@ export class TapMessagingService {
 						}
 					: {}),
 				nonce: requestNonce,
+				inviteNonce: invite.nonce,
 				protocolVersion: "1.0",
 				timestamp: requestedAt,
 			};
 
 			const rpcRequest = buildConnectionRequest(requestParams);
 			const requestId = String(rpcRequest.id);
-			const receipt = await transport.send(peerAgent.agentId, rpcRequest, {
-				peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
-			});
-
 			const nextContact = {
 				connectionId,
 				peerAgentId: peerAgent.agentId,
@@ -453,14 +500,39 @@ export class TapMessagingService {
 				kind: "request",
 				method: rpcRequest.method,
 				peerAgentId: peerAgent.agentId,
-				status: "acked",
+				status: "pending",
 			});
 
+			let receipt: TransportReceipt | undefined;
+			try {
+				receipt = await transport.send(peerAgent.agentId, rpcRequest, {
+					peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
+					timeout: CONNECT_RECEIPT_TIMEOUT_MS,
+				});
+				const journalEntry = await requestJournal.getByRequestId(requestId);
+				if (journalEntry?.status !== "completed") {
+					await requestJournal.updateStatus(requestId, "acked");
+				}
+			} catch (error: unknown) {
+				if (!isTransportReceiptTimeout(error)) {
+					if (existing) {
+						await trustStore.updateContact(existing.connectionId, existing);
+					} else {
+						await trustStore.removeContact(connectionId);
+					}
+					await requestJournal.delete(requestId);
+					throw error;
+				}
+			}
+
+			const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+			const status = latestContact?.status === "active" ? "active" : "pending";
+
 			return {
-				connectionId,
-				peerName: peerAgent.registrationFile.name,
+				connectionId: latestContact?.connectionId ?? connectionId,
+				peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
 				peerAgentId: peerAgent.agentId,
-				status: "pending",
+				status,
 				receipt,
 				requestedGrants: params.requestedGrants?.grants ?? [],
 				offeredGrants: params.offeredGrants?.grants ?? [],
@@ -469,6 +541,16 @@ export class TapMessagingService {
 	}
 
 	async sendMessage(
+		peer: string,
+		text: string,
+		scope = DEFAULT_MESSAGE_SCOPE,
+	): Promise<TapSendMessageResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.sendMessageInternal(peer, text, scope),
+		);
+	}
+
+	private async sendMessageInternal(
 		peer: string,
 		text: string,
 		scope = DEFAULT_MESSAGE_SCOPE,
@@ -500,6 +582,16 @@ export class TapMessagingService {
 	}
 
 	async publishGrantSet(
+		peer: string,
+		grantSet: PermissionGrantSet,
+		note?: string,
+	): Promise<TapPublishGrantSetResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.publishGrantSetInternal(peer, grantSet, note),
+		);
+	}
+
+	private async publishGrantSetInternal(
 		peer: string,
 		grantSet: PermissionGrantSet,
 		note?: string,
@@ -539,6 +631,16 @@ export class TapMessagingService {
 	}
 
 	async requestGrantSet(
+		peer: string,
+		grantSet: PermissionGrantSet,
+		note?: string,
+	): Promise<TapRequestGrantSetResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.requestGrantSetInternal(peer, grantSet, note),
+		);
+	}
+
+	private async requestGrantSetInternal(
 		peer: string,
 		grantSet: PermissionGrantSet,
 		note?: string,
@@ -590,6 +692,12 @@ export class TapMessagingService {
 	}
 
 	async requestFunds(input: TapRequestFundsInput): Promise<TapRequestFundsResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.requestFundsInternal(input),
+		);
+	}
+
+	private async requestFundsInternal(input: TapRequestFundsInput): Promise<TapRequestFundsResult> {
 		return await this.withTransportSession(async () => {
 			const contact = await this.requireActiveContact(input.peer);
 			const requestPayload = {
@@ -674,12 +782,115 @@ export class TapMessagingService {
 		});
 	}
 
+	private async runMaintenanceCycle(reconcile: boolean): Promise<number> {
+		if (!reconcile) {
+			return await this.processOutboxInternal();
+		}
+		const reconciled = await this.runReconcile();
+		const outboxProcessed = await this.processOutboxInternal();
+		return reconciled + outboxProcessed;
+	}
+
+	private async processOutboxInternal(): Promise<number> {
+		await this.cleanupOutboxResultsIfDue();
+		let processed = 0;
+		while (true) {
+			const job = await this.commandOutbox.claimNext({
+				owner: this.ownerLabel,
+				staleLeaseMs: this.outboxStaleLeaseMs,
+			});
+			if (!job) {
+				return processed;
+			}
+
+			try {
+				const result = await this.executeOutboxJob(job);
+				await this.commandOutbox.complete(job, result);
+			} catch (error: unknown) {
+				const message = error instanceof Error ? error.message : String(error);
+				await this.commandOutbox.fail(
+					job,
+					message,
+					error instanceof TrustedAgentError ? error.code : undefined,
+				);
+				this.log("error", `Failed queued TAP job ${job.jobId} (${job.type}): ${message}`);
+			}
+			processed += 1;
+		}
+	}
+
+	private async executeOutboxJob(
+		job: ProcessingTapCommandJob,
+	): Promise<TapCommandJobResultPayload> {
+		switch (job.type) {
+			case "connect":
+				return await this.connectInternal(job.payload);
+			case "send-message":
+				return await this.sendMessageInternal(
+					job.payload.peer,
+					job.payload.text,
+					job.payload.scope,
+				);
+			case "publish-grant-set":
+				return await this.publishGrantSetInternal(
+					job.payload.peer,
+					job.payload.grantSet,
+					job.payload.note,
+				);
+			case "request-grant-set":
+				return await this.requestGrantSetInternal(
+					job.payload.peer,
+					job.payload.grantSet,
+					job.payload.note,
+				);
+			case "request-funds":
+				return await this.requestFundsInternal(job.payload.input);
+			default:
+				return assertNever(job);
+		}
+	}
+
+	private installOutboxPoller(): void {
+		if (this.outboxPollIntervalMs <= 0 || this.outboxPoller) {
+			return;
+		}
+		this.outboxPoller = setInterval(() => {
+			void this.tickOutboxPoller();
+		}, this.outboxPollIntervalMs);
+	}
+
+	private clearOutboxPoller(): void {
+		if (!this.outboxPoller) {
+			return;
+		}
+		clearInterval(this.outboxPoller);
+		this.outboxPoller = null;
+	}
+
+	private async tickOutboxPoller(): Promise<void> {
+		if (!this.running || this.outboxPollInFlight) {
+			return;
+		}
+		this.outboxPollInFlight = true;
+		try {
+			await this.executionMutex.runExclusive(async () => await this.processOutboxInternal());
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Queued TAP command polling failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		} finally {
+			this.outboxPollInFlight = false;
+		}
+	}
+
 	private async withTransportSession<T>(task: () => Promise<T>): Promise<T> {
-		if (this.running) {
+		if (this.running || this.transportSessionReentryDepth > 0) {
 			return await task();
 		}
 
 		await this.ownerLock.acquire();
+		this.transportSessionReentryDepth += 1;
 		try {
 			this.context.transport.setHandlers(this.handlers);
 			await this.context.transport.start?.();
@@ -690,8 +901,18 @@ export class TapMessagingService {
 				await this.context.transport.stop?.();
 			}
 		} finally {
+			this.transportSessionReentryDepth -= 1;
 			await this.ownerLock.release().catch(() => {});
 		}
+	}
+
+	private async cleanupOutboxResultsIfDue(): Promise<void> {
+		const now = Date.now();
+		if (now - this.lastOutboxCleanupAt < OUTBOX_RESULT_CLEANUP_INTERVAL_MS) {
+			return;
+		}
+		await this.commandOutbox.cleanupResults(this.outboxResultRetentionMs);
+		this.lastOutboxCleanupAt = now;
 	}
 
 	private async runReconcile(): Promise<number> {
@@ -963,6 +1184,12 @@ export class TapMessagingService {
 		requestId: string,
 	): Promise<void> {
 		const params = parseConnectionRequest(envelope.message);
+		if (
+			params.to.agentId !== this.context.config.agentId ||
+			params.to.chain !== this.context.config.chain
+		) {
+			throw new ValidationError("Connection request target does not match the local agent");
+		}
 		const peer = await this.context.resolver.resolveWithCache(
 			params.from.agentId,
 			params.from.chain,
@@ -974,8 +1201,33 @@ export class TapMessagingService {
 				buildPendingConnectionDetails(peer, params.permissionIntent, existing?.status === "active"),
 			),
 		);
+		const alreadyActive = existing?.status === "active";
 
-		if (existing?.status !== "active") {
+		const inviteRejectionReason = alreadyActive
+			? null
+			: await this.validateInboundInviteNonce(params.inviteNonce);
+		if (inviteRejectionReason) {
+			await this.deliverConnectionResult(
+				peer,
+				{
+					requestId: String(envelope.message.id),
+					requestNonce: params.nonce,
+					from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+					to: params.from,
+					status: "rejected",
+					reason: inviteRejectionReason,
+					timestamp: nowISO(),
+				},
+				requestId,
+			);
+			this.log(
+				"warn",
+				`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}): ${inviteRejectionReason}`,
+			);
+			return;
+		}
+
+		if (!alreadyActive) {
 			const pendingContact = {
 				connectionId: existing?.connectionId ?? params.connectionId,
 				peerAgentId: peer.agentId,
@@ -1006,7 +1258,7 @@ export class TapMessagingService {
 			requestId,
 			peer,
 			params.permissionIntent,
-			existing?.status === "active",
+			alreadyActive,
 		);
 		if (decision === null) {
 			this.log(
@@ -1023,33 +1275,7 @@ export class TapMessagingService {
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
 			approve: async () => decision,
 		});
-		const resultMessage = buildConnectionResult(outcome.result);
-		const peerAddress = outcome.peer.xmtpEndpoint ?? outcome.peer.agentAddress;
-		try {
-			await this.context.transport.send(outcome.peer.agentId, resultMessage, {
-				peerAddress,
-				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-			});
-			await this.context.requestJournal.updateStatus(requestId, "completed");
-			await this.context.requestJournal.putOutbound({
-				requestId: String(resultMessage.id),
-				requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
-				direction: "outbound",
-				kind: "result",
-				method: resultMessage.method,
-				peerAgentId: outcome.peer.agentId,
-				correlationId: outcome.result.requestId,
-				status: "completed",
-			});
-		} catch (error: unknown) {
-			// On timeout the message may have been delivered, so mark completed to
-			// avoid duplicate processing. For other transport errors, keep pending
-			// so reconciliation can retry.
-			if (error instanceof TransportError && /timeout/i.test(error.message)) {
-				await this.context.requestJournal.updateStatus(requestId, "completed");
-			}
-			this.logConnectionResultDeliveryFailure(outcome.peer, outcome.result.status, error);
-		}
+		await this.deliverConnectionResult(outcome.peer, outcome.result, requestId);
 
 		if (outcome.result.status === "rejected") {
 			const pendingContact = await this.context.trustStore.findByAgentId(
@@ -1226,7 +1452,26 @@ export class TapMessagingService {
 			result.from.chain,
 		);
 		if (contact) {
+			const matchesPendingRequest =
+				contact.status === "pending" &&
+				contact.pending?.direction === "outbound" &&
+				contact.pending.requestId === result.requestId;
 			if (result.status === "accepted") {
+				if (!matchesPendingRequest) {
+					if (contact.status === "active" && contact.connectionId === result.connectionId) {
+						this.log(
+							"info",
+							`Ignoring duplicate accepted connection result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						);
+					} else {
+						this.log(
+							"warn",
+							`Ignoring stale accepted connection result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						);
+					}
+					await this.context.requestJournal.updateStatus(result.requestId, "completed");
+					return;
+				}
 				if (!result.connectionId) {
 					throw new ValidationError("Accepted connection result missing connectionId");
 				}
@@ -1250,6 +1495,14 @@ export class TapMessagingService {
 					`Connection accepted by ${contact.peerDisplayName} (#${contact.peerAgentId})`,
 				);
 			} else {
+				if (!matchesPendingRequest) {
+					this.log(
+						"warn",
+						`Ignoring stale rejected connection result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					);
+					await this.context.requestJournal.updateStatus(result.requestId, "completed");
+					return;
+				}
 				await this.context.trustStore.removeContact(contact.connectionId);
 				this.log(
 					"info",
@@ -1259,6 +1512,21 @@ export class TapMessagingService {
 		}
 
 		await this.context.requestJournal.updateStatus(result.requestId, "completed");
+	}
+
+	private async validateInboundInviteNonce(
+		inviteNonce: string | undefined,
+	): Promise<string | null> {
+		if (!inviteNonce) {
+			return null;
+		}
+
+		const redeemed = await this.pendingInviteStore.redeem(inviteNonce);
+		if (redeemed) {
+			return null;
+		}
+
+		return "Invite is invalid, expired, or already used";
 	}
 
 	private async handleActionResult(from: number, message: ProtocolMessage): Promise<void> {
@@ -1374,6 +1642,40 @@ export class TapMessagingService {
 		);
 	}
 
+	private async deliverConnectionResult(
+		peer: ResolvedAgent,
+		result: ConnectionResultParams,
+		inboundRequestId: string,
+	): Promise<void> {
+		const resultMessage = buildConnectionResult(result);
+		const peerAddress = peer.xmtpEndpoint ?? peer.agentAddress;
+		try {
+			await this.context.transport.send(peer.agentId, resultMessage, {
+				peerAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+			await this.context.requestJournal.updateStatus(inboundRequestId, "completed");
+			await this.context.requestJournal.putOutbound({
+				requestId: String(resultMessage.id),
+				requestKey: `outbound:${resultMessage.method}:${String(resultMessage.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: resultMessage.method,
+				peerAgentId: peer.agentId,
+				correlationId: result.requestId,
+				status: "completed",
+			});
+		} catch (error: unknown) {
+			// On timeout the message may have been delivered, so mark completed to
+			// avoid duplicate processing. For other transport errors, keep pending
+			// so reconciliation can retry.
+			if (isTransportReceiptTimeout(error)) {
+				await this.context.requestJournal.updateStatus(inboundRequestId, "completed");
+			}
+			this.logConnectionResultDeliveryFailure(peer, result.status, error);
+		}
+	}
+
 	private async sendActionResult(
 		contact: Contact,
 		requestId: string,
@@ -1473,6 +1775,7 @@ function parseConnectionRequest(message: ProtocolMessage): ConnectionRequestPara
 		typeof params.to.chain !== "string" ||
 		typeof params.connectionId !== "string" ||
 		typeof params.nonce !== "string" ||
+		(params.inviteNonce !== undefined && typeof params.inviteNonce !== "string") ||
 		typeof params.timestamp !== "string"
 	) {
 		throw new ValidationError("Invalid connection request payload");
@@ -1740,6 +2043,10 @@ function extractConnectionId(message: ProtocolMessage): string | null {
 
 	const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
 	return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
+}
+
+function assertNever(value: never): never {
+	throw new ValidationError(`Unsupported queued TAP job type: ${String(value)}`);
 }
 
 export { TransportOwnershipError };

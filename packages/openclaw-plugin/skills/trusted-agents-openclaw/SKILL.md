@@ -28,6 +28,7 @@ Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to
 1. In plugin mode, use `tap_gateway` for TAP status, sync, connect, messaging, grant updates, fund requests, and pending request resolution.
 2. If the plugin is not installed or not configured yet, fall back to the normal `tap` CLI workflow and run `tap message sync` on heartbeat.
 3. Do not run `tap message listen` in OpenClaw shell background jobs as the primary runtime.
+4. If a transport-active `tap` CLI command is run against the same `dataDir` anyway, TAP can queue it behind the plugin owner, but that is a fallback. `tap_gateway` is still the preferred interface.
 
 ## Install From This Repo
 
@@ -61,7 +62,7 @@ Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `t
 ### Connections
 
 - **create_invite**: Generate a signed invite URL. Params: `expiresInSeconds` (optional).
-- **connect**: Send a connection request using an invite URL. Params: `inviteUrl` (required), `requestedGrantSet` (optional), `offeredGrantSet` (optional). If offered grants are included and the peer accepts, those grants become `grantedByPeer` on the peer's side immediately.
+- **connect**: Send a durable asynchronous connection request using an invite URL. Params: `inviteUrl` (required), `requestedGrantSet` (optional), `offeredGrantSet` (optional). The peer does not need to be online at the same moment; the plugin runtime or a later sync can resolve the request. If offered grants are included and the peer accepts, those grants become `grantedByPeer` on the peer's side immediately.
 
 ### Messaging
 

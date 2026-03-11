@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileTrustStore, generateInvite } from "trusted-agents-core";
+import { FileTrustStore, TransportError, generateInvite } from "trusted-agents-core";
 import type { IAgentResolver, ResolvedAgent, TransportProvider } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeConnect } from "../../src/commands/connect.js";
@@ -169,5 +169,42 @@ describe("executeConnect", () => {
 		const contact = result.connectionId ? await store.getContact(result.connectionId) : null;
 		expect(contact?.permissions.grantedByMe.grants).toEqual([]);
 		expect(contact?.permissions.grantedByPeer.grants).toEqual([]);
+	});
+
+	it("returns pending when the delivery receipt times out", async () => {
+		const { url } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: inviterPrivateKey,
+			expirySeconds: 3600,
+		});
+
+		const transport: TransportProvider = {
+			send: vi.fn(async (_peerId, request) => {
+				throw new TransportError(`Response timeout for message ${String(request.id)}`);
+			}),
+			setHandlers: vi.fn(),
+			start: vi.fn(),
+			stop: vi.fn(),
+			isReachable: vi.fn(async () => true),
+		};
+
+		const result = await executeConnect({
+			inviteUrl: url,
+			privateKey: connectorPrivateKey,
+			agentId: 2,
+			chain: "eip155:84532",
+			dataDir: tmpDir,
+			resolver: createMockResolver(mockAgent),
+			transport,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.status).toBe("pending");
+		expect(result.receiptStatus).toBeUndefined();
+
+		const contacts = await new FileTrustStore(tmpDir).getContacts();
+		expect(contacts).toHaveLength(1);
+		expect(contacts[0]?.status).toBe("pending");
 	});
 });

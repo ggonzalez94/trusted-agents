@@ -62,6 +62,7 @@ export function buildContextWithTransport(config: TrustedAgentsConfig): CliConte
 			privateKey: config.privateKey,
 			chain: config.chain,
 			env: config.xmtpEnv,
+			dbPath: `${config.dataDir}/xmtp`,
 			dbEncryptionKey: config.xmtpDbEncryptionKey,
 			agentResolver: ctx.resolver,
 			resolveCacheTtlMs: config.resolveCacheTtlMs,

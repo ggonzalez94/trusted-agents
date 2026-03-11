@@ -1,15 +1,21 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TransportError, ValidationError } from "../../../src/common/errors.js";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
-import { buildConnectionRequest } from "../../../src/connection/handshake.js";
+import {
+	buildConnectionRequest,
+	buildConnectionResult,
+} from "../../../src/connection/handshake.js";
+import { generateInvite } from "../../../src/connection/invite.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import {
+	FileTapCommandOutbox,
 	buildOutgoingActionRequest,
 	parseTransferActionResponse,
 } from "../../../src/runtime/index.js";
@@ -369,6 +375,280 @@ describe("TapMessagingService", () => {
 		);
 		expect(transport.startCalls).toBe(0);
 		expect(transport.sentMessages).toHaveLength(0);
+	});
+
+	it("keeps an outbound connection pending when the receipt times out", async () => {
+		const { url } = await generateInvite({
+			agentId: PEER_AGENT.agentId,
+			chain: PEER_AGENT.chain,
+			privateKey: BOB.privateKey,
+			expirySeconds: 3600,
+		});
+		const transport = new FakeTransport({
+			sendError: new TransportError("Response timeout for message connect-timeout-1"),
+		});
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+			},
+		);
+
+		const result = await service.connect({ inviteUrl: url });
+
+		expect(result.status).toBe("pending");
+		expect(result.receipt).toBeUndefined();
+		expect(
+			(await requestJournal.getByRequestId(transport.sentMessages[0]!.message.id as string))
+				?.status,
+		).toBe("pending");
+	});
+
+	it("returns active when the peer accepts during the same transport session", async () => {
+		const { url } = await generateInvite({
+			agentId: PEER_AGENT.agentId,
+			chain: PEER_AGENT.chain,
+			privateKey: BOB.privateKey,
+			expirySeconds: 3600,
+		});
+
+		class ImmediateAcceptTransport extends FakeTransport {
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message });
+				if (message.method === "connection/request") {
+					const params = message.params as {
+						from: { agentId: number; chain: string };
+						to: { agentId: number; chain: string };
+						connectionId: string;
+						nonce: string;
+					};
+					await this.handlers.onResult?.({
+						from: peerId,
+						senderInboxId: "peer-inbox-immediate",
+						message: buildConnectionResult({
+							requestId: String(message.id),
+							requestNonce: params.nonce,
+							from: params.to,
+							to: params.from,
+							status: "accepted",
+							connectionId: params.connectionId,
+							timestamp: "2026-03-08T00:00:01.000Z",
+						}),
+					});
+				}
+
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new ImmediateAcceptTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+			},
+		);
+
+		const result = await service.connect({ inviteUrl: url });
+
+		expect(result.status).toBe("active");
+		expect(transport.sentMessages.map((entry) => entry.message.method)).toContain(
+			"connection/request",
+		);
+	});
+
+	it("ignores stale rejected connection results for a different outbound request", async () => {
+		const pendingContact: Contact = {
+			connectionId: "conn-current-1",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "pending",
+			pending: {
+				direction: "outbound",
+				requestId: "req-current-1",
+				requestNonce: "nonce-current-1",
+				requestedAt: "2026-03-08T00:00:00.000Z",
+			},
+		};
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore([pendingContact]);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+		await requestJournal.putOutbound({
+			requestId: "req-stale-1",
+			requestKey: "outbound:connection/request:req-stale-1",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: PEER_AGENT.agentId,
+			status: "acked",
+		});
+
+		const staleRejectedResult = buildConnectionResult({
+			requestId: "req-stale-1",
+			requestNonce: "nonce-stale-1",
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			to: { agentId: 1, chain: "eip155:84532" },
+			status: "rejected",
+			reason: "stale rejection",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-stale-result",
+				message: staleRejectedResult,
+			}),
+		).resolves.toEqual({ status: "received" });
+
+		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		expect(contact?.status).toBe("pending");
+		expect(contact?.connectionId).toBe("conn-current-1");
+		expect((await requestJournal.getByRequestId("req-stale-1"))?.status).toBe("completed");
+	});
+
+	it("processes queued outbound commands during syncOnce", async () => {
+		const activeContact: Contact = {
+			connectionId: "conn-message-1",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const { service, transport, dataDir } = await createService(
+			{},
+			{
+				trustStore: createMemoryTrustStore([activeContact]),
+			},
+		);
+		const outbox = new FileTapCommandOutbox(dataDir);
+		const queued = await outbox.enqueue({
+			type: "send-message",
+			payload: {
+				peer: activeContact.peerDisplayName,
+				text: "queued hello",
+				scope: "general-chat",
+			},
+			requestedBy: "test",
+		});
+
+		const report = await service.syncOnce();
+
+		expect(report.processed).toBe(1);
+		expect(transport.sentMessages).toHaveLength(1);
+		expect(transport.sentMessages[0]?.message.method).toBe("message/send");
+		expect(await outbox.getResult(queued.jobId)).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+	});
+
+	it("processes queued connect commands during syncOnce", async () => {
+		const { service, transport, dataDir } = await createService();
+		const outbox = new FileTapCommandOutbox(dataDir);
+		const invite = await generateInvite({
+			agentId: PEER_AGENT.agentId,
+			chain: PEER_AGENT.chain,
+			privateKey: BOB.privateKey,
+			expirySeconds: 3600,
+		});
+		const queued = await outbox.enqueue({
+			type: "connect",
+			payload: {
+				inviteUrl: invite.url,
+			},
+			requestedBy: "test",
+		});
+
+		const report = await service.syncOnce();
+
+		expect(report.processed).toBe(1);
+		expect(transport.sentMessages).toHaveLength(1);
+		expect(transport.sentMessages[0]?.message.method).toBe("connection/request");
+		expect(await outbox.getResult(queued.jobId)).toEqual(
+			expect.objectContaining({
+				status: "completed",
+				result: expect.objectContaining({
+					status: "pending",
+				}),
+			}),
+		);
+	});
+
+	it("polls queued outbound commands while the listener is running", async () => {
+		const activeContact: Contact = {
+			connectionId: "conn-grants-1",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const { service, transport, dataDir } = await createService(
+			{},
+			{
+				trustStore: createMemoryTrustStore([activeContact]),
+				serviceOptions: {
+					outboxPollIntervalMs: 25,
+				},
+			},
+		);
+		const outbox = new FileTapCommandOutbox(dataDir);
+
+		await service.start();
+		const queued = await outbox.enqueue({
+			type: "publish-grant-set",
+			payload: {
+				peer: activeContact.peerDisplayName,
+				grantSet: {
+					version: "tap-grants/v1",
+					updatedAt: "2026-03-08T00:00:00.000Z",
+					grants: [{ grantId: "queued-chat", scope: "general-chat" }],
+				},
+				note: "queued publish",
+			},
+			requestedBy: "test",
+		});
+
+		await sleep(150);
+		await service.stop();
+
+		expect(transport.sentMessages).toHaveLength(1);
+		expect(transport.sentMessages[0]?.message.method).toBe("permissions/update");
+		expect(await outbox.getResult(queued.jobId)).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
 	});
 
 	it("rejects transfer approvals without a matching grant before consulting hooks", async () => {

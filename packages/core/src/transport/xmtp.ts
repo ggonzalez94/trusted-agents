@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { Client } from "@xmtp/node-sdk";
+import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
 import { hexToBytes, keccak256, toHex } from "viem";
 import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
@@ -18,10 +20,13 @@ import type {
 } from "./interface.js";
 import type { TransportSendOptions } from "./types.js";
 import { createXmtpSigner } from "./xmtp-signer.js";
+import { FileXmtpSyncStateStore, type XmtpConversationCheckpoint } from "./xmtp-sync-state.js";
 import type { XmtpTransportConfig } from "./xmtp-types.js";
 
 /** IdentifierKind.Ethereum from @xmtp/node-bindings (const enum, value inlined to avoid verbatimModuleSyntax issues) */
 const IDENTIFIER_KIND_ETHEREUM = 0 as const;
+const MESSAGE_SORT_BY_SENT_AT = 0 as const;
+const SORT_DIRECTION_ASCENDING = 0 as const;
 
 const RECONNECT_DELAY_MS = 5_000;
 const INBOUND_REQUEST_DEDUPE_TTL_MS = 10 * 60 * 1_000;
@@ -37,6 +42,8 @@ interface IncomingTransportMessage {
 	senderInboxId: string;
 	content: unknown;
 	conversationId?: string;
+	messageId?: string;
+	sentAtNs?: bigint;
 }
 
 export class XmtpTransport implements TransportProvider {
@@ -49,6 +56,7 @@ export class XmtpTransport implements TransportProvider {
 	private readonly inboxIdToAddress = new Map<string, `0x${string}`>();
 	private readonly agentResolver?: IAgentResolver;
 	private readonly resolveCacheTtlMs: number;
+	private readonly syncState: FileXmtpSyncStateStore | null;
 
 	constructor(
 		private readonly config: XmtpTransportConfig,
@@ -56,6 +64,12 @@ export class XmtpTransport implements TransportProvider {
 	) {
 		this.agentResolver = config.agentResolver;
 		this.resolveCacheTtlMs = config.resolveCacheTtlMs ?? 86_400_000;
+		this.syncState =
+			config.syncStatePath || config.dbPath
+				? new FileXmtpSyncStateStore(
+						config.syncStatePath ?? join(config.dbPath ?? ".", "sync-state.json"),
+					)
+				: null;
 	}
 
 	setHandlers(handlers: TransportHandlers): void {
@@ -152,24 +166,27 @@ export class XmtpTransport implements TransportProvider {
 			throw new TransportError("XMTP client not started");
 		}
 
+		if (!this.syncState) {
+			return await this.reconcileAllMessages(options);
+		}
+
 		await this.client.conversations.syncAll(
 			options?.consentStates as Parameters<Client["conversations"]["syncAll"]>[0],
 		);
 
+		const dms = this.client.conversations.listDms();
+		const initialized = await this.syncState.isInitialized();
+		if (!initialized) {
+			await this.syncState.initializeAtHead(await this.buildConversationHeadCheckpoints(dms));
+			return {
+				synced: true,
+				processed: 0,
+			};
+		}
+
 		let processed = 0;
-		for (const dm of this.client.conversations.listDms()) {
-			const messages = await dm.messages();
-			messages.sort((left, right) => left.sentAt.getTime() - right.sentAt.getTime());
-			for (const message of messages) {
-				const didProcess = await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-				});
-				if (didProcess) {
-					processed += 1;
-				}
-			}
+		for (const dm of dms) {
+			processed += await this.reconcileConversation(dm);
 		}
 
 		return {
@@ -250,7 +267,9 @@ export class XmtpTransport implements TransportProvider {
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
-		const stream = await this.client.conversations.streamAllDmMessages();
+		const stream = await this.client.conversations.streamAllDmMessages({
+			disableSync: true,
+		});
 		this.streamCloser = stream;
 
 		for await (const message of stream) {
@@ -259,8 +278,95 @@ export class XmtpTransport implements TransportProvider {
 				senderInboxId: message.senderInboxId,
 				content: message.content,
 				conversationId: message.conversationId,
-			}).catch(() => {});
+				messageId: message.id,
+				sentAtNs: message.sentAtNs,
+			})
+				.then(async () => {
+					await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
+				})
+				.catch(() => {});
 		}
+	}
+
+	private async reconcileAllMessages(
+		options?: TransportReconcileOptions,
+	): Promise<TransportReconcileResult> {
+		if (!this.client) {
+			throw new TransportError("XMTP client not started");
+		}
+
+		await this.client.conversations.syncAll(
+			options?.consentStates as Parameters<Client["conversations"]["syncAll"]>[0],
+		);
+
+		let processed = 0;
+		for (const dm of this.client.conversations.listDms()) {
+			const messages = await dm.messages();
+			messages.sort((left, right) => left.sentAt.getTime() - right.sentAt.getTime());
+			for (const message of messages) {
+				const didProcess = await this.processMessage({
+					senderInboxId: message.senderInboxId,
+					content: message.content,
+					conversationId: message.conversationId,
+					messageId: message.id,
+					sentAtNs: message.sentAtNs,
+				});
+				if (didProcess) {
+					processed += 1;
+				}
+			}
+		}
+
+		return {
+			synced: true,
+			processed,
+		};
+	}
+
+	private async buildConversationHeadCheckpoints(
+		dms: Dm[],
+	): Promise<Record<string, XmtpConversationCheckpoint>> {
+		const checkpoints: Record<string, XmtpConversationCheckpoint> = {};
+		for (const dm of dms) {
+			const lastMessage = await dm.lastMessage();
+			if (!lastMessage) {
+				continue;
+			}
+			checkpoints[dm.id] = {
+				lastSentAtNs: lastMessage.sentAtNs.toString(),
+				lastMessageIds: [lastMessage.id],
+			};
+		}
+		return checkpoints;
+	}
+
+	private async reconcileConversation(dm: Dm): Promise<number> {
+		if (!this.syncState) {
+			return 0;
+		}
+
+		const checkpoint = await this.syncState.getCheckpoint(dm.id);
+		const messages = await dm.messages(buildMessageQuery(checkpoint));
+
+		let processed = 0;
+		for (const message of messages) {
+			if (isMessageAlreadyCheckpointed(checkpoint, message)) {
+				continue;
+			}
+			const didProcess = await this.processMessage({
+				senderInboxId: message.senderInboxId,
+				content: message.content,
+				conversationId: message.conversationId,
+				messageId: message.id,
+				sentAtNs: message.sentAtNs,
+			});
+			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
+			if (didProcess) {
+				processed += 1;
+			}
+		}
+
+		return processed;
 	}
 
 	private async processMessage(message: IncomingTransportMessage): Promise<boolean> {
@@ -645,4 +751,56 @@ export class XmtpTransport implements TransportProvider {
 			this.processedIncomingRequests.delete(key);
 		}
 	}
+
+	private async advanceCheckpoint(
+		conversationId: string | undefined,
+		sentAtNs: bigint | undefined,
+		messageId: string | undefined,
+	): Promise<void> {
+		if (!this.syncState || !conversationId || sentAtNs === undefined || !messageId) {
+			return;
+		}
+		await this.syncState.advance(conversationId, {
+			sentAtNs,
+			messageId,
+		});
+	}
+}
+
+function buildMessageQuery(checkpoint: XmtpConversationCheckpoint | null): {
+	sentAfterNs?: bigint;
+	sortBy: number;
+	direction: number;
+} {
+	if (!checkpoint) {
+		return {
+			sortBy: MESSAGE_SORT_BY_SENT_AT,
+			direction: SORT_DIRECTION_ASCENDING,
+		};
+	}
+
+	const floor = BigInt(checkpoint.lastSentAtNs);
+	return {
+		sentAfterNs: floor > 0n ? floor - 1n : floor,
+		sortBy: MESSAGE_SORT_BY_SENT_AT,
+		direction: SORT_DIRECTION_ASCENDING,
+	};
+}
+
+function isMessageAlreadyCheckpointed(
+	checkpoint: XmtpConversationCheckpoint | null,
+	message: DecodedMessage,
+): boolean {
+	if (!checkpoint) {
+		return false;
+	}
+
+	const checkpointNs = BigInt(checkpoint.lastSentAtNs);
+	if (message.sentAtNs < checkpointNs) {
+		return true;
+	}
+	if (message.sentAtNs > checkpointNs) {
+		return false;
+	}
+	return checkpoint.lastMessageIds.includes(message.id);
 }

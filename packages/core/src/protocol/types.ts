@@ -68,6 +68,7 @@ export interface ConnectionRequestParams {
 	message?: string;
 	permissionIntent?: ConnectionPermissionIntent;
 	nonce: string;
+	inviteNonce?: string;
 	protocolVersion?: string;
 	timestamp: string;
 }

@@ -185,14 +185,6 @@ describe("two-agent CLI E2E flow", () => {
 		]);
 		expect(JSON.parse(resolvePeer.stdout).data.name).toBe("WorkerAgent");
 
-		treasuryListener = await createMessageListenerSession(
-			{ plain: true, dataDir: treasuryDir },
-			{ yes: true },
-			{
-				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
-			},
-		);
-
 		const invite = await runCli(["--json", "--data-dir", treasuryDir, "invite", "create"]);
 		const inviteUrl = JSON.parse(invite.stdout).data.url as string;
 
@@ -212,8 +204,41 @@ describe("two-agent CLI E2E flow", () => {
 		expect(connect.stdout).toContain("Requested Grants:");
 		expect(connect.stdout).toContain("Offered Grants:");
 		expect(connect.stdout).toContain("Status:         pending");
+		expect(connect.stdout).toContain('"status": "queued"');
 
-		const syncAfterConnect = await runCli([
+		const workerPendingContactBeforeSync = await runCli([
+			"--json",
+			"--data-dir",
+			workerDir,
+			"contacts",
+			"list",
+		]);
+		expect(workerPendingContactBeforeSync.exitCode).toBe(0);
+		expect(JSON.parse(workerPendingContactBeforeSync.stdout).data.contacts[0]?.status).toBe(
+			"pending",
+		);
+
+		const syncTreasuryAfterOfflineConnect = await runCli([
+			"--json",
+			"--data-dir",
+			treasuryDir,
+			"message",
+			"sync",
+			"--yes",
+		]);
+		expect(syncTreasuryAfterOfflineConnect.exitCode).toBe(0);
+
+		const inviteListAfterAcceptance = await runCli([
+			"--json",
+			"--data-dir",
+			treasuryDir,
+			"invite",
+			"list",
+		]);
+		expect(inviteListAfterAcceptance.exitCode).toBe(0);
+		expect(JSON.parse(inviteListAfterAcceptance.stdout).data.invites).toEqual([]);
+
+		const syncWorkerAfterAcceptance = await runCli([
 			"--json",
 			"--data-dir",
 			workerDir,
@@ -221,10 +246,15 @@ describe("two-agent CLI E2E flow", () => {
 			"sync",
 			"--yes",
 		]);
-		expect(syncAfterConnect.exitCode).toBe(0);
+		expect(syncWorkerAfterAcceptance.exitCode).toBe(0);
 
 		const contacts = await runCli(["--json", "--data-dir", treasuryDir, "contacts", "list"]);
 		expect(JSON.parse(contacts.stdout).data.contacts).toHaveLength(1);
+		expect(JSON.parse(contacts.stdout).data.contacts[0]?.status).toBe("active");
+
+		const workerContacts = await runCli(["--json", "--data-dir", workerDir, "contacts", "list"]);
+		expect(JSON.parse(workerContacts.stdout).data.contacts).toHaveLength(1);
+		expect(JSON.parse(workerContacts.stdout).data.contacts[0]?.status).toBe("active");
 
 		const initialTreasuryPermissions = await waitForPermissions(
 			treasuryDir,
@@ -236,9 +266,6 @@ describe("two-agent CLI E2E flow", () => {
 		expect(initialTreasuryPermissions.granted_by_peer.grants.map((grant) => grant.grantId)).toEqual(
 			["treasury-chat-from-worker"],
 		);
-
-		await treasuryListener.stop();
-		treasuryListener = undefined;
 
 		const requestMore = await runCli([
 			"--plain",
@@ -260,6 +287,13 @@ describe("two-agent CLI E2E flow", () => {
 			{ yes: true },
 			{},
 		);
+		treasuryListener = await createMessageListenerSession(
+			{ plain: true, dataDir: treasuryDir },
+			{ yes: true },
+			{
+				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
+			},
+		);
 
 		const grant = await runCli([
 			"--plain",
@@ -275,6 +309,7 @@ describe("two-agent CLI E2E flow", () => {
 		]);
 		expect(grant.exitCode).toBe(0);
 		expect(grant.stdout).toContain("Published:    true");
+		expect(grant.stdout).toMatch(/Queued:\s+true/);
 
 		const workerPermissions = await waitForPermissions(
 			workerDir,
@@ -294,9 +329,6 @@ describe("two-agent CLI E2E flow", () => {
 			{ id: "worker-native-budget", status: "active" },
 		]);
 
-		await workerListener.stop();
-		workerListener = undefined;
-
 		const sendWorkerToTreasury = await runCli([
 			"--plain",
 			"--data-dir",
@@ -310,12 +342,7 @@ describe("two-agent CLI E2E flow", () => {
 		]);
 		expect(sendWorkerToTreasury.exitCode).toBe(0);
 		expect(sendWorkerToTreasury.stdout).toContain("Sent:      true");
-
-		workerListener = await createMessageListenerSession(
-			{ plain: true, dataDir: workerDir },
-			{ yes: true },
-			{},
-		);
+		expect(sendWorkerToTreasury.stdout).toMatch(/Queued:\s+true/);
 
 		const sendTreasuryToWorker = await runCli([
 			"--plain",
@@ -330,17 +357,7 @@ describe("two-agent CLI E2E flow", () => {
 		]);
 		expect(sendTreasuryToWorker.exitCode).toBe(0);
 		expect(sendTreasuryToWorker.stdout).toContain("Sent:      true");
-
-		await workerListener.stop();
-		workerListener = undefined;
-
-		treasuryListener = await createMessageListenerSession(
-			{ plain: true, dataDir: treasuryDir },
-			{ yes: true },
-			{
-				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
-			},
-		);
+		expect(sendTreasuryToWorker.stdout).toMatch(/Queued:\s+true/);
 
 		const approvedFundsRequest = await runCli([
 			"--plain",
@@ -359,18 +376,10 @@ describe("two-agent CLI E2E flow", () => {
 			"approved deterministic request",
 		]);
 		expect(approvedFundsRequest.exitCode).toBe(0);
+		expect(approvedFundsRequest.stdout).toMatch(/Queued:\s+true/);
 		expect(approvedFundsRequest.stdout).toContain("Status:                   completed");
 		expect(approvedFundsRequest.stdout).toContain(
 			"0xa100000000000000000000000000000000000000000000000000000000000000",
-		);
-
-		await treasuryListener.stop();
-		treasuryListener = undefined;
-
-		workerListener = await createMessageListenerSession(
-			{ plain: true, dataDir: workerDir },
-			{ yes: true },
-			{},
 		);
 
 		const revoke = await runCli([
@@ -387,6 +396,7 @@ describe("two-agent CLI E2E flow", () => {
 		]);
 		expect(revoke.exitCode).toBe(0);
 		expect(revoke.stdout).toContain("Revoked:   true");
+		expect(revoke.stdout).toMatch(/Queued:\s+true/);
 
 		const revokedPermissions = await waitForPermissions(workerDir, "TreasuryAgent", (data) =>
 			data.granted_by_peer.grants.some(
@@ -398,17 +408,6 @@ describe("two-agent CLI E2E flow", () => {
 				(grant) => grant.grantId === "worker-native-budget",
 			)?.status,
 		).toBe("revoked");
-
-		await workerListener.stop();
-		workerListener = undefined;
-
-		treasuryListener = await createMessageListenerSession(
-			{ plain: true, dataDir: treasuryDir },
-			{ yes: true },
-			{
-				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
-			},
-		);
 
 		const rejectedFundsRequest = await runCli([
 			"--plain",
@@ -471,7 +470,7 @@ describe("two-agent CLI E2E flow", () => {
 		expect(workerLedger).toContain("grant-request-sent");
 		expect(workerLedger).toContain("transfer-completed");
 		expect(workerLedger).toContain("transfer-rejected");
-	});
+	}, 20_000);
 
 	it("reports the persisted connection id for pending connects", async () => {
 		const pendingRoot = await mkdtemp(join(tmpdir(), "tap-cli-pending-"));
@@ -573,6 +572,79 @@ describe("two-agent CLI E2E flow", () => {
 			await rm(pendingRoot, { recursive: true, force: true });
 		}
 	});
+
+	it("queues connect behind a live listener and still converges to active", async () => {
+		expect(
+			await runCli([
+				"--plain",
+				"--data-dir",
+				treasuryDir,
+				"init",
+				"--chain",
+				"base-sepolia",
+				"--private-key",
+				TREASURY_KEY.slice(2),
+			]),
+		).toMatchObject({ exitCode: 0 });
+		expect(
+			await runCli([
+				"--plain",
+				"--data-dir",
+				workerDir,
+				"init",
+				"--chain",
+				"base-sepolia",
+				"--private-key",
+				WORKER_KEY.slice(2),
+			]),
+		).toMatchObject({ exitCode: 0 });
+		expect(
+			await runCli(["--json", "--data-dir", treasuryDir, "config", "set", "agent_id", "7001"]),
+		).toMatchObject({ exitCode: 0 });
+		expect(
+			await runCli(["--json", "--data-dir", workerDir, "config", "set", "agent_id", "7002"]),
+		).toMatchObject({ exitCode: 0 });
+
+		const invite = await runCli(["--json", "--data-dir", treasuryDir, "invite", "create"]);
+		const inviteUrl = JSON.parse(invite.stdout).data.url as string;
+
+		treasuryListener = await createMessageListenerSession(
+			{ plain: true, dataDir: treasuryDir },
+			{ yes: true },
+			{},
+		);
+		workerListener = await createMessageListenerSession(
+			{ plain: true, dataDir: workerDir },
+			{ yes: true },
+			{},
+		);
+
+		const connect = await runCli([
+			"--json",
+			"--data-dir",
+			workerDir,
+			"connect",
+			inviteUrl,
+			"--yes",
+		]);
+		expect(connect.exitCode).toBe(0);
+		const connectData = parseJsonEnvelope(connect.stdout).data as {
+			status: string;
+			queued?: boolean;
+		};
+		expect(connectData.queued).toBe(true);
+		expect(["pending", "active"]).toContain(connectData.status);
+
+		const treasuryContacts = await waitForContacts(treasuryDir, (contacts) =>
+			contacts.some((contact) => contact.status === "active"),
+		);
+		expect(treasuryContacts[0]?.status).toBe("active");
+
+		const workerContacts = await waitForContacts(workerDir, (contacts) =>
+			contacts.some((contact) => contact.status === "active"),
+		);
+		expect(workerContacts[0]?.status).toBe("active");
+	});
 });
 
 async function writeJsonFile(dir: string, name: string, value: unknown): Promise<string> {
@@ -605,5 +677,71 @@ async function waitForPermissions(
 
 	throw new Error(
 		`Timed out waiting for permissions for ${peer}: ${JSON.stringify(lastSnapshot ?? null)}`,
+	);
+}
+
+function parseJsonEnvelope(stdout: string): { ok: boolean; data: unknown } {
+	for (const line of stdout.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith("{") || !trimmed.includes('"ok"')) {
+			continue;
+		}
+		return JSON.parse(trimmed) as { ok: boolean; data: unknown };
+	}
+	throw new Error(`No JSON envelope found in output: ${stdout}`);
+}
+
+async function waitForContacts(
+	dataDir: string,
+	predicate: (
+		contacts: Array<{
+			name: string;
+			agent_id: number;
+			status: string;
+			connection_id: string;
+		}>,
+	) => boolean,
+	timeoutMs = 3_000,
+): Promise<
+	Array<{
+		name: string;
+		agent_id: number;
+		status: string;
+		connection_id: string;
+	}>
+> {
+	const deadline = Date.now() + timeoutMs;
+	let lastContacts:
+		| Array<{
+				name: string;
+				agent_id: number;
+				status: string;
+				connection_id: string;
+		  }>
+		| undefined;
+
+	while (Date.now() < deadline) {
+		const result = await runCli(["--json", "--data-dir", dataDir, "contacts", "list"]);
+		if (result.exitCode === 0) {
+			const contacts = (
+				parseJsonEnvelope(result.stdout).data as {
+					contacts: Array<{
+						name: string;
+						agent_id: number;
+						status: string;
+						connection_id: string;
+					}>;
+				}
+			).contacts;
+			lastContacts = contacts;
+			if (predicate(contacts)) {
+				return contacts;
+			}
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+
+	throw new Error(
+		`Timed out waiting for contacts in ${dataDir}: ${JSON.stringify(lastContacts ?? [])}`,
 	);
 }

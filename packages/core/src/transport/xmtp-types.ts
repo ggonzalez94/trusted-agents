@@ -5,6 +5,7 @@ export interface XmtpTransportConfig {
 	chain: string;
 	env?: "dev" | "production" | "local";
 	dbPath?: string;
+	syncStatePath?: string;
 	dbEncryptionKey?: `0x${string}`;
 	defaultResponseTimeoutMs?: number;
 	agentResolver?: IAgentResolver;

@@ -12,6 +12,12 @@ import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { readGrantFile, summarizeGrantSet } from "../lib/grants.js";
 import { error, info, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
+import {
+	isQueuedTapCommandPending,
+	queuedTapCommandPendingFields,
+	queuedTapCommandResultFields,
+	runOrQueueTapCommand,
+} from "../lib/queued-commands.js";
 import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -89,11 +95,40 @@ export async function connectCommand(
 		const service = createCliTapMessagingService(ctx, opts, {
 			ownerLabel: "tap:connect",
 		});
-		const result = await service.connect({
+		const connectInput = {
 			inviteUrl,
 			requestedGrants,
 			offeredGrants,
-		});
+		};
+		const outcome = await runOrQueueTapCommand(
+			config.dataDir,
+			{
+				type: "connect",
+				payload: connectInput,
+			},
+			async () => await service.connect(connectInput),
+			{
+				requestedBy: "tap:connect",
+			},
+		);
+
+		if (isQueuedTapCommandPending(outcome)) {
+			success(
+				{
+					...queuedTapCommandPendingFields(outcome),
+					peer_name: peerAgent.registrationFile.name,
+					peer_agent_id: peerAgent.agentId,
+					status: "queued",
+					requested_grants: requestedGrants?.grants ?? [],
+					offered_grants: offeredGrants?.grants ?? [],
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		const result = outcome.result;
 
 		success(
 			{
@@ -101,6 +136,7 @@ export async function connectCommand(
 				peer_name: result.peerName,
 				peer_agent_id: result.peerAgentId,
 				status: result.status,
+				...queuedTapCommandResultFields(outcome),
 				receipt: result.receipt,
 				requested_grants: result.requestedGrants,
 				offered_grants: result.offeredGrants,

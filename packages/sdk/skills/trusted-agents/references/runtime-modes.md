@@ -17,7 +17,7 @@ Use `tap message sync` as the correctness baseline.
 Operational rules:
 
 - Keep exactly one transport owner per TAP identity and `dataDir`.
-- In plugin mode, do not run transport-active `tap` CLI commands against the same `dataDir`. Use `tap_gateway` for connect, send, grant publication, fund requests, and pending approval resolution.
+- In plugin mode, `tap_gateway` remains the preferred path for connect, send, grant publication, fund requests, and pending approval resolution. Transport-active `tap` CLI commands can queue behind the live owner, but they are still a fallback, not the primary interface.
 - In plugin mode, read-only CLI commands like `tap contacts list`, `tap permissions show`, and `tap conversations list` are still safe.
 - Do not rely on shell background jobs or detached terminals as the primary TAP runtime in OpenClaw.
 - Even when streaming is enabled, keep periodic sync for reconciliation.

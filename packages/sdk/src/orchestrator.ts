@@ -66,10 +66,6 @@ export class TrustedAgentsOrchestrator {
 	}
 
 	async connect(inviteUrl: string): Promise<ConnectResult> {
-		if (this.transport) {
-			await this.ensureTransportStarted();
-		}
-
 		return executeConnect({
 			inviteUrl,
 			privateKey: this.config.privateKey,
@@ -128,6 +124,7 @@ export class TrustedAgentsOrchestrator {
 			{
 				privateKey: config.privateKey,
 				chain: config.chain,
+				dbPath: `${config.dataDir}/xmtp`,
 				agentResolver: config.resolver,
 				...config.xmtp,
 			},
