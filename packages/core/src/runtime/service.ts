@@ -22,11 +22,7 @@ import {
 	verifyInvite,
 } from "../connection/index.js";
 import type { ResolvedAgent } from "../identity/types.js";
-import {
-	TAP_GRANTS_VERSION,
-	createEmptyPermissionState,
-	createGrantSet,
-} from "../permissions/index.js";
+import { createEmptyPermissionState, createGrantSet } from "../permissions/index.js";
 import type { PermissionGrantSet } from "../permissions/types.js";
 import {
 	ACTION_REQUEST,
@@ -70,6 +66,7 @@ import {
 import type { TapRuntimeContext } from "./default-context.js";
 import {
 	findActiveGrantsByScope,
+	normalizeGrantInput,
 	replaceGrantedByMe,
 	replaceGrantedByPeer,
 	summarizeGrant,
@@ -152,6 +149,21 @@ export interface TapPendingRequest {
 	status: string;
 	correlationId?: string;
 	details?: TapPendingRequestDetails;
+}
+
+interface PendingActionResultDelivery extends Record<string, unknown> {
+	type: "action-result-delivery";
+	actionId: string;
+	connectionId: string;
+	peerAgentId: number;
+	peerName: string;
+	peerAddress: `0x${string}`;
+	request: ProtocolMessage;
+}
+
+interface RecordedTransferResponseMetadata extends Record<string, unknown> {
+	type: "transfer-response";
+	response: TransferActionResponse;
 }
 
 export interface TapServiceHooks {
@@ -352,7 +364,9 @@ export class TapMessagingService {
 	}
 
 	async listPendingRequests(): Promise<TapServiceStatus["pendingRequests"]> {
-		const pending = await this.context.requestJournal.listPending();
+		const pending = (await this.context.requestJournal.listPending()).filter(
+			(entry) => entry.kind === "request",
+		);
 		return pending.map((entry) => ({
 			requestId: entry.requestId,
 			method: entry.method,
@@ -526,6 +540,14 @@ export class TapMessagingService {
 			}
 
 			const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+			if (!latestContact) {
+				const journalEntry = await requestJournal.getByRequestId(requestId);
+				if (journalEntry?.status === "completed") {
+					throw new ValidationError(
+						`Connection rejected by ${peerAgent.registrationFile.name} (#${peerAgent.agentId})`,
+					);
+				}
+			}
 			const status = latestContact?.status === "active" ? "active" : "pending";
 
 			return {
@@ -730,17 +752,6 @@ export class TapMessagingService {
 				note: input.note,
 			});
 
-			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
-				peerAddress: contact.peerAgentAddress,
-			});
-			await appendConversationLog(
-				this.context.conversationLogger,
-				contact,
-				request,
-				"outgoing",
-				timestamp,
-			);
-			await this.context.trustStore.touchContact(contact.connectionId);
 			await this.context.requestJournal.putOutbound({
 				requestId,
 				requestKey: `outbound:${request.method}:${requestId}`,
@@ -748,24 +759,47 @@ export class TapMessagingService {
 				kind: "request",
 				method: request.method,
 				peerAgentId: contact.peerAgentId,
-				status: "acked",
+				status: "pending",
 			});
-
-			const asyncResult = await this.waitForActionResult(
+			const waiter = this.registerActionResultWaiter(
 				requestId,
 				requestPayload.actionId,
 				ACTION_RESULT_WAIT_TIMEOUT_MS,
 			);
+
+			let receipt: TransportReceipt;
+			try {
+				receipt = await this.context.transport.send(contact.peerAgentId, request, {
+					peerAddress: contact.peerAgentAddress,
+				});
+			} catch (error: unknown) {
+				waiter.cancel();
+				if (!isTransportReceiptTimeout(error)) {
+					await this.context.requestJournal.delete(requestId);
+				}
+				throw error;
+			}
+
+			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
+			if (journalEntry?.status !== "completed") {
+				await this.context.requestJournal.updateStatus(requestId, "acked");
+			}
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+			await this.touchContactSafe(contact.connectionId);
+
+			const asyncResult = await waiter.promise;
 			if (!asyncResult) {
 				await this.runReconcile();
 			}
 			await this.drain();
+			const settledResult =
+				asyncResult ?? (await this.readRecordedTransferResponse(requestId)) ?? undefined;
 
-			if (asyncResult?.status === "rejected") {
-				throw new PermissionError(asyncResult.error ?? "Action rejected by agent");
+			if (settledResult?.status === "rejected") {
+				throw new PermissionError(settledResult.error ?? "Action rejected by agent");
 			}
-			if (asyncResult?.status === "failed") {
-				throw new Error(asyncResult.error ?? "Transfer request failed");
+			if (settledResult?.status === "failed") {
+				throw new Error(settledResult.error ?? "Transfer request failed");
 			}
 
 			return {
@@ -777,7 +811,7 @@ export class TapMessagingService {
 				amount: input.amount,
 				chain: input.chain,
 				toAddress: input.toAddress,
-				asyncResult: asyncResult ?? undefined,
+				asyncResult: settledResult,
 			};
 		});
 	}
@@ -793,7 +827,7 @@ export class TapMessagingService {
 
 	private async processOutboxInternal(): Promise<number> {
 		await this.cleanupOutboxResultsIfDue();
-		let processed = 0;
+		let processed = await this.retryPendingActionResults();
 		while (true) {
 			const job = await this.commandOutbox.claimNext({
 				owner: this.ownerLabel,
@@ -951,6 +985,39 @@ export class TapMessagingService {
 		return appendPermissionLedgerEntry(this.context.config.dataDir, entry);
 	}
 
+	private async appendConversationLogSafe(
+		contact: Contact,
+		request: ProtocolMessage,
+		direction: "incoming" | "outgoing",
+		timestamp?: string,
+	): Promise<void> {
+		try {
+			await appendConversationLog(
+				this.context.conversationLogger,
+				contact,
+				request,
+				direction,
+				timestamp,
+			);
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to record conversation log for ${contact.peerDisplayName} (#${contact.peerAgentId}): ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	private async touchContactSafe(connectionId: string): Promise<void> {
+		try {
+			await this.context.trustStore.touchContact(connectionId);
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to update contact activity for ${connectionId}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
 	private enqueue(key: string, task: () => Promise<void>): void {
 		if (this.inFlightKeys.has(key)) {
 			return;
@@ -972,31 +1039,57 @@ export class TapMessagingService {
 		await Promise.allSettled([...this.pendingTasks]);
 	}
 
-	private async waitForActionResult(
+	private registerActionResultWaiter(
 		requestId: string,
 		actionId: string,
 		timeoutMs: number,
-	): Promise<TransferActionResponse | null> {
-		const immediate = await this.context.requestJournal.getByRequestId(requestId);
-		if (immediate?.status === "completed") {
-			return null;
-		}
-
-		return await new Promise<TransferActionResponse | null>((resolve) => {
-			const timeout = setTimeout(() => {
-				this.waiters.delete(requestId);
-				resolve(null);
-			}, timeoutMs);
-
-			this.waiters.set(requestId, (value) => {
-				if (value.actionId !== actionId) {
-					return;
-				}
-				clearTimeout(timeout);
-				this.waiters.delete(requestId);
-				resolve(value);
-			});
+	): {
+		promise: Promise<TransferActionResponse | null>;
+		cancel: () => void;
+	} {
+		let settle: (value: TransferActionResponse | null) => void = () => {};
+		const promise = new Promise<TransferActionResponse | null>((resolve) => {
+			settle = resolve;
 		});
+		let settled = false;
+		let timeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+			finish(null);
+		}, timeoutMs);
+
+		const finish = (value: TransferActionResponse | null) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			if (timeout) {
+				clearTimeout(timeout);
+				timeout = null;
+			}
+			if (this.waiters.get(requestId) === onResult) {
+				this.waiters.delete(requestId);
+			}
+			settle(value);
+		};
+
+		const onResult = (value: TransferActionResponse) => {
+			if (value.actionId !== actionId) {
+				return;
+			}
+			finish(value);
+		};
+
+		this.waiters.set(requestId, onResult);
+		return {
+			promise,
+			cancel: () => finish(null),
+		};
+	}
+
+	private async readRecordedTransferResponse(
+		requestId: string,
+	): Promise<TransferActionResponse | null> {
+		const entry = await this.context.requestJournal.getByRequestId(requestId);
+		return parseRecordedTransferResponse(entry?.metadata);
 	}
 
 	private async onRequest(envelope: {
@@ -1111,12 +1204,7 @@ export class TapMessagingService {
 		);
 
 		this.enqueue(requestKey, async () => {
-			await this.processTransferRequest(
-				contact,
-				String(envelope.message.id),
-				envelope.message,
-				transferRequest,
-			);
+			await this.processTransferRequest(contact, String(envelope.message.id), transferRequest);
 		});
 		const status = claimed.duplicate ? "duplicate" : "queued";
 		this.emitEvent({
@@ -1295,6 +1383,10 @@ export class TapMessagingService {
 
 	private async handlePermissionsUpdate(contact: Contact, message: ProtocolMessage): Promise<void> {
 		const update = parsePermissionsUpdate(message);
+		const peer = resolvePermissionsUpdatePeer(this.context.config, update);
+		if (peer.agentId !== contact.peerAgentId || peer.chain !== contact.peerChain) {
+			throw new ValidationError("Grant update does not match the sending contact");
+		}
 		await this.context.trustStore.updateContact(contact.connectionId, {
 			permissions: replaceGrantedByPeer(contact.permissions, update.grantSet),
 		});
@@ -1339,7 +1431,6 @@ export class TapMessagingService {
 	private async processTransferRequest(
 		contact: Contact,
 		requestId: string,
-		message: ProtocolMessage,
 		request: TransferActionRequest,
 	): Promise<void> {
 		const approved = await this.decideTransfer(requestId, contact, request);
@@ -1435,27 +1526,68 @@ export class TapMessagingService {
 			}
 		}
 
-		// The on-chain transfer is irreversible at this point, so always mark the
-		// request as completed regardless of result delivery outcome.
+		const delivery = buildPendingActionResultDelivery(contact, requestId, response);
 		await this.context.requestJournal.updateStatus(requestId, "completed");
+		// The on-chain transfer is irreversible at this point, so complete the inbound
+		// request before attempting any retry bookkeeping to avoid duplicate execution.
 		try {
-			await this.sendActionResult(contact, String(message.id), response);
+			await this.context.requestJournal.putOutbound({
+				requestId: String(delivery.request.id),
+				requestKey: `outbound:${delivery.request.method}:${String(delivery.request.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: delivery.request.method,
+				peerAgentId: contact.peerAgentId,
+				correlationId: requestId,
+				status: "pending",
+				metadata: serializePendingActionResultDelivery(delivery),
+			});
 		} catch (error: unknown) {
-			this.logActionResultDeliveryFailure(contact, request.actionId, error);
+			this.log(
+				"error",
+				`Failed to persist retry metadata for action result ${response.actionId}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			try {
+				await this.context.transport.send(contact.peerAgentId, delivery.request, {
+					peerAddress: contact.peerAgentAddress,
+					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+				});
+				await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
+				await this.touchContactSafe(contact.connectionId);
+			} catch (deliveryError: unknown) {
+				this.logActionResultDeliveryFailure(contact, response.actionId, deliveryError);
+			}
+			return;
+		}
+		try {
+			await this.deliverPendingActionResult(delivery);
+		} catch (error: unknown) {
+			this.logActionResultDeliveryFailure(contact, response.actionId, error);
 		}
 	}
 
 	private async handleConnectionResult(message: ProtocolMessage): Promise<void> {
 		const result = parseConnectionResult(message);
+		if (
+			result.to.agentId !== this.context.config.agentId ||
+			result.to.chain !== this.context.config.chain
+		) {
+			throw new ValidationError("Connection result target does not match the local agent");
+		}
 		const contact = await this.context.trustStore.findByAgentId(
 			result.from.agentId,
 			result.from.chain,
 		);
 		if (contact) {
-			const matchesPendingRequest =
+			const matchesPendingRequestId =
 				contact.status === "pending" &&
 				contact.pending?.direction === "outbound" &&
 				contact.pending.requestId === result.requestId;
+			if (matchesPendingRequestId && contact.pending?.requestNonce !== result.requestNonce) {
+				throw new ValidationError("Connection result returned an unexpected pending nonce");
+			}
+			const matchesPendingRequest =
+				matchesPendingRequestId && contact.pending?.requestNonce === result.requestNonce;
 			if (result.status === "accepted") {
 				if (!matchesPendingRequest) {
 					if (contact.status === "active" && contact.connectionId === result.connectionId) {
@@ -1532,8 +1664,8 @@ export class TapMessagingService {
 	private async handleActionResult(from: number, message: ProtocolMessage): Promise<void> {
 		const contact = await findContactForMessage(this.context, from, message);
 		if (contact) {
-			await appendConversationLog(this.context.conversationLogger, contact, message, "incoming");
-			await this.context.trustStore.touchContact(contact.connectionId);
+			await this.appendConversationLogSafe(contact, message, "incoming");
+			await this.touchContactSafe(contact.connectionId);
 		}
 
 		const response = parseTransferActionResponse(message);
@@ -1556,6 +1688,10 @@ export class TapMessagingService {
 			});
 		}
 		if (response.requestId) {
+			await this.context.requestJournal.updateMetadata(
+				response.requestId,
+				serializeRecordedTransferResponse(response),
+			);
 			await this.context.requestJournal.updateStatus(response.requestId, "completed");
 			this.waiters.get(response.requestId)?.(response);
 		}
@@ -1676,36 +1812,45 @@ export class TapMessagingService {
 		}
 	}
 
-	private async sendActionResult(
-		contact: Contact,
-		requestId: string,
-		response: TransferActionResponse,
-	): Promise<void> {
-		const request = buildOutgoingActionResult(
-			contact,
-			requestId,
-			buildTransferResponseText(response),
-			response,
-			"transfer/request",
-			response.status,
-		);
+	private async retryPendingActionResults(): Promise<number> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		let processed = 0;
+		for (const entry of pending) {
+			if (entry.kind !== "result" || entry.method !== ACTION_RESULT) {
+				continue;
+			}
+			const delivery = parsePendingActionResultDelivery(entry.metadata);
+			if (!delivery) {
+				continue;
+			}
+			try {
+				await this.deliverPendingActionResult(delivery);
+				processed += 1;
+			} catch (error: unknown) {
+				this.logResultDeliveryFailure(
+					`Action result ${delivery.actionId}`,
+					`${delivery.peerName} (#${delivery.peerAgentId})`,
+					error,
+				);
+			}
+		}
+		return processed;
+	}
 
-		await this.context.transport.send(contact.peerAgentId, request, {
-			peerAddress: contact.peerAgentAddress,
+	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
+		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
+			peerAddress: delivery.peerAddress,
 			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 		});
-		await appendConversationLog(this.context.conversationLogger, contact, request, "outgoing");
-		await this.context.trustStore.touchContact(contact.connectionId);
-		await this.context.requestJournal.putOutbound({
-			requestId: String(request.id),
-			requestKey: `outbound:${request.method}:${String(request.id)}`,
-			direction: "outbound",
-			kind: "result",
-			method: request.method,
-			peerAgentId: contact.peerAgentId,
-			correlationId: requestId,
-			status: "completed",
-		});
+		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
+		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
+
+		const contact = await this.context.trustStore.getContact(delivery.connectionId);
+		if (!contact || contact.peerAgentId !== delivery.peerAgentId) {
+			return;
+		}
+		await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
+		await this.touchContactSafe(contact.connectionId);
 	}
 
 	private logConnectionResultDeliveryFailure(
@@ -1818,9 +1963,6 @@ function parsePermissionsUpdate(
 	if (
 		typeof params.grantSet !== "object" ||
 		params.grantSet === null ||
-		!Array.isArray(params.grantSet.grants) ||
-		typeof params.grantSet.updatedAt !== "string" ||
-		params.grantSet.version !== TAP_GRANTS_VERSION ||
 		typeof params.grantor?.agentId !== "number" ||
 		typeof params.grantor.chain !== "string" ||
 		typeof params.grantee?.agentId !== "number" ||
@@ -1831,7 +1973,7 @@ function parsePermissionsUpdate(
 	}
 
 	return {
-		grantSet: params.grantSet,
+		grantSet: normalizeGrantInput(params.grantSet),
 		grantor: params.grantor,
 		grantee: params.grantee,
 		note: typeof params.note === "string" && params.note.length > 0 ? params.note : undefined,
@@ -1934,6 +2076,135 @@ function serializePendingRequestDetails(
 	return details as unknown as Record<string, unknown>;
 }
 
+function buildPendingActionResultDelivery(
+	contact: Contact,
+	requestId: string,
+	response: TransferActionResponse,
+): PendingActionResultDelivery {
+	const request = buildOutgoingActionResult(
+		contact,
+		requestId,
+		buildTransferResponseText(response),
+		response,
+		"transfer/request",
+		response.status,
+	);
+	return {
+		type: "action-result-delivery",
+		actionId: response.actionId,
+		connectionId: contact.connectionId,
+		peerAgentId: contact.peerAgentId,
+		peerName: contact.peerDisplayName,
+		peerAddress: contact.peerAgentAddress,
+		request,
+	};
+}
+
+function serializePendingActionResultDelivery(
+	delivery: PendingActionResultDelivery,
+): Record<string, unknown> {
+	return delivery as unknown as Record<string, unknown>;
+}
+
+function parsePendingActionResultDelivery(
+	metadata: Record<string, unknown> | undefined,
+): PendingActionResultDelivery | null {
+	if (!metadata || metadata.type !== "action-result-delivery") {
+		return null;
+	}
+
+	const peerAddress = asString(metadata.peerAddress);
+	if (
+		typeof metadata.actionId !== "string" ||
+		typeof metadata.connectionId !== "string" ||
+		typeof metadata.peerAgentId !== "number" ||
+		typeof metadata.peerName !== "string" ||
+		!peerAddress?.startsWith("0x") ||
+		!isProtocolMessage(metadata.request)
+	) {
+		return null;
+	}
+
+	return {
+		type: "action-result-delivery",
+		actionId: metadata.actionId,
+		connectionId: metadata.connectionId,
+		peerAgentId: metadata.peerAgentId,
+		peerName: metadata.peerName,
+		peerAddress: peerAddress as `0x${string}`,
+		request: metadata.request,
+	};
+}
+
+function resolvePermissionsUpdatePeer(
+	config: Pick<TrustedAgentsConfig, "agentId" | "chain">,
+	params: Pick<PermissionsUpdateParams, "grantor" | "grantee">,
+) {
+	const localAgent = { agentId: config.agentId, chain: config.chain };
+	const grantorIsLocal = isSameAgentIdentifier(params.grantor, localAgent);
+	const granteeIsLocal = isSameAgentIdentifier(params.grantee, localAgent);
+
+	if (grantorIsLocal === granteeIsLocal) {
+		throw new ValidationError("Grant update must involve the local agent exactly once");
+	}
+
+	return grantorIsLocal ? params.grantee : params.grantor;
+}
+
+function serializeRecordedTransferResponse(
+	response: TransferActionResponse,
+): RecordedTransferResponseMetadata {
+	return {
+		type: "transfer-response",
+		response,
+	};
+}
+
+function parseRecordedTransferResponse(
+	metadata: Record<string, unknown> | undefined,
+): TransferActionResponse | null {
+	if (!metadata || metadata.type !== "transfer-response") {
+		return null;
+	}
+
+	const response = metadata.response;
+	if (typeof response !== "object" || response === null) {
+		return null;
+	}
+
+	const parsed = response as Partial<TransferActionResponse>;
+	if (
+		parsed.type !== "transfer/response" ||
+		typeof parsed.actionId !== "string" ||
+		(parsed.asset !== "native" && parsed.asset !== "usdc") ||
+		typeof parsed.amount !== "string" ||
+		typeof parsed.chain !== "string" ||
+		typeof parsed.toAddress !== "string" ||
+		(parsed.status !== "completed" && parsed.status !== "rejected" && parsed.status !== "failed")
+	) {
+		return null;
+	}
+
+	return parsed as TransferActionResponse;
+}
+
+function isProtocolMessage(value: unknown): value is ProtocolMessage {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		(value as { jsonrpc?: unknown }).jsonrpc === "2.0" &&
+		typeof (value as { method?: unknown }).method === "string" &&
+		"id" in (value as Record<string, unknown>)
+	);
+}
+
+function isSameAgentIdentifier(
+	left: Pick<AgentIdentifier, "agentId" | "chain">,
+	right: Pick<AgentIdentifier, "agentId" | "chain">,
+): boolean {
+	return left.agentId === right.agentId && left.chain === right.chain;
+}
+
 function findApplicableTransferGrants(
 	grantSet: PermissionGrantSet,
 	request: TransferActionRequest,
@@ -2014,11 +2285,7 @@ async function findContactForMessage(
 
 	if (message.method === PERMISSIONS_UPDATE) {
 		const params = parsePermissionsUpdate(message);
-		const peer =
-			params.grantor.agentId === context.config.agentId &&
-			params.grantor.chain === context.config.chain
-				? params.grantee
-				: params.grantor;
+		const peer = resolvePermissionsUpdatePeer(context.config, params);
 		return await context.trustStore.findByAgentId(peer.agentId, peer.chain);
 	}
 

@@ -8,6 +8,7 @@ import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import {
 	buildConnectionRequest,
 	buildConnectionResult,
+	buildPermissionsUpdate,
 } from "../../../src/connection/handshake.js";
 import { generateInvite } from "../../../src/connection/invite.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
@@ -17,6 +18,8 @@ import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import {
 	FileTapCommandOutbox,
 	buildOutgoingActionRequest,
+	buildOutgoingActionResult,
+	parseTransferActionRequest,
 	parseTransferActionResponse,
 } from "../../../src/runtime/index.js";
 import type { FileRequestJournal } from "../../../src/runtime/request-journal.js";
@@ -462,6 +465,63 @@ describe("TapMessagingService", () => {
 		);
 	});
 
+	it("fails when the peer rejects during the same transport session", async () => {
+		const { url } = await generateInvite({
+			agentId: PEER_AGENT.agentId,
+			chain: PEER_AGENT.chain,
+			privateKey: BOB.privateKey,
+			expirySeconds: 3600,
+		});
+
+		class ImmediateRejectTransport extends FakeTransport {
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message });
+				if (message.method === "connection/request") {
+					const params = message.params as {
+						from: { agentId: number; chain: string };
+						to: { agentId: number; chain: string };
+						nonce: string;
+					};
+					await this.handlers.onResult?.({
+						from: peerId,
+						senderInboxId: "peer-inbox-rejected",
+						message: buildConnectionResult({
+							requestId: String(message.id),
+							requestNonce: params.nonce,
+							from: params.to,
+							to: params.from,
+							status: "rejected",
+							reason: "no thanks",
+							timestamp: "2026-03-08T00:00:01.000Z",
+						}),
+					});
+				}
+
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new ImmediateRejectTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+			},
+		);
+
+		await expect(service.connect({ inviteUrl: url })).rejects.toThrow(
+			"Connection rejected by Bob (#10)",
+		);
+		expect(
+			(await requestJournal.getByRequestId(String(transport.sentMessages[0]!.message.id)))?.status,
+		).toBe("completed");
+	});
+
 	it("ignores stale rejected connection results for a different outbound request", async () => {
 		const pendingContact: Contact = {
 			connectionId: "conn-current-1",
@@ -651,6 +711,255 @@ describe("TapMessagingService", () => {
 		);
 	});
 
+	it("captures an action result that arrives before requestFunds finishes sending", async () => {
+		const activeContact: Contact = {
+			connectionId: "conn-request-funds-fast",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+
+		class ImmediateActionResultTransport extends FakeTransport {
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message });
+				if (message.method === "action/request") {
+					const request = parseTransferActionRequest(message);
+					if (!request) {
+						throw new Error("expected transfer request payload");
+					}
+					await this.handlers.onResult?.({
+						from: peerId,
+						senderInboxId: "peer-inbox-fast-result",
+						message: buildOutgoingActionResult(
+							activeContact,
+							String(message.id),
+							"Transfer complete",
+							{
+								type: "transfer/response",
+								requestId: String(message.id),
+								actionId: request.actionId,
+								asset: request.asset,
+								amount: request.amount,
+								chain: request.chain,
+								toAddress: request.toAddress,
+								status: "completed",
+								txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+							},
+							"transfer/request",
+							"completed",
+						),
+					});
+				}
+
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const { service } = await createService(
+			{},
+			{
+				transport: new ImmediateActionResultTransport(),
+				trustStore: createMemoryTrustStore([activeContact]),
+			},
+		);
+
+		const result = await service.requestFunds({
+			peer: activeContact.peerDisplayName,
+			asset: "native",
+			amount: "0.1",
+			chain: "eip155:84532",
+			toAddress: ALICE.address,
+		});
+
+		expect(result.asyncResult).toEqual(
+			expect.objectContaining({
+				status: "completed",
+				actionId: result.actionId,
+			}),
+		);
+	});
+
+	it("retries pending action result delivery during maintenance", async () => {
+		const contact: Contact = {
+			connectionId: "conn-transfer-retry",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+
+		class FlakyActionResultTransport extends FakeTransport {
+			private failActionResultOnce = true;
+
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message });
+				if (message.method === "action/result" && this.failActionResultOnce) {
+					this.failActionResultOnce = false;
+					throw new TransportError("temporary action result send failure");
+				}
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FlakyActionResultTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: {
+					executeTransfer: vi.fn(async () => ({
+						txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const,
+					})),
+				},
+				serviceOptions: { unsafeAutoApproveActions: true },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "transfer-retry-1",
+				asset: "native",
+				amount: "0.2",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-retry",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		const firstActionResult = transport.sentMessages.find(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(firstActionResult).toBeDefined();
+		expect(
+			(await requestJournal.getByRequestId(String(firstActionResult!.message.id)))?.status,
+		).toBe("pending");
+
+		await service.syncOnce();
+
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "action/result"),
+		).toHaveLength(2);
+		expect(
+			(await requestJournal.getByRequestId(String(firstActionResult!.message.id)))?.status,
+		).toBe("completed");
+
+		await service.stop();
+	});
+
+	it("marks executed transfer requests completed even if retry metadata persistence fails", async () => {
+		const contact: Contact = {
+			connectionId: "conn-transfer-journal-fail",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const executeTransfer = vi.fn(async () => ({
+			txHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" as const,
+		}));
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { executeTransfer },
+				serviceOptions: { unsafeAutoApproveActions: true },
+			},
+		);
+		const originalPutOutbound = requestJournal.putOutbound.bind(requestJournal);
+		vi.spyOn(requestJournal, "putOutbound").mockImplementation(async (entry) => {
+			if (entry.kind === "result" && entry.method === "action/result") {
+				throw new Error("disk full");
+			}
+			return await originalPutOutbound(entry);
+		});
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "transfer-journal-fail-1",
+				asset: "native",
+				amount: "0.5",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-journal-fail",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(executeTransfer).toHaveBeenCalledOnce();
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "action/result"),
+		).toHaveLength(1);
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-journal-fail",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "duplicate" });
+		expect(executeTransfer).toHaveBeenCalledOnce();
+
+		await service.stop();
+	});
+
 	it("rejects transfer approvals without a matching grant before consulting hooks", async () => {
 		const contact: Contact = {
 			connectionId: "conn-transfer-1",
@@ -769,5 +1078,202 @@ describe("TapMessagingService", () => {
 		expect(parseTransferActionResponse(transport.sentMessages[0]!.message)?.status).toBe(
 			"completed",
 		);
+	});
+
+	it("captures fast transfer results that arrive before the request call finishes", async () => {
+		const contact: Contact = {
+			connectionId: "conn-request-funds-fast",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+
+		class FastResultTransport extends FakeTransport {
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message });
+				if (message.method === "action/request") {
+					const request = parseTransferActionRequest(message);
+					if (request) {
+						await this.handlers.onResult?.({
+							from: peerId,
+							senderInboxId: "peer-inbox-fast-result",
+							message: buildOutgoingActionResult(
+								contact,
+								String(message.id),
+								"Transfer completed",
+								{
+									type: "transfer/response",
+									actionId: request.actionId,
+									asset: request.asset,
+									amount: request.amount,
+									chain: request.chain,
+									toAddress: request.toAddress,
+									status: "completed",
+									txHash:
+										"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" as const,
+								},
+								"transfer/request",
+								"completed",
+							),
+						});
+					}
+				}
+
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FastResultTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+			},
+		);
+
+		const result = await service.requestFunds({
+			peer: contact.peerDisplayName,
+			asset: "native",
+			amount: "0.1",
+			chain: "eip155:84532",
+			toAddress: ALICE.address,
+		});
+
+		expect(result.asyncResult).toEqual(
+			expect.objectContaining({
+				status: "completed",
+				actionId: expect.any(String),
+			}),
+		);
+	});
+
+	it("rejects connection results with the wrong pending nonce", async () => {
+		const pendingContact: Contact = {
+			connectionId: "conn-wrong-nonce",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "pending",
+			pending: {
+				direction: "outbound",
+				requestId: "req-wrong-nonce",
+				requestNonce: "expected-nonce",
+				requestedAt: "2026-03-08T00:00:00.000Z",
+			},
+		};
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore([pendingContact]);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+		await requestJournal.putOutbound({
+			requestId: "req-wrong-nonce",
+			requestKey: "outbound:connection/request:req-wrong-nonce",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: PEER_AGENT.agentId,
+			status: "acked",
+		});
+
+		const wrongNonceResult = buildConnectionResult({
+			requestId: "req-wrong-nonce",
+			requestNonce: "unexpected-nonce",
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			to: { agentId: 1, chain: "eip155:84532" },
+			status: "accepted",
+			connectionId: pendingContact.connectionId,
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-wrong-nonce",
+				message: wrongNonceResult,
+			}),
+		).rejects.toThrow("unexpected pending nonce");
+
+		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		expect(contact?.status).toBe("pending");
+		expect((await requestJournal.getByRequestId("req-wrong-nonce"))?.status).toBe("acked");
+	});
+
+	it("rejects permission updates that do not involve the local agent", async () => {
+		const contact: Contact = {
+			connectionId: "conn-grants-invalid",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const trustStore = createMemoryTrustStore([contact]);
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+
+		const invalidUpdate = buildPermissionsUpdate({
+			grantSet: {
+				version: "tap-grants/v1",
+				updatedAt: "2026-03-08T00:00:00.000Z",
+				grants: [
+					{
+						grantId: "invalid",
+						scope: "general-chat",
+						updatedAt: "2026-03-08T00:00:00.000Z",
+						status: "active",
+					},
+				],
+			},
+			grantor: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			grantee: { agentId: 999, chain: PEER_AGENT.chain },
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-invalid-grants",
+				message: invalidUpdate,
+			}),
+		).rejects.toThrow("local agent exactly once");
+
+		const nextContact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		expect(nextContact?.permissions.grantedByPeer.grants).toEqual([]);
 	});
 });
