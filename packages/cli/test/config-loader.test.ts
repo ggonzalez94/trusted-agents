@@ -29,6 +29,26 @@ describe("config-loader", () => {
 			expect(path).toBe("/custom/config.yaml");
 		});
 
+		it("allows --config without a separately selected data dir", async () => {
+			const configPath = join(tmpDir, "custom-config.yaml");
+			await mkdir(join(tmpDir, "identity"), { recursive: true });
+			await writeFile(
+				join(tmpDir, "identity", "agent.key"),
+				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+				"utf-8",
+			);
+			await writeFile(
+				configPath,
+				["agent_id: 1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
+				"utf-8",
+			);
+
+			const config = await loadConfig({ config: configPath }, { requireAgentId: false });
+
+			expect(config.agentId).toBe(1);
+			expect(config.chain).toBe("eip155:84532");
+		});
+
 		it("should prefer config.yaml inside dataDir when it exists", async () => {
 			const dataDir = join(tmpDir, "data");
 			await mkdir(dataDir, { recursive: true });
@@ -146,6 +166,35 @@ describe("config-loader", () => {
 			const config = await loadConfig({ dataDir });
 
 			expect(config.chains["eip155:8453"]?.rpcUrl).toBe("https://example.test/base-override");
+		});
+
+		it("rejects mismatched --config and --data-dir combinations", async () => {
+			const dataDir = join(tmpDir, "agent-a");
+			const otherDir = join(tmpDir, "agent-b");
+			await mkdir(join(dataDir, "identity"), { recursive: true });
+			await mkdir(otherDir, { recursive: true });
+			await writeFile(
+				join(dataDir, "identity", "agent.key"),
+				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+				"utf-8",
+			);
+			await writeFile(
+				join(otherDir, "config.yaml"),
+				["agent_id: 1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
+				"utf-8",
+			);
+
+			await expect(
+				loadConfig(
+					{
+						dataDir,
+						config: join(otherDir, "config.yaml"),
+					},
+					{ requireAgentId: false },
+				),
+			).rejects.toThrow(
+				`Config path must match the TAP data dir config at ${join(dataDir, "config.yaml")}`,
+			);
 		});
 	});
 });

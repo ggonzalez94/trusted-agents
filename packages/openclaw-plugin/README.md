@@ -19,6 +19,8 @@ cd packages/cli && npm link
 tap install --runtime openclaw
 ```
 
+`tap install --runtime openclaw` is the convenience wrapper for the canonical OpenClaw plugin install. It installs the plugin-backed OpenClaw surface only; it does not link the generic TAP skill tree into `~/.openclaw/skills`.
+
 ## Configure
 
 Add one or more TAP identities to the plugin config. Each identity points at an existing TAP `dataDir`.

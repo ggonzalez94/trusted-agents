@@ -177,21 +177,23 @@ export class OpenClawTapRegistry {
 		expiresInSeconds: number;
 	}> {
 		const runtime = await this.ensureRuntimeForAction(identity);
-		const expiresIn = expirySeconds ?? runtime.config.inviteExpirySeconds;
-		const result = await generateInvite({
-			agentId: runtime.config.agentId,
-			chain: runtime.config.chain,
-			privateKey: runtime.config.privateKey,
-			expirySeconds: expiresIn,
+		return await runtime.mutex.runExclusive(async () => {
+			const expiresIn = expirySeconds ?? runtime.config.inviteExpirySeconds;
+			const result = await generateInvite({
+				agentId: runtime.config.agentId,
+				chain: runtime.config.chain,
+				privateKey: runtime.config.privateKey,
+				expirySeconds: expiresIn,
+			});
+			const store = new FilePendingInviteStore(runtime.config.dataDir);
+			await store.create(result.invite.nonce, result.invite.expires);
+			return {
+				identity: runtime.definition.name,
+				url: result.url,
+				nonce: result.invite.nonce,
+				expiresInSeconds: expiresIn,
+			};
 		});
-		const store = new FilePendingInviteStore(runtime.config.dataDir);
-		await store.create(result.invite.nonce, result.invite.expires);
-		return {
-			identity: runtime.definition.name,
-			url: result.url,
-			nonce: result.invite.nonce,
-			expiresInSeconds: expiresIn,
-		};
 	}
 
 	async connect(params: {
@@ -310,16 +312,26 @@ export class OpenClawTapRegistry {
 			return;
 		}
 
+		const failures: string[] = [];
 		for (const identity of this.pluginConfig.identities) {
 			try {
 				const runtime = await this.ensureRuntime(identity.name);
 				await this.startRuntime(runtime);
 			} catch (error: unknown) {
+				const message = formatError(error);
+				failures.push(`${identity.name}: ${message}`);
 				this.logger.warn(
-					`[trusted-agents-tap:${identity.name}] Failed to start TAP runtime: ${formatError(error)}`,
+					`[trusted-agents-tap:${identity.name}] Failed to start TAP runtime: ${message}`,
 				);
 			}
 		}
+
+		if (failures.length === 0) {
+			return;
+		}
+
+		await this.stop();
+		throw new Error(`Failed to start TAP runtimes: ${failures.join("; ")}`);
 	}
 
 	private async ensureRuntimeForAction(identity?: string): Promise<ManagedTapRuntime> {

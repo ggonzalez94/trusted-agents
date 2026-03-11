@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { validateRegistrationFile } from "../../../src/identity/registration-file.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { IdentityError } from "../../../src/common/index.js";
+import {
+	fetchRegistrationFile,
+	validateRegistrationFile,
+} from "../../../src/identity/registration-file.js";
 import {
 	REGISTRATION_INVALID_ADDRESS,
 	REGISTRATION_MISSING_PROTOCOL,
@@ -138,5 +142,38 @@ describe("validateRegistrationFile", () => {
 		};
 
 		expect(() => validateRegistrationFile(file)).toThrow("execution.address");
+	});
+});
+
+describe("fetchRegistrationFile", () => {
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it.each(["not-a-uri", "https://[invalid"])(
+		"should wrap malformed registration URIs in IdentityError: %s",
+		async (uri) => {
+			const fetchMock = vi.spyOn(globalThis, "fetch");
+			const result = fetchRegistrationFile(uri);
+
+			await expect(result).rejects.toBeInstanceOf(IdentityError);
+			await expect(result).rejects.toThrow("Invalid registration URI");
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each([
+		"https://169.254.10.20/registration.json",
+		"https://[::1]/registration.json",
+		"https://[fe80::1]/registration.json",
+		"https://[fc00::1]/registration.json",
+		"https://[fd12:3456::1]/registration.json",
+	])("should reject unsafe registration hosts: %s", async (uri) => {
+		const fetchMock = vi.spyOn(globalThis, "fetch");
+		const result = fetchRegistrationFile(uri);
+
+		await expect(result).rejects.toBeInstanceOf(IdentityError);
+		await expect(result).rejects.toThrow("Registration URI is not allowed");
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

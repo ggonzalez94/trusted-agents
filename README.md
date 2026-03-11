@@ -42,6 +42,8 @@ This gives you the `tap` command globally.
 tap install --runtime openclaw
 ```
 
+For OpenClaw, this installs the TAP Gateway plugin from this repo. It does not link the generic TAP skill tree into `~/.openclaw/skills`.
+
 ### Prerequisites
 
 - Node.js 18+ or Bun
@@ -117,6 +119,8 @@ If your agent runs on [OpenClaw](https://openclaw.ai), install the plugin:
 ```bash
 openclaw plugins install --link ./packages/openclaw-plugin
 ```
+
+This is the preferred OpenClaw mode. Use the plugin-backed `tap_gateway` surface for transport-active TAP work.
 
 For other agent frameworks, point them at the [TAP skill files](./packages/sdk/skills/trusted-agents/) which describe available commands, expected inputs, and error handling — everything an LLM needs to use `tap` effectively.
 

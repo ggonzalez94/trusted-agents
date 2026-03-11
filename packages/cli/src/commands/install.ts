@@ -60,12 +60,14 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 				notes,
 			};
 
-			if (!cmdOpts.skipSkills) {
+			if (shouldLinkGenericSkills(runtime, cmdOpts.skipSkills)) {
 				const linkPath = await ensureSkillLink(runtimeDir, skillSource);
 				result.skills_linked = true;
 				result.skills_path = linkPath;
-			} else {
+			} else if (cmdOpts.skipSkills) {
 				notes.push("Skipped generic TAP skill linking.");
+			} else if (runtime === "openclaw") {
+				notes.push("OpenClaw uses plugin-bundled TAP skills; skipped generic TAP skill linking.");
 			}
 
 			if (runtime === "openclaw") {
@@ -161,6 +163,13 @@ function parseRuntime(value: string): SupportedRuntime {
 		throw new Error(`Unsupported runtime: ${value}. Use one of: ${SUPPORTED_RUNTIMES.join(", ")}`);
 	}
 	return match;
+}
+
+function shouldLinkGenericSkills(
+	runtime: SupportedRuntime,
+	skipSkills: boolean | undefined,
+): boolean {
+	return !skipSkills && runtime !== "openclaw";
 }
 
 async function ensureSkillLink(runtimeDir: string, skillSource: string): Promise<string> {

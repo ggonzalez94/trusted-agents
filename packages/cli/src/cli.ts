@@ -30,7 +30,10 @@ export function createCli(): Command {
 			[],
 		)
 		.option("--source-dir <path>", "Override the TAP source checkout directory")
-		.option("--skip-skills", "Skip linking the generic TAP skill tree")
+		.option(
+			"--skip-skills",
+			"Skip linking the generic TAP skill tree (OpenClaw always uses plugin-bundled skills)",
+		)
 		.action(async (cmdOpts: { runtime?: string[]; sourceDir?: string; skipSkills?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { installCommand } = await import("./commands/install.js");

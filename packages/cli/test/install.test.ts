@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,7 +35,7 @@ describe("tap install", () => {
 		await rm(tempRoot, { recursive: true, force: true });
 	});
 
-	it("auto-installs generic skills and the OpenClaw plugin for detected runtimes", async () => {
+	it("auto-installs generic skills for generic runtimes and the OpenClaw plugin for OpenClaw", async () => {
 		await mkdir(join(homeDir, ".codex"), { recursive: true });
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
 
@@ -44,8 +44,22 @@ describe("tap install", () => {
 		expect(await readSymlink(join(homeDir, ".codex", "skills", "trusted-agents"))).toBe(
 			join(sourceDir, "packages", "sdk", "skills", "trusted-agents"),
 		);
-		expect(await readSymlink(join(homeDir, ".openclaw", "skills", "trusted-agents"))).toBe(
-			join(sourceDir, "packages", "sdk", "skills", "trusted-agents"),
+		await expect(pathMissing(join(homeDir, ".openclaw", "skills", "trusted-agents"))).resolves.toBe(
+			true,
+		);
+
+		const pluginLog = await readFile(join(tempRoot, "openclaw.log"), "utf-8");
+		expect(pluginLog).toContain("plugins install --link");
+		expect(pluginLog).toContain(join(sourceDir, "packages", "openclaw-plugin"));
+	});
+
+	it("installs the OpenClaw plugin without linking generic skills into ~/.openclaw", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
+
+		await expect(pathMissing(join(homeDir, ".openclaw", "skills", "trusted-agents"))).resolves.toBe(
+			true,
 		);
 
 		const pluginLog = await readFile(join(tempRoot, "openclaw.log"), "utf-8");
@@ -87,4 +101,13 @@ async function writeFakeOpenClaw(binDir: string, logPath: string): Promise<void>
 
 async function readSymlink(path: string): Promise<string> {
 	return await readlink(path);
+}
+
+async function pathMissing(path: string): Promise<boolean> {
+	try {
+		await access(path);
+		return false;
+	} catch {
+		return true;
+	}
 }

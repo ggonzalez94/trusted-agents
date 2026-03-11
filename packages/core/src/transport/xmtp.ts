@@ -36,6 +36,7 @@ interface PendingRequest {
 	resolve: (receipt: TransportReceipt) => void;
 	reject: (error: Error) => void;
 	timer: NodeJS.Timeout;
+	senderInboxId: string;
 }
 
 interface IncomingTransportMessage {
@@ -136,7 +137,12 @@ export class XmtpTransport implements TransportProvider {
 				reject(new TransportError(`Response timeout for message ${requestId}`));
 			}, timeout);
 
-			this.pendingRequests.set(requestId, { resolve, reject, timer });
+			this.pendingRequests.set(requestId, {
+				resolve,
+				reject,
+				timer,
+				senderInboxId: inboxId,
+			});
 		});
 
 		try {
@@ -274,17 +280,18 @@ export class XmtpTransport implements TransportProvider {
 
 		for await (const message of stream) {
 			if (!this.running) break;
-			this.processMessage({
-				senderInboxId: message.senderInboxId,
-				content: message.content,
-				conversationId: message.conversationId,
-				messageId: message.id,
-				sentAtNs: message.sentAtNs,
-			})
-				.then(async () => {
-					await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
-				})
-				.catch(() => {});
+			try {
+				await this.processMessage({
+					senderInboxId: message.senderInboxId,
+					content: message.content,
+					conversationId: message.conversationId,
+					messageId: message.id,
+					sentAtNs: message.sentAtNs,
+				});
+				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
+			} catch {
+				// Leave the checkpoint unchanged so transient failures can be retried.
+			}
 		}
 	}
 
@@ -396,7 +403,7 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		if ("result" in payload || "error" in payload) {
-			return this.processIncomingReceipt(payload);
+			return this.processIncomingReceipt(message.senderInboxId, payload);
 		}
 
 		if (!("method" in payload)) {
@@ -404,18 +411,24 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const request = payload as unknown as ProtocolMessage;
-		if (this.shouldSkipDuplicateIncomingRequest(message.senderInboxId, request)) {
+		if (this.isDuplicateIncomingRequest(message.senderInboxId, request)) {
 			return false;
 		}
 
-		await this.handleIncomingProtocolMessage(message, request);
-		return true;
+		const handled = await this.handleIncomingProtocolMessage(message, request);
+		if (handled) {
+			this.markIncomingRequestProcessed(message.senderInboxId, request);
+		}
+		return handled;
 	}
 
-	private processIncomingReceipt(payload: Record<string, unknown>): boolean {
+	private processIncomingReceipt(senderInboxId: string, payload: Record<string, unknown>): boolean {
 		const requestId = String(payload.id);
 		const pending = this.pendingRequests.get(requestId);
 		if (!pending) {
+			return false;
+		}
+		if (pending.senderInboxId !== senderInboxId) {
 			return false;
 		}
 
@@ -467,9 +480,9 @@ export class XmtpTransport implements TransportProvider {
 	private async handleIncomingProtocolMessage(
 		rawMessage: IncomingTransportMessage,
 		message: ProtocolMessage,
-	): Promise<void> {
+	): Promise<boolean> {
 		if (!this.client) {
-			return;
+			return false;
 		}
 
 		const senderAddresses = await this.resolveInboxAddresses(rawMessage.senderInboxId);
@@ -485,7 +498,7 @@ export class XmtpTransport implements TransportProvider {
 					-32003,
 					"Sender connection is not active for this method",
 				);
-				return;
+				return false;
 			}
 			senderId = senderContact.peerAgentId;
 		} else if (message.method === CONNECTION_REQUEST) {
@@ -502,11 +515,11 @@ export class XmtpTransport implements TransportProvider {
 					-32001,
 					error instanceof Error ? error.message : "Bootstrap sender verification failed",
 				);
-				return;
+				return false;
 			}
 		} else {
 			await this.sendJsonRpcError(rawMessage.senderInboxId, message.id, -32001, "Unknown sender");
-			return;
+			return false;
 		}
 
 		const handler = resultMethod ? this.handlers.onResult : this.handlers.onRequest;
@@ -517,7 +530,7 @@ export class XmtpTransport implements TransportProvider {
 				-32601,
 				`No transport handler registered for ${resultMethod ? "results" : "requests"}`,
 			);
-			return;
+			return false;
 		}
 
 		let ack: TransportAck;
@@ -534,10 +547,11 @@ export class XmtpTransport implements TransportProvider {
 				-32603,
 				error instanceof Error ? error.message : "Internal error",
 			);
-			return;
+			return false;
 		}
 
 		await this.sendJsonRpcReceipt(rawMessage.senderInboxId, message.id, String(message.id), ack);
+		return true;
 	}
 
 	private isContactAllowedForMethod(contact: Contact, method: string): boolean {
@@ -713,21 +727,16 @@ export class XmtpTransport implements TransportProvider {
 		}
 	}
 
-	private shouldSkipDuplicateIncomingRequest(
-		senderInboxId: string,
-		request: ProtocolMessage,
-	): boolean {
-		const requestId = String(request.id);
-		const key = `${senderInboxId}:${request.method}:${requestId}`;
+	private isDuplicateIncomingRequest(senderInboxId: string, request: ProtocolMessage): boolean {
 		const now = Date.now();
 		this.pruneProcessedIncomingRequests(now);
+		return this.processedIncomingRequests.has(buildIncomingRequestKey(senderInboxId, request));
+	}
 
-		if (this.processedIncomingRequests.has(key)) {
-			return true;
-		}
-
-		this.processedIncomingRequests.set(key, now);
-		return false;
+	private markIncomingRequestProcessed(senderInboxId: string, request: ProtocolMessage): void {
+		const now = Date.now();
+		this.pruneProcessedIncomingRequests(now);
+		this.processedIncomingRequests.set(buildIncomingRequestKey(senderInboxId, request), now);
 	}
 
 	private pruneProcessedIncomingRequests(now: number): void {
@@ -765,6 +774,10 @@ export class XmtpTransport implements TransportProvider {
 			messageId,
 		});
 	}
+}
+
+function buildIncomingRequestKey(senderInboxId: string, request: ProtocolMessage): string {
+	return `${senderInboxId}:${request.method}:${String(request.id)}`;
 }
 
 function buildMessageQuery(checkpoint: XmtpConversationCheckpoint | null): {

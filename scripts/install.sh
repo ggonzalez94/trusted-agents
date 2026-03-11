@@ -44,11 +44,11 @@ usage() {
   cat <<'USAGE'
 Usage: install.sh [OPTIONS]
 
-Install the Trusted Agents Protocol CLI (tap), skill files, and runtime integrations.
+Install the Trusted Agents Protocol CLI (tap), generic TAP skill links for supported non-OpenClaw hosts, and runtime integrations.
 
 Options:
   --uninstall       Remove tap binary and skill symlinks
-  --skip-skills     Skip linking generic TAP skill files into agent runtimes
+  --skip-skills     Skip linking generic TAP skill files into non-OpenClaw agent runtimes
   --repo-url URL    Git repository URL (default: GitHub)
   --branch BRANCH   Git branch to clone (default: main)
   --bin-dir DIR     Binary install directory (default: ~/.local/bin)

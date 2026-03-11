@@ -37,4 +37,15 @@ describe("parseTapOpenClawPluginConfig", () => {
 			}),
 		).toThrow("Duplicate TAP plugin identity name");
 	});
+
+	it("rejects duplicate identity data dirs after path normalization", () => {
+		expect(() =>
+			parseTapOpenClawPluginConfig({
+				identities: [
+					{ name: "alpha", dataDir: "/tmp/tap/agent-a" },
+					{ name: "beta", dataDir: "/tmp/tap/../tap/agent-a" },
+				],
+			}),
+		).toThrow("Duplicate TAP plugin identity dataDir");
+	});
 });

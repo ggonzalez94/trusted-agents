@@ -30,6 +30,7 @@ export interface OrchestratorConfig {
 export class TrustedAgentsOrchestrator {
 	private readonly approvalHandler?: ApprovalHandler;
 	private readonly transport?: TransportProvider;
+	private transportHandlers: TransportHandlers = {};
 	private transportStarted = false;
 
 	constructor(private readonly config: OrchestratorConfig) {
@@ -44,6 +45,7 @@ export class TrustedAgentsOrchestrator {
 	}): Promise<void> {
 		if (!this.transport) return;
 		if (options?.handlers) {
+			this.transportHandlers = options.handlers;
 			this.transport.setHandlers(options.handlers);
 		}
 		await this.ensureTransportStarted();
@@ -66,33 +68,49 @@ export class TrustedAgentsOrchestrator {
 	}
 
 	async connect(inviteUrl: string): Promise<ConnectResult> {
-		return executeConnect({
-			inviteUrl,
-			privateKey: this.config.privateKey,
-			agentId: this.config.agentId,
-			chain: this.config.chain,
-			dataDir: this.config.dataDir,
-			resolver: this.config.resolver,
-			transport: this.transport!,
-			approveConnection: this.approvalHandler
-				? async (details) =>
-						this.approvalHandler!.requestApproval({
-							type: "connection",
-							description: `Connect to ${details.peerName} (#${details.peerAgentId})`,
-							details: {
-								peerName: details.peerName,
-								peerAgentId: details.peerAgentId,
-								chain: details.chain,
-								capabilities: details.capabilities.join(", "),
-							},
-						})
-				: undefined,
-			notify: this.config.notification
-				? async (message) => {
-						await this.config.notification!.notify(message);
-					}
-				: undefined,
-		});
+		if (!this.transport) {
+			return {
+				success: false,
+				error: "No transport configured. Provide config.transport or config.xmtp.",
+			};
+		}
+
+		try {
+			return await executeConnect({
+				inviteUrl,
+				privateKey: this.config.privateKey,
+				agentId: this.config.agentId,
+				chain: this.config.chain,
+				dataDir: this.config.dataDir,
+				resolver: this.config.resolver,
+				transport: this.transport,
+				transportHandlers: this.transportHandlers,
+				manageTransportLifecycle: !this.transportStarted,
+				approveConnection: this.approvalHandler
+					? async (details) =>
+							this.approvalHandler!.requestApproval({
+								type: "connection",
+								description: `Connect to ${details.peerName} (#${details.peerAgentId})`,
+								details: {
+									peerName: details.peerName,
+									peerAgentId: details.peerAgentId,
+									chain: details.chain,
+									capabilities: details.capabilities.join(", "),
+								},
+							})
+					: undefined,
+				notify: this.config.notification
+					? async (message) => {
+							await this.config.notification!.notify(message);
+						}
+					: undefined,
+			});
+		} catch (error) {
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "Connection failed",
+			};
+		}
 	}
 
 	async contacts(): Promise<ContactsResult> {

@@ -168,7 +168,7 @@ function resolveRegistrationUri(uri: string): string {
 		return `https://ipfs.io/ipfs/${cidAndPath}`;
 	}
 
-	const parsed = new URL(uri);
+	const parsed = parseRegistrationUrl(uri);
 	if (parsed.protocol !== "https:") {
 		throw new IdentityError(`Unsupported registration URI protocol: ${parsed.protocol}`);
 	}
@@ -176,16 +176,56 @@ function resolveRegistrationUri(uri: string): string {
 }
 
 function isSafeRemoteUri(uri: string): boolean {
-	const url = new URL(uri);
-	const host = url.hostname.toLowerCase();
+	const url = parseRegistrationUrl(uri);
+	const host = normalizeHostname(url.hostname);
 
 	if (host === "localhost" || host === "::1" || host.endsWith(".local")) {
 		return false;
 	}
 	if (/^127\./.test(host)) return false;
 	if (/^10\./.test(host)) return false;
+	if (/^169\.254\./.test(host)) return false;
 	if (/^192\.168\./.test(host)) return false;
 	if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
+	if (isBlockedIpv6Host(host)) return false;
 
 	return true;
+}
+
+function parseRegistrationUrl(uri: string): URL {
+	try {
+		return new URL(uri);
+	} catch {
+		throw new IdentityError(`Invalid registration URI: ${uri}`);
+	}
+}
+
+function normalizeHostname(hostname: string): string {
+	return hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+}
+
+function isBlockedIpv6Host(host: string): boolean {
+	if (!host.includes(":")) {
+		return false;
+	}
+
+	const firstHextet = getLeadingIpv6Hextet(host);
+	if (firstHextet === null) {
+		return false;
+	}
+
+	return (
+		(firstHextet >= 0xfe80 && firstHextet <= 0xfebf) ||
+		(firstHextet >= 0xfc00 && firstHextet <= 0xfdff)
+	);
+}
+
+function getLeadingIpv6Hextet(host: string): number | null {
+	const firstSegment = host.split(":", 1)[0];
+	if (!firstSegment) {
+		return null;
+	}
+
+	const parsed = Number.parseInt(firstSegment, 16);
+	return Number.isNaN(parsed) ? null : parsed;
 }

@@ -71,6 +71,7 @@ Installation expectations:
 
 - OpenClaw plugin install loads the plugin skill directory from `packages/openclaw-plugin/openclaw.plugin.json`.
 - That plugin install does **not** automatically install the generic TAP skill tree from `packages/sdk/skills/trusted-agents/`.
+- `tap install --runtime openclaw` should match that plugin-only OpenClaw result; it is a convenience wrapper, not a second OpenClaw skill-install mode.
 - Outside OpenClaw plugin mode, hosts should install the generic TAP skills from `packages/sdk/skills/trusted-agents/` into whatever skill directory that host uses.
 - In this repo, skill files under `packages/*/skills/...` are the canonical source. Any copies under `~/.local/share/...`, `~/.openclaw/...`, or other host-specific paths are installed mirrors, not the source of truth.
 

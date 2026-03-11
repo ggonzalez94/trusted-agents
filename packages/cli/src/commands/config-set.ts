@@ -1,7 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import YAML from "yaml";
 import { resolveChainAlias } from "../lib/chains.js";
-import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
+import {
+	resolveConfigPath,
+	resolveDataDir,
+	validateConfigPathInDataDir,
+} from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
@@ -15,8 +19,27 @@ const CONFIG_KEY_SEGMENT_ALIASES: Record<string, string> = {
 	rpcUrl: "rpc_url",
 };
 
+const NUMERIC_CONFIG_PATHS = new Set([
+	"agent_id",
+	"invite_expiry_seconds",
+	"resolve_cache_ttl_ms",
+	"resolve_cache_max_entries",
+]);
+
 function normalizeConfigPath(key: string): string[] {
 	return key.split(".").map((part) => CONFIG_KEY_SEGMENT_ALIASES[part] ?? part);
+}
+
+function parseConfigValue(path: string[], value: string): number | string {
+	if (!NUMERIC_CONFIG_PATHS.has(path.join("."))) {
+		return value;
+	}
+
+	const numericValue = Number(value);
+	if (!Number.isFinite(numericValue)) {
+		throw new Error(`Expected a numeric value for ${path.join(".")}`);
+	}
+	return numericValue;
 }
 
 export async function configSetCommand(
@@ -29,6 +52,7 @@ export async function configSetCommand(
 	try {
 		const dataDir = resolveDataDir(opts);
 		const configPath = resolveConfigPath(opts, dataDir);
+		validateConfigPathInDataDir(opts, configPath, dataDir);
 
 		if (!existsSync(configPath)) {
 			throw new Error(`Config file not found at ${configPath}. Run 'tap init' first.`);
@@ -52,10 +76,7 @@ export async function configSetCommand(
 
 		// Resolve chain aliases when setting the chain key
 		const resolvedValue = leafKey === "chain" ? resolveChainAlias(value) : value;
-
-		// Auto-convert numeric values
-		const numVal = Number(resolvedValue);
-		target[leafKey] = Number.isNaN(numVal) ? resolvedValue : numVal;
+		target[leafKey] = parseConfigValue(parts, resolvedValue);
 
 		writeFileSync(configPath, YAML.stringify(yaml), "utf-8");
 

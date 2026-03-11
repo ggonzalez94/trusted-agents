@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { configSetCommand } from "../src/commands/config-set.js";
 
 describe("config set", () => {
@@ -70,5 +71,38 @@ describe("config set", () => {
 
 		const config = await readFile(join(tmpDir, "config.yaml"), "utf-8");
 		expect(config).toContain("chain: eip155:84532");
+	});
+
+	it("only coerces known numeric config keys", async () => {
+		await configSetCommand("resolve_cache_ttl_ms", "60000", {
+			json: true,
+			dataDir: tmpDir,
+		});
+		await configSetCommand("xmtp.env", "1234", {
+			json: true,
+			dataDir: tmpDir,
+		});
+
+		const config = YAML.parse(await readFile(join(tmpDir, "config.yaml"), "utf-8")) as {
+			resolve_cache_ttl_ms: unknown;
+			xmtp?: { env?: unknown };
+		};
+		expect(config.resolve_cache_ttl_ms).toBe(60000);
+		expect(config.xmtp?.env).toBe("1234");
+	});
+
+	it("rejects split-brain config and data-dir overrides", async () => {
+		const otherDir = join(tmpDir, "other-agent");
+		await mkdir(otherDir, { recursive: true });
+		await writeFile(join(otherDir, "config.yaml"), "agent_id: 9\nchain: eip155:84532\n", "utf-8");
+
+		await configSetCommand("chain", "base", {
+			json: true,
+			dataDir: tmpDir,
+			config: join(otherDir, "config.yaml"),
+		});
+
+		expect(process.exitCode).toBe(1);
+		expect(stdoutWrites.join("")).toContain("Config path must match the TAP data dir config");
 	});
 });

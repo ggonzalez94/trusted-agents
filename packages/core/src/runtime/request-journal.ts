@@ -83,22 +83,7 @@ export class FileRequestJournal implements IRequestJournal {
 	): Promise<RequestJournalEntry> {
 		return this.writeMutex.runExclusive(async () => {
 			const file = await this.load();
-			const timestamp = nowISO();
-			const existingIndex = file.entries.findIndex(
-				(candidate) => candidate.requestId === entry.requestId,
-			);
-			const normalized: RequestJournalEntry = {
-				...entry,
-				createdAt: existingIndex >= 0 ? file.entries[existingIndex]!.createdAt : timestamp,
-				updatedAt: timestamp,
-			};
-
-			if (existingIndex >= 0) {
-				file.entries[existingIndex] = normalized;
-			} else {
-				file.entries.push(normalized);
-			}
-
+			const normalized = this.upsertOutboundEntry(file, entry);
 			await this.save(file);
 			return normalized;
 		});
@@ -188,5 +173,28 @@ export class FileRequestJournal implements IRequestJournal {
 			mode: 0o600,
 		});
 		await rename(tmpPath, this.path);
+	}
+
+	private upsertOutboundEntry(
+		file: RequestJournalFile,
+		entry: Omit<RequestJournalEntry, "createdAt" | "updatedAt">,
+	): RequestJournalEntry {
+		const timestamp = nowISO();
+		const existingIndex = file.entries.findIndex(
+			(candidate) => candidate.requestId === entry.requestId,
+		);
+		const normalized: RequestJournalEntry = {
+			...entry,
+			createdAt: existingIndex >= 0 ? file.entries[existingIndex]!.createdAt : timestamp,
+			updatedAt: timestamp,
+		};
+
+		if (existingIndex >= 0) {
+			file.entries[existingIndex] = normalized;
+		} else {
+			file.entries.push(normalized);
+		}
+
+		return normalized;
 	}
 }

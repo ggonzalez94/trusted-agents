@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import type {
@@ -39,6 +40,16 @@ interface StoredMockMessage {
 	id: string;
 	sentAtNs: bigint;
 	sentAt: Date;
+}
+
+function createDeferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise;
+		reject = rejectPromise;
+	});
+	return { promise, resolve, reject };
 }
 
 function createMockConversation() {
@@ -467,6 +478,7 @@ describe("XmtpTransport", () => {
 				},
 				reject: () => {},
 				timer,
+				senderInboxId: "other-inbox",
 			});
 
 			await internals(transport).processMessage({
@@ -477,6 +489,53 @@ describe("XmtpTransport", () => {
 			expect(resolved).toBeDefined();
 			expect(resolved!.status).toBe("received");
 			expect(internals(transport).pendingRequests.has("req-123")).toBe(false);
+		});
+
+		it("should ignore receipts from the wrong inbox", async () => {
+			injectMockClient();
+
+			const responseData = {
+				jsonrpc: "2.0",
+				id: "req-foreign",
+				result: {
+					received: true,
+					requestId: "req-foreign",
+					status: "received",
+					receivedAt: "2025-01-01T00:00:00.000Z",
+				},
+			};
+
+			let resolved: TransportReceipt | undefined;
+			const timer = setTimeout(() => {}, 30000);
+			internals(transport).pendingRequests.set("req-foreign", {
+				resolve: (receipt: TransportReceipt) => {
+					resolved = receipt;
+				},
+				reject: () => {},
+				timer,
+				senderInboxId: "expected-inbox",
+			});
+
+			await internals(transport).processMessage({
+				senderInboxId: "wrong-inbox",
+				content: JSON.stringify(responseData),
+			});
+
+			expect(resolved).toBeUndefined();
+			expect(internals(transport).pendingRequests.has("req-foreign")).toBe(true);
+
+			await internals(transport).processMessage({
+				senderInboxId: "expected-inbox",
+				content: JSON.stringify(responseData),
+			});
+
+			expect(resolved).toEqual(
+				expect.objectContaining({
+					requestId: "req-foreign",
+					status: "received",
+				}),
+			);
+			expect(internals(transport).pendingRequests.has("req-foreign")).toBe(false);
 		});
 
 		it("should route incoming requests to message callback for known contacts", async () => {
@@ -541,6 +600,48 @@ describe("XmtpTransport", () => {
 
 			expect(callback).toHaveBeenCalledTimes(1);
 			expect(mockSetup.mockConversation.sendText).toHaveBeenCalledTimes(1);
+		});
+
+		it("should allow a retry after transient request handling failure", async () => {
+			const failingTrustStore = createMockTrustStore([BOB_CONTACT]);
+			const retryTransport = new XmtpTransport(TEST_CONFIG, failingTrustStore);
+			injectMockClient(retryTransport);
+			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
+			internals(retryTransport).inboxIdToAddress.set(bobInboxId, BOB.address);
+
+			failingTrustStore.findByAgentAddress = vi
+				.fn<ITrustStore["findByAgentAddress"]>()
+				.mockRejectedValueOnce(new Error("temporary lookup failure"))
+				.mockResolvedValue(BOB_CONTACT);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			retryTransport.setHandlers({ onRequest: callback });
+
+			const request: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "message/send",
+				id: "req-retryable",
+			};
+
+			await expect(
+				internals(retryTransport).processMessage({
+					senderInboxId: bobInboxId,
+					content: JSON.stringify(request),
+				}),
+			).rejects.toThrow("temporary lookup failure");
+
+			await expect(
+				internals(retryTransport).processMessage({
+					senderInboxId: bobInboxId,
+					content: JSON.stringify(request),
+				}),
+			).resolves.toBe(true);
+
+			expect(callback).toHaveBeenCalledTimes(1);
 		});
 
 		it("should reject non-bootstrap requests from unknown senders", async () => {
@@ -885,7 +986,12 @@ describe("XmtpTransport", () => {
 
 			const pendingPromise = new Promise<TransportReceipt>((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error("timeout")), 30000);
-				internals(transport).pendingRequests.set("stop-test", { resolve, reject, timer });
+				internals(transport).pendingRequests.set("stop-test", {
+					resolve,
+					reject,
+					timer,
+					senderInboxId: "stop-test-inbox",
+				});
 			});
 
 			await transport.stop();
@@ -930,6 +1036,70 @@ describe("XmtpTransport", () => {
 			await listenPromise;
 
 			expect(mockSetup.streamOptions).toEqual([{ disableSync: true }]);
+		});
+
+		it("processes streamed messages sequentially before advancing to the next one", async () => {
+			injectMockClient();
+
+			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
+			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+
+			const firstRequestGate = createDeferred<void>();
+			const callback = vi.fn(async (envelope: InboundRequestEnvelope): Promise<TransportAck> => {
+				if (envelope.message.id === "stream-msg-1") {
+					await firstRequestGate.promise;
+				}
+				return { status: "received" };
+			});
+			transport.setHandlers({ onRequest: callback });
+
+			const listenPromise = internals(transport).listenForMessages();
+			await sleep(10);
+
+			mockSetup.pushMessage({
+				senderInboxId: bobInboxId,
+				conversationId: "dm-sequential",
+				id: "stream-entry-1",
+				sentAtNs: 1_000n,
+				content: JSON.stringify({
+					jsonrpc: "2.0",
+					method: "message/send",
+					id: "stream-msg-1",
+				}),
+			});
+			mockSetup.pushMessage({
+				senderInboxId: bobInboxId,
+				conversationId: "dm-sequential",
+				id: "stream-entry-2",
+				sentAtNs: 2_000n,
+				content: JSON.stringify({
+					jsonrpc: "2.0",
+					method: "message/send",
+					id: "stream-msg-2",
+				}),
+			});
+
+			await sleep(25);
+			expect(callback).toHaveBeenCalledTimes(1);
+			expect(callback).toHaveBeenNthCalledWith(
+				1,
+				expect.objectContaining({
+					message: expect.objectContaining({ id: "stream-msg-1" }),
+				}),
+			);
+
+			firstRequestGate.resolve();
+			await sleep(25);
+			expect(callback).toHaveBeenCalledTimes(2);
+			expect(callback).toHaveBeenNthCalledWith(
+				2,
+				expect.objectContaining({
+					message: expect.objectContaining({ id: "stream-msg-2" }),
+				}),
+			);
+
+			await transport.stop();
+			await listenPromise;
 		});
 	});
 });

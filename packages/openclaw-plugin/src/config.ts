@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk";
 
 export interface TapOpenClawIdentityConfig {
@@ -89,11 +90,18 @@ export function parseTapOpenClawPluginConfig(raw: unknown): TapOpenClawPluginCon
 
 	const identities = input.identities.map((value, index) => parseIdentityConfig(value, index));
 	const names = new Set<string>();
+	const dataDirs = new Set<string>();
 	for (const identity of identities) {
 		if (names.has(identity.name)) {
 			throw new Error(`Duplicate TAP plugin identity name: ${identity.name}`);
 		}
 		names.add(identity.name);
+
+		const normalizedDataDir = resolve(identity.dataDir);
+		if (dataDirs.has(normalizedDataDir)) {
+			throw new Error(`Duplicate TAP plugin identity dataDir: ${identity.dataDir}`);
+		}
+		dataDirs.add(normalizedDataDir);
 	}
 
 	return { identities };

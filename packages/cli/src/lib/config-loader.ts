@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	type ExecutionMode,
 	type ExecutionPaymasterProvider,
@@ -44,6 +44,7 @@ export async function loadConfig(
 ): Promise<TrustedAgentsConfig> {
 	const dataDir = resolveDataDir(opts);
 	const configPath = resolveConfigPath(opts, dataDir);
+	validateConfigPathInDataDir(opts, configPath, dataDir);
 	const agentIdStr = process.env.TAP_AGENT_ID;
 	const agentId = agentIdStr !== undefined ? Number.parseInt(agentIdStr, 10) : undefined;
 	const chainRaw =
@@ -94,4 +95,22 @@ export async function loadConfig(
 			},
 		},
 	};
+}
+
+export function validateConfigPathInDataDir(
+	opts: Pick<GlobalOptions, "config" | "dataDir">,
+	configPath: string,
+	dataDir: string,
+): void {
+	const hasExplicitDataDir = opts.dataDir !== undefined || process.env.TAP_DATA_DIR !== undefined;
+	if (opts.config === undefined || !hasExplicitDataDir) {
+		return;
+	}
+
+	const expectedPath = resolve(dataDir, "config.yaml");
+	if (resolve(configPath) !== expectedPath) {
+		throw new Error(
+			`Config path must match the TAP data dir config at ${expectedPath}. Use --data-dir to select the agent instead of mixing --config with another data dir.`,
+		);
+	}
 }

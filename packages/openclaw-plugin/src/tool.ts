@@ -100,11 +100,7 @@ export function createTapGatewayTool(registry: OpenClawTapRegistry): AnyAgentToo
 			"Operate the Trusted Agents Protocol inside OpenClaw Gateway. Use this when the TAP OpenClaw plugin is installed for status, sync, connect, messaging, grant updates, fund requests, and pending approval resolution.",
 		parameters: TapGatewayToolSchema,
 		async execute(_toolCallId, params) {
-			try {
-				return json(await executeTapGatewayAction(registry, params as TapGatewayToolParams));
-			} catch (error: unknown) {
-				return json({ error: error instanceof Error ? error.message : String(error) });
-			}
+			return json(await executeTapGatewayAction(registry, params as TapGatewayToolParams));
 		},
 	} as AnyAgentTool;
 }

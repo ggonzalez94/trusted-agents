@@ -118,4 +118,44 @@ describe("FileRequestJournal", () => {
 			}),
 		]);
 	});
+
+	it("completes an inbound request before recording an outbound result", async () => {
+		const journal = await createJournal();
+
+		await journal.claimInbound({
+			requestId: "in-1",
+			requestKey: "inbound:in-1",
+			direction: "inbound",
+			kind: "request",
+			method: "action/request",
+			peerAgentId: 2,
+			status: "pending",
+		});
+
+		await journal.updateStatus("in-1", "completed");
+		await journal.putOutbound({
+			requestId: "out-1",
+			requestKey: "outbound:out-1",
+			direction: "outbound",
+			kind: "result",
+			method: "action/result",
+			peerAgentId: 2,
+			correlationId: "in-1",
+			status: "pending",
+			metadata: { queued: true },
+		});
+
+		expect(await journal.getByRequestId("in-1")).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		expect(await journal.getByRequestId("out-1")).toEqual(
+			expect.objectContaining({
+				status: "pending",
+				correlationId: "in-1",
+				metadata: { queued: true },
+			}),
+		);
+	});
 });
