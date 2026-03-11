@@ -12,8 +12,6 @@ import {
 import type { GlobalOptions } from "../types.js";
 import { ALL_CHAINS, DEFAULT_CHAIN_ALIAS, resolveChainAlias } from "./chains.js";
 
-const DEFAULT_DATA_DIR = join(homedir(), ".trustedagents");
-
 export { getDefaultExecutionModeForChain, getDefaultPaymasterProviderForMode };
 
 export function resolveDataDir(opts: GlobalOptions): string {
@@ -24,7 +22,7 @@ export function resolveDataDir(opts: GlobalOptions): string {
 	if (envDir) {
 		return envDir;
 	}
-	return DEFAULT_DATA_DIR;
+	return join(process.env.HOME ?? homedir(), ".trustedagents");
 }
 
 export function resolveConfigPath(opts: GlobalOptions, dataDir: string): string {

@@ -6,13 +6,16 @@ import { loadConfig, resolveConfigPath, resolveDataDir } from "../src/lib/config
 
 describe("config-loader", () => {
 	let tmpDir: string;
+	let originalHome: string | undefined;
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-config-test-"));
+		originalHome = process.env.HOME;
 	});
 
 	afterEach(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
+		process.env.HOME = originalHome;
 		// Clean up env vars
 		unsetEnv("TAP_DATA_DIR");
 		unsetEnv("TAP_AGENT_ID");
@@ -30,10 +33,12 @@ describe("config-loader", () => {
 		});
 
 		it("allows --config without a separately selected data dir", async () => {
+			process.env.HOME = tmpDir;
+			const defaultDataDir = join(tmpDir, ".trustedagents");
 			const configPath = join(tmpDir, "custom-config.yaml");
-			await mkdir(join(tmpDir, "identity"), { recursive: true });
+			await mkdir(join(defaultDataDir, "identity"), { recursive: true });
 			await writeFile(
-				join(tmpDir, "identity", "agent.key"),
+				join(defaultDataDir, "identity", "agent.key"),
 				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
 				"utf-8",
 			);
@@ -47,6 +52,7 @@ describe("config-loader", () => {
 
 			expect(config.agentId).toBe(1);
 			expect(config.chain).toBe("eip155:84532");
+			expect(config.dataDir).toBe(defaultDataDir);
 		});
 
 		it("should prefer config.yaml inside dataDir when it exists", async () => {
