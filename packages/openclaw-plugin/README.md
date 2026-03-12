@@ -21,6 +21,11 @@ tap install --runtime openclaw
 
 `tap install --runtime openclaw` is the convenience wrapper for the canonical OpenClaw plugin install. It installs the plugin-backed OpenClaw surface only; it does not link the generic TAP skill tree into `~/.openclaw/skills`.
 
+The install path is gateway-aware:
+
+- If the managed Gateway service is already loaded, `tap install --runtime openclaw` stops it, installs + validates the plugin config, then restores the managed service. On macOS LaunchAgent setups that restore path is a forced service reinstall, not a plain `gateway start`.
+- If an unmanaged foreground Gateway is already running, the installer refuses to proceed until that process is stopped.
+
 ## Configure
 
 Add one or more TAP identities to the plugin config. Each identity points at an existing TAP `dataDir`.
@@ -29,7 +34,7 @@ Add one or more TAP identities to the plugin config. Each identity points at an 
 openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/agent-data","autoApproveConnections":false,"unsafeApproveActions":false,"reconcileIntervalMinutes":10}]' --json
 ```
 
-Restart the Gateway after plugin config changes.
+Restart the Gateway after plugin config changes. If the Gateway warns that no TAP identities are configured immediately after install, that is expected until this step is done.
 
 ## Runtime Model
 

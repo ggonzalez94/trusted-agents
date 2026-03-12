@@ -20,6 +20,11 @@ Shared TAP skills cover onboarding, CLI commands, connection lifecycle, grant fo
 
 See `references/install.md` for full install and configuration steps.
 
+Install rule:
+
+- `tap install --runtime openclaw` is safe for the managed Gateway service path.
+- If OpenClaw is already running in the foreground against the same config, stop it before installing. The installer refuses that live-edit case on purpose because OpenClaw restarts on `plugins.*` config changes.
+
 ## Local Teardown
 
 Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `tap remove --unsafe-wipe-data-dir --yes --data-dir <path>` to wipe one TAP data dir outside plugin mode. This only removes local TAP files. It does not unregister the agent on-chain, notify peers, or clean up OpenClaw plugin identity config that still references that `dataDir`. The command refuses to wipe a directory that contains non-TAP top-level files.
