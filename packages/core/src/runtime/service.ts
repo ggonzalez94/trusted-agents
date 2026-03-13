@@ -153,6 +153,11 @@ interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	request: ProtocolMessage;
 }
 
+interface PendingConnectionRequest extends Record<string, unknown> {
+	type: "connection-request";
+	message: ProtocolMessage;
+}
+
 interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 	type: "transfer-response";
 	response: TransferActionResponse;
@@ -763,7 +768,8 @@ export class TapMessagingService {
 
 	private async processOutboxInternal(): Promise<number> {
 		await this.cleanupOutboxResultsIfDue();
-		let processed = await this.retryPendingConnectionResults();
+		let processed = await this.retryPendingConnectionRequests();
+		processed += await this.retryPendingConnectionResults();
 		processed += await this.retryPendingActionResults();
 		while (true) {
 			const job = await this.commandOutbox.claimNext({
@@ -1034,22 +1040,43 @@ export class TapMessagingService {
 		senderInboxId: string;
 		message: ProtocolMessage;
 	}): Promise<{ status: "received" | "duplicate" | "queued" }> {
+		const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
 		if (envelope.message.method === CONNECTION_REQUEST) {
-			const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
+			const claimed = await this.context.requestJournal.claimInbound({
+				requestId: String(envelope.message.id),
+				requestKey,
+				direction: "inbound",
+				kind: "request",
+				method: envelope.message.method,
+				peerAgentId: envelope.from,
+				metadata: serializePendingConnectionRequest(envelope.message),
+			});
+
+			if (claimed.duplicate && claimed.entry.status === "completed") {
+				this.emitEvent({
+					direction: "incoming",
+					from: envelope.from,
+					method: envelope.message.method,
+					id: envelope.message.id,
+					receipt_status: "duplicate",
+				});
+				return { status: "duplicate" };
+			}
+
 			this.enqueue(requestKey, async () => {
-				await this.processConnectionRequest(envelope);
+				await this.processConnectionRequest(envelope.message);
+				await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
 			});
 			this.emitEvent({
 				direction: "incoming",
 				from: envelope.from,
 				method: envelope.message.method,
 				id: envelope.message.id,
-				receipt_status: "queued",
+				receipt_status: claimed.duplicate ? "duplicate" : "queued",
 			});
-			return { status: "queued" };
+			return { status: claimed.duplicate ? "duplicate" : "queued" };
 		}
 
-		const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
 		const claimed = await this.context.requestJournal.claimInbound({
 			requestId: String(envelope.message.id),
 			requestKey,
@@ -1208,12 +1235,8 @@ export class TapMessagingService {
 		return { status };
 	}
 
-	private async processConnectionRequest(envelope: {
-		from: number;
-		senderInboxId: string;
-		message: ProtocolMessage;
-	}): Promise<void> {
-		const params = parseConnectionRequest(envelope.message);
+	private async processConnectionRequest(message: ProtocolMessage): Promise<void> {
+		const params = parseConnectionRequest(message);
 
 		// Cheap local check first — avoids resolving a peer for misrouted requests
 		const inviteRejectionReason = await this.validateInboundInvite(params.invite);
@@ -1223,7 +1246,7 @@ export class TapMessagingService {
 				params.from.chain,
 			);
 			await this.sendConnectionResult(peer, {
-				requestId: String(envelope.message.id),
+				requestId: String(message.id),
 				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
 				status: "rejected",
 				reason: inviteRejectionReason,
@@ -1237,7 +1260,7 @@ export class TapMessagingService {
 		}
 
 		const outcome = await handleConnectionRequest({
-			message: envelope.message,
+			message,
 			resolver: this.context.resolver,
 			trustStore: this.context.trustStore,
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
@@ -1685,6 +1708,31 @@ export class TapMessagingService {
 		return processed;
 	}
 
+	private async retryPendingConnectionRequests(): Promise<number> {
+		const pending = await this.context.requestJournal.listPending("inbound");
+		let processed = 0;
+		for (const entry of pending) {
+			if (entry.kind !== "request" || entry.method !== CONNECTION_REQUEST) {
+				continue;
+			}
+			const pendingRequest = parsePendingConnectionRequest(entry.metadata);
+			if (!pendingRequest || this.inFlightKeys.has(entry.requestKey)) {
+				continue;
+			}
+			try {
+				await this.processConnectionRequest(pendingRequest.message);
+				await this.context.requestJournal.updateStatus(entry.requestId, "completed");
+				processed += 1;
+			} catch (error: unknown) {
+				this.log(
+					"warn",
+					`Failed to retry connection request ${entry.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}
+		return processed;
+	}
+
 	private async retryPendingConnectionResults(): Promise<number> {
 		const pending = await this.context.requestJournal.listPending("outbound");
 		let processed = 0;
@@ -1957,6 +2005,13 @@ function serializePendingActionResultDelivery(
 	return delivery as unknown as Record<string, unknown>;
 }
 
+function serializePendingConnectionRequest(message: ProtocolMessage): Record<string, unknown> {
+	return {
+		type: "connection-request",
+		message,
+	};
+}
+
 function buildPendingConnectionResultDelivery(
 	peer: ResolvedAgent,
 	result: ConnectionResultParams,
@@ -2000,6 +2055,19 @@ function parsePendingConnectionResultDelivery(
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
+	};
+}
+
+function parsePendingConnectionRequest(
+	metadata: Record<string, unknown> | undefined,
+): PendingConnectionRequest | null {
+	if (!metadata || metadata.type !== "connection-request" || !isProtocolMessage(metadata.message)) {
+		return null;
+	}
+
+	return {
+		type: "connection-request",
+		message: metadata.message,
 	};
 }
 

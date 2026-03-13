@@ -453,6 +453,85 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
+	it("retries pending inbound connection requests during maintenance", async () => {
+		const baseTrustStore = createMemoryTrustStore();
+		let failAddContactOnce = true;
+		const trustStore: ITrustStore = {
+			...baseTrustStore,
+			addContact: async (contact) => {
+				if (failAddContactOnce) {
+					failAddContactOnce = false;
+					throw new Error("temporary trust store failure");
+				}
+				await baseTrustStore.addContact(contact);
+			},
+		};
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-retry-connection-request",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				direction: "inbound",
+				kind: "request",
+				method: "connection/request",
+				status: "pending",
+			}),
+		);
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
+		).toHaveLength(0);
+
+		const report = await service.syncOnce();
+
+		expect(report.processed).toBe(1);
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
+		).toHaveLength(1);
+
+		await service.stop();
+	});
+
 	it("rejects inbound connection requests whose invite targets a different agent", async () => {
 		const trustStore = createMemoryTrustStore();
 		const transport = new FakeTransport();
