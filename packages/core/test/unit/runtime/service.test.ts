@@ -14,7 +14,7 @@ import { generateInvite } from "../../../src/connection/invite.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
-import { createEmptyPermissionState } from "../../../src/permissions/types.js";
+import { createEmptyPermissionState, createGrantSet } from "../../../src/permissions/types.js";
 import {
 	FileTapCommandOutbox,
 	buildOutgoingActionRequest,
@@ -351,6 +351,141 @@ describe("TapMessagingService", () => {
 				message: request,
 			}),
 		).resolves.toEqual({ status: "duplicate" });
+	});
+
+	it("resolves queued inbound connection requests from local journal state", async () => {
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			to: { agentId: 1, chain: "eip155:84532" },
+			connectionId: "conn-manual-resolve-1",
+			nonce: "nonce-manual-resolve-1",
+			protocolVersion: "1.0",
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-manual-resolve",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(await service.listPendingRequests()).toEqual([
+			expect.objectContaining({
+				requestId: String(request.id),
+				method: "connection/request",
+				peerAgentId: PEER_AGENT.agentId,
+			}),
+		]);
+
+		const report = await service.resolvePending(String(request.id), true);
+
+		expect(report.pendingRequests).toEqual([]);
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				connectionId: "conn-manual-resolve-1",
+				status: "active",
+			}),
+		);
+		expect(transport.sentMessages.map((entry) => entry.message.method)).toEqual([
+			"connection/result",
+		]);
+
+		await service.stop();
+	});
+
+	it("retries pending connection result delivery during maintenance", async () => {
+		class FlakyConnectionResultTransport extends FakeTransport {
+			private failConnectionResultOnce = true;
+
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message });
+				if (message.method === "connection/result" && this.failConnectionResultOnce) {
+					this.failConnectionResultOnce = false;
+					throw new TransportError("temporary connection result send failure");
+				}
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FlakyConnectionResultTransport();
+		const trustStore = createMemoryTrustStore();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				serviceOptions: { autoApproveConnections: true },
+			},
+		);
+
+		await service.start();
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			to: { agentId: 1, chain: "eip155:84532" },
+			connectionId: "conn-connection-retry-1",
+			nonce: "nonce-connection-retry-1",
+			protocolVersion: "1.0",
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-connection-retry",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		const firstConnectionResult = transport.sentMessages.find(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(firstConnectionResult).toBeDefined();
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
+		expect(
+			(await requestJournal.getByRequestId(String(firstConnectionResult!.message.id)))?.status,
+		).toBe("pending");
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				connectionId: "conn-connection-retry-1",
+				status: "active",
+			}),
+		);
+
+		await service.processOutboxOnce();
+
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
+		).toHaveLength(2);
+		expect(
+			(await requestJournal.getByRequestId(String(firstConnectionResult!.message.id)))?.status,
+		).toBe("completed");
+
+		await service.stop();
 	});
 
 	it("rejects self-invites before starting transport", async () => {
@@ -879,6 +1014,97 @@ describe("TapMessagingService", () => {
 		expect(
 			(await requestJournal.getByRequestId(String(firstActionResult!.message.id)))?.status,
 		).toBe("completed");
+
+		await service.stop();
+	});
+
+	it("resolves queued transfer requests from local journal state", async () => {
+		const contact: Contact = {
+			connectionId: "conn-manual-transfer-1",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: {
+				...createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+				grantedByMe: createGrantSet(
+					[
+						{
+							grantId: "manual-transfer-approval",
+							scope: "transfer/request",
+							constraints: {
+								asset: "native",
+								chain: "eip155:84532",
+								toAddress: ALICE.address,
+								maxAmount: "1",
+							},
+						},
+					],
+					"2026-03-08T00:00:00.000Z",
+				),
+			},
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const executeTransfer = vi.fn(async () => ({
+			txHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" as const,
+		}));
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { executeTransfer },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "manual-transfer-1",
+				asset: "native",
+				amount: "0.1",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-manual-transfer",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(await service.listPendingRequests()).toEqual([
+			expect.objectContaining({
+				requestId: String(request.id),
+				method: "action/request",
+				peerAgentId: PEER_AGENT.agentId,
+			}),
+		]);
+
+		const report = await service.resolvePending(String(request.id), true);
+		const actionResult = transport.sentMessages.find(
+			(entry) => entry.message.method === "action/result",
+		);
+
+		expect(report.pendingRequests).toEqual([]);
+		expect(executeTransfer).toHaveBeenCalledOnce();
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
+		expect(actionResult).toBeDefined();
+		expect(parseTransferActionResponse(actionResult!.message)?.status).toBe("completed");
 
 		await service.stop();
 	});
