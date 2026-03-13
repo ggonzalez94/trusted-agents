@@ -186,11 +186,10 @@ File: `packages/sdk/src/orchestrator.ts`
 - This keeps XMTP DB readable across restarts without extra secrets.
 
 3. Unknown inbound senders are hard-rejected unless bootstrap path passes:
-- In `XmtpTransport`, unknown sender can only proceed via `connection/request`
+- In `XmtpTransport`, unknown sender can only proceed via `connection/request` or `connection/result`
 - Requires `agentResolver` and inbox address verification against resolved `agentAddress`
 
-4. Known senders are still blocked unless contact status is `active`, with one exception:
-- `connection/result` is allowed from a pending outbound contact so async connection resolution can complete.
+4. Known senders are still blocked unless contact status is `active`.
 
 5. Trust store lookup by address can throw:
 - `findByAgentAddress()` throws if multiple active contacts match same address (+ optional chain)
@@ -213,8 +212,8 @@ File: `packages/sdk/src/orchestrator.ts`
 ├── config.yaml              # agent_id, chain, xmtp.env
 ├── identity/agent.key       # Raw private key hex (chmod 0600)
 ├── contacts.json            # Connected peers (trust store)
-├── request-journal.json     # Durable inbound/outbound TAP request state
-├── pending-invites.json     # Outstanding invite nonces
+├── request-journal.json     # Durable TAP action request state
+├── pending-connects.json    # Minimal outbound connection state awaiting connection/result
 ├── ipfs-cache.json          # Content hash → CID (avoids re-upload)
 ├── conversations/<id>.json  # Per-peer message transcripts
 └── xmtp/<inboxId>.db3       # XMTP client DB (encrypted)
@@ -244,19 +243,19 @@ File: `packages/sdk/src/orchestrator.ts`
 - `message send`, `request-funds`, listener processing, and reconciliation append conversation entries
 - Conversation commands read the persisted logs from disk
 
-15. Async connection and action outcomes are journaled:
-- `connect` persists a pending contact immediately after the transport receipt
+15. Async connection and action outcomes use different durable state:
+- `connect` persists a minimal pending-connect record immediately after the transport receipt
 - `message listen` and `message sync` process later `connection/result` and `action/result`
-- `FileRequestJournal` is the dedupe and reconciliation source for inbound/outbound async work
+- `FileRequestJournal` is the dedupe and reconciliation source for action requests/results
+- `pending-connects.json` gates outbound `connection/result` acceptance and survives restarts
 
 16. OpenClaw plugin mode owns transport inside Gateway:
 - `packages/openclaw-plugin` starts one `TapMessagingService` per configured TAP identity
 - OpenClaw agents should use the `tap_gateway` tool for transport-active operations when the plugin is installed
 - `tap message sync` remains the safe fallback when the plugin is not installed
 
-17. SDK sharp edge:
-- `TrustedAgentsOrchestrator.connect()` uses `this.transport!`
-- If neither `transport` nor `xmtp` config is provided, this will fail at runtime
+17. SDK connect requirement:
+- `TrustedAgentsOrchestrator.connect()` returns an explicit error unless `transport` or `xmtp` config is provided
 
 18. Invite chain value is not strongly validated in invite generation:
 - `generateInvite()` signs any chain string given by caller

@@ -1,5 +1,7 @@
 # Connection And Messaging Research
 
+Status note: this document describes the pre-simplification handshake. The current implementation now uses trust-only `connect`, reusable signed invites until expiry, automatic connection acceptance on valid invite receipt, and a minimal outbound `pending-connects.json` store instead of pending contacts plus connection journaling.
+
 Date: 2026-03-06
 
 ## Executive Summary

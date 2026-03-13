@@ -88,7 +88,7 @@ describe("TrustedAgentsOrchestrator", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("should register inbound handlers and start transport once", async () => {
+	it("starts the transport once when requested repeatedly", async () => {
 		const transport = createTransportMock();
 		const orchestrator = new TrustedAgentsOrchestrator({
 			privateKey: CONNECTOR_PRIVATE_KEY,
@@ -99,26 +99,15 @@ describe("TrustedAgentsOrchestrator", () => {
 			transport,
 		});
 
-		const handlers = {
-			onRequest: vi.fn(async () => ({ status: "received" as const })),
-		};
+		await orchestrator.start();
+		await orchestrator.start();
 
-		await orchestrator.start({ handlers });
-		await orchestrator.start({ handlers });
-
-		expect(transport.setHandlers).toHaveBeenCalledWith(handlers);
 		expect(transport.start).toHaveBeenCalledTimes(1);
 	});
 
 	it("should lazily start transport before XMTP connect", async () => {
 		const transport = createTransportMock({
 			onSend: async (handlers, request) => {
-				const params = request.params as {
-					connectionId: string;
-					nonce: string;
-					from: { agentId: number; chain: string };
-					to: { agentId: number; chain: string };
-				};
 				await handlers.onResult?.({
 					from: 1,
 					senderInboxId: "peer-inbox",
@@ -128,11 +117,8 @@ describe("TrustedAgentsOrchestrator", () => {
 						method: "connection/result",
 						params: {
 							requestId: String(request.id),
-							requestNonce: params.nonce,
-							from: params.to,
-							to: params.from,
+							from: { agentId: 1, chain: "eip155:84532" },
 							status: "accepted",
-							connectionId: params.connectionId,
 							timestamp: "2026-03-11T00:00:00.000Z",
 						},
 					},
@@ -165,15 +151,9 @@ describe("TrustedAgentsOrchestrator", () => {
 		expect(transport.stop).toHaveBeenCalledTimes(1);
 	});
 
-	it("keeps an already managed transport running during connect", async () => {
+	it("restarts a previously started transport around connect", async () => {
 		const transport = createTransportMock({
 			onSend: async (handlers, request) => {
-				const params = request.params as {
-					connectionId: string;
-					nonce: string;
-					from: { agentId: number; chain: string };
-					to: { agentId: number; chain: string };
-				};
 				await handlers.onResult?.({
 					from: 1,
 					senderInboxId: "peer-inbox",
@@ -183,11 +163,8 @@ describe("TrustedAgentsOrchestrator", () => {
 						method: "connection/result",
 						params: {
 							requestId: String(request.id),
-							requestNonce: params.nonce,
-							from: params.to,
-							to: params.from,
+							from: { agentId: 1, chain: "eip155:84532" },
 							status: "accepted",
-							connectionId: params.connectionId,
 							timestamp: "2026-03-11T00:00:00.000Z",
 						},
 					},
@@ -215,8 +192,8 @@ describe("TrustedAgentsOrchestrator", () => {
 
 		expect(result.success).toBe(true);
 		expect(result.status).toBe("active");
-		expect(transport.start).toHaveBeenCalledTimes(1);
-		expect(transport.stop).not.toHaveBeenCalled();
+		expect(transport.start).toHaveBeenCalledTimes(2);
+		expect(transport.stop).toHaveBeenCalledTimes(1);
 	});
 
 	it("fails clearly when no transport is configured", async () => {

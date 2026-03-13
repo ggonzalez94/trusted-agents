@@ -5,11 +5,9 @@ import {
 	parseInviteUrl,
 	verifyInvite,
 } from "trusted-agents-core";
-import type { PermissionGrantSet } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { readGrantFile, summarizeGrantSet } from "../lib/grants.js";
 import { error, info, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import {
@@ -24,10 +22,6 @@ import type { GlobalOptions } from "../types.js";
 export async function connectCommand(
 	inviteUrl: string,
 	autoApprove: boolean,
-	cmdOpts: {
-		requestGrantsFile?: string;
-		grantFile?: string;
-	},
 	opts: GlobalOptions,
 ): Promise<void> {
 	const startTime = Date.now();
@@ -48,12 +42,8 @@ export async function connectCommand(
 				"Cannot connect to your own invite. Switch to a different TAP identity or --data-dir before accepting it.",
 			);
 		}
-		const peerAgent = await ctx.resolver.resolve(invite.agentId, invite.chain);
-		const requestedGrants = cmdOpts.requestGrantsFile
-			? await readGrantFile(cmdOpts.requestGrantsFile)
-			: undefined;
-		const offeredGrants = cmdOpts.grantFile ? await readGrantFile(cmdOpts.grantFile) : undefined;
 
+		const peerAgent = await ctx.resolver.resolve(invite.agentId, invite.chain);
 		const verification = await verifyInvite(invite, {
 			expectedSignerAddress: peerAgent.agentAddress,
 		});
@@ -69,10 +59,9 @@ export async function connectCommand(
 		);
 		info(`Capabilities: ${peerAgent.capabilities.join(", ")}`, opts);
 		info(
-			"Connection is now asynchronous. The peer only needs to receive the request; acceptance arrives later as a separate result.",
+			"Connect establishes trust only. Publish or request grants after the contact is active.",
 			opts,
 		);
-		printPermissionIntent(requestedGrants, offeredGrants, opts);
 
 		if (!autoApprove) {
 			info(
@@ -95,11 +84,7 @@ export async function connectCommand(
 		const service = createCliTapMessagingService(ctx, opts, {
 			ownerLabel: "tap:connect",
 		});
-		const connectInput = {
-			inviteUrl,
-			requestedGrants,
-			offeredGrants,
-		};
+		const connectInput = { inviteUrl };
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
 			{
@@ -119,8 +104,6 @@ export async function connectCommand(
 					peer_name: peerAgent.registrationFile.name,
 					peer_agent_id: peerAgent.agentId,
 					status: "queued",
-					requested_grants: requestedGrants?.grants ?? [],
-					offered_grants: offeredGrants?.grants ?? [],
 				},
 				opts,
 				startTime,
@@ -129,7 +112,6 @@ export async function connectCommand(
 		}
 
 		const result = outcome.result;
-
 		success(
 			{
 				connection_id: result.connectionId,
@@ -138,8 +120,6 @@ export async function connectCommand(
 				status: result.status,
 				...queuedTapCommandResultFields(outcome),
 				receipt: result.receipt,
-				requested_grants: result.requestedGrants,
-				offered_grants: result.offeredGrants,
 			},
 			opts,
 			startTime,
@@ -147,33 +127,5 @@ export async function connectCommand(
 	} catch (err) {
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
-	}
-}
-
-function printPermissionIntent(
-	requestedGrants: PermissionGrantSet | undefined,
-	offeredGrants: PermissionGrantSet | undefined,
-	opts: GlobalOptions,
-): void {
-	if (!requestedGrants && !offeredGrants) {
-		info(
-			"No initial grant requests or grant publications will be sent with the connect request.",
-			opts,
-		);
-		return;
-	}
-
-	if (requestedGrants) {
-		info("Will include these requested grants in the connection request:", opts);
-		for (const line of summarizeGrantSet(requestedGrants)) {
-			info(`  - ${line}`, opts);
-		}
-	}
-
-	if (offeredGrants) {
-		info("Will include these offered grants in the connection request:", opts);
-		for (const line of summarizeGrantSet(offeredGrants)) {
-			info(`  - ${line}`, opts);
-		}
 	}
 }

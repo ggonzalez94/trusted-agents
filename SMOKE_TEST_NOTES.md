@@ -8,7 +8,7 @@ Date: 2026-03-07
 - Base mainnet `register update` succeeded with `eip7702 + circle`.
 - Base mainnet `register update` succeeded with `eip7702 + candide` after adding automatic USDC approval handling.
 - Base mainnet `register update` no-change path succeeded.
-- `identity show`, `identity resolve`, `identity resolve-self`, `balance`, `config show`, `invite create`, `invite list`, `contacts list`, and `conversations list` all succeeded in smoke runs.
+- `identity show`, `identity resolve`, `identity resolve-self`, `balance`, `config show`, `invite create`, `contacts list`, and `conversations list` all succeeded in smoke runs.
 - Full local verification passed:
   - `bun run typecheck`
   - `bun run test`

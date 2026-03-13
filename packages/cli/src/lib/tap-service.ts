@@ -1,7 +1,4 @@
 import {
-	type ConnectionPermissionIntent,
-	type ResolvedAgent,
-	type TapConnectionApprovalContext,
 	TapMessagingService,
 	type TapTransferApprovalContext,
 	executeOnchainTransfer,
@@ -14,16 +11,10 @@ import { promptYesNo } from "./prompt.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
 
 export interface CliTapServiceHooks {
-	approveConnection?: (
-		peer: ResolvedAgent,
-		intent: ConnectionPermissionIntent | undefined,
-		context: TapConnectionApprovalContext,
-	) => Promise<boolean | null | undefined>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null | undefined>;
 }
 
 export interface CliTapServiceOptions {
-	autoApproveConnections?: boolean;
 	unsafeAutoApproveActions?: boolean;
 	emitEvents?: boolean;
 	ownerLabel?: string;
@@ -38,28 +29,9 @@ export function createCliTapMessagingService(
 	const hooks = options.hooks ?? {};
 
 	return new TapMessagingService(context, {
-		autoApproveConnections: options.autoApproveConnections ?? false,
 		unsafeAutoApproveActions: options.unsafeAutoApproveActions ?? false,
 		ownerLabel: options.ownerLabel,
 		hooks: {
-			approveConnection: async (approvalContext) => {
-				printConnectionRequest(approvalContext.peer, approvalContext.intent, opts);
-
-				const decision = await hooks.approveConnection?.(
-					approvalContext.peer,
-					approvalContext.intent,
-					approvalContext,
-				);
-				if (decision !== undefined) {
-					return decision;
-				}
-
-				if (!process.stdin.isTTY) {
-					return null;
-				}
-
-				return await promptYesNo("Accept? [y/N] ");
-			},
 			approveTransfer: async (approvalContext) => {
 				printTransferRequest(approvalContext, opts);
 
@@ -89,41 +61,6 @@ export function createCliTapMessagingService(
 				: undefined,
 		},
 	});
-}
-
-function printConnectionRequest(
-	peer: ResolvedAgent,
-	intent: ConnectionPermissionIntent | undefined,
-	opts: GlobalOptions,
-): void {
-	info(
-		`Connection request from ${peer.registrationFile.name} (#${peer.agentId}) on ${peer.chain}`,
-		opts,
-	);
-	info(`Capabilities: ${peer.capabilities.join(", ")}`, opts);
-	info(
-		"Connection establishes trust only; any grants requested or offered are exchanged separately.",
-		opts,
-	);
-
-	if (!intent?.requestedGrants?.length && !intent?.offeredGrants?.length) {
-		info("No initial grant requests or grant publications were included.", opts);
-		return;
-	}
-
-	if (intent.requestedGrants?.length) {
-		info("Peer intends to request these grants after connect:", opts);
-		for (const grant of intent.requestedGrants) {
-			info(`  - ${summarizeGrant(grant)}`, opts);
-		}
-	}
-
-	if (intent.offeredGrants?.length) {
-		info("Peer intends to publish these grants after connect:", opts);
-		for (const grant of intent.offeredGrants) {
-			info(`  - ${summarizeGrant(grant)}`, opts);
-		}
-	}
 }
 
 function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalOptions): void {

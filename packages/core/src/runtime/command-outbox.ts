@@ -32,8 +32,6 @@ export interface TapConnectJob
 		"connect",
 		{
 			inviteUrl: string;
-			requestedGrants?: PermissionGrantSet;
-			offeredGrants?: PermissionGrantSet;
 		}
 	> {}
 

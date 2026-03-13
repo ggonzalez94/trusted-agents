@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -81,6 +81,13 @@ function createMockTransport(
 	};
 }
 
+async function readPendingConnects(tmpDir: string): Promise<Array<{ requestId: string }>> {
+	const raw = JSON.parse(await readFile(join(tmpDir, "pending-connects.json"), "utf-8")) as {
+		pendingConnects?: Array<{ requestId: string }>;
+	};
+	return raw.pendingConnects ?? [];
+}
+
 describe("executeConnect", () => {
 	const inviterPrivateKey =
 		"0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
@@ -97,7 +104,7 @@ describe("executeConnect", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("persists a pending outbound contact for a valid invite", async () => {
+	it("tracks a pending outbound connect without creating a contact", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:84532",
@@ -122,15 +129,14 @@ describe("executeConnect", () => {
 		expect(result.peerName).toBe("TestAgent");
 		expect(result.status).toBe("pending");
 		expect(result.receiptStatus).toBe("received");
+		expect(result.connectionId).toBeUndefined();
 		expect(resolver.resolve).toHaveBeenCalledWith(1, "eip155:84532");
-
-		const contacts = await new FileTrustStore(tmpDir).getContacts();
-		expect(contacts).toHaveLength(1);
-		expect(contacts[0]?.connectionId).toBe(result.connectionId);
-		expect(contacts[0]?.status).toBe("pending");
-		expect(contacts[0]?.pending).toMatchObject({
-			direction: "outbound",
-		});
+		expect(await new FileTrustStore(tmpDir).getContacts()).toEqual([]);
+		expect(await readPendingConnects(tmpDir)).toEqual([
+			expect.objectContaining({
+				requestId: expect.any(String),
+			}),
+		]);
 		expect(transport.start).toHaveBeenCalledTimes(1);
 		expect(transport.stop).toHaveBeenCalledTimes(1);
 	});
@@ -172,34 +178,6 @@ describe("executeConnect", () => {
 		expect(result.error).toContain("Invalid invite URL");
 	});
 
-	it("preserves directional permission state on the pending contact", async () => {
-		const { url } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:84532",
-			privateKey: inviterPrivateKey,
-			expirySeconds: 3600,
-		});
-
-		const result = await executeConnect({
-			inviteUrl: url,
-			privateKey: connectorPrivateKey,
-			agentId: 2,
-			chain: "eip155:84532",
-			dataDir: tmpDir,
-			resolver: createMockResolver(mockAgent),
-			transport: createMockTransport("queued"),
-		});
-
-		expect(result.success).toBe(true);
-		expect(result.status).toBe("pending");
-		expect(result.receiptStatus).toBe("queued");
-
-		const store = new FileTrustStore(tmpDir);
-		const contact = result.connectionId ? await store.getContact(result.connectionId) : null;
-		expect(contact?.permissions.grantedByMe.grants).toEqual([]);
-		expect(contact?.permissions.grantedByPeer.grants).toEqual([]);
-	});
-
 	it("returns pending when the delivery receipt times out", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
@@ -231,13 +209,12 @@ describe("executeConnect", () => {
 		expect(result.success).toBe(true);
 		expect(result.status).toBe("pending");
 		expect(result.receiptStatus).toBeUndefined();
-
-		const contacts = await new FileTrustStore(tmpDir).getContacts();
-		expect(contacts).toHaveLength(1);
-		expect(contacts[0]?.status).toBe("pending");
+		expect(result.connectionId).toBeUndefined();
+		expect(await new FileTrustStore(tmpDir).getContacts()).toEqual([]);
+		expect(await readPendingConnects(tmpDir)).toHaveLength(1);
 	});
 
-	it("rejects self-invites before writing a pending contact", async () => {
+	it("rejects self-invites before writing a pending connect", async () => {
 		const { url } = await generateInvite({
 			agentId: 2,
 			chain: "eip155:84532",
@@ -273,12 +250,6 @@ describe("executeConnect", () => {
 		});
 		const transport = createMockTransport("received", {
 			onSend: async (handlers, request) => {
-				const params = request.params as {
-					connectionId: string;
-					nonce: string;
-					from: { agentId: number; chain: string };
-					to: { agentId: number; chain: string };
-				};
 				await handlers.onResult?.({
 					from: 1,
 					senderInboxId: "peer-inbox",
@@ -288,11 +259,8 @@ describe("executeConnect", () => {
 						method: "connection/result",
 						params: {
 							requestId: String(request.id),
-							requestNonce: params.nonce,
-							from: params.to,
-							to: params.from,
+							from: { agentId: 1, chain: "eip155:84532" },
 							status: "accepted",
-							connectionId: params.connectionId,
 							timestamp: "2026-03-11T00:00:00.000Z",
 						},
 					},
@@ -312,12 +280,13 @@ describe("executeConnect", () => {
 
 		expect(result.success).toBe(true);
 		expect(result.status).toBe("active");
+		expect(result.connectionId).toBeDefined();
 		expect(transport.start).toHaveBeenCalledTimes(1);
 		expect(transport.stop).toHaveBeenCalledTimes(1);
 
 		const contacts = await new FileTrustStore(tmpDir).getContacts();
 		expect(contacts[0]?.status).toBe("active");
-		expect(contacts[0]?.pending).toBeUndefined();
+		expect(await readPendingConnects(tmpDir)).toEqual([]);
 	});
 
 	it("keeps lazy connect from dropping unrelated inbound requests", async () => {
@@ -327,18 +296,24 @@ describe("executeConnect", () => {
 			privateKey: inviterPrivateKey,
 			expirySeconds: 3600,
 		});
+		const { invite } = await generateInvite({
+			agentId: 2,
+			chain: "eip155:84532",
+			privateKey: connectorPrivateKey,
+			expirySeconds: 3600,
+		});
 		const inboundAcks: Array<{ status: "received" | "duplicate" | "queued" }> = [];
 		const transport = createMockTransport("received", {
-			onSend: async (handlers) => {
+			onSend: async (handlers, request) => {
+				if ((request as { method?: unknown }).method !== "connection/request") {
+					return;
+				}
 				const ack = await handlers.onRequest?.({
 					from: 1,
 					senderInboxId: "peer-inbox-unrelated",
 					message: buildConnectionRequest({
 						from: { agentId: 1, chain: "eip155:84532" },
-						to: { agentId: 2, chain: "eip155:84532" },
-						connectionId: "conn-unrelated-1",
-						nonce: "nonce-unrelated-1",
-						protocolVersion: "1.0",
+						invite,
 						timestamp: "2026-03-11T00:00:00.000Z",
 					}),
 				});
@@ -371,11 +346,6 @@ describe("executeConnect", () => {
 		});
 		const transport = createMockTransport("received", {
 			onSend: async (handlers, request) => {
-				const params = request.params as {
-					nonce: string;
-					from: { agentId: number; chain: string };
-					to: { agentId: number; chain: string };
-				};
 				await handlers.onResult?.({
 					from: 1,
 					senderInboxId: "peer-inbox-rejected",
@@ -385,9 +355,7 @@ describe("executeConnect", () => {
 						method: "connection/result",
 						params: {
 							requestId: String(request.id),
-							requestNonce: params.nonce,
-							from: params.to,
-							to: params.from,
+							from: { agentId: 1, chain: "eip155:84532" },
 							status: "rejected",
 							reason: "no thanks",
 							timestamp: "2026-03-11T00:00:00.000Z",
@@ -405,7 +373,6 @@ describe("executeConnect", () => {
 			dataDir: tmpDir,
 			resolver: createMockResolver(mockAgent),
 			transport,
-			manageTransportLifecycle: false,
 		});
 
 		expect(result).toEqual({
@@ -413,7 +380,8 @@ describe("executeConnect", () => {
 			error: "Connection rejected by TestAgent (#1)",
 		});
 		expect(await new FileTrustStore(tmpDir).getContacts()).toEqual([]);
-		expect(transport.start).not.toHaveBeenCalled();
-		expect(transport.stop).not.toHaveBeenCalled();
+		expect(await readPendingConnects(tmpDir)).toEqual([]);
+		expect(transport.start).toHaveBeenCalledTimes(1);
+		expect(transport.stop).toHaveBeenCalledTimes(1);
 	});
 });

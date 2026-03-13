@@ -11,7 +11,7 @@ Shared TAP skills cover onboarding, CLI commands, connection lifecycle, grant fo
 
 ## Decision Rule
 
-1. In plugin mode, use `tap_gateway` for TAP status, sync, connect, messaging, grant updates, fund requests, and pending request resolution.
+1. In plugin mode, use `tap_gateway` for TAP status, sync, connect, messaging, grant updates, fund requests, and action-request resolution.
 2. If the plugin is not installed or not configured yet, fall back to the normal `tap` CLI workflow and run `tap message sync` on heartbeat.
 3. Do not run `tap message listen` in OpenClaw shell background jobs as the primary runtime.
 4. If a transport-active `tap` CLI command is run against the same `dataDir` anyway, TAP can queue it behind the plugin owner, but that is a fallback. `tap_gateway` is still the preferred interface.
@@ -40,7 +40,7 @@ Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `t
 ### Connections
 
 - **create_invite**: Generate a signed invite URL. Params: `expiresInSeconds` (optional).
-- **connect**: Send a durable asynchronous connection request using an invite URL. Params: `inviteUrl` (required), `requestedGrantSet` (optional), `offeredGrantSet` (optional). The peer does not need to be online at the same moment; the plugin runtime or a later sync can resolve the request. If offered grants are included and the peer accepts, those grants become `grantedByPeer` on the peer's side immediately.
+- **connect**: Send an asynchronous trust request using an invite URL. Params: `inviteUrl` (required). The peer does not need to be online at the same moment; the plugin runtime or a later sync can resolve the request. Valid invites auto-accept on receipt.
 
 ### Messaging
 
@@ -55,10 +55,10 @@ Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `t
 
 - **request_funds**: Ask a peer to send ETH or USDC. TAP hard-blocks this action unless the peer has published a matching active `transfer/request` grant to this agent. Params: `peer` (required), `asset` (`native` or `usdc`), `amount` (required), `chain` (optional CAIP-2 override), `toAddress` (optional — defaults to this agent's address), `note` (optional).
 
-### Pending Approvals
+### Pending Action Approvals
 
-- **list_pending**: List queued inbound requests awaiting approval.
-- **resolve_pending**: Approve or reject a pending request. Params: `requestId` (required — from `list_pending`), `approve` (required boolean). Before deciding, inspect `tap permissions show <peer>` and the permissions ledger.
+- **list_pending**: List queued inbound action requests awaiting approval.
+- **resolve_pending**: Approve or reject a pending action request. Params: `requestId` (required — from `list_pending`), `approve` (required boolean). Before deciding, inspect `tap permissions show <peer>` and the permissions ledger.
 
 ### Read-Only CLI (Safe in Plugin Mode)
 

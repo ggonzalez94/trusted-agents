@@ -45,16 +45,6 @@ export const TapGatewayToolSchema = Type.Object(
 				description: "Grant array or tap-grants/v1 object",
 			}),
 		),
-		requestedGrantSet: Type.Optional(
-			Type.Unknown({
-				description: "Requested grants for a connect action",
-			}),
-		),
-		offeredGrantSet: Type.Optional(
-			Type.Unknown({
-				description: "Offered grants for a connect action",
-			}),
-		),
 		requestId: Type.Optional(Type.String({ description: "Pending TAP request ID" })),
 		approve: Type.Optional(Type.Boolean({ description: "Approve or reject the pending request" })),
 		asset: Type.Optional(
@@ -81,8 +71,6 @@ interface TapGatewayToolParams {
 	scope?: string;
 	note?: string;
 	grantSet?: unknown;
-	requestedGrantSet?: unknown;
-	offeredGrantSet?: unknown;
 	requestId?: string;
 	approve?: boolean;
 	asset?: "native" | "usdc";
@@ -122,12 +110,6 @@ async function executeTapGatewayAction(
 			return await registry.connect({
 				identity: params.identity,
 				inviteUrl: requireString(params.inviteUrl, "inviteUrl"),
-				requestedGrants: params.requestedGrantSet
-					? normalizeGrantInput(params.requestedGrantSet)
-					: undefined,
-				offeredGrants: params.offeredGrantSet
-					? normalizeGrantInput(params.offeredGrantSet)
-					: undefined,
 			});
 		case "send_message":
 			return await registry.sendMessage({
