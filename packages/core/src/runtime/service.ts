@@ -145,6 +145,14 @@ interface PendingActionResultDelivery extends Record<string, unknown> {
 	request: ProtocolMessage;
 }
 
+interface PendingConnectionResultDelivery extends Record<string, unknown> {
+	type: "connection-result-delivery";
+	peerAgentId: number;
+	peerName: string;
+	peerAddress: `0x${string}`;
+	request: ProtocolMessage;
+}
+
 interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 	type: "transfer-response";
 	response: TransferActionResponse;
@@ -755,7 +763,8 @@ export class TapMessagingService {
 
 	private async processOutboxInternal(): Promise<number> {
 		await this.cleanupOutboxResultsIfDue();
-		let processed = await this.retryPendingActionResults();
+		let processed = await this.retryPendingConnectionResults();
+		processed += await this.retryPendingActionResults();
 		while (true) {
 			const job = await this.commandOutbox.claimNext({
 				owner: this.ownerLabel,
@@ -1577,12 +1586,29 @@ export class TapMessagingService {
 		peer: ResolvedAgent,
 		result: ConnectionResultParams,
 	): Promise<void> {
-		const peerAddress = peer.xmtpEndpoint ?? peer.agentAddress;
+		const delivery = buildPendingConnectionResultDelivery(peer, result);
+		const deliveryRequestId = String(delivery.request.id);
 		try {
-			await this.context.transport.send(peer.agentId, buildConnectionResult(result), {
-				peerAddress,
-				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			await this.context.requestJournal.putOutbound({
+				requestId: deliveryRequestId,
+				requestKey: `outbound:${delivery.request.method}:${deliveryRequestId}`,
+				direction: "outbound",
+				kind: "result",
+				method: delivery.request.method,
+				peerAgentId: peer.agentId,
+				correlationId: result.requestId,
+				status: "pending",
+				metadata: serializePendingConnectionResultDelivery(delivery),
 			});
+		} catch (error: unknown) {
+			this.log(
+				"error",
+				`Failed to persist retry metadata for connection result ${result.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+
+		try {
+			await this.deliverPendingConnectionResult(delivery);
 		} catch (error: unknown) {
 			this.logResultDeliveryFailure(
 				"Connection result",
@@ -1659,6 +1685,31 @@ export class TapMessagingService {
 		return processed;
 	}
 
+	private async retryPendingConnectionResults(): Promise<number> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		let processed = 0;
+		for (const entry of pending) {
+			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
+				continue;
+			}
+			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
+			if (!delivery) {
+				continue;
+			}
+			try {
+				await this.deliverPendingConnectionResult(delivery);
+				processed += 1;
+			} catch (error: unknown) {
+				this.logResultDeliveryFailure(
+					"Connection result",
+					`${delivery.peerName} (#${delivery.peerAgentId})`,
+					error,
+				);
+			}
+		}
+		return processed;
+	}
+
 	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
 		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 			peerAddress: delivery.peerAddress,
@@ -1673,6 +1724,17 @@ export class TapMessagingService {
 		}
 		await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
 		await this.touchContactSafe(contact.connectionId);
+	}
+
+	private async deliverPendingConnectionResult(
+		delivery: PendingConnectionResultDelivery,
+	): Promise<void> {
+		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
+			peerAddress: delivery.peerAddress,
+			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+		});
+		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
+		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
 	}
 
 	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
@@ -1893,6 +1955,52 @@ function serializePendingActionResultDelivery(
 	delivery: PendingActionResultDelivery,
 ): Record<string, unknown> {
 	return delivery as unknown as Record<string, unknown>;
+}
+
+function buildPendingConnectionResultDelivery(
+	peer: ResolvedAgent,
+	result: ConnectionResultParams,
+): PendingConnectionResultDelivery {
+	const request = buildConnectionResult(result);
+	return {
+		type: "connection-result-delivery",
+		peerAgentId: peer.agentId,
+		peerName: peer.registrationFile.name,
+		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
+		request,
+	};
+}
+
+function serializePendingConnectionResultDelivery(
+	delivery: PendingConnectionResultDelivery,
+): Record<string, unknown> {
+	return delivery as unknown as Record<string, unknown>;
+}
+
+function parsePendingConnectionResultDelivery(
+	metadata: Record<string, unknown> | undefined,
+): PendingConnectionResultDelivery | null {
+	if (!metadata || metadata.type !== "connection-result-delivery") {
+		return null;
+	}
+
+	const peerAddress = asString(metadata.peerAddress);
+	if (
+		typeof metadata.peerAgentId !== "number" ||
+		typeof metadata.peerName !== "string" ||
+		!peerAddress?.startsWith("0x") ||
+		!isProtocolMessage(metadata.request)
+	) {
+		return null;
+	}
+
+	return {
+		type: "connection-result-delivery",
+		peerAgentId: metadata.peerAgentId,
+		peerName: metadata.peerName,
+		peerAddress: peerAddress as `0x${string}`,
+		request: metadata.request,
+	};
 }
 
 function parsePendingActionResultDelivery(

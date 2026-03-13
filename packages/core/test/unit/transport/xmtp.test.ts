@@ -808,6 +808,81 @@ describe("XmtpTransport", () => {
 			expect(mockSetup.mockConversation.sendText).toHaveBeenCalled();
 		});
 
+		it("should bootstrap-verify connection/result senders for legacy non-active contacts", async () => {
+			const legacyContactStore = createMockTrustStore([
+				{
+					...BOB_CONTACT,
+					status: "pending",
+				} as unknown as Contact,
+			]);
+			const resolver = {
+				resolve: vi.fn(),
+				resolveWithCache: vi.fn(async () => ({
+					agentId: BOB_CONTACT.peerAgentId,
+					chain: BOB_CONTACT.peerChain,
+					ownerAddress: BOB.address,
+					agentAddress: BOB.address,
+					xmtpEndpoint: BOB.address,
+					endpoint: undefined,
+					capabilities: ["connection/result"],
+					registrationFile: {
+						type: "eip-8004-registration-v1" as const,
+						name: BOB_CONTACT.peerDisplayName,
+						description: "Test",
+						services: [{ name: "xmtp", endpoint: BOB.address }],
+						trustedAgentProtocol: {
+							version: "1.0",
+							agentAddress: BOB.address,
+							capabilities: ["connection/result"],
+						},
+					},
+					resolvedAt: new Date().toISOString(),
+				})),
+			};
+			const transportWithResolver = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					agentResolver: resolver,
+				},
+				legacyContactStore,
+			);
+			injectMockClient(transportWithResolver);
+
+			mockSetup.setInboxIdentifiers("legacy-inbox", [
+				{ identifier: BOB.address, identifierKind: 0 },
+			]);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transportWithResolver.setHandlers({ onResult: callback });
+
+			const result: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "connection/result",
+				id: "conn-result-legacy",
+				params: {
+					requestId: "conn-request-legacy",
+					from: { agentId: BOB_CONTACT.peerAgentId, chain: BOB_CONTACT.peerChain },
+					status: "accepted",
+					timestamp: new Date().toISOString(),
+				},
+			};
+
+			await internals(transportWithResolver).processMessage({
+				senderInboxId: "legacy-inbox",
+				content: JSON.stringify(result),
+			});
+
+			expect(callback).toHaveBeenCalledWith({
+				from: BOB_CONTACT.peerAgentId,
+				senderInboxId: "legacy-inbox",
+				message: result,
+			});
+		});
+
 		it("should reject messages from known contacts that are not active", async () => {
 			const pendingContactStore = createMockTrustStore([
 				{

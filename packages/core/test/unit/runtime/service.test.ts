@@ -315,7 +315,7 @@ describe("TapMessagingService", () => {
 		const transport = new FakeTransport({
 			sendError: new TransportError("Response timeout for message result-1"),
 		});
-		const { service } = await createService(
+		const { service, requestJournal } = await createService(
 			{},
 			{
 				transport,
@@ -353,6 +353,102 @@ describe("TapMessagingService", () => {
 		);
 		expect(transport.sentMessages).toHaveLength(1);
 		expect(transport.sentMessages[0]?.message.method).toBe("connection/result");
+		expect(
+			await requestJournal.getByRequestId(String(transport.sentMessages[0]!.message.id)),
+		).toEqual(
+			expect.objectContaining({
+				direction: "outbound",
+				kind: "result",
+				method: "connection/result",
+				status: "pending",
+				correlationId: String(request.id),
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("retries pending connection result delivery during maintenance", async () => {
+		const trustStore = createMemoryTrustStore();
+
+		class FlakyConnectionResultTransport extends FakeTransport {
+			private failConnectionResultOnce = true;
+
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				this.sentMessages.push({
+					peerId,
+					message,
+				});
+				if (message.method === "connection/result" && this.failConnectionResultOnce) {
+					this.failConnectionResultOnce = false;
+					throw new TransportError("temporary connection result send failure");
+				}
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "received",
+					receivedAt: "2026-03-08T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FlakyConnectionResultTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-connection-result-retry",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		const firstConnectionResult = transport.sentMessages.find(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(firstConnectionResult).toBeDefined();
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		expect(
+			(await requestJournal.getByRequestId(String(firstConnectionResult!.message.id)))?.status,
+		).toBe("pending");
+
+		await service.syncOnce();
+
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
+		).toHaveLength(2);
+		expect(await requestJournal.getByRequestId(String(firstConnectionResult!.message.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+				correlationId: String(request.id),
+			}),
+		);
 
 		await service.stop();
 	});

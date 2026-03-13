@@ -27,29 +27,9 @@ export class FilePendingConnectStore {
 		this.path = join(this.dataDir, "pending-connects.json");
 	}
 
-	async put(record: PendingConnectRecord): Promise<void> {
-		await this.writeMutex.runExclusive(async () => {
-			const file = await this.load();
-			file.pendingConnects = [
-				...file.pendingConnects.filter((entry) => entry.requestId !== record.requestId),
-				record,
-			];
-			await this.save(file);
-		});
-	}
-
 	async get(requestId: string): Promise<PendingConnectRecord | null> {
 		const file = await this.load();
 		return file.pendingConnects.find((entry) => entry.requestId === requestId) ?? null;
-	}
-
-	async findByPeer(peerAgentId: number, peerChain: string): Promise<PendingConnectRecord | null> {
-		const file = await this.load();
-		return (
-			file.pendingConnects.find(
-				(entry) => entry.peerAgentId === peerAgentId && entry.peerChain === peerChain,
-			) ?? null
-		);
 	}
 
 	async delete(requestId: string): Promise<void> {
@@ -69,26 +49,12 @@ export class FilePendingConnectStore {
 			file.pendingConnects = [
 				...file.pendingConnects.filter(
 					(entry) =>
-						(entry.peerAgentId !== record.peerAgentId ||
-							entry.peerChain !== record.peerChain) &&
+						(entry.peerAgentId !== record.peerAgentId || entry.peerChain !== record.peerChain) &&
 						entry.requestId !== record.requestId,
 				),
 				record,
 			];
 			await this.save(file);
-		});
-	}
-
-	async deleteForPeer(peerAgentId: number, peerChain: string): Promise<void> {
-		await this.writeMutex.runExclusive(async () => {
-			const file = await this.load();
-			const filtered = file.pendingConnects.filter(
-				(entry) => entry.peerAgentId !== peerAgentId || entry.peerChain !== peerChain,
-			);
-			if (filtered.length === file.pendingConnects.length) {
-				return;
-			}
-			await this.save({ pendingConnects: filtered });
 		});
 	}
 

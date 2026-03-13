@@ -490,18 +490,9 @@ export class XmtpTransport implements TransportProvider {
 		const resultMethod = isResultMethod(message.method);
 
 		let senderId: number;
-		if (senderContact) {
-			if (!this.isContactAllowedForMethod(senderContact, message.method)) {
-				await this.sendJsonRpcError(
-					rawMessage.senderInboxId,
-					message.id,
-					-32003,
-					"Sender connection is not active for this method",
-				);
-				return false;
-			}
+		if (senderContact && this.isContactAllowedForMethod(senderContact, message.method)) {
 			senderId = senderContact.peerAgentId;
-		} else if (message.method === CONNECTION_REQUEST || message.method === CONNECTION_RESULT) {
+		} else if (this.isBootstrapMethod(message.method)) {
 			try {
 				senderId = await this.verifyBootstrapSender(
 					rawMessage.senderInboxId,
@@ -517,6 +508,14 @@ export class XmtpTransport implements TransportProvider {
 				);
 				return false;
 			}
+		} else if (senderContact) {
+			await this.sendJsonRpcError(
+				rawMessage.senderInboxId,
+				message.id,
+				-32003,
+				"Sender connection is not active for this method",
+			);
+			return false;
 		} else {
 			await this.sendJsonRpcError(rawMessage.senderInboxId, message.id, -32001, "Unknown sender");
 			return false;
@@ -556,6 +555,10 @@ export class XmtpTransport implements TransportProvider {
 
 	private isContactAllowedForMethod(contact: Contact, _method: string): boolean {
 		return contact.status === "active";
+	}
+
+	private isBootstrapMethod(method: string): boolean {
+		return method === CONNECTION_REQUEST || method === CONNECTION_RESULT;
 	}
 
 	private async verifyBootstrapSender(
