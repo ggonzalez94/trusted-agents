@@ -14,9 +14,7 @@ describe("executeInvite", () => {
 		expect(result.url).toContain("https://trustedagents.link/connect");
 		expect(result.url).toContain("agentId=1");
 		expect(result.url).toContain("chain=base-sepolia");
-		expect(result.url).toContain("nonce=");
 		expect(result.url).toContain("sig=0x");
-		expect(result.nonce).toBeTruthy();
 		expect(result.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 	});
 
@@ -36,20 +34,21 @@ describe("executeInvite", () => {
 		expect(diffSeconds).toBeLessThan(7300);
 	});
 
-	it("should generate unique nonces for each invite", async () => {
+	it("should generate different invite URLs when the expiry changes", async () => {
 		const result1 = await executeInvite({
 			privateKey,
 			agentId: 1,
 			chain: "base-sepolia",
+			expirySeconds: 3600,
 		});
 
 		const result2 = await executeInvite({
 			privateKey,
 			agentId: 1,
 			chain: "base-sepolia",
+			expirySeconds: 7200,
 		});
 
-		expect(result1.nonce).not.toBe(result2.nonce);
 		expect(result1.url).not.toBe(result2.url);
 	});
 });

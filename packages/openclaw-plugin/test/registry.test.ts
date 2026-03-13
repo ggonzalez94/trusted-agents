@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,7 +55,6 @@ describe("OpenClawTapRegistry", () => {
 					{
 						name: "alpha",
 						dataDir: "/tmp/alpha",
-						autoApproveConnections: false,
 						unsafeApproveActions: false,
 						reconcileIntervalMinutes: 10,
 					},
@@ -83,7 +82,6 @@ describe("OpenClawTapRegistry", () => {
 					{
 						name: "alpha",
 						dataDir,
-						autoApproveConnections: false,
 						unsafeApproveActions: false,
 						reconcileIntervalMinutes: 10,
 					},
@@ -109,8 +107,7 @@ describe("OpenClawTapRegistry", () => {
 
 		expect(result.identity).toBe("alpha");
 		expect(runExclusive).toHaveBeenCalledTimes(1);
-		await access(join(dataDir, "pending-invites.json"));
-		const saved = await readFile(join(dataDir, "pending-invites.json"), "utf-8");
-		expect(saved).toContain(result.nonce);
+		expect(result.url).toContain("trustedagents.link/connect");
+		expect(result.expiresInSeconds).toBe(600);
 	});
 });

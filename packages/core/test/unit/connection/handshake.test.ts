@@ -12,9 +12,12 @@ describe("buildConnectionRequest", () => {
 	it("should build a valid JSON-RPC connection/request message", () => {
 		const params: ConnectionRequestParams = {
 			from: { agentId: 1, chain: "eip155:1" },
-			to: { agentId: 2, chain: "eip155:1" },
-			connectionId: "conn-001",
-			nonce: "test-nonce",
+			invite: {
+				agentId: 2,
+				chain: "eip155:1",
+				expires: 1_893_456_000,
+				signature: `0x${"1".repeat(130)}` as `0x${string}`,
+			},
 			timestamp: "2025-01-01T00:00:00.000Z",
 		};
 
@@ -31,10 +34,7 @@ describe("buildConnectionResult", () => {
 	it("should build a valid accepted connection/result message", () => {
 		const params: ConnectionResultParams = {
 			requestId: "req-001",
-			requestNonce: "nonce-001",
-			connectionId: "conn-001",
 			from: { agentId: 2, chain: "eip155:1" },
-			to: { agentId: 1, chain: "eip155:1" },
 			status: "accepted",
 			timestamp: "2025-01-01T00:01:00.000Z",
 		};
@@ -50,9 +50,7 @@ describe("buildConnectionResult", () => {
 	it("should build a valid rejected connection/result message", () => {
 		const params: ConnectionResultParams = {
 			requestId: "req-002",
-			requestNonce: "nonce-002",
 			from: { agentId: 2, chain: "eip155:1" },
-			to: { agentId: 1, chain: "eip155:1" },
 			status: "rejected",
 			reason: "Not interested",
 			timestamp: "2025-01-01T00:01:00.000Z",

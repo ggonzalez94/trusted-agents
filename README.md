@@ -75,12 +75,7 @@ On agent B:
 tap connect "<invite-url>" --yes
 ```
 
-Optionally exchange permissions during connection:
-```bash
-tap connect "<invite-url>" --yes \
-  --grant-file ./grants/offer.json \
-  --request-grants-file ./grants/request.json
-```
+`tap connect` establishes trust only. If agent A is not already listening, run `tap message sync` on A to accept the request and `tap message sync` on B to ingest the later `connection/result`.
 
 ### Send messages
 
@@ -95,6 +90,7 @@ tap conversations list --with PeerAgent  # review the conversation
 ```bash
 tap permissions show PeerAgent
 tap permissions grant PeerAgent --file ./grants/budget.json --note "weekly budget"
+tap permissions request PeerAgent --file ./grants/request.json --note "need transfer approval"
 tap permissions revoke PeerAgent --grant-id weekly-usdc --note "paused"
 ```
 

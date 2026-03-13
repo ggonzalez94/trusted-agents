@@ -1,10 +1,9 @@
-import { nowISO } from "../common/index.js";
+import { generateConnectionId, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import type { ResolvedAgent } from "../identity/types.js";
-import { createEmptyPermissionState, createGrantSet } from "../permissions/types.js";
+import { createEmptyPermissionState } from "../permissions/types.js";
 import type {
 	AgentIdentifier,
-	ConnectionPermissionIntent,
 	ConnectionRequestParams,
 	ConnectionResultParams,
 	JsonRpcRequest,
@@ -17,10 +16,6 @@ export interface ConnectionRequestContext {
 	resolver: IAgentResolver;
 	trustStore: ITrustStore;
 	ownAgent: AgentIdentifier;
-	approve: (
-		peer: ResolvedAgent,
-		permissionIntent: ConnectionPermissionIntent | undefined,
-	) => Promise<boolean>;
 }
 
 export interface ConnectionRequestOutcome {
@@ -37,75 +32,43 @@ export async function handleConnectionRequest(
 		typeof params?.from?.agentId !== "number" ||
 		params.from.agentId < 0 ||
 		typeof params.from.chain !== "string" ||
-		params.from.chain.length === 0 ||
-		typeof params.connectionId !== "string" ||
-		params.connectionId.length === 0
+		params.from.chain.length === 0
 	) {
 		throw new Error("Invalid connection request parameters");
 	}
 
 	const resolved = await ctx.resolver.resolveWithCache(params.from.agentId, params.from.chain);
 	const existing = await ctx.trustStore.findByAgentId(params.from.agentId, params.from.chain);
+	const now = nowISO();
 	if (existing && existing.status === "active") {
+		await ctx.trustStore.touchContact(existing.connectionId);
 		return {
 			peer: resolved,
 			contact: existing,
 			result: {
 				requestId: String(ctx.message.id),
-				requestNonce: params.nonce,
 				from: ctx.ownAgent,
-				to: params.from,
 				status: "accepted",
-				connectionId: existing.connectionId,
-				timestamp: nowISO(),
+				timestamp: now,
 			},
 		};
 	}
 
-	const approved = await ctx.approve(resolved, params.permissionIntent);
-	if (!approved) {
-		return {
-			peer: resolved,
-			contact: null,
-			result: {
-				requestId: String(ctx.message.id),
-				requestNonce: params.nonce,
-				from: ctx.ownAgent,
-				to: params.from,
-				status: "rejected",
-				reason: "Connection rejected by agent",
-				timestamp: nowISO(),
-			},
-		};
-	}
-
-	const now = nowISO();
-	const basePermissions = existing?.permissions ?? createEmptyPermissionState(now);
-	const nextPermissions =
-		params.permissionIntent?.offeredGrants && params.permissionIntent.offeredGrants.length > 0
-			? {
-					...basePermissions,
-					grantedByPeer: createGrantSet(params.permissionIntent.offeredGrants, now),
-				}
-			: basePermissions;
 	const nextContact: Contact = {
-		connectionId: existing?.connectionId ?? params.connectionId,
+		connectionId: existing?.connectionId ?? generateConnectionId(),
 		peerAgentId: resolved.agentId,
 		peerChain: resolved.chain,
 		peerOwnerAddress: resolved.ownerAddress,
 		peerDisplayName: resolved.registrationFile.name,
 		peerAgentAddress: resolved.agentAddress,
-		permissions: nextPermissions,
+		permissions: existing?.permissions ?? createEmptyPermissionState(now),
 		establishedAt: existing?.establishedAt ?? now,
 		lastContactAt: now,
 		status: "active",
 	};
 
 	if (existing) {
-		await ctx.trustStore.updateContact(existing.connectionId, {
-			...nextContact,
-			pending: undefined,
-		});
+		await ctx.trustStore.updateContact(existing.connectionId, nextContact);
 	} else {
 		await ctx.trustStore.addContact(nextContact);
 	}
@@ -115,11 +78,8 @@ export async function handleConnectionRequest(
 		contact: nextContact,
 		result: {
 			requestId: String(ctx.message.id),
-			requestNonce: params.nonce,
 			from: ctx.ownAgent,
-			to: params.from,
 			status: "accepted",
-			connectionId: nextContact.connectionId,
 			timestamp: now,
 		},
 	};

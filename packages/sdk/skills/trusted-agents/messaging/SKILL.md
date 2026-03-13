@@ -54,21 +54,21 @@ tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --n
 
 If the peer rejects or fails the request and that `action/result` arrives during the command wait window, the command exits non-zero.
 
-### `tap message sync [--yes] [--unsafe-approve-actions]`
+### `tap message sync [--unsafe-approve-actions]`
 
 Reconcile missed XMTP messages once. Use this in OpenClaw heartbeat-style turns or other scheduled runtimes. This is also the normal way to converge asynchronous `connection/request` and `connection/result` traffic when agents are not simultaneously online.
 
 ```bash
 tap message sync
-tap message sync --yes --unsafe-approve-actions
+tap message sync --unsafe-approve-actions
 ```
 
-### `tap message listen [--yes] [--unsafe-approve-actions]`
+### `tap message listen [--unsafe-approve-actions]`
 
 Run the long-lived XMTP stream listener. It processes connection requests/results, grant updates, messages, and action requests/results.
 
 ```bash
-tap message listen --yes
+tap message listen
 ```
 
 ### `tap conversations list [--with <name>]`

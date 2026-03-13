@@ -1,11 +1,5 @@
 import { FileTrustStore, XmtpTransport } from "trusted-agents-core";
-import type {
-	IAgentResolver,
-	TransportHandlers,
-	TransportProvider,
-	XmtpTransportConfig,
-} from "trusted-agents-core";
-import { ApprovalHandler } from "./approval.js";
+import type { IAgentResolver, TransportProvider, XmtpTransportConfig } from "trusted-agents-core";
 import { executeConnect } from "./commands/connect.js";
 import type { ConnectResult } from "./commands/connect.js";
 import { executeContacts } from "./commands/contacts.js";
@@ -28,26 +22,15 @@ export interface OrchestratorConfig {
 }
 
 export class TrustedAgentsOrchestrator {
-	private readonly approvalHandler?: ApprovalHandler;
 	private readonly transport?: TransportProvider;
-	private transportHandlers: TransportHandlers = {};
 	private transportStarted = false;
 
 	constructor(private readonly config: OrchestratorConfig) {
-		if (config.notification) {
-			this.approvalHandler = new ApprovalHandler(config.notification);
-		}
 		this.transport = this.buildTransport(config);
 	}
 
-	async start(options?: {
-		handlers?: TransportHandlers;
-	}): Promise<void> {
+	async start(): Promise<void> {
 		if (!this.transport) return;
-		if (options?.handlers) {
-			this.transportHandlers = options.handlers;
-			this.transport.setHandlers(options.handlers);
-		}
 		await this.ensureTransportStarted();
 	}
 
@@ -62,7 +45,6 @@ export class TrustedAgentsOrchestrator {
 			privateKey: this.config.privateKey,
 			agentId: this.config.agentId,
 			chain: this.config.chain,
-			dataDir: this.config.dataDir,
 			expirySeconds,
 		});
 	}
@@ -84,21 +66,6 @@ export class TrustedAgentsOrchestrator {
 				dataDir: this.config.dataDir,
 				resolver: this.config.resolver,
 				transport: this.transport,
-				transportHandlers: this.transportHandlers,
-				manageTransportLifecycle: !this.transportStarted,
-				approveConnection: this.approvalHandler
-					? async (details) =>
-							this.approvalHandler!.requestApproval({
-								type: "connection",
-								description: `Connect to ${details.peerName} (#${details.peerAgentId})`,
-								details: {
-									peerName: details.peerName,
-									peerAgentId: details.peerAgentId,
-									chain: details.chain,
-									capabilities: details.capabilities.join(", "),
-								},
-							})
-					: undefined,
 				notify: this.config.notification
 					? async (message) => {
 							await this.config.notification!.notify(message);

@@ -341,23 +341,21 @@ If both agents resolve cleanly, continue with the shared live flow below.
 Start the inviter first. Agent B does not need a listener yet.
 
 ```bash
-tap --data-dir "$AGENT_A_DIR" message listen --yes
+tap --data-dir "$AGENT_A_DIR" message listen
 ```
 
-### 2. Connect with initial grant intent
+### 2. Connect
 
 ```bash
 INVITE_URL="$(tap --json --data-dir "$AGENT_A_DIR" invite create | jq -r '.data.url')"
 
-tap --data-dir "$AGENT_B_DIR" connect "$INVITE_URL" \
-  --yes \
-  --request-grants-file ./worker-request.json \
-  --grant-file ./worker-offer.json
+tap --data-dir "$AGENT_B_DIR" connect "$INVITE_URL" --yes
 ```
 
 Checks:
-- the connector sees requested and offered grants in the command output
-- Agent A listener shows the peer's requested and offered grant intent
+- the connector returns `active` immediately if Agent A is listening, otherwise `pending`
+- Agent A listener shows the inbound `connection/request`
+- if the connect returned `pending`, `tap --data-dir "$AGENT_B_DIR" message sync` converges the later `connection/result`
 
 ### 3. Optionally request an additional grant later
 
@@ -368,14 +366,14 @@ This is not required for the main smoke path, but it is a useful extra check if 
 Start Agent B's listener so it can receive the grant publication:
 
 ```bash
-tap --data-dir "$AGENT_B_DIR" message listen --yes
+tap --data-dir "$AGENT_B_DIR" message listen
 ```
 
 Use `Ctrl+C` to stop Agent A's listener before publishing from Agent A, then restart it after the publish completes:
 
 ```bash
 tap --data-dir "$AGENT_A_DIR" permissions grant WorkerAgent --file ./treasury-grants.json --note "approved for smoke run"
-tap --data-dir "$AGENT_A_DIR" message listen --yes
+tap --data-dir "$AGENT_A_DIR" message listen
 ```
 
 Checks:
@@ -394,7 +392,7 @@ Then stop Agent A's listener, send from Agent A to Agent B, and restart Agent A'
 
 ```bash
 tap --data-dir "$AGENT_A_DIR" message send WorkerAgent "hello back from live smoke" --scope general-chat
-tap --data-dir "$AGENT_A_DIR" message listen --yes
+tap --data-dir "$AGENT_A_DIR" message listen
 ```
 
 Use `Ctrl+C` to stop the currently running listener before starting the next command for that same identity.
@@ -421,7 +419,7 @@ Checks:
 Agent B must be listening to receive the grant update, and Agent A should not have its own listener running while it sends the revoke.
 
 ```bash
-tap --data-dir "$AGENT_B_DIR" message listen --yes
+tap --data-dir "$AGENT_B_DIR" message listen
 ```
 
 Use `Ctrl+C` to stop Agent A's listener before running the revoke command.
@@ -437,7 +435,7 @@ tap --data-dir "$AGENT_A_DIR" permissions revoke WorkerAgent \
 Use `Ctrl+C` to stop Agent B's listener before restarting Agent A's listener.
 
 ```bash
-tap --data-dir "$AGENT_A_DIR" message listen --yes
+tap --data-dir "$AGENT_A_DIR" message listen
 tap --data-dir "$AGENT_B_DIR" message request-funds TreasuryAgent \
   --asset native \
   --amount 0.0001 \

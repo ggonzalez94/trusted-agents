@@ -15,7 +15,6 @@ describe("parseInviteUrl", () => {
 
 		expect(parsed.agentId).toBe(1);
 		expect(parsed.chain).toBe("eip155:1");
-		expect(parsed.nonce).toBeDefined();
 		expect(parsed.expires).toBeGreaterThan(0);
 		expect(parsed.signature).toMatch(/^0x/);
 	});
@@ -33,7 +32,7 @@ describe("parseInviteUrl", () => {
 	it("should throw for a URL with invalid expires", () => {
 		expect(() =>
 			parseInviteUrl(
-				"https://trustedagents.link/connect?agentId=1&chain=eip155:1&nonce=abc&expires=notanumber&sig=0xabc",
+				"https://trustedagents.link/connect?agentId=1&chain=eip155:1&expires=notanumber&sig=0xabc",
 			),
 		).toThrow("expires is not a number");
 	});
@@ -41,7 +40,7 @@ describe("parseInviteUrl", () => {
 	it("should throw for a signature not starting with 0x", () => {
 		expect(() =>
 			parseInviteUrl(
-				"https://trustedagents.link/connect?agentId=1&chain=eip155:1&nonce=abc&expires=9999999999&sig=abc",
+				"https://trustedagents.link/connect?agentId=1&chain=eip155:1&expires=9999999999&sig=abc",
 			),
 		).toThrow("signature must start with 0x");
 	});

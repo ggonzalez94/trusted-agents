@@ -109,26 +109,6 @@ describe("two-agent CLI E2E flow", () => {
 				},
 			],
 		});
-		const workerInitialRequestPath = await writeJsonFile(treasuryDir, "worker-request.json", {
-			version: "tap-grants/v1",
-			grants: [
-				{ grantId: "worker-chat-from-treasury", scope: "general-chat" },
-				{
-					grantId: "worker-native-budget",
-					scope: "transfer/request",
-					constraints: {
-						asset: "native",
-						chain: CHAIN,
-						maxAmount: "0.001",
-						window: "week",
-					},
-				},
-			],
-		});
-		const workerInitialOfferPath = await writeJsonFile(treasuryDir, "worker-offer.json", {
-			version: "tap-grants/v1",
-			grants: [{ grantId: "treasury-chat-from-worker", scope: "general-chat" }],
-		});
 		const followupRequestPath = await writeJsonFile(treasuryDir, "worker-followup.json", {
 			version: "tap-grants/v1",
 			grants: [{ grantId: "worker-research", scope: "research" }],
@@ -195,14 +175,8 @@ describe("two-agent CLI E2E flow", () => {
 			"connect",
 			inviteUrl,
 			"--yes",
-			"--request-grants-file",
-			workerInitialRequestPath,
-			"--grant-file",
-			workerInitialOfferPath,
 		]);
 		expect(connect.exitCode).toBe(0);
-		expect(connect.stdout).toContain("Requested Grants:");
-		expect(connect.stdout).toContain("Offered Grants:");
 		expect(connect.stdout).toContain("Status:         pending");
 		expect(connect.stdout).toContain('"status": "queued"');
 
@@ -214,9 +188,7 @@ describe("two-agent CLI E2E flow", () => {
 			"list",
 		]);
 		expect(workerPendingContactBeforeSync.exitCode).toBe(0);
-		expect(JSON.parse(workerPendingContactBeforeSync.stdout).data.contacts[0]?.status).toBe(
-			"pending",
-		);
+		expect(JSON.parse(workerPendingContactBeforeSync.stdout).data.contacts).toEqual([]);
 
 		const syncTreasuryAfterOfflineConnect = await runCli([
 			"--json",
@@ -224,19 +196,8 @@ describe("two-agent CLI E2E flow", () => {
 			treasuryDir,
 			"message",
 			"sync",
-			"--yes",
 		]);
 		expect(syncTreasuryAfterOfflineConnect.exitCode).toBe(0);
-
-		const inviteListAfterAcceptance = await runCli([
-			"--json",
-			"--data-dir",
-			treasuryDir,
-			"invite",
-			"list",
-		]);
-		expect(inviteListAfterAcceptance.exitCode).toBe(0);
-		expect(JSON.parse(inviteListAfterAcceptance.stdout).data.invites).toEqual([]);
 
 		const syncWorkerAfterAcceptance = await runCli([
 			"--json",
@@ -244,7 +205,6 @@ describe("two-agent CLI E2E flow", () => {
 			workerDir,
 			"message",
 			"sync",
-			"--yes",
 		]);
 		expect(syncWorkerAfterAcceptance.exitCode).toBe(0);
 
@@ -259,13 +219,10 @@ describe("two-agent CLI E2E flow", () => {
 		const initialTreasuryPermissions = await waitForPermissions(
 			treasuryDir,
 			"WorkerAgent",
-			(data) =>
-				data.granted_by_peer.grants.some((grant) => grant.grantId === "treasury-chat-from-worker"),
+			(data) => data.granted_by_peer.grants.length === 0,
 		);
 		expect(initialTreasuryPermissions.granted_by_me.grants).toEqual([]);
-		expect(initialTreasuryPermissions.granted_by_peer.grants.map((grant) => grant.grantId)).toEqual(
-			["treasury-chat-from-worker"],
-		);
+		expect(initialTreasuryPermissions.granted_by_peer.grants).toEqual([]);
 
 		const requestMore = await runCli([
 			"--plain",
@@ -284,12 +241,12 @@ describe("two-agent CLI E2E flow", () => {
 
 		workerListener = await createMessageListenerSession(
 			{ plain: true, dataDir: workerDir },
-			{ yes: true },
+			{},
 			{},
 		);
 		treasuryListener = await createMessageListenerSession(
 			{ plain: true, dataDir: treasuryDir },
-			{ yes: true },
+			{},
 			{
 				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
 			},
@@ -445,6 +402,21 @@ describe("two-agent CLI E2E flow", () => {
 		).data.conversations as Array<{ id: string; messages: number }>;
 		expect(treasuryConversations).toHaveLength(1);
 		expect(treasuryConversations[0]!.messages).toBeGreaterThan(0);
+		const workerConversations = JSON.parse(
+			(
+				await runCli([
+					"--json",
+					"--data-dir",
+					workerDir,
+					"conversations",
+					"list",
+					"--with",
+					"TreasuryAgent",
+				])
+			).stdout,
+		).data.conversations as Array<{ id: string; messages: number }>;
+		expect(workerConversations).toHaveLength(1);
+		expect(workerConversations[0]!.messages).toBeGreaterThan(0);
 
 		const workerTranscript = await runCli([
 			"--plain",
@@ -452,7 +424,7 @@ describe("two-agent CLI E2E flow", () => {
 			workerDir,
 			"conversations",
 			"show",
-			treasuryConversations[0]!.id,
+			workerConversations[0]!.id,
 		]);
 		expect(workerTranscript.exitCode).toBe(0);
 		expect(workerTranscript.stdout).toContain("hello from worker");
@@ -472,7 +444,7 @@ describe("two-agent CLI E2E flow", () => {
 		expect(workerLedger).toContain("transfer-rejected");
 	}, 20_000);
 
-	it("reports the persisted connection id for pending connects", async () => {
+	it("persists pending outbound connects without creating a contact", async () => {
 		const pendingRoot = await mkdtemp(join(tmpdir(), "tap-cli-pending-"));
 		const pendingConnectorDir = join(pendingRoot, "connector");
 		await mkdir(pendingConnectorDir, { recursive: true });
@@ -557,16 +529,20 @@ describe("two-agent CLI E2E flow", () => {
 			expect(connect.exitCode).toBe(0);
 
 			const output = JSON.parse(connect.stdout).data as {
-				connection_id: string;
+				connection_id?: string;
 				status: string;
 			};
 			expect(output.status).toBe("pending");
+			expect(output.connection_id).toBeUndefined();
 
 			const trustStore = new FileTrustStore(pendingConnectorDir);
-			const storedContacts = await trustStore.getContacts();
-			expect(storedContacts).toHaveLength(1);
-			expect(output.connection_id).toBe(storedContacts[0]?.connectionId);
-			expect(output.connection_id).not.toBe(invite.nonce);
+			expect(await trustStore.getContacts()).toEqual([]);
+			const pendingConnects = JSON.parse(
+				await readFile(join(pendingConnectorDir, "pending-connects.json"), "utf-8"),
+			) as { pendingConnects?: Array<{ peerAgentId: number }> };
+			expect(pendingConnects.pendingConnects).toEqual([
+				expect.objectContaining({ peerAgentId: pendingAgentId }),
+			]);
 		} finally {
 			clearLoopbackRuntime(pendingConnectorDir);
 			await rm(pendingRoot, { recursive: true, force: true });
@@ -610,12 +586,12 @@ describe("two-agent CLI E2E flow", () => {
 
 		treasuryListener = await createMessageListenerSession(
 			{ plain: true, dataDir: treasuryDir },
-			{ yes: true },
+			{},
 			{},
 		);
 		workerListener = await createMessageListenerSession(
 			{ plain: true, dataDir: workerDir },
-			{ yes: true },
+			{},
 			{},
 		);
 
