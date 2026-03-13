@@ -28,7 +28,7 @@ Run these checks to determine what the agent needs next:
 2. `tap config show` — if errors, run `tap init` via /onboard
 3. `tap identity show` — if agent_id < 0, fund wallet and `tap register` via /onboard
 4. `tap balance` — verify funding
-5. `tap contacts list` — if empty, use /connections; if any contact shows "pending", run `tap message sync --yes`
+5. `tap contacts list` — if empty, use /connections; if you recently initiated a connect and expect the result, run `tap message sync`
 
 ## Default Loop
 
@@ -41,7 +41,7 @@ tap not installed? → references/install-cli.md
          │
     no contacts? → /connections (invite or connect)
          │
-    pending contacts? → tap message sync --yes
+    waiting on async results? → tap message sync
          │
     ready → /messaging, grant management, high-impact review
 ```

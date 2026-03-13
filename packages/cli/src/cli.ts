@@ -242,46 +242,25 @@ Examples:
 			await inviteCreateCommand(Number.parseInt(cmdOpts.expiry, 10), opts);
 		});
 
-	invite
-		.command("list")
-		.description("Show pending invites")
-		.action(async () => {
-			const opts = program.opts<GlobalOptions>();
-			const { inviteListCommand } = await import("./commands/invite-list.js");
-			await inviteListCommand(opts);
-		});
-
 	// connect
 	program
 		.command("connect <invite-url>")
-		.description("Send an asynchronous connection request from an invite")
+		.description("Send a connection request from an invite")
 		.option("--yes", "Auto-approve connection (no interactive prompt)")
-		.option(
-			"--request-grants-file <path>",
-			"JSON file describing grants to request in the connect intent",
-		)
-		.option("--grant-file <path>", "JSON file describing grants to offer in the connect intent")
 		.addHelpText(
 			"after",
 			`
-Connect is asynchronous. The peer only needs to receive your request; acceptance or rejection arrives later through listen/sync.
+Connect establishes trust only. Publish or request grants separately after the contact is active.
 
 Examples:
   tap connect "<invite-url>" --yes
-  tap connect "<invite-url>" --yes --request-grants-file ./grants/request.json
-  tap connect "<invite-url>" --yes --grant-file ./grants/offer.json
 `,
 		)
-		.action(
-			async (
-				inviteUrl: string,
-				cmdOpts: { yes?: boolean; requestGrantsFile?: string; grantFile?: string },
-			) => {
-				const opts = program.opts<GlobalOptions>();
-				const { connectCommand } = await import("./commands/connect.js");
-				await connectCommand(inviteUrl, !!cmdOpts.yes, cmdOpts, opts);
-			},
-		);
+		.action(async (inviteUrl: string, cmdOpts: { yes?: boolean }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { connectCommand } = await import("./commands/connect.js");
+			await connectCommand(inviteUrl, !!cmdOpts.yes, opts);
+		});
 
 	const permissions = program.command("permissions").description("Manage directional grants");
 
@@ -392,16 +371,14 @@ Examples:
 	message
 		.command("listen")
 		.description("Stream incoming messages and process results (long-running)")
-		.option("--yes", "Auto-accept incoming connection requests")
 		.option(
 			"--unsafe-approve-actions",
 			"Unsafely approve incoming action requests without interactive review or grant checks",
 		)
-		.action(async (cmdOpts: { yes?: boolean; unsafeApproveActions?: boolean }) => {
+		.action(async (cmdOpts: { unsafeApproveActions?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageListenCommand } = await import("./commands/message-listen.js");
 			await messageListenCommand(opts, {
-				yes: cmdOpts.yes,
 				unsafeApproveActions: cmdOpts.unsafeApproveActions,
 			});
 		});
@@ -409,16 +386,14 @@ Examples:
 	message
 		.command("sync")
 		.description("Reconcile missed XMTP messages and process queued work once")
-		.option("--yes", "Auto-accept incoming connection requests during reconciliation")
 		.option(
 			"--unsafe-approve-actions",
 			"Unsafely approve incoming action requests during reconciliation without grant checks",
 		)
-		.action(async (cmdOpts: { yes?: boolean; unsafeApproveActions?: boolean }) => {
+		.action(async (cmdOpts: { unsafeApproveActions?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageSyncCommand } = await import("./commands/message-sync.js");
 			await messageSyncCommand(opts, {
-				yes: cmdOpts.yes,
 				unsafeApproveActions: cmdOpts.unsafeApproveActions,
 			});
 		});

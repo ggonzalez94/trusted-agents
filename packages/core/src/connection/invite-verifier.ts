@@ -14,11 +14,10 @@ export function parseInviteUrl(url: string): InviteData {
 	const parsed = new URL(url);
 	const agentId = parsed.searchParams.get("agentId");
 	const chain = parsed.searchParams.get("chain");
-	const nonce = parsed.searchParams.get("nonce");
 	const expires = parsed.searchParams.get("expires");
 	const sig = parsed.searchParams.get("sig");
 
-	if (!agentId || !chain || !nonce || !expires || !sig) {
+	if (!agentId || !chain || !expires || !sig) {
 		throw new ConnectionError("Invalid invite URL: missing required parameters");
 	}
 
@@ -34,7 +33,6 @@ export function parseInviteUrl(url: string): InviteData {
 	return {
 		agentId: Number.parseInt(agentId, 10),
 		chain: decodeURIComponent(chain),
-		nonce,
 		expires: parsedExpires,
 		signature: sig as `0x${string}`,
 	};
@@ -65,10 +63,11 @@ export async function verifyInvite(
 
 	try {
 		const message = keccak256(
-			encodeAbiParameters(
-				parseAbiParameters("uint256 agentId, string chain, string nonce, uint256 expires"),
-				[BigInt(invite.agentId), invite.chain, invite.nonce, BigInt(invite.expires)],
-			),
+			encodeAbiParameters(parseAbiParameters("uint256 agentId, string chain, uint256 expires"), [
+				BigInt(invite.agentId),
+				invite.chain,
+				BigInt(invite.expires),
+			]),
 		);
 
 		const signerAddress = await recoverMessageAddress({

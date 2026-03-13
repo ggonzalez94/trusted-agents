@@ -26,7 +26,8 @@ Key behavior:
 - async TAP protocol with separate transport receipts and later business outcomes
 - one `TapMessagingService` per identity
 - startup reconcile and explicit `syncOnce()`
-- durable request journal for dedupe and replay recovery
+- durable request journal for async action dedupe and replay recovery
+- minimal outbound `pending-connects.json` state for connection result correlation
 - one transport owner per `dataDir` enforced with `.transport.lock`
 
 ### Host adapters
@@ -90,8 +91,7 @@ The plugin reads one or more TAP identities:
     {
       "name": "default",
       "dataDir": "/absolute/path/to/tap-agent",
-      "autoApproveConnections": false,
-      "autoApproveActions": false,
+      "unsafeApproveActions": false,
       "reconcileIntervalMinutes": 10
     }
   ]

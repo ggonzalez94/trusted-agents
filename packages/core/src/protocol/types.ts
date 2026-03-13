@@ -1,4 +1,5 @@
-import type { PermissionGrant, PermissionGrantSet } from "../permissions/types.js";
+import type { InviteData } from "../connection/types.js";
+import type { PermissionGrantSet } from "../permissions/types.js";
 
 export type JsonRpcId = string | number | null;
 
@@ -56,30 +57,16 @@ export interface AgentIdentifier {
 	ownerAddress?: `0x${string}`;
 }
 
-export interface ConnectionPermissionIntent {
-	requestedGrants?: PermissionGrant[];
-	offeredGrants?: PermissionGrant[];
-}
-
 export interface ConnectionRequestParams {
 	from: AgentIdentifier;
-	to: AgentIdentifier;
-	connectionId: string;
-	message?: string;
-	permissionIntent?: ConnectionPermissionIntent;
-	nonce: string;
-	inviteNonce?: string;
-	protocolVersion?: string;
+	invite: InviteData;
 	timestamp: string;
 }
 
 export interface ConnectionResultParams {
 	requestId: string;
-	requestNonce: string;
 	from: AgentIdentifier;
-	to: AgentIdentifier;
 	status: "accepted" | "rejected";
-	connectionId?: string;
 	reason?: string;
 	timestamp: string;
 }

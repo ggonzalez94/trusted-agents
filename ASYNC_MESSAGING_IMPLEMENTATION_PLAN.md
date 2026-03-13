@@ -2,6 +2,8 @@
 
 Status note: this document is now historical for the OpenClaw host strategy. The current OpenClaw-native plan is implemented through `packages/openclaw-plugin`; see `OPENCLAW_PLUGIN_DEPLOYMENT_PLAN.md` for the up-to-date Gateway plugin deployment model.
 
+Handshake note: the later clean-slate connection rewrite removed connection invite nonces, removed connect-time grants, removed manual connection approval, and replaced connection journal usage with a minimal outbound `pending-connects.json` store.
+
 Date: 2026-03-06
 
 ## Goal

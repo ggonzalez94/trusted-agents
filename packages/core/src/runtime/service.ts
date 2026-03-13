@@ -1,4 +1,5 @@
 import { parseEther, parseUnits } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import {
 	AsyncMutex,
 	PermissionError,
@@ -12,7 +13,6 @@ import {
 } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
 import {
-	FilePendingInviteStore,
 	buildConnectionRequest,
 	buildConnectionResult,
 	buildPermissionsUpdate,
@@ -34,7 +34,6 @@ import {
 } from "../protocol/methods.js";
 import type {
 	AgentIdentifier,
-	ConnectionPermissionIntent,
 	ConnectionRequestParams,
 	ConnectionResultParams,
 	PermissionsUpdateParams,
@@ -81,6 +80,7 @@ import {
 	findContactForPeer,
 	findUniqueContactForAgentId,
 } from "./message-conversations.js";
+import { FilePendingConnectStore, type PendingConnectRecord } from "./pending-connect-store.js";
 import {
 	type PermissionLedgerEntry,
 	appendPermissionLedgerEntry,
@@ -101,29 +101,12 @@ const OUTBOX_RESULT_RETENTION_MS = 60 * 60 * 1000;
 const OUTBOX_RESULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const OUTBOX_STALE_LEASE_MS = 60_000;
 
-export interface TapConnectionApprovalContext {
-	requestId: string;
-	peer: ResolvedAgent;
-	intent: ConnectionPermissionIntent | undefined;
-	alreadyActive: boolean;
-}
-
 export interface TapTransferApprovalContext {
 	requestId: string;
 	contact: Contact;
 	request: TransferActionRequest;
 	activeTransferGrants: ReturnType<typeof findActiveGrantsByScope>;
 	ledgerPath: string;
-}
-
-export interface TapPendingConnectionDetails {
-	type: "connection";
-	peerName: string;
-	peerChain: string;
-	capabilities: string[];
-	alreadyActive: boolean;
-	requestedGrantSummary: string[];
-	offeredGrantSummary: string[];
 }
 
 export interface TapPendingTransferDetails {
@@ -139,7 +122,7 @@ export interface TapPendingTransferDetails {
 	ledgerPath: string;
 }
 
-export type TapPendingRequestDetails = TapPendingConnectionDetails | TapPendingTransferDetails;
+export type TapPendingRequestDetails = TapPendingTransferDetails;
 
 export interface TapPendingRequest {
 	requestId: string;
@@ -162,21 +145,12 @@ interface PendingActionResultDelivery extends Record<string, unknown> {
 	request: ProtocolMessage;
 }
 
-interface PendingConnectionResultDelivery extends Record<string, unknown> {
-	type: "connection-result-delivery";
-	peerAgentId: number;
-	peerName: string;
-	peerAddress: `0x${string}`;
-	request: ProtocolMessage;
-}
-
 interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 	type: "transfer-response";
 	response: TransferActionResponse;
 }
 
 export interface TapServiceHooks {
-	approveConnection?: (context: TapConnectionApprovalContext) => Promise<boolean | null>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null>;
 	executeTransfer?: (
 		config: TrustedAgentsConfig,
@@ -188,7 +162,6 @@ export interface TapServiceHooks {
 }
 
 export interface TapServiceOptions {
-	autoApproveConnections?: boolean;
 	unsafeAutoApproveActions?: boolean;
 	ownerLabel?: string;
 	commandOutbox?: FileTapCommandOutbox;
@@ -212,13 +185,11 @@ export interface TapSyncReport {
 }
 
 export interface TapConnectResult {
-	connectionId: string;
+	connectionId?: string;
 	peerName: string;
 	peerAgentId: number;
 	status: "active" | "pending";
 	receipt?: TransportReceipt;
-	requestedGrants: PermissionGrantSet["grants"];
-	offeredGrants: PermissionGrantSet["grants"];
 }
 
 export interface TapSendMessageResult {
@@ -267,11 +238,11 @@ export interface TapRequestFundsResult {
 export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
-	private readonly autoApproveConnections: boolean;
 	private readonly unsafeAutoApproveActions: boolean;
 	private readonly ownerLabel: string;
 	private readonly ownerLock: TransportOwnerLock;
-	private readonly pendingInviteStore: FilePendingInviteStore;
+	private readonly pendingConnectStore: FilePendingConnectStore;
+	private readonly localAgentAddress: `0x${string}`;
 	private readonly executionMutex = new AsyncMutex();
 	private readonly commandOutbox: FileTapCommandOutbox;
 	private readonly outboxPollIntervalMs: number;
@@ -279,10 +250,7 @@ export class TapMessagingService {
 	private readonly outboxStaleLeaseMs: number;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
-	private readonly decisionOverrides = {
-		connections: new Map<string, boolean>(),
-		transfers: new Map<string, boolean>(),
-	};
+	private readonly decisionOverrides = { transfers: new Map<string, boolean>() };
 	private readonly waiters = new Map<string, (value: TransferActionResponse) => void>();
 	private readonly handlers: TransportHandlers;
 	private running = false;
@@ -295,11 +263,11 @@ export class TapMessagingService {
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
 		this.context = context;
 		this.hooks = options.hooks ?? {};
-		this.autoApproveConnections = options.autoApproveConnections ?? false;
 		this.unsafeAutoApproveActions = options.unsafeAutoApproveActions ?? false;
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
-		this.pendingInviteStore = new FilePendingInviteStore(context.config.dataDir);
+		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
+		this.localAgentAddress = privateKeyToAccount(context.config.privateKey).address;
 		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
 		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
@@ -394,18 +362,11 @@ export class TapMessagingService {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
 		}
 
-		const decisionStore =
-			entry.method === CONNECTION_REQUEST
-				? this.decisionOverrides.connections
-				: entry.method === ACTION_REQUEST
-					? this.decisionOverrides.transfers
-					: null;
-
-		if (!decisionStore) {
+		if (entry.method !== ACTION_REQUEST) {
 			throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 		}
 
-		decisionStore.set(requestId, approve);
+		this.decisionOverrides.transfers.set(requestId, approve);
 		try {
 			return await this.executionMutex.runExclusive(
 				async () =>
@@ -423,9 +384,7 @@ export class TapMessagingService {
 							return await this.buildSyncReport(0);
 						}
 
-						if (latestEntry.method === CONNECTION_REQUEST) {
-							await this.resolvePendingConnectionRequest(latestEntry, approve);
-						} else if (latestEntry.method === ACTION_REQUEST) {
+						if (latestEntry.method === ACTION_REQUEST) {
 							await this.resolvePendingTransferRequest(latestEntry);
 						} else {
 							throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
@@ -436,23 +395,15 @@ export class TapMessagingService {
 					}),
 			);
 		} finally {
-			decisionStore.delete(requestId);
+			this.decisionOverrides.transfers.delete(requestId);
 		}
 	}
 
-	async connect(params: {
-		inviteUrl: string;
-		requestedGrants?: PermissionGrantSet;
-		offeredGrants?: PermissionGrantSet;
-	}): Promise<TapConnectResult> {
+	async connect(params: { inviteUrl: string }): Promise<TapConnectResult> {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
 	}
 
-	private async connectInternal(params: {
-		inviteUrl: string;
-		requestedGrants?: PermissionGrantSet;
-		offeredGrants?: PermissionGrantSet;
-	}): Promise<TapConnectResult> {
+	private async connectInternal(params: { inviteUrl: string }): Promise<TapConnectResult> {
 		const { config, resolver } = this.context;
 		const chainId = caip2ToChainId(config.chain);
 		if (chainId === null) {
@@ -474,7 +425,7 @@ export class TapMessagingService {
 		}
 
 		return await this.withTransportSession(async () => {
-			const { trustStore, requestJournal, transport } = this.context;
+			const { trustStore, transport } = this.context;
 
 			const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
 			if (existing?.status === "active") {
@@ -483,75 +434,29 @@ export class TapMessagingService {
 					peerName: existing.peerDisplayName,
 					peerAgentId: existing.peerAgentId,
 					status: "active",
-					requestedGrants: params.requestedGrants?.grants ?? [],
-					offeredGrants: params.offeredGrants?.grants ?? [],
 				};
 			}
 
 			const from: AgentIdentifier = { agentId: config.agentId, chain: config.chain };
-			const to: AgentIdentifier = { agentId: invite.agentId, chain: invite.chain };
 			const requestedAt = nowISO();
-			const connectionId = existing?.connectionId ?? generateConnectionId();
-			const requestNonce = generateNonce();
 			const requestParams: ConnectionRequestParams = {
 				from,
-				to,
-				connectionId,
-				...(params.requestedGrants || params.offeredGrants
-					? {
-							permissionIntent: {
-								...(params.requestedGrants
-									? { requestedGrants: params.requestedGrants.grants }
-									: {}),
-								...(params.offeredGrants ? { offeredGrants: params.offeredGrants.grants } : {}),
-							},
-						}
-					: {}),
-				nonce: requestNonce,
-				inviteNonce: invite.nonce,
-				protocolVersion: "1.0",
+				invite,
 				timestamp: requestedAt,
 			};
 
 			const rpcRequest = buildConnectionRequest(requestParams);
 			const requestId = String(rpcRequest.id);
-			const nextContact = {
-				connectionId,
+			const pendingConnect: PendingConnectRecord = {
+				requestId,
 				peerAgentId: peerAgent.agentId,
 				peerChain: peerAgent.chain,
 				peerOwnerAddress: peerAgent.ownerAddress,
 				peerDisplayName: peerAgent.registrationFile.name,
 				peerAgentAddress: peerAgent.agentAddress,
-				permissions: existing?.permissions ?? createEmptyPermissionState(requestedAt),
-				establishedAt: existing?.establishedAt ?? requestedAt,
-				lastContactAt: requestedAt,
-				status: "pending" as const,
-				pending: {
-					direction: "outbound" as const,
-					requestId,
-					requestNonce,
-					requestedAt,
-					inviteNonce: invite.nonce,
-					initialRequestedGrants: params.requestedGrants,
-					initialOfferedGrants: params.offeredGrants,
-				},
+				createdAt: requestedAt,
 			};
-
-			if (existing) {
-				await trustStore.updateContact(existing.connectionId, nextContact);
-			} else {
-				await trustStore.addContact(nextContact);
-			}
-
-			await requestJournal.putOutbound({
-				requestId,
-				requestKey: `outbound:${rpcRequest.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: rpcRequest.method,
-				peerAgentId: peerAgent.agentId,
-				status: "pending",
-			});
+			await this.pendingConnectStore.replaceForPeer(pendingConnect);
 
 			let receipt: TransportReceipt | undefined;
 			try {
@@ -559,41 +464,28 @@ export class TapMessagingService {
 					peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
 					timeout: CONNECT_RECEIPT_TIMEOUT_MS,
 				});
-				const journalEntry = await requestJournal.getByRequestId(requestId);
-				if (journalEntry?.status !== "completed") {
-					await requestJournal.updateStatus(requestId, "acked");
-				}
 			} catch (error: unknown) {
 				if (!isTransportReceiptTimeout(error)) {
-					if (existing) {
-						await trustStore.updateContact(existing.connectionId, existing);
-					} else {
-						await trustStore.removeContact(connectionId);
-					}
-					await requestJournal.delete(requestId);
+					await this.pendingConnectStore.delete(requestId);
 					throw error;
 				}
 			}
 
 			const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-			if (!latestContact) {
-				const journalEntry = await requestJournal.getByRequestId(requestId);
-				if (journalEntry?.status === "completed") {
-					throw new ValidationError(
-						`Connection rejected by ${peerAgent.registrationFile.name} (#${peerAgent.agentId})`,
-					);
-				}
+			const pendingRecord = await this.pendingConnectStore.get(requestId);
+			if (!latestContact && !pendingRecord) {
+				throw new ValidationError(
+					`Connection rejected by ${peerAgent.registrationFile.name} (#${peerAgent.agentId})`,
+				);
 			}
 			const status = latestContact?.status === "active" ? "active" : "pending";
 
 			return {
-				connectionId: latestContact?.connectionId ?? connectionId,
+				connectionId: latestContact?.connectionId,
 				peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
 				peerAgentId: peerAgent.agentId,
 				status,
 				receipt,
-				requestedGrants: params.requestedGrants?.grants ?? [],
-				offeredGrants: params.offeredGrants?.grants ?? [],
 			};
 		});
 	}
@@ -863,8 +755,7 @@ export class TapMessagingService {
 
 	private async processOutboxInternal(): Promise<number> {
 		await this.cleanupOutboxResultsIfDue();
-		let processed = await this.retryPendingConnectionResults();
-		processed += await this.retryPendingActionResults();
+		let processed = await this.retryPendingActionResults();
 		while (true) {
 			const job = await this.commandOutbox.claimNext({
 				owner: this.ownerLabel,
@@ -1134,6 +1025,21 @@ export class TapMessagingService {
 		senderInboxId: string;
 		message: ProtocolMessage;
 	}): Promise<{ status: "received" | "duplicate" | "queued" }> {
+		if (envelope.message.method === CONNECTION_REQUEST) {
+			const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
+			this.enqueue(requestKey, async () => {
+				await this.processConnectionRequest(envelope);
+			});
+			this.emitEvent({
+				direction: "incoming",
+				from: envelope.from,
+				method: envelope.message.method,
+				id: envelope.message.id,
+				receipt_status: "queued",
+			});
+			return { status: "queued" };
+		}
+
 		const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
 		const claimed = await this.context.requestJournal.claimInbound({
 			requestId: String(envelope.message.id),
@@ -1153,21 +1059,6 @@ export class TapMessagingService {
 				receipt_status: "duplicate",
 			});
 			return { status: "duplicate" };
-		}
-
-		if (envelope.message.method === CONNECTION_REQUEST) {
-			this.enqueue(requestKey, async () => {
-				await this.processConnectionRequest(envelope, String(envelope.message.id));
-			});
-			const status = claimed.duplicate ? "duplicate" : "queued";
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: status,
-			});
-			return { status };
 		}
 
 		const contact = await findContactForMessage(this.context, envelope.from, envelope.message);
@@ -1257,6 +1148,18 @@ export class TapMessagingService {
 		senderInboxId: string;
 		message: ProtocolMessage;
 	}): Promise<{ status: "received" | "duplicate" }> {
+		if (envelope.message.method === CONNECTION_RESULT) {
+			await this.handleConnectionResult(envelope.message);
+			this.emitEvent({
+				direction: "incoming",
+				from: envelope.from,
+				method: envelope.message.method,
+				id: envelope.message.id,
+				receipt_status: "received",
+			});
+			return { status: "received" };
+		}
+
 		const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
 		const claimed = await this.context.requestJournal.claimInbound({
 			requestId: String(envelope.message.id),
@@ -1278,9 +1181,7 @@ export class TapMessagingService {
 			return { status: "duplicate" };
 		}
 
-		if (envelope.message.method === CONNECTION_RESULT) {
-			await this.handleConnectionResult(envelope.message);
-		} else if (envelope.message.method === ACTION_RESULT) {
+		if (envelope.message.method === ACTION_RESULT) {
 			await this.handleActionResult(envelope.from, envelope.message);
 		} else {
 			throw new ValidationError(`Unsupported result method: ${envelope.message.method}`);
@@ -1298,93 +1199,30 @@ export class TapMessagingService {
 		return { status };
 	}
 
-	private async processConnectionRequest(
-		envelope: {
-			from: number;
-			senderInboxId: string;
-			message: ProtocolMessage;
-		},
-		requestId: string,
-	): Promise<void> {
+	private async processConnectionRequest(envelope: {
+		from: number;
+		senderInboxId: string;
+		message: ProtocolMessage;
+	}): Promise<void> {
 		const params = parseConnectionRequest(envelope.message);
-		if (
-			params.to.agentId !== this.context.config.agentId ||
-			params.to.chain !== this.context.config.chain
-		) {
-			throw new ValidationError("Connection request target does not match the local agent");
-		}
-		const peer = await this.context.resolver.resolveWithCache(
-			params.from.agentId,
-			params.from.chain,
-		);
-		const existing = await this.context.trustStore.findByAgentId(peer.agentId, peer.chain);
-		await this.context.requestJournal.updateMetadata(
-			requestId,
-			serializePendingConnectionRequestDetails(peer, params, existing?.status === "active"),
-		);
-		const alreadyActive = existing?.status === "active";
 
-		const inviteRejectionReason = alreadyActive
-			? null
-			: await this.validateInboundInviteNonce(params.inviteNonce);
+		// Cheap local check first — avoids resolving a peer for misrouted requests
+		const inviteRejectionReason = await this.validateInboundInvite(params.invite);
 		if (inviteRejectionReason) {
-			await this.deliverConnectionResult(
-				peer,
-				{
-					requestId: String(envelope.message.id),
-					requestNonce: params.nonce,
-					from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-					to: params.from,
-					status: "rejected",
-					reason: inviteRejectionReason,
-					timestamp: nowISO(),
-				},
-				requestId,
+			const peer = await this.context.resolver.resolveWithCache(
+				params.from.agentId,
+				params.from.chain,
 			);
+			await this.sendConnectionResult(peer, {
+				requestId: String(envelope.message.id),
+				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+				status: "rejected",
+				reason: inviteRejectionReason,
+				timestamp: nowISO(),
+			});
 			this.log(
 				"warn",
 				`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}): ${inviteRejectionReason}`,
-			);
-			return;
-		}
-
-		if (!alreadyActive) {
-			const pendingContact = {
-				connectionId: existing?.connectionId ?? params.connectionId,
-				peerAgentId: peer.agentId,
-				peerChain: peer.chain,
-				peerOwnerAddress: peer.ownerAddress,
-				peerDisplayName: peer.registrationFile.name,
-				peerAgentAddress: peer.agentAddress,
-				permissions: existing?.permissions ?? createEmptyPermissionState(params.timestamp),
-				establishedAt: existing?.establishedAt ?? params.timestamp,
-				lastContactAt: params.timestamp,
-				status: "pending" as const,
-				pending: {
-					direction: "inbound" as const,
-					requestId,
-					requestNonce: params.nonce,
-					requestedAt: params.timestamp,
-				},
-			};
-
-			if (existing) {
-				await this.context.trustStore.updateContact(existing.connectionId, pendingContact);
-			} else {
-				await this.context.trustStore.addContact(pendingContact);
-			}
-		}
-
-		const decision = await this.decideConnection(
-			requestId,
-			peer,
-			params.permissionIntent,
-			alreadyActive,
-		);
-		if (decision === null) {
-			this.log(
-				"info",
-				`Queued connection request from ${peer.registrationFile.name} (#${peer.agentId}); resolve it later with TAP sync or the host approval flow`,
 			);
 			return;
 		}
@@ -1394,99 +1232,33 @@ export class TapMessagingService {
 			resolver: this.context.resolver,
 			trustStore: this.context.trustStore,
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-			approve: async () => decision,
 		});
-		await this.deliverConnectionResult(outcome.peer, outcome.result, requestId);
-
-		if (outcome.result.status === "rejected") {
-			const pendingContact = await this.context.trustStore.findByAgentId(
-				outcome.peer.agentId,
-				outcome.peer.chain,
-			);
-			if (pendingContact?.status === "pending") {
-				await this.context.trustStore.removeContact(pendingContact.connectionId);
-			}
-		}
+		await this.sendConnectionResult(outcome.peer, outcome.result);
 
 		this.log(
 			"info",
-			`${outcome.result.status === "accepted" ? "Accepted" : "Rejected"} connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
+			`Accepted connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
 		);
 	}
 
-	private async resolvePendingConnectionRequest(
-		entry: RequestJournalEntry,
-		approve: boolean,
-	): Promise<void> {
-		const params =
-			parseStoredConnectionRequestParams(entry.metadata) ??
-			(await this.recoverPendingConnectionRequestParams(entry));
-		if (!params) {
-			throw new ValidationError(
-				`Pending connection request ${entry.requestId} is missing the original request payload`,
-			);
+	private async validateInboundInvite(
+		invite: ConnectionRequestParams["invite"],
+	): Promise<string | null> {
+		if (
+			invite.agentId !== this.context.config.agentId ||
+			invite.chain !== this.context.config.chain
+		) {
+			return "Invite does not target the local agent";
 		}
 
-		const outcome = await handleConnectionRequest({
-			message: {
-				jsonrpc: "2.0",
-				id: entry.requestId,
-				method: CONNECTION_REQUEST,
-				params,
-			},
-			resolver: this.context.resolver,
-			trustStore: this.context.trustStore,
-			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-			approve: async () => approve,
+		const verification = await verifyInvite(invite, {
+			expectedSignerAddress: this.localAgentAddress,
 		});
-		await this.deliverConnectionResult(outcome.peer, outcome.result, entry.requestId);
-
-		if (outcome.result.status === "rejected") {
-			const pendingContact = await this.context.trustStore.findByAgentId(
-				outcome.peer.agentId,
-				outcome.peer.chain,
-			);
-			if (pendingContact?.status === "pending") {
-				await this.context.trustStore.removeContact(pendingContact.connectionId);
-			}
+		if (!verification.valid) {
+			return verification.error ?? "Invite verification failed";
 		}
 
-		this.log(
-			"info",
-			`${outcome.result.status === "accepted" ? "Accepted" : "Rejected"} connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
-		);
-	}
-
-	private async recoverPendingConnectionRequestParams(
-		entry: RequestJournalEntry,
-	): Promise<ConnectionRequestParams | null> {
-		const contacts = await this.context.trustStore.getContacts();
-		const pendingContact = contacts.find(
-			(contact) =>
-				contact.status === "pending" &&
-				contact.pending?.direction === "inbound" &&
-				contact.pending.requestId === entry.requestId,
-		);
-		if (!pendingContact?.pending) {
-			return null;
-		}
-
-		const intent = parseStoredConnectionIntent(entry.metadata);
-		return {
-			from: {
-				agentId: pendingContact.peerAgentId,
-				chain: pendingContact.peerChain,
-			},
-			to: {
-				agentId: this.context.config.agentId,
-				chain: this.context.config.chain,
-			},
-			connectionId: pendingContact.connectionId,
-			nonce: pendingContact.pending.requestNonce,
-			protocolVersion: "1.0",
-			timestamp: pendingContact.pending.requestedAt,
-			...(intent ? { permissionIntent: intent } : {}),
-		};
+		return null;
 	}
 
 	private async handlePermissionsUpdate(contact: Contact, message: ProtocolMessage): Promise<void> {
@@ -1697,97 +1469,66 @@ export class TapMessagingService {
 
 	private async handleConnectionResult(message: ProtocolMessage): Promise<void> {
 		const result = parseConnectionResult(message);
+		const [pendingConnect, existingContact] = await Promise.all([
+			this.pendingConnectStore.get(result.requestId),
+			this.context.trustStore.findByAgentId(result.from.agentId, result.from.chain),
+		]);
+
+		if (!pendingConnect) {
+			if (existingContact?.status === "active") {
+				this.log(
+					"info",
+					`Ignoring duplicate connection result from ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
+				);
+				return;
+			}
+			this.log(
+				"warn",
+				`Ignoring unsolicited connection result from agent #${result.from.agentId} on ${result.from.chain}`,
+			);
+			return;
+		}
+
 		if (
-			result.to.agentId !== this.context.config.agentId ||
-			result.to.chain !== this.context.config.chain
+			pendingConnect.peerAgentId !== result.from.agentId ||
+			pendingConnect.peerChain !== result.from.chain
 		) {
-			throw new ValidationError("Connection result target does not match the local agent");
+			throw new ValidationError("Connection result sender does not match the pending connect");
 		}
-		const contact = await this.context.trustStore.findByAgentId(
-			result.from.agentId,
-			result.from.chain,
+
+		if (result.status === "rejected") {
+			await this.pendingConnectStore.delete(result.requestId);
+			this.log(
+				"info",
+				`Connection rejected by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
+			);
+			return;
+		}
+
+		const establishedAt = result.timestamp;
+		const nextContact: Contact = {
+			connectionId: existingContact?.connectionId ?? generateConnectionId(),
+			peerAgentId: pendingConnect.peerAgentId,
+			peerChain: pendingConnect.peerChain,
+			peerOwnerAddress: pendingConnect.peerOwnerAddress,
+			peerDisplayName: pendingConnect.peerDisplayName,
+			peerAgentAddress: pendingConnect.peerAgentAddress,
+			permissions: existingContact?.permissions ?? createEmptyPermissionState(establishedAt),
+			establishedAt: existingContact?.establishedAt ?? establishedAt,
+			lastContactAt: establishedAt,
+			status: "active",
+		};
+
+		if (existingContact) {
+			await this.context.trustStore.updateContact(existingContact.connectionId, nextContact);
+		} else {
+			await this.context.trustStore.addContact(nextContact);
+		}
+		await this.pendingConnectStore.delete(result.requestId);
+		this.log(
+			"info",
+			`Connection accepted by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
 		);
-		if (contact) {
-			const matchesPendingRequestId =
-				contact.status === "pending" &&
-				contact.pending?.direction === "outbound" &&
-				contact.pending.requestId === result.requestId;
-			if (matchesPendingRequestId && contact.pending?.requestNonce !== result.requestNonce) {
-				throw new ValidationError("Connection result returned an unexpected pending nonce");
-			}
-			const matchesPendingRequest =
-				matchesPendingRequestId && contact.pending?.requestNonce === result.requestNonce;
-			if (result.status === "accepted") {
-				if (!matchesPendingRequest) {
-					if (contact.status === "active" && contact.connectionId === result.connectionId) {
-						this.log(
-							"info",
-							`Ignoring duplicate accepted connection result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-						);
-					} else {
-						this.log(
-							"warn",
-							`Ignoring stale accepted connection result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-						);
-					}
-					await this.context.requestJournal.updateStatus(result.requestId, "completed");
-					return;
-				}
-				if (!result.connectionId) {
-					throw new ValidationError("Accepted connection result missing connectionId");
-				}
-				if (contact.connectionId !== result.connectionId) {
-					throw new ValidationError("Connection result returned an unexpected connectionId");
-				}
-				const nextPermissions = contact.pending?.initialOfferedGrants
-					? {
-							...contact.permissions,
-							grantedByMe: contact.pending.initialOfferedGrants,
-						}
-					: contact.permissions;
-				await this.context.trustStore.updateContact(contact.connectionId, {
-					permissions: nextPermissions,
-					status: "active",
-					pending: undefined,
-					lastContactAt: result.timestamp,
-				});
-				this.log(
-					"info",
-					`Connection accepted by ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				);
-			} else {
-				if (!matchesPendingRequest) {
-					this.log(
-						"warn",
-						`Ignoring stale rejected connection result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					);
-					await this.context.requestJournal.updateStatus(result.requestId, "completed");
-					return;
-				}
-				await this.context.trustStore.removeContact(contact.connectionId);
-				this.log(
-					"info",
-					`Connection rejected by ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				);
-			}
-		}
-
-		await this.context.requestJournal.updateStatus(result.requestId, "completed");
-	}
-
-	private async validateInboundInviteNonce(
-		inviteNonce: string | undefined,
-	): Promise<string | null> {
-		if (!inviteNonce) {
-			return null;
-		}
-
-		const redeemed = await this.pendingInviteStore.redeem(inviteNonce);
-		if (redeemed) {
-			return null;
-		}
-
-		return "Invite is invalid, expired, or already used";
 	}
 
 	private async handleActionResult(from: number, message: ProtocolMessage): Promise<void> {
@@ -1832,37 +1573,23 @@ export class TapMessagingService {
 		}
 	}
 
-	private async decideConnection(
-		requestId: string,
+	private async sendConnectionResult(
 		peer: ResolvedAgent,
-		intent: ConnectionPermissionIntent | undefined,
-		alreadyActive: boolean,
-	): Promise<boolean | null> {
-		if (alreadyActive) {
-			return true;
-		}
-
-		const override = this.decisionOverrides.connections.get(requestId);
-		if (override !== undefined) {
-			return override;
-		}
-
-		if (this.autoApproveConnections) {
-			this.log(
-				"info",
-				`Auto-accepting connection from ${peer.registrationFile.name} (#${peer.agentId})`,
+		result: ConnectionResultParams,
+	): Promise<void> {
+		const peerAddress = peer.xmtpEndpoint ?? peer.agentAddress;
+		try {
+			await this.context.transport.send(peer.agentId, buildConnectionResult(result), {
+				peerAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+		} catch (error: unknown) {
+			this.logResultDeliveryFailure(
+				"Connection result",
+				`${peer.registrationFile.name} (#${peer.agentId})`,
+				error,
 			);
-			return true;
 		}
-
-		return (
-			(await this.hooks.approveConnection?.({
-				requestId,
-				peer,
-				intent,
-				alreadyActive,
-			})) ?? null
-		);
 	}
 
 	private async decideTransfer(
@@ -1907,73 +1634,6 @@ export class TapMessagingService {
 		);
 	}
 
-	private async deliverConnectionResult(
-		peer: ResolvedAgent,
-		result: ConnectionResultParams,
-		inboundRequestId: string,
-	): Promise<void> {
-		const delivery = buildPendingConnectionResultDelivery(peer, result);
-		await this.context.requestJournal.updateStatus(inboundRequestId, "completed");
-		try {
-			await this.context.requestJournal.putOutbound({
-				requestId: String(delivery.request.id),
-				requestKey: `outbound:${delivery.request.method}:${String(delivery.request.id)}`,
-				direction: "outbound",
-				kind: "result",
-				method: delivery.request.method,
-				peerAgentId: peer.agentId,
-				correlationId: result.requestId,
-				status: "pending",
-				metadata: serializePendingConnectionResultDelivery(delivery),
-			});
-		} catch (error: unknown) {
-			this.log(
-				"error",
-				`Failed to persist retry metadata for connection result ${result.requestId}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			try {
-				await this.context.transport.send(peer.agentId, delivery.request, {
-					peerAddress: delivery.peerAddress,
-					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-				});
-			} catch (deliveryError: unknown) {
-				this.logConnectionResultDeliveryFailure(peer, result.status, deliveryError);
-			}
-			return;
-		}
-
-		try {
-			await this.deliverPendingConnectionResult(delivery);
-		} catch (error: unknown) {
-			this.logConnectionResultDeliveryFailure(peer, result.status, error);
-		}
-	}
-
-	private async retryPendingConnectionResults(): Promise<number> {
-		const pending = await this.context.requestJournal.listPending("outbound");
-		let processed = 0;
-		for (const entry of pending) {
-			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
-				continue;
-			}
-			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
-			if (!delivery) {
-				continue;
-			}
-			try {
-				await this.deliverPendingConnectionResult(delivery);
-				processed += 1;
-			} catch (error: unknown) {
-				this.logResultDeliveryFailure(
-					"Connection result",
-					`${delivery.peerName} (#${delivery.peerAgentId})`,
-					error,
-				);
-			}
-		}
-		return processed;
-	}
-
 	private async retryPendingActionResults(): Promise<number> {
 		const pending = await this.context.requestJournal.listPending("outbound");
 		let processed = 0;
@@ -2013,29 +1673,6 @@ export class TapMessagingService {
 		}
 		await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
 		await this.touchContactSafe(contact.connectionId);
-	}
-
-	private async deliverPendingConnectionResult(
-		delivery: PendingConnectionResultDelivery,
-	): Promise<void> {
-		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
-			peerAddress: delivery.peerAddress,
-			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-		});
-		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
-		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
-	}
-
-	private logConnectionResultDeliveryFailure(
-		peer: ResolvedAgent,
-		status: "accepted" | "rejected",
-		error: unknown,
-	): void {
-		this.logResultDeliveryFailure(
-			`${status === "accepted" ? "Accepted" : "Rejected"} connection result`,
-			`${peer.registrationFile.name} (#${peer.agentId})`,
-			error,
-		);
 	}
 
 	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
@@ -2089,11 +1726,12 @@ function parseConnectionRequest(message: ProtocolMessage): ConnectionRequestPara
 	if (
 		typeof params?.from?.agentId !== "number" ||
 		typeof params.from.chain !== "string" ||
-		typeof params.to?.agentId !== "number" ||
-		typeof params.to.chain !== "string" ||
-		typeof params.connectionId !== "string" ||
-		typeof params.nonce !== "string" ||
-		(params.inviteNonce !== undefined && typeof params.inviteNonce !== "string") ||
+		typeof params.invite !== "object" ||
+		params.invite === null ||
+		typeof params.invite.agentId !== "number" ||
+		typeof params.invite.chain !== "string" ||
+		typeof params.invite.expires !== "number" ||
+		typeof params.invite.signature !== "string" ||
 		typeof params.timestamp !== "string"
 	) {
 		throw new ValidationError("Invalid connection request payload");
@@ -2105,11 +1743,8 @@ function parseConnectionResult(message: ProtocolMessage): ConnectionResultParams
 	const params = message.params as ConnectionResultParams | undefined;
 	if (
 		typeof params?.requestId !== "string" ||
-		typeof params.requestNonce !== "string" ||
 		typeof params.from?.agentId !== "number" ||
 		typeof params.from.chain !== "string" ||
-		typeof params.to?.agentId !== "number" ||
-		typeof params.to.chain !== "string" ||
 		(params.status !== "accepted" && params.status !== "rejected") ||
 		typeof params.timestamp !== "string"
 	) {
@@ -2154,22 +1789,6 @@ function parsePermissionsUpdate(
 	};
 }
 
-function buildPendingConnectionDetails(
-	peer: ResolvedAgent,
-	intent: ConnectionPermissionIntent | undefined,
-	alreadyActive: boolean,
-): TapPendingConnectionDetails {
-	return {
-		type: "connection",
-		peerName: peer.registrationFile.name,
-		peerChain: peer.chain,
-		capabilities: peer.capabilities,
-		alreadyActive,
-		requestedGrantSummary: intent?.requestedGrants?.map((grant) => summarizeGrant(grant)) ?? [],
-		offeredGrantSummary: intent?.offeredGrants?.map((grant) => summarizeGrant(grant)) ?? [],
-	};
-}
-
 function buildPendingTransferDetails(
 	contact: Contact,
 	request: TransferActionRequest,
@@ -2195,42 +1814,25 @@ function buildPendingTransferDetails(
 function parsePendingRequestDetails(
 	metadata: Record<string, unknown> | undefined,
 ): TapPendingRequestDetails | undefined {
-	if (!metadata || typeof metadata.type !== "string") {
+	if (!metadata || metadata.type !== "transfer") {
 		return undefined;
 	}
-
-	if (metadata.type === "connection") {
-		return {
-			type: "connection",
-			peerName: asString(metadata.peerName) ?? "Unknown peer",
-			peerChain: asString(metadata.peerChain) ?? "unknown",
-			capabilities: asStringArray(metadata.capabilities),
-			alreadyActive: metadata.alreadyActive === true,
-			requestedGrantSummary: asStringArray(metadata.requestedGrantSummary),
-			offeredGrantSummary: asStringArray(metadata.offeredGrantSummary),
-		};
+	const toAddress = asString(metadata.toAddress);
+	if (!toAddress || !toAddress.startsWith("0x")) {
+		return undefined;
 	}
-
-	if (metadata.type === "transfer") {
-		const toAddress = asString(metadata.toAddress);
-		if (!toAddress || !toAddress.startsWith("0x")) {
-			return undefined;
-		}
-		return {
-			type: "transfer",
-			peerName: asString(metadata.peerName) ?? "Unknown peer",
-			peerChain: asString(metadata.peerChain) ?? "unknown",
-			asset: metadata.asset === "usdc" ? "usdc" : "native",
-			amount: asString(metadata.amount) ?? "0",
-			chain: asString(metadata.chain) ?? "unknown",
-			toAddress: toAddress as `0x${string}`,
-			note: asString(metadata.note),
-			activeGrantSummary: asStringArray(metadata.activeGrantSummary),
-			ledgerPath: asString(metadata.ledgerPath) ?? "",
-		};
-	}
-
-	return undefined;
+	return {
+		type: "transfer",
+		peerName: asString(metadata.peerName) ?? "Unknown peer",
+		peerChain: asString(metadata.peerChain) ?? "unknown",
+		asset: metadata.asset === "usdc" ? "usdc" : "native",
+		amount: asString(metadata.amount) ?? "0",
+		chain: asString(metadata.chain) ?? "unknown",
+		toAddress: toAddress as `0x${string}`,
+		note: asString(metadata.note),
+		activeGrantSummary: asStringArray(metadata.activeGrantSummary),
+		ledgerPath: asString(metadata.ledgerPath) ?? "",
+	};
 }
 
 function asString(value: unknown): string | undefined {
@@ -2249,22 +1851,6 @@ function serializePendingRequestDetails(
 	return details as unknown as Record<string, unknown>;
 }
 
-function serializePendingConnectionRequestDetails(
-	peer: ResolvedAgent,
-	params: ConnectionRequestParams,
-	alreadyActive: boolean,
-): Record<string, unknown> {
-	return {
-		...serializePendingRequestDetails(
-			buildPendingConnectionDetails(peer, params.permissionIntent, alreadyActive),
-		),
-		request: {
-			type: "connection-request",
-			params,
-		},
-	};
-}
-
 function serializePendingTransferRequestDetails(
 	contact: Contact,
 	request: TransferActionRequest,
@@ -2276,19 +1862,6 @@ function serializePendingTransferRequestDetails(
 			type: "transfer-request",
 			payload: request,
 		},
-	};
-}
-
-function buildPendingConnectionResultDelivery(
-	peer: ResolvedAgent,
-	result: ConnectionResultParams,
-): PendingConnectionResultDelivery {
-	return {
-		type: "connection-result-delivery",
-		peerAgentId: peer.agentId,
-		peerName: peer.registrationFile.name,
-		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
-		request: buildConnectionResult(result),
 	};
 }
 
@@ -2322,12 +1895,6 @@ function serializePendingActionResultDelivery(
 	return delivery as unknown as Record<string, unknown>;
 }
 
-function serializePendingConnectionResultDelivery(
-	delivery: PendingConnectionResultDelivery,
-): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
-}
-
 function parsePendingActionResultDelivery(
 	metadata: Record<string, unknown> | undefined,
 ): PendingActionResultDelivery | null {
@@ -2356,59 +1923,6 @@ function parsePendingActionResultDelivery(
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
 	};
-}
-
-function parsePendingConnectionResultDelivery(
-	metadata: Record<string, unknown> | undefined,
-): PendingConnectionResultDelivery | null {
-	if (!metadata || metadata.type !== "connection-result-delivery") {
-		return null;
-	}
-
-	const peerAddress = asString(metadata.peerAddress);
-	if (
-		typeof metadata.peerAgentId !== "number" ||
-		typeof metadata.peerName !== "string" ||
-		!peerAddress?.startsWith("0x") ||
-		!isProtocolMessage(metadata.request) ||
-		metadata.request.method !== CONNECTION_RESULT
-	) {
-		return null;
-	}
-
-	return {
-		type: "connection-result-delivery",
-		peerAgentId: metadata.peerAgentId,
-		peerName: metadata.peerName,
-		peerAddress: peerAddress as `0x${string}`,
-		request: metadata.request,
-	};
-}
-
-function parseStoredConnectionRequestParams(
-	metadata: Record<string, unknown> | undefined,
-): ConnectionRequestParams | null {
-	const params = parseStoredRequestField(metadata, "connection-request", "params");
-	if (params === null) {
-		return null;
-	}
-
-	try {
-		return parseConnectionRequest({
-			jsonrpc: "2.0",
-			id: "pending-connection-request",
-			method: CONNECTION_REQUEST,
-			params,
-		});
-	} catch {
-		return null;
-	}
-}
-
-function parseStoredConnectionIntent(
-	metadata: Record<string, unknown> | undefined,
-): ConnectionPermissionIntent | undefined {
-	return parseStoredConnectionRequestParams(metadata)?.permissionIntent;
 }
 
 function parseStoredTransferRequest(

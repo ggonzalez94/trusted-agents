@@ -4,7 +4,6 @@ import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk";
 export interface TapOpenClawIdentityConfig {
 	name: string;
 	dataDir: string;
-	autoApproveConnections: boolean;
 	unsafeApproveActions: boolean;
 	reconcileIntervalMinutes: number;
 }
@@ -27,10 +26,6 @@ const UI_HINTS = {
 	"identities[].dataDir": {
 		label: "TAP Data Dir",
 		help: "Path to the TAP data directory created by `tap init`.",
-	},
-	"identities[].autoApproveConnections": {
-		label: "Auto-Approve Connections",
-		help: "Accept inbound TAP connection requests automatically.",
 	},
 	"identities[].unsafeApproveActions": {
 		label: "Unsafe Approve Actions",
@@ -55,7 +50,6 @@ const JSON_SCHEMA = {
 				properties: {
 					name: { type: "string" },
 					dataDir: { type: "string" },
-					autoApproveConnections: { type: "boolean" },
 					unsafeApproveActions: { type: "boolean" },
 					reconcileIntervalMinutes: { type: "number", minimum: 1 },
 				},
@@ -115,7 +109,6 @@ function parseIdentityConfig(value: unknown, index: number): TapOpenClawIdentity
 	const input = value as {
 		name?: unknown;
 		dataDir?: unknown;
-		autoApproveConnections?: unknown;
 		unsafeApproveActions?: unknown;
 		reconcileIntervalMinutes?: unknown;
 	};
@@ -140,7 +133,6 @@ function parseIdentityConfig(value: unknown, index: number): TapOpenClawIdentity
 	return {
 		name,
 		dataDir: input.dataDir.trim(),
-		autoApproveConnections: input.autoApproveConnections === true,
 		unsafeApproveActions: input.unsafeApproveActions === true,
 		reconcileIntervalMinutes,
 	};

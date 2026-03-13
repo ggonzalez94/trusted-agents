@@ -1,7 +1,6 @@
 import type { PluginLogger } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,
-	FilePendingInviteStore,
 	type PermissionGrantSet,
 	TapMessagingService,
 	type TapRequestFundsInput,
@@ -173,7 +172,6 @@ export class OpenClawTapRegistry {
 	): Promise<{
 		identity: string;
 		url: string;
-		nonce: string;
 		expiresInSeconds: number;
 	}> {
 		const runtime = await this.ensureRuntimeForAction(identity);
@@ -185,12 +183,9 @@ export class OpenClawTapRegistry {
 				privateKey: runtime.config.privateKey,
 				expirySeconds: expiresIn,
 			});
-			const store = new FilePendingInviteStore(runtime.config.dataDir);
-			await store.create(result.invite.nonce, result.invite.expires);
 			return {
 				identity: runtime.definition.name,
 				url: result.url,
-				nonce: result.invite.nonce,
 				expiresInSeconds: expiresIn,
 			};
 		});
@@ -199,16 +194,12 @@ export class OpenClawTapRegistry {
 	async connect(params: {
 		identity?: string;
 		inviteUrl: string;
-		requestedGrants?: PermissionGrantSet;
-		offeredGrants?: PermissionGrantSet;
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		return await runtime.mutex.runExclusive(
 			async () =>
 				await runtime.service.connect({
 					inviteUrl: params.inviteUrl,
-					requestedGrants: params.requestedGrants,
-					offeredGrants: params.offeredGrants,
 				}),
 		);
 	}
@@ -373,7 +364,6 @@ export class OpenClawTapRegistry {
 			definition,
 			config,
 			service: new TapMessagingService(context, {
-				autoApproveConnections: definition.autoApproveConnections,
 				unsafeAutoApproveActions: definition.unsafeApproveActions,
 				ownerLabel: `openclaw:${definition.name}`,
 				hooks: {

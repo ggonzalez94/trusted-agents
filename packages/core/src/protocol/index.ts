@@ -8,7 +8,6 @@ export type {
 	TrustedAgentMetadata,
 	Message,
 	AgentIdentifier,
-	ConnectionPermissionIntent,
 	ConnectionRequestParams,
 	ConnectionResultParams,
 	PermissionsUpdateParams,

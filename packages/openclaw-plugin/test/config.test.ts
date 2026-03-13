@@ -5,21 +5,19 @@ describe("parseTapOpenClawPluginConfig", () => {
 	it("defaults unnamed identities and reconcile intervals", () => {
 		expect(
 			parseTapOpenClawPluginConfig({
-				identities: [{ dataDir: "/tmp/a" }, { dataDir: "/tmp/b", autoApproveConnections: true }],
+				identities: [{ dataDir: "/tmp/a" }, { dataDir: "/tmp/b" }],
 			}),
 		).toEqual({
 			identities: [
 				{
 					name: "default",
 					dataDir: "/tmp/a",
-					autoApproveConnections: false,
 					unsafeApproveActions: false,
 					reconcileIntervalMinutes: 10,
 				},
 				{
 					name: "identity-2",
 					dataDir: "/tmp/b",
-					autoApproveConnections: true,
 					unsafeApproveActions: false,
 					reconcileIntervalMinutes: 10,
 				},

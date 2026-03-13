@@ -6,7 +6,7 @@ import { hexToBytes, keccak256, toHex } from "viem";
 import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import { CONNECTION_REQUEST, CONNECTION_RESULT, isResultMethod } from "../protocol/index.js";
-import type { ConnectionRequestParams } from "../protocol/types.js";
+import type { AgentIdentifier } from "../protocol/types.js";
 import type { ITrustStore } from "../trust/trust-store.js";
 import type { Contact } from "../trust/types.js";
 import type {
@@ -501,9 +501,9 @@ export class XmtpTransport implements TransportProvider {
 				return false;
 			}
 			senderId = senderContact.peerAgentId;
-		} else if (message.method === CONNECTION_REQUEST) {
+		} else if (message.method === CONNECTION_REQUEST || message.method === CONNECTION_RESULT) {
 			try {
-				senderId = await this.verifyBootstrapRequest(
+				senderId = await this.verifyBootstrapSender(
 					rawMessage.senderInboxId,
 					senderAddresses,
 					message,
@@ -554,30 +554,18 @@ export class XmtpTransport implements TransportProvider {
 		return true;
 	}
 
-	private isContactAllowedForMethod(contact: Contact, method: string): boolean {
-		if (contact.status === "active") {
-			return true;
-		}
-
-		if (
-			method === CONNECTION_RESULT &&
-			contact.status === "pending" &&
-			contact.pending?.direction === "outbound"
-		) {
-			return true;
-		}
-
-		return false;
+	private isContactAllowedForMethod(contact: Contact, _method: string): boolean {
+		return contact.status === "active";
 	}
 
-	private async verifyBootstrapRequest(
+	private async verifyBootstrapSender(
 		senderInboxId: string,
 		senderAddresses: `0x${string}`[],
-		request: ProtocolMessage,
+		message: ProtocolMessage,
 	): Promise<number> {
-		const params = request.params as ConnectionRequestParams | undefined;
-		const claimedAgentId = params?.from?.agentId;
-		const claimedChain = params?.from?.chain;
+		const claimedSender = this.extractBootstrapSender(message.params);
+		const claimedAgentId = claimedSender?.agentId;
+		const claimedChain = claimedSender?.chain;
 
 		if (
 			typeof claimedAgentId !== "number" ||
@@ -609,6 +597,30 @@ export class XmtpTransport implements TransportProvider {
 
 		this.inboxIdToAddress.set(senderInboxId, expectedSenderAddress as `0x${string}`);
 		return claimedAgentId;
+	}
+
+	private extractBootstrapSender(params: unknown): AgentIdentifier | null {
+		if (typeof params !== "object" || params === null) {
+			return null;
+		}
+
+		const from = (params as { from?: unknown }).from;
+		if (typeof from !== "object" || from === null) {
+			return null;
+		}
+
+		const agentId = (from as { agentId?: unknown }).agentId;
+		const chain = (from as { chain?: unknown }).chain;
+		if (
+			typeof agentId !== "number" ||
+			agentId < 0 ||
+			typeof chain !== "string" ||
+			chain.length === 0
+		) {
+			return null;
+		}
+
+		return { agentId, chain };
 	}
 
 	private async resolveInboxAddresses(senderInboxId: string): Promise<`0x${string}`[]> {

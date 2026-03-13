@@ -1,4 +1,4 @@
-import { FilePendingInviteStore, generateInvite } from "trusted-agents-core";
+import { generateInvite } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
@@ -20,14 +20,9 @@ export async function inviteCreateCommand(
 			expirySeconds,
 		});
 
-		// Store the pending invite
-		const store = new FilePendingInviteStore(config.dataDir);
-		await store.create(result.invite.nonce, result.invite.expires);
-
 		success(
 			{
 				url: result.url,
-				nonce: result.invite.nonce,
 				expires_in_seconds: expirySeconds,
 			},
 			opts,
