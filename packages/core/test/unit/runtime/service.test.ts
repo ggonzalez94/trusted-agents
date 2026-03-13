@@ -532,6 +532,74 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
+	it("does not report connection result delivery failure when retry persistence fails", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const logs: string[] = [];
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: {
+					log: (level, message) => {
+						logs.push(`${level}:${message}`);
+					},
+				},
+			},
+		);
+		const originalPutOutbound = requestJournal.putOutbound.bind(requestJournal);
+		vi.spyOn(requestJournal, "putOutbound").mockImplementation(async (entry) => {
+			if (entry.kind === "result" && entry.method === "connection/result") {
+				throw new Error("disk full");
+			}
+			return await originalPutOutbound(entry);
+		});
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-connection-result-persist-fail",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		const sentResult = transport.sentMessages.find(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(sentResult).toBeDefined();
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		expect(await requestJournal.getByRequestId(String(sentResult!.message.id))).toBeNull();
+		expect(
+			logs.some((entry) =>
+				entry.includes("Failed to persist retry metadata for connection result"),
+			),
+		).toBe(true);
+		expect(logs.some((entry) => entry.includes("Failed to deliver connection result"))).toBe(false);
+
+		await service.stop();
+	});
+
 	it("rejects inbound connection requests whose invite targets a different agent", async () => {
 		const trustStore = createMemoryTrustStore();
 		const transport = new FakeTransport();

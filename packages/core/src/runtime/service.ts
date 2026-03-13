@@ -1611,6 +1611,7 @@ export class TapMessagingService {
 	): Promise<void> {
 		const delivery = buildPendingConnectionResultDelivery(peer, result);
 		const deliveryRequestId = String(delivery.request.id);
+		let persisted = false;
 		try {
 			await this.context.requestJournal.putOutbound({
 				requestId: deliveryRequestId,
@@ -1623,6 +1624,7 @@ export class TapMessagingService {
 				status: "pending",
 				metadata: serializePendingConnectionResultDelivery(delivery),
 			});
+			persisted = true;
 		} catch (error: unknown) {
 			this.log(
 				"error",
@@ -1631,7 +1633,14 @@ export class TapMessagingService {
 		}
 
 		try {
-			await this.deliverPendingConnectionResult(delivery);
+			if (persisted) {
+				await this.deliverPendingConnectionResult(delivery);
+			} else {
+				await this.context.transport.send(delivery.peerAgentId, delivery.request, {
+					peerAddress: delivery.peerAddress,
+					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+				});
+			}
 		} catch (error: unknown) {
 			this.logResultDeliveryFailure(
 				"Connection result",
