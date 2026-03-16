@@ -1,4 +1,14 @@
-import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import {
+	access,
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readlink,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -76,6 +86,26 @@ describe("tap install", () => {
 			true,
 		);
 
+		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+			"gateway status --json --no-probe",
+			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
+			"config validate --json",
+		]);
+	});
+
+	it("removes a legacy TAP-managed ~/.openclaw skill symlink before plugin install", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+		await mkdir(join(homeDir, ".openclaw", "skills"), { recursive: true });
+		await symlink(
+			join(sourceDir, "packages", "sdk", "skills", "trusted-agents"),
+			join(homeDir, ".openclaw", "skills", "trusted-agents"),
+		);
+
+		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
+
+		await expect(pathMissing(join(homeDir, ".openclaw", "skills", "trusted-agents"))).resolves.toBe(
+			true,
+		);
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
 			"gateway status --json --no-probe",
 			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,

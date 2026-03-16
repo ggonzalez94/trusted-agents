@@ -129,7 +129,7 @@ bun install
 bun run build
 cd packages/cli && npm link
 cd ../..
-openclaw plugins install --link ./packages/openclaw-plugin
+tap install --runtime openclaw
 ```
 
 Then:
@@ -145,7 +145,13 @@ openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"nam
 4. restart the Gateway
 5. verify with `tap_gateway` action `status`
 
-This keeps the install story compatible with “install TAP from this repo” while still ending in a real Gateway-owned runtime.
+Low-level fallback:
+
+```bash
+openclaw plugins install --link ./packages/openclaw-plugin
+```
+
+That raw OpenClaw command only links the plugin. It does not run TAP's Gateway stop/restore logic and it does not clean up legacy `~/.openclaw/skills/trusted-agents` entries.
 
 ## Non-OpenClaw Deployment Modes
 

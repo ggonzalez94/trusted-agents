@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, lstat, mkdir, readlink, symlink } from "node:fs/promises";
+import { access, lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 	try {
 		const sourceDir = resolveSourceDir(cmdOpts.sourceDir);
 		validateSourceDir(sourceDir);
+		const homeDir = resolveHomeDir();
 
 		const runtimes = resolveRequestedRuntimes(cmdOpts.runtimes);
 		const autoDetect = runtimes.length === 0;
@@ -68,7 +69,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 		const results: RuntimeInstallResult[] = [];
 
 		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {
-			const runtimeDir = join(homedir(), `.${runtime}`);
+			const runtimeDir = join(homeDir, `.${runtime}`);
 			const detected =
 				existsSync(runtimeDir) || (runtime === "openclaw" && (await commandExists("openclaw")));
 			if (autoDetect && !detected) {
@@ -94,7 +95,13 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			}
 
 			if (runtime === "openclaw") {
-				const pluginResult = await installOpenClawPlugin(pluginSource, autoDetect, notes);
+				const pluginResult = await installOpenClawPlugin(
+					pluginSource,
+					skillSource,
+					runtimeDir,
+					autoDetect,
+					notes,
+				);
 				result.plugin_installed = pluginResult.installed;
 				result.plugin_target = pluginSource;
 			}
@@ -151,6 +158,11 @@ function resolveSourceDir(input?: string): string {
 
 	const currentFile = fileURLToPath(import.meta.url);
 	return resolve(dirname(currentFile), "../../../../");
+}
+
+function resolveHomeDir(): string {
+	const envHome = process.env.HOME?.trim();
+	return envHome && envHome.length > 0 ? envHome : homedir();
 }
 
 function validateSourceDir(sourceDir: string): void {
@@ -218,6 +230,8 @@ async function ensureSkillLink(runtimeDir: string, skillSource: string): Promise
 
 async function installOpenClawPlugin(
 	pluginSource: string,
+	skillSource: string,
+	openClawDir: string,
 	autoDetect: boolean,
 	notes: string[],
 ): Promise<{ installed: boolean }> {
@@ -235,6 +249,7 @@ async function installOpenClawPlugin(
 	let restartError: Error | null = null;
 
 	try {
+		await cleanupLegacyOpenClawSkillLink(openClawDir, skillSource, notes);
 		await execOpenClawCommand(["plugins", "install", "--link", pluginSource]);
 		notes.push("Installed or refreshed the TAP OpenClaw plugin link.");
 		await validateOpenClawConfig(notes);
@@ -268,6 +283,35 @@ async function installOpenClawPlugin(
 	}
 
 	return { installed: true };
+}
+
+async function cleanupLegacyOpenClawSkillLink(
+	openClawDir: string,
+	skillSource: string,
+	notes: string[],
+): Promise<void> {
+	const legacyLinkPath = join(openClawDir, "skills", "trusted-agents");
+	const existingTarget = await readSymlinkTarget(legacyLinkPath);
+	if (existingTarget !== null) {
+		if (existingTarget === skillSource || looksLikeLegacyTapSkillTarget(existingTarget)) {
+			await rm(legacyLinkPath, { force: true });
+			notes.push(
+				"Removed the legacy ~/.openclaw/skills/trusted-agents TAP symlink. OpenClaw plugin mode uses the plugin-bundled skill tree only.",
+			);
+			return;
+		}
+
+		notes.push(
+			"Found an existing ~/.openclaw/skills/trusted-agents symlink. OpenClaw plugin mode does not use generic TAP skills; remove that symlink if Gateway logs TAP skill-path warnings.",
+		);
+		return;
+	}
+
+	if (await pathExists(legacyLinkPath)) {
+		notes.push(
+			"Found an existing ~/.openclaw/skills/trusted-agents entry that is not a symlink. OpenClaw plugin mode does not use generic TAP skills; remove or rename it if Gateway logs TAP skill-path warnings.",
+		);
+	}
 }
 
 async function prepareOpenClawPluginInstall(
@@ -415,6 +459,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeError(err: unknown): Error {
 	return err instanceof Error ? err : new Error(String(err));
+}
+
+function looksLikeLegacyTapSkillTarget(path: string): boolean {
+	const suffix = join("packages", "sdk", "skills", "trusted-agents");
+	return path.endsWith(suffix);
 }
 
 async function commandExists(command: string): Promise<boolean> {

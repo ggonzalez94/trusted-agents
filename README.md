@@ -110,13 +110,21 @@ A grant file looks like this:
 
 ## Telling Your Agent About TAP
 
-If your agent runs on [OpenClaw](https://openclaw.ai), install the plugin:
+If your agent runs on [OpenClaw](https://openclaw.ai), use the managed TAP install path:
+
+```bash
+tap install --runtime openclaw
+```
+
+This is the preferred OpenClaw mode. Use the plugin-backed `tap_gateway` surface for transport-active TAP work.
+
+If you intentionally need the low-level OpenClaw command, you can still run:
 
 ```bash
 openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
-This is the preferred OpenClaw mode. Use the plugin-backed `tap_gateway` surface for transport-active TAP work.
+That path only links the plugin. It does not run TAP's Gateway stop/restore logic and it does not clean up legacy `~/.openclaw/skills/trusted-agents` entries.
 
 For other agent frameworks, point them at the [TAP skill files](./packages/sdk/skills/trusted-agents/) which describe available commands, expected inputs, and error handling — everything an LLM needs to use `tap` effectively.
 

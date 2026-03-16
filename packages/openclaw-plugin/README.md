@@ -19,12 +19,21 @@ cd packages/cli && npm link
 tap install --runtime openclaw
 ```
 
-`tap install --runtime openclaw` is the convenience wrapper for the canonical OpenClaw plugin install. It installs the plugin-backed OpenClaw surface only; it does not link the generic TAP skill tree into `~/.openclaw/skills`.
+`tap install --runtime openclaw` is the recommended managed install path. It installs the plugin-backed OpenClaw surface only; it does not link the generic TAP skill tree into `~/.openclaw/skills`.
 
 The install path is gateway-aware:
 
 - If the managed Gateway service is already loaded, `tap install --runtime openclaw` stops it, installs + validates the plugin config, then restores the managed service. On macOS LaunchAgent setups that restore path is a forced service reinstall, not a plain `gateway start`.
 - If an unmanaged foreground Gateway is already running, the installer refuses to proceed until that process is stopped.
+- If a TAP-managed legacy `~/.openclaw/skills/trusted-agents` symlink exists, the installer removes it so Gateway only sees the plugin-bundled TAP skill tree.
+
+Low-level manual link:
+
+```bash
+openclaw plugins install --link ./packages/openclaw-plugin
+```
+
+That raw OpenClaw command only links the plugin. It does not run TAP's Gateway stop/restore logic and it does not clean up legacy `~/.openclaw/skills/trusted-agents` entries.
 
 ## Configure
 
