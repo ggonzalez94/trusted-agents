@@ -73,6 +73,7 @@ export {
 export {
 	TapMessagingService,
 	type TapConnectResult,
+	type TapConnectionApprovalContext,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,
 	type TapPendingTransferDetails,

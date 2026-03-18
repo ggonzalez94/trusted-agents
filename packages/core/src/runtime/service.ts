@@ -163,7 +163,14 @@ interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 	response: TransferActionResponse;
 }
 
+export interface TapConnectionApprovalContext {
+	peerAgentId: number;
+	peerName: string;
+	peerChain: string;
+}
+
 export interface TapServiceHooks {
+	approveConnection?: (context: TapConnectionApprovalContext) => Promise<boolean | null>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null>;
 	executeTransfer?: (
 		config: TrustedAgentsConfig,
@@ -1061,8 +1068,10 @@ export class TapMessagingService {
 			}
 
 			this.enqueue(requestKey, async () => {
-				await this.processConnectionRequest(envelope.message);
-				await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+				const result = await this.processConnectionRequest(envelope.message);
+				if (result === "processed") {
+					await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+				}
 			});
 			this.emitEvent({
 				direction: "incoming",
@@ -1232,7 +1241,10 @@ export class TapMessagingService {
 		return { status };
 	}
 
-	private async processConnectionRequest(message: ProtocolMessage): Promise<void> {
+	private async processConnectionRequest(
+		message: ProtocolMessage,
+		options?: { skipApprovalHook?: boolean },
+	): Promise<"processed" | "deferred"> {
 		const params = parseConnectionRequest(message);
 
 		// Cheap local check first — avoids resolving a peer for misrouted requests
@@ -1253,7 +1265,40 @@ export class TapMessagingService {
 				"warn",
 				`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}): ${inviteRejectionReason}`,
 			);
-			return;
+			return "processed";
+		}
+
+		if (this.hooks.approveConnection && !options?.skipApprovalHook) {
+			const peer = await this.context.resolver.resolveWithCache(
+				params.from.agentId,
+				params.from.chain,
+			);
+			const decision = await this.hooks.approveConnection({
+				peerAgentId: peer.agentId,
+				peerName: peer.registrationFile.name,
+				peerChain: peer.chain,
+			});
+			if (decision === null) {
+				this.log(
+					"info",
+					`Deferred connection request from ${peer.registrationFile.name} (#${peer.agentId}); resolve it later with resolvePending`,
+				);
+				return "deferred";
+			}
+			if (decision === false) {
+				await this.sendConnectionResult(peer, {
+					requestId: String(message.id),
+					from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+					status: "rejected",
+					reason: "Connection request declined by operator",
+					timestamp: nowISO(),
+				});
+				this.log(
+					"info",
+					`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}) via approveConnection hook`,
+				);
+				return "processed";
+			}
 		}
 
 		const outcome = await handleConnectionRequest({
@@ -1268,6 +1313,7 @@ export class TapMessagingService {
 			"info",
 			`Accepted connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
 		);
+		return "processed";
 	}
 
 	private async validateInboundInvite(
@@ -1729,9 +1775,11 @@ export class TapMessagingService {
 				continue;
 			}
 			try {
-				await this.processConnectionRequest(pendingRequest.message);
-				await this.context.requestJournal.updateStatus(entry.requestId, "completed");
-				processed += 1;
+				const result = await this.processConnectionRequest(pendingRequest.message);
+				if (result === "processed") {
+					await this.context.requestJournal.updateStatus(entry.requestId, "completed");
+					processed += 1;
+				}
 			} catch (error: unknown) {
 				this.log(
 					"warn",

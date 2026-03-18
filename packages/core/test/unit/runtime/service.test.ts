@@ -1697,4 +1697,240 @@ describe("TapMessagingService", () => {
 		const nextContact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
 		expect(nextContact?.permissions.grantedByPeer.grants).toEqual([]);
 	});
+
+	it("defers connection request when approveConnection hook returns null", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => null);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-defer-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(approveConnection).toHaveBeenCalledOnce();
+		expect(approveConnection).toHaveBeenCalledWith({
+			peerAgentId: PEER_AGENT.agentId,
+			peerName: PEER_AGENT.registrationFile.name,
+			peerChain: PEER_AGENT.chain,
+		});
+		// No connection/result should have been sent
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
+		).toHaveLength(0);
+		// No contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		// Journal entry should still be pending (NOT completed)
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				direction: "inbound",
+				kind: "request",
+				method: "connection/request",
+				status: "pending",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("rejects connection request when approveConnection hook returns false", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => false);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-reject-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(approveConnection).toHaveBeenCalledOnce();
+		// A connection/result with rejected status should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as {
+			status?: string;
+			reason?: string;
+		};
+		expect(resultParams?.status).toBe("rejected");
+		expect(resultParams?.reason).toContain("declined by operator");
+		// No contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("accepts connection request when approveConnection hook returns true", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => true);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-accept-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(approveConnection).toHaveBeenCalledOnce();
+		// An accepted connection/result should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as { status?: string };
+		expect(resultParams?.status).toBe("accepted");
+		// Contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("auto-accepts connection request when no approveConnection hook is registered", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				// No hooks — default behavior
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-auto-accept-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		// Contact should have been created (auto-accept)
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		await service.stop();
+	});
 });
