@@ -364,7 +364,6 @@ export class OpenClawTapRegistry {
 			definition,
 			config,
 			service: new TapMessagingService(context, {
-				unsafeAutoApproveActions: definition.unsafeApproveActions,
 				ownerLabel: `openclaw:${definition.name}`,
 				hooks: {
 					executeTransfer: async (serviceConfig, request) =>

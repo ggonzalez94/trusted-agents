@@ -1103,11 +1103,11 @@ describe("TapMessagingService", () => {
 				transport,
 				trustStore: createMemoryTrustStore([contact]),
 				hooks: {
+					approveTransfer: async () => true,
 					executeTransfer: vi.fn(async () => ({
 						txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const,
 					})),
 				},
-				serviceOptions: { unsafeAutoApproveActions: true },
 			},
 		);
 
@@ -1270,8 +1270,7 @@ describe("TapMessagingService", () => {
 			{
 				transport,
 				trustStore: createMemoryTrustStore([contact]),
-				hooks: { executeTransfer },
-				serviceOptions: { unsafeAutoApproveActions: true },
+				hooks: { approveTransfer: async () => true, executeTransfer },
 			},
 		);
 		const originalPutOutbound = requestJournal.putOutbound.bind(requestJournal);
@@ -1325,9 +1324,9 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
-	it("rejects transfer approvals without a matching grant before consulting hooks", async () => {
+	it("rejects transfer without matching grants when no approveTransfer hook is registered", async () => {
 		const contact: Contact = {
-			connectionId: "conn-transfer-1",
+			connectionId: "conn-transfer-no-hook",
 			peerAgentId: PEER_AGENT.agentId,
 			peerChain: PEER_AGENT.chain,
 			peerOwnerAddress: PEER_AGENT.ownerAddress,
@@ -1338,7 +1337,65 @@ describe("TapMessagingService", () => {
 			lastContactAt: "2026-03-08T00:00:00.000Z",
 			status: "active",
 		};
-		const approveTransfer = vi.fn(async () => true);
+		const executeTransfer = vi.fn(async () => ({
+			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
+		}));
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { executeTransfer },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "transfer-action-no-hook",
+				asset: "native",
+				amount: "0.1",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-no-hook",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await service.stop();
+
+		expect(executeTransfer).not.toHaveBeenCalled();
+		const result = parseTransferActionResponse(transport.sentMessages[0]!.message);
+		expect(transport.sentMessages[0]?.message.method).toBe("action/result");
+		expect(result?.status).toBe("rejected");
+	});
+
+	it("leaves transfer pending when approveTransfer hook returns null and no grants match", async () => {
+		const contact: Contact = {
+			connectionId: "conn-transfer-hook-null",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const approveTransfer = vi.fn(async () => null);
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
 		}));
@@ -1359,7 +1416,7 @@ describe("TapMessagingService", () => {
 			"Please send funds",
 			{
 				type: "transfer/request",
-				actionId: "transfer-action-1",
+				actionId: "transfer-hook-null-1",
 				asset: "native",
 				amount: "0.1",
 				chain: "eip155:84532",
@@ -1371,21 +1428,31 @@ describe("TapMessagingService", () => {
 		await expect(
 			transport.handlers.onRequest?.({
 				from: contact.peerAgentId,
-				senderInboxId: "peer-inbox-2",
+				senderInboxId: "peer-inbox-hook-null",
 				message: request,
 			}),
 		).resolves.toEqual({ status: "queued" });
 
-		await service.stop();
+		await sleep(50);
 
-		expect(approveTransfer).not.toHaveBeenCalled();
+		expect(approveTransfer).toHaveBeenCalledOnce();
 		expect(executeTransfer).not.toHaveBeenCalled();
-		const result = parseTransferActionResponse(transport.sentMessages[0]!.message);
-		expect(transport.sentMessages[0]?.message.method).toBe("action/result");
-		expect(result?.status).toBe("rejected");
+		expect(await service.listPendingRequests()).toEqual([
+			expect.objectContaining({
+				requestId: String(request.id),
+				method: "action/request",
+				peerAgentId: PEER_AGENT.agentId,
+			}),
+		]);
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(0);
+
+		await service.stop();
 	});
 
-	it("allows unsafe transfer auto-approval without matching grants", async () => {
+	it("allows hook-based transfer approval without matching grants", async () => {
 		const contact: Contact = {
 			connectionId: "conn-transfer-2",
 			peerAgentId: PEER_AGENT.agentId,
@@ -1407,8 +1474,7 @@ describe("TapMessagingService", () => {
 			{
 				transport,
 				trustStore: createMemoryTrustStore([contact]),
-				hooks: { executeTransfer },
-				serviceOptions: { unsafeAutoApproveActions: true },
+				hooks: { approveTransfer: async () => true, executeTransfer },
 			},
 		);
 

@@ -175,7 +175,6 @@ export interface TapServiceHooks {
 }
 
 export interface TapServiceOptions {
-	unsafeAutoApproveActions?: boolean;
 	ownerLabel?: string;
 	commandOutbox?: FileTapCommandOutbox;
 	outboxPollIntervalMs?: number;
@@ -251,7 +250,6 @@ export interface TapRequestFundsResult {
 export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
-	private readonly unsafeAutoApproveActions: boolean;
 	private readonly ownerLabel: string;
 	private readonly ownerLock: TransportOwnerLock;
 	private readonly pendingConnectStore: FilePendingConnectStore;
@@ -276,7 +274,6 @@ export class TapMessagingService {
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
 		this.context = context;
 		this.hooks = options.hooks ?? {};
-		this.unsafeAutoApproveActions = options.unsafeAutoApproveActions ?? false;
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
 		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
@@ -1661,15 +1658,18 @@ export class TapMessagingService {
 			return false;
 		}
 
-		if (this.unsafeAutoApproveActions) {
-			this.log(
-				"warn",
-				`Unsafely auto-approving action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-			);
-			return true;
-		}
-
 		if (transferGrants.length === 0) {
+			if (this.hooks.approveTransfer) {
+				return (
+					(await this.hooks.approveTransfer({
+						requestId,
+						contact,
+						request,
+						activeTransferGrants: transferGrants,
+						ledgerPath: getPermissionLedgerPath(this.context.config.dataDir),
+					})) ?? null
+				);
+			}
 			this.log(
 				"warn",
 				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,

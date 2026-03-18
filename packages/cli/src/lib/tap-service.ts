@@ -15,7 +15,6 @@ export interface CliTapServiceHooks {
 }
 
 export interface CliTapServiceOptions {
-	unsafeAutoApproveActions?: boolean;
 	emitEvents?: boolean;
 	ownerLabel?: string;
 	hooks?: CliTapServiceHooks;
@@ -29,7 +28,6 @@ export function createCliTapMessagingService(
 	const hooks = options.hooks ?? {};
 
 	return new TapMessagingService(context, {
-		unsafeAutoApproveActions: options.unsafeAutoApproveActions ?? false,
 		ownerLabel: options.ownerLabel,
 		hooks: {
 			approveTransfer: async (approvalContext) => {

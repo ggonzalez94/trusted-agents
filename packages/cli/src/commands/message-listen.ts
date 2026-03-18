@@ -40,13 +40,12 @@ export async function messageListenCommand(
 
 export async function createMessageListenerSession(
 	opts: GlobalOptions,
-	cmdOpts?: { unsafeApproveActions?: boolean },
+	_cmdOpts?: { unsafeApproveActions?: boolean },
 	hooks?: MessageListenerHooks,
 ): Promise<MessageListenerSession> {
 	const config = await loadConfig(opts);
 	const ctx = buildContextWithTransport(config);
 	const service = createCliTapMessagingService(ctx, opts, {
-		unsafeAutoApproveActions: cmdOpts?.unsafeApproveActions ?? false,
 		emitEvents: true,
 		ownerLabel: "tap:listen",
 		hooks,
