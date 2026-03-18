@@ -268,7 +268,7 @@ Maximum queue size: 1000 entries. If the queue overflows (agent offline for a lo
    - `approveTransfer` → grant-aware: auto-approve if grants cover it (upgrade notification to summary), return `null` otherwise.
    - `approveConnection` → always return `null` (escalate to user).
    - Remove `unsafeApproveActions` passthrough.
-5. **`plugin.ts`** — Register `before_prompt_build` hook via `api.on("before_prompt_build", handler)`. The hook drains the notification queue and injects a `[TAP Notifications]` system context block into the agent's turn.
+5. **`plugin.ts`** — Register `before_prompt_build` hook via `api.registerTypedHook(record, "before_prompt_build", handler)`. The hook drains the notification queue and returns `{ prependContext: "[TAP Notifications]\n..." }` to inject the context block into the agent's turn. For escalation events, the `emitEvent` handler calls `enqueueSystemEvent(text, { sessionKey })` and `requestHeartbeatNow({ reason: "tap-escalation", coalesceMs: 2000 })` to wake the agent immediately (coalescing rapid-fire events within 2s).
 
 ### `packages/cli`
 
@@ -291,7 +291,11 @@ Maximum queue size: 1000 entries. If the queue overflows (agent offline for a lo
 - CLI behavior outside of removing the `unsafeApproveActions` option (CLI preserves auto-accept for connections).
 - The periodic reconcile interval — it remains as a safety net, not the primary delivery path.
 
-## Open Questions
+## Validated OpenClaw SDK APIs
 
-1. **`enqueueSystemEvent` + `requestHeartbeatNow` behavior** needs validation against the actual OpenClaw runtime. The design assumes these trigger an agent turn where `before_prompt_build` fires. If not, we need an alternative wake mechanism.
-2. **`before_prompt_build` hook registration** — the current `plugin.ts` only uses `api.registerService()` and `api.registerTool()`. The `api.on("before_prompt_build", handler)` pattern needs validation. The SDK exposes both `api.on()` and `api.registerHook()` — confirm which is the correct registration pattern.
+The following APIs have been validated against the OpenClaw SDK type definitions and documentation:
+
+- **`requestHeartbeatNow(opts?)`** — Triggers an immediate agent turn without user input. Accepts `{ reason?, coalesceMs?, agentId?, sessionKey? }`. Non-blocking. Source: `openclaw/dist/plugin-sdk/infra/heartbeat-wake.d.ts`.
+- **`enqueueSystemEvent(text, { sessionKey, contextKey? })`** — Injects a system event message into the next agent turn's prompt. Returns boolean. Source: `openclaw/dist/plugin-sdk/infra/system-events.d.ts`.
+- **`api.registerTypedHook(record, hookName, handler, opts?)`** — Type-safe hook registration. Source: `openclaw/dist/plugin-sdk/plugins/registry.d.ts`.
+- **`before_prompt_build` hook** — Fires before model prompt is finalized. Handler receives `{ prompt, messages }` and can return `{ systemPrompt?, prependContext? }`. Source: `openclaw/dist/plugin-sdk/plugins/types.d.ts`.
