@@ -1933,4 +1933,174 @@ describe("TapMessagingService", () => {
 
 		await service.stop();
 	});
+
+	it("resolvePending approves a deferred connection request", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => null);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-resolve-approve-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		// Verify it's deferred
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "pending",
+				method: "connection/request",
+			}),
+		);
+
+		// Now resolve it with approval
+		const report = await service.resolvePending(String(request.id), true);
+
+		expect(report.pendingRequests).toEqual([]);
+		// Contact should now be created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		// An accepted connection/result should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as { status?: string };
+		expect(resultParams?.status).toBe("accepted");
+
+		await service.stop();
+	});
+
+	it("resolvePending rejects a deferred connection request", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => null);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-resolve-reject-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		// Verify it's deferred
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "pending",
+				method: "connection/request",
+			}),
+		);
+
+		// Now resolve it with rejection
+		const report = await service.resolvePending(String(request.id), false);
+
+		expect(report.pendingRequests).toEqual([]);
+		// No contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		// A rejection connection/result should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as {
+			status?: string;
+			reason?: string;
+		};
+		expect(resultParams?.status).toBe("rejected");
+		expect(resultParams?.reason).toContain("declined by operator");
+
+		await service.stop();
+	});
+
+	it("resolvePending rejects non-connection and non-action requests", async () => {
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		// Manually insert a message/send journal entry to simulate a non-resolvable request
+		await requestJournal.claimInbound({
+			requestId: "msg-send-123",
+			requestKey: "test:message/send:msg-send-123",
+			direction: "inbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: PEER_AGENT.agentId,
+		});
+
+		await expect(service.resolvePending("msg-send-123", true)).rejects.toThrow(
+			"cannot be resolved manually",
+		);
+	});
 });

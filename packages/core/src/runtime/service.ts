@@ -379,11 +379,13 @@ export class TapMessagingService {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
 		}
 
-		if (entry.method !== ACTION_REQUEST) {
+		if (entry.method !== ACTION_REQUEST && entry.method !== CONNECTION_REQUEST) {
 			throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 		}
 
-		this.decisionOverrides.transfers.set(requestId, approve);
+		if (entry.method === ACTION_REQUEST) {
+			this.decisionOverrides.transfers.set(requestId, approve);
+		}
 		try {
 			return await this.executionMutex.runExclusive(
 				async () =>
@@ -403,6 +405,8 @@ export class TapMessagingService {
 
 						if (latestEntry.method === ACTION_REQUEST) {
 							await this.resolvePendingTransferRequest(latestEntry);
+						} else if (latestEntry.method === CONNECTION_REQUEST) {
+							await this.resolvePendingConnectionRequest(latestEntry, approve);
 						} else {
 							throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 						}
@@ -412,7 +416,9 @@ export class TapMessagingService {
 					}),
 			);
 		} finally {
-			this.decisionOverrides.transfers.delete(requestId);
+			if (entry.method === ACTION_REQUEST) {
+				this.decisionOverrides.transfers.delete(requestId);
+			}
 		}
 	}
 
@@ -1402,6 +1408,34 @@ export class TapMessagingService {
 		}
 
 		await this.processTransferRequest(contact, entry.requestId, request);
+	}
+
+	private async resolvePendingConnectionRequest(
+		entry: RequestJournalEntry,
+		approve: boolean,
+	): Promise<void> {
+		const pendingRequest = parsePendingConnectionRequest(entry.metadata);
+		if (!pendingRequest) {
+			throw new ValidationError(`Cannot parse pending connection request: ${entry.requestId}`);
+		}
+
+		if (approve) {
+			await this.processConnectionRequest(pendingRequest.message, { skipApprovalHook: true });
+		} else {
+			const params = parseConnectionRequest(pendingRequest.message);
+			const peer = await this.context.resolver.resolveWithCache(
+				params.from.agentId,
+				params.from.chain,
+			);
+			await this.sendConnectionResult(peer, {
+				requestId: entry.requestId,
+				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+				status: "rejected",
+				reason: "Connection request declined by operator",
+				timestamp: nowISO(),
+			});
+		}
+		await this.context.requestJournal.updateStatus(entry.requestId, "completed");
 	}
 
 	private async processTransferRequest(
