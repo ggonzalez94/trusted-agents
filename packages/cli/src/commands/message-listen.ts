@@ -15,12 +15,9 @@ export interface MessageListenerSession {
 	stop(): Promise<void>;
 }
 
-export async function messageListenCommand(
-	opts: GlobalOptions,
-	cmdOpts?: { unsafeApproveActions?: boolean },
-): Promise<void> {
+export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
 	try {
-		const session = await createMessageListenerSession(opts, cmdOpts);
+		const session = await createMessageListenerSession(opts);
 
 		const shutdown = async () => {
 			info("\nShutting down...", opts);
@@ -40,7 +37,6 @@ export async function messageListenCommand(
 
 export async function createMessageListenerSession(
 	opts: GlobalOptions,
-	_cmdOpts?: { unsafeApproveActions?: boolean },
 	hooks?: MessageListenerHooks,
 ): Promise<MessageListenerSession> {
 	const config = await loadConfig(opts);

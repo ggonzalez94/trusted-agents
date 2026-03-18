@@ -91,7 +91,6 @@ The plugin reads one or more TAP identities:
     {
       "name": "default",
       "dataDir": "/absolute/path/to/tap-agent",
-      "unsafeApproveActions": false,
       "reconcileIntervalMinutes": 10
     }
   ]

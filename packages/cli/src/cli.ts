@@ -371,31 +371,19 @@ Examples:
 	message
 		.command("listen")
 		.description("Stream incoming messages and process results (long-running)")
-		.option(
-			"--unsafe-approve-actions",
-			"Unsafely approve incoming action requests without interactive review or grant checks",
-		)
-		.action(async (cmdOpts: { unsafeApproveActions?: boolean }) => {
+		.action(async () => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageListenCommand } = await import("./commands/message-listen.js");
-			await messageListenCommand(opts, {
-				unsafeApproveActions: cmdOpts.unsafeApproveActions,
-			});
+			await messageListenCommand(opts);
 		});
 
 	message
 		.command("sync")
 		.description("Reconcile missed XMTP messages and process queued work once")
-		.option(
-			"--unsafe-approve-actions",
-			"Unsafely approve incoming action requests during reconciliation without grant checks",
-		)
-		.action(async (cmdOpts: { unsafeApproveActions?: boolean }) => {
+		.action(async () => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageSyncCommand } = await import("./commands/message-sync.js");
-			await messageSyncCommand(opts, {
-				unsafeApproveActions: cmdOpts.unsafeApproveActions,
-			});
+			await messageSyncCommand(opts);
 		});
 
 	// conversations

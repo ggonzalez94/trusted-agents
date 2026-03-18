@@ -239,14 +239,9 @@ describe("two-agent CLI E2E flow", () => {
 		expect(requestMore.exitCode).toBe(0);
 		expect(requestMore.stdout).toContain("Requested:    true");
 
-		workerListener = await createMessageListenerSession(
-			{ plain: true, dataDir: workerDir },
-			{},
-			{},
-		);
+		workerListener = await createMessageListenerSession({ plain: true, dataDir: workerDir }, {});
 		treasuryListener = await createMessageListenerSession(
 			{ plain: true, dataDir: treasuryDir },
-			{},
 			{
 				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
 			},
@@ -587,13 +582,8 @@ describe("two-agent CLI E2E flow", () => {
 		treasuryListener = await createMessageListenerSession(
 			{ plain: true, dataDir: treasuryDir },
 			{},
-			{},
 		);
-		workerListener = await createMessageListenerSession(
-			{ plain: true, dataDir: workerDir },
-			{},
-			{},
-		);
+		workerListener = await createMessageListenerSession({ plain: true, dataDir: workerDir }, {});
 
 		const connect = await runCli([
 			"--json",

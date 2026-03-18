@@ -55,7 +55,6 @@ describe("OpenClawTapRegistry", () => {
 					{
 						name: "alpha",
 						dataDir: "/tmp/alpha",
-						unsafeApproveActions: false,
 						reconcileIntervalMinutes: 10,
 					},
 				],
@@ -82,7 +81,6 @@ describe("OpenClawTapRegistry", () => {
 					{
 						name: "alpha",
 						dataDir,
-						unsafeApproveActions: false,
 						reconcileIntervalMinutes: 10,
 					},
 				],

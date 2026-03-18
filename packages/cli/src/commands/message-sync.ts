@@ -5,10 +5,7 @@ import { error, success } from "../lib/output.js";
 import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
-export async function messageSyncCommand(
-	opts: GlobalOptions,
-	_cmdOpts?: { unsafeApproveActions?: boolean },
-): Promise<void> {
+export async function messageSyncCommand(opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
 	try {

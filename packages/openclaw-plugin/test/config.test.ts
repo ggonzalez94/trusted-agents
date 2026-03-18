@@ -12,13 +12,11 @@ describe("parseTapOpenClawPluginConfig", () => {
 				{
 					name: "default",
 					dataDir: "/tmp/a",
-					unsafeApproveActions: false,
 					reconcileIntervalMinutes: 10,
 				},
 				{
 					name: "identity-2",
 					dataDir: "/tmp/b",
-					unsafeApproveActions: false,
 					reconcileIntervalMinutes: 10,
 				},
 			],
