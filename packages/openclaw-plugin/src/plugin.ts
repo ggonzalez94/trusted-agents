@@ -24,6 +24,21 @@ const plugin = {
 		});
 
 		api.registerTool(createTapGatewayTool(registry));
+
+		api.on("before_prompt_build", async (_event, _ctx) => {
+			const notifications = registry.drainNotifications();
+			if (notifications.length === 0) return;
+
+			const lines = notifications.map((n) => {
+				const prefix =
+					n.type === "escalation" ? "ESCALATION" : n.type === "summary" ? "SUMMARY" : "INFO";
+				return `- ${prefix}: ${n.oneLiner}`;
+			});
+
+			return {
+				prependContext: `[TAP Notifications]\n${lines.join("\n")}`,
+			};
+		});
 	},
 };
 
