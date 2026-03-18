@@ -20,7 +20,7 @@ Use this skill for agent-to-agent communication after a connection is active and
 - Before approving a high-impact request, inspect:
   - `tap permissions show <peer>`
   - `<dataDir>/notes/permissions-ledger.md`
-- `--unsafe-approve-actions` skips interactive review **and** bypasses transfer grant enforcement. Use it only for controlled testing — never in production.
+- Transfer approval is grant-based: requests are auto-approved when a matching grant covers them, and left pending for user review otherwise. There is no blanket override — all transfer decisions go through grant evaluation.
 
 ## Transfer Request Lifecycle
 
@@ -54,16 +54,15 @@ tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --n
 
 If the peer rejects or fails the request and that `action/result` arrives during the command wait window, the command exits non-zero.
 
-### `tap message sync [--unsafe-approve-actions]`
+### `tap message sync`
 
 Reconcile missed XMTP messages once. Use this in OpenClaw heartbeat-style turns or other scheduled runtimes. This is also the normal way to converge asynchronous `connection/request` and `connection/result` traffic when agents are not simultaneously online.
 
 ```bash
 tap message sync
-tap message sync --unsafe-approve-actions
 ```
 
-### `tap message listen [--unsafe-approve-actions]`
+### `tap message listen`
 
 Run the long-lived XMTP stream listener. It processes connection requests/results, grant updates, messages, and action requests/results.
 
