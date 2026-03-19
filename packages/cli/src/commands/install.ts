@@ -41,7 +41,6 @@ interface OpenClawGatewayStatus {
 	rpcOk: boolean;
 }
 
-
 export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
@@ -234,7 +233,6 @@ async function installOpenClawPlugin(
 
 	const gatewayStatusBeforeInstall = await getOpenClawGatewayStatus();
 	const waitForGatewayReload = isHealthyOpenClawGatewayStatus(gatewayStatusBeforeInstall);
-
 
 	await cleanupLegacyOpenClawSkillLink(openClawDir, skillSource, notes);
 	await execOpenClawCommand(["plugins", "install", "--link", pluginSource]);
