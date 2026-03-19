@@ -23,23 +23,9 @@ export class TapNotificationQueue {
 	}
 
 	push(notification: TapNotification): void {
+		if (this.items.some((n) => n.messageId === notification.messageId)) return;
 		this.items.push(notification);
 		this.evictIfNeeded();
-	}
-
-	upgrade(
-		messageId: string,
-		newType: TapNotification["type"],
-		updates?: Partial<Pick<TapNotification, "oneLiner" | "detail" | "requestId">>,
-	): void {
-		const item = this.items.find((n) => n.messageId === messageId);
-		if (!item) return;
-		item.type = newType;
-		if (updates) {
-			if (updates.oneLiner !== undefined) item.oneLiner = updates.oneLiner;
-			if (updates.detail !== undefined) item.detail = updates.detail;
-			if (updates.requestId !== undefined) item.requestId = updates.requestId;
-		}
 	}
 
 	drain(): TapNotification[] {

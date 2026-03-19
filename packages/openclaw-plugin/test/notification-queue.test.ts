@@ -65,58 +65,30 @@ describe("TapNotificationQueue", () => {
 		});
 	});
 
-	describe("upgrade", () => {
-		it("changes type and merges oneLiner, detail, and requestId", () => {
+	describe("deduplication", () => {
+		it("silently drops push when messageId already exists in queue", () => {
 			const queue = new TapNotificationQueue();
-			const notification = makeNotification({
-				messageId: "upgrade-me",
-				type: "info",
-				oneLiner: "original",
-				detail: { foo: 1 },
-			});
-			queue.push(notification);
+			const first = makeNotification({ messageId: "dup", type: "summary", oneLiner: "first" });
+			const second = makeNotification({ messageId: "dup", type: "escalation", oneLiner: "second" });
 
-			queue.upgrade("upgrade-me", "escalation", {
-				oneLiner: "upgraded",
-				detail: { bar: 2 },
-				requestId: "req-123",
-			});
+			queue.push(first);
+			queue.push(second);
 
-			const [item] = queue.drain();
-			expect(item.type).toBe("escalation");
-			expect(item.oneLiner).toBe("upgraded");
-			expect(item.detail).toEqual({ bar: 2 });
-			expect(item.requestId).toBe("req-123");
+			const items = queue.drain();
+			expect(items).toHaveLength(1);
+			expect(items[0]!.oneLiner).toBe("first");
+			expect(items[0]!.type).toBe("summary");
 		});
 
-		it("changes only the type when no updates are provided", () => {
+		it("allows same messageId after drain (re-escalation across agent turns)", () => {
 			const queue = new TapNotificationQueue();
-			const notification = makeNotification({
-				messageId: "type-only",
-				type: "info",
-				oneLiner: "keep me",
-				detail: { keep: true },
-			});
-			queue.push(notification);
+			queue.push(makeNotification({ messageId: "dup", oneLiner: "first" }));
+			queue.drain();
 
-			queue.upgrade("type-only", "summary");
-
-			const [item] = queue.drain();
-			expect(item.type).toBe("summary");
-			expect(item.oneLiner).toBe("keep me");
-			expect(item.detail).toEqual({ keep: true });
-		});
-
-		it("is a no-op for unknown messageId", () => {
-			const queue = new TapNotificationQueue();
-			const notification = makeNotification({ messageId: "known" });
-			queue.push(notification);
-
-			queue.upgrade("unknown-id", "escalation", { oneLiner: "nope" });
-
-			const [item] = queue.drain();
-			expect(item.messageId).toBe("known");
-			expect(item.type).toBe("info");
+			queue.push(makeNotification({ messageId: "dup", oneLiner: "second" }));
+			const items = queue.drain();
+			expect(items).toHaveLength(1);
+			expect(items[0]!.oneLiner).toBe("second");
 		});
 	});
 
