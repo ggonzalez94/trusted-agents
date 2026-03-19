@@ -505,9 +505,9 @@ export class OpenClawTapRegistry {
 			oneLiner: this.buildOneLiner(event),
 		};
 
-		queue.push(notification);
+		const enqueued = queue.push(notification);
 
-		if (bucket === "escalate") {
+		if (bucket === "escalate" && enqueued) {
 			void this.triggerEscalation(
 				`Incoming ${event.method} from agent #${event.from} requires attention`,
 			);
