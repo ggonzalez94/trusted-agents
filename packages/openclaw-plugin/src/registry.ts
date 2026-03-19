@@ -1,4 +1,4 @@
-import type { PluginLogger } from "openclaw/plugin-sdk";
+import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,
 	type PermissionGrantSet,
@@ -25,6 +25,11 @@ interface ManagedTapRuntime {
 	lastError?: string;
 }
 
+interface OpenClawTapEscalationTarget {
+	sessionKey: string;
+	system: Pick<PluginRuntime["system"], "enqueueSystemEvent" | "requestHeartbeatNow">;
+}
+
 export class OpenClawTapRegistry {
 	private readonly runtimes = new Map<string, ManagedTapRuntime>();
 	private readonly notificationQueues = new Map<string, TapNotificationQueue>();
@@ -34,6 +39,7 @@ export class OpenClawTapRegistry {
 	constructor(
 		private readonly pluginConfig: TapOpenClawPluginConfig,
 		private readonly logger: PluginLogger,
+		private readonly escalationTarget?: OpenClawTapEscalationTarget,
 	) {}
 
 	drainNotifications(): TapNotification[] {
@@ -514,31 +520,25 @@ export class OpenClawTapRegistry {
 		}
 	}
 
-	private async triggerEscalation(description: string): Promise<void> {
+	private triggerEscalation(description: string): void {
+		if (!this.escalationTarget) {
+			return;
+		}
+
 		try {
-			// Dynamic path construction prevents Vite from statically resolving
-			// these imports. At runtime inside Gateway, the modules resolve fine;
-			// outside Gateway (e.g., tests), the catch block silently absorbs the error.
-			const base = "openclaw/plugin-sdk/infra";
-			const [systemEventsModule, heartbeatModule] = await Promise.all([
-				import(/* @vite-ignore */ `${base}/system-events`) as Promise<{
-					enqueueSystemEvent: (text: string, options: { sessionKey: string }) => boolean;
-				}>,
-				import(/* @vite-ignore */ `${base}/heartbeat-wake`) as Promise<{
-					requestHeartbeatNow: (opts?: { reason?: string; coalesceMs?: number }) => void;
-				}>,
-			]);
-			systemEventsModule.enqueueSystemEvent(`TAP: ${description}`, {
-				sessionKey: "agent:main:main",
+			this.escalationTarget.system.enqueueSystemEvent(`TAP: ${description}`, {
+				sessionKey: this.escalationTarget.sessionKey,
+				contextKey: "tap:escalation",
 			});
-			heartbeatModule.requestHeartbeatNow({
-				reason: "tap-escalation",
+			this.escalationTarget.system.requestHeartbeatNow({
+				reason: "hook:tap-escalation",
 				coalesceMs: 2000,
+				sessionKey: this.escalationTarget.sessionKey,
 			});
-		} catch {
-			// System event and heartbeat are best-effort.
-			// If they fail (e.g., not running inside Gateway), the notification
-			// still queues and will be picked up on the next agent turn.
+		} catch (error: unknown) {
+			this.logger.warn(
+				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${formatError(error)}`,
+			);
 		}
 	}
 

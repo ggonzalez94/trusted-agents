@@ -108,4 +108,54 @@ describe("OpenClawTapRegistry", () => {
 		expect(result.url).toContain("trustedagents.link/connect");
 		expect(result.expiresInSeconds).toBe(600);
 	});
+
+	it("routes TAP escalations through the injected OpenClaw runtime system", () => {
+		const logger = createLogger();
+		const enqueueSystemEvent = vi.fn();
+		const requestHeartbeatNow = vi.fn();
+		const registry = new OpenClawTapRegistry({ identities: [] }, logger, {
+			sessionKey: "agent:alpha:primary",
+			system: {
+				enqueueSystemEvent,
+				requestHeartbeatNow,
+			},
+		});
+
+		(registry as never).triggerEscalation("Connection request from agent #7 requires attention");
+
+		expect(enqueueSystemEvent).toHaveBeenCalledWith(
+			"TAP: Connection request from agent #7 requires attention",
+			{
+				sessionKey: "agent:alpha:primary",
+				contextKey: "tap:escalation",
+			},
+		);
+		expect(requestHeartbeatNow).toHaveBeenCalledWith({
+			reason: "hook:tap-escalation",
+			coalesceMs: 2000,
+			sessionKey: "agent:alpha:primary",
+		});
+	});
+
+	it("logs escalation wake failures instead of swallowing them", () => {
+		const logger = createLogger();
+		const enqueueSystemEvent = vi.fn(() => {
+			throw new Error("boom");
+		});
+		const requestHeartbeatNow = vi.fn();
+		const registry = new OpenClawTapRegistry({ identities: [] }, logger, {
+			sessionKey: "agent:main:main",
+			system: {
+				enqueueSystemEvent,
+				requestHeartbeatNow,
+			},
+		});
+
+		(registry as never).triggerEscalation("Transfer request requires approval");
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			"[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: boom",
+		);
+		expect(requestHeartbeatNow).not.toHaveBeenCalled();
+	});
 });

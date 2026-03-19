@@ -37,6 +37,16 @@ describe("tap install", () => {
 		process.env.PATH = `${binDir}:${originalPath ?? ""}`;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = JSON.stringify({ valid: true });
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = gatewayStatusJson({
+			serviceLoaded: false,
+			runtimeStatus: "stopped",
+			rpcOk: false,
+		});
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_1 = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_2 = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_3 = "";
+		process.env.TAP_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS = "20";
+		process.env.TAP_OPENCLAW_GATEWAY_WAIT_POLL_MS = "1";
 		process.exitCode = undefined;
 	});
 
@@ -45,6 +55,12 @@ describe("tap install", () => {
 		process.env.PATH = originalPath;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = "";
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_1 = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_2 = "";
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_3 = "";
+		process.env.TAP_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS = "";
+		process.env.TAP_OPENCLAW_GATEWAY_WAIT_POLL_MS = "";
 		process.exitCode = undefined;
 		await rm(tempRoot, { recursive: true, force: true });
 	});
@@ -63,6 +79,7 @@ describe("tap install", () => {
 		);
 
 		const pluginLog = await readFile(join(tempRoot, "openclaw.log"), "utf-8");
+		expect(pluginLog).toContain("gateway status --json");
 		expect(pluginLog).toContain("plugins install --link");
 		expect(pluginLog).toContain("config validate --json");
 		expect(pluginLog).toContain(join(sourceDir, "packages", "openclaw-plugin"));
@@ -78,6 +95,7 @@ describe("tap install", () => {
 		);
 
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+			"gateway status --json",
 			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
 			"config validate --json",
 		]);
@@ -97,6 +115,7 @@ describe("tap install", () => {
 			true,
 		);
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+			"gateway status --json",
 			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
 			"config validate --json",
 		]);
@@ -110,13 +129,36 @@ describe("tap install", () => {
 		);
 	});
 
-	it("does not check or manipulate gateway state during plugin install", async () => {
+	it("waits for a running OpenClaw Gateway to reload before reporting plugin install success", async () => {
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_1 = gatewayStatusJson({
+			serviceLoaded: true,
+			runtimeStatus: "running",
+			runtimePid: 101,
+			rpcOk: true,
+		});
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_2 = gatewayStatusJson({
+			serviceLoaded: true,
+			runtimeStatus: "running",
+			runtimePid: 101,
+			rpcOk: true,
+		});
+		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_3 = gatewayStatusJson({
+			serviceLoaded: true,
+			runtimeStatus: "running",
+			runtimePid: 202,
+			rpcOk: true,
+		});
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
 
 		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
 
-		const log = await readCommandLog(join(tempRoot, "openclaw.log"));
-		expect(log).not.toContainEqual(expect.stringContaining("gateway"));
+		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+			"gateway status --json",
+			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
+			"config validate --json",
+			"gateway status --json",
+			"gateway status --json",
+		]);
 	});
 });
 
@@ -156,9 +198,38 @@ fi
 if [[ "$1" == "plugins" && "$2" == "install" ]]; then
   exit "\${FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE:-0}"
 fi
+
+if [[ "$1" == "gateway" && "$2" == "status" ]]; then
+  status_count="$(grep -c '^gateway status --json$' "${logPath}" || true)"
+  status_json_var="FAKE_OPENCLAW_GATEWAY_STATUS_JSON_\${status_count}"
+  status_json="\${!status_json_var:-$FAKE_OPENCLAW_GATEWAY_STATUS_JSON}"
+  if [[ -z "$status_json" ]]; then
+    status_json='{"service":{"loaded":false},"rpc":{"ok":false}}'
+  fi
+  printf '%s\\n' "$status_json"
+  exit 0
+fi
 `,
 	);
 	await chmod(scriptPath, 0o755);
+}
+
+function gatewayStatusJson(params: {
+	serviceLoaded: boolean;
+	runtimeStatus: string;
+	runtimePid?: number;
+	rpcOk: boolean;
+}): string {
+	return JSON.stringify({
+		service: {
+			loaded: params.serviceLoaded,
+			runtime:
+				params.runtimePid === undefined
+					? { status: params.runtimeStatus }
+					: { status: params.runtimeStatus, pid: params.runtimePid },
+		},
+		rpc: { ok: params.rpcOk },
+	});
 }
 
 async function readSymlink(path: string): Promise<string> {

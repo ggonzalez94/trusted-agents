@@ -21,7 +21,7 @@ tap install --runtime openclaw
 
 `tap install --runtime openclaw` is the recommended managed install path. It installs the plugin-backed OpenClaw surface only; it does not link the generic TAP skill tree into `~/.openclaw/skills`.
 
-The installer does not stop or restart the Gateway. OpenClaw's built-in config reload handles plugin changes automatically — the Gateway detects the `plugins.*` config change and restarts itself.
+The installer does not force a stop/start cycle. If the Gateway is already running and healthy, `tap install --runtime openclaw` waits for OpenClaw's built-in config reload to restart the Gateway onto the refreshed plugin before returning. If the Gateway is not running, the installer updates the plugin link and config only.
 
 - If a TAP-managed legacy `~/.openclaw/skills/trusted-agents` symlink exists, the installer removes it so Gateway only sees the plugin-bundled TAP skill tree.
 
@@ -31,7 +31,7 @@ Low-level manual link:
 openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
-That raw OpenClaw command only links the plugin. It does not clean up legacy `~/.openclaw/skills/trusted-agents` entries.
+That raw OpenClaw command only links the plugin. It does not clean up legacy `~/.openclaw/skills/trusted-agents` entries or wait for a running Gateway to reload onto the refreshed plugin.
 
 ## Configure
 
