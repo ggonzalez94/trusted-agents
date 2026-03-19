@@ -388,14 +388,32 @@ export class OpenClawTapRegistry {
 						this.handleEmitEvent(name, notificationQueue, payload);
 					},
 					approveTransfer: async ({ requestId, contact, request, activeTransferGrants }) => {
+						// The hook fires BEFORE emitEvent in the core runtime's async task
+						// flow, so we push new notifications here instead of upgrading —
+						// the classifier returns null for transfer requests to avoid duplicates.
 						if (activeTransferGrants.length > 0) {
-							notificationQueue.upgrade(requestId, "summary", {
+							notificationQueue.push({
+								type: "summary",
+								identity: name,
+								timestamp: new Date().toISOString(),
+								method: "action/request",
+								from: contact.peerAgentId,
+								fromName: contact.peerDisplayName,
+								messageId: requestId,
+								detail: { asset: request.asset, amount: request.amount },
 								oneLiner: `Approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName} (covered by grant)`,
 							});
 							return true;
 						}
-						// No grants cover this request — escalate for user approval
-						notificationQueue.upgrade(requestId, "escalation", {
+						notificationQueue.push({
+							type: "escalation",
+							identity: name,
+							timestamp: new Date().toISOString(),
+							method: "action/request",
+							from: contact.peerAgentId,
+							fromName: contact.peerDisplayName,
+							messageId: requestId,
+							detail: { asset: request.asset, amount: request.amount },
 							oneLiner: `Transfer request from ${contact.peerDisplayName}: ${request.amount} ${request.asset} — needs approval`,
 						});
 						void this.triggerEscalation(

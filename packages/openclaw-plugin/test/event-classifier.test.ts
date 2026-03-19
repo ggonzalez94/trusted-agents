@@ -72,13 +72,13 @@ describe("classifyTapEvent", () => {
 		});
 	});
 
-	describe("deferred escalation for transfer requests", () => {
-		it("classifies action/request with receipt_status 'queued' as auto-handle (escalation deferred to approveTransfer hook)", () => {
+	describe("transfer requests owned by approveTransfer hook", () => {
+		it("returns null for action/request with receipt_status 'queued' (notification owned by approveTransfer hook)", () => {
 			const event = makeEvent({
 				method: "action/request",
 				receipt_status: "queued",
 			});
-			expect(classifyTapEvent(event)).toBe("auto-handle");
+			expect(classifyTapEvent(event)).toBeNull();
 		});
 	});
 
