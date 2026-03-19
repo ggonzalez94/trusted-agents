@@ -31,29 +31,6 @@ interface RuntimeInstallResult {
 	notes: string[];
 }
 
-interface OpenClawGatewayStatus {
-	service?: {
-		loaded?: boolean;
-		label?: string;
-	};
-	port?: {
-		status?: string;
-		listeners?: OpenClawGatewayListener[];
-	};
-}
-
-interface OpenClawGatewayListener {
-	pid?: number;
-	command?: string;
-	commandLine?: string;
-}
-
-interface PreparedOpenClawPluginInstall {
-	restoreCommand?: string[];
-	restoreNote?: string;
-	serviceWasLoaded: boolean;
-}
-
 export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
@@ -244,43 +221,11 @@ async function installOpenClawPlugin(
 		throw new Error("OpenClaw CLI not found on PATH. Install OpenClaw or omit --runtime openclaw.");
 	}
 
-	const gatewayState = await prepareOpenClawPluginInstall(notes);
-	let installError: Error | null = null;
-	let restartError: Error | null = null;
-
-	try {
-		await cleanupLegacyOpenClawSkillLink(openClawDir, skillSource, notes);
-		await execOpenClawCommand(["plugins", "install", "--link", pluginSource]);
-		notes.push("Installed or refreshed the TAP OpenClaw plugin link.");
-		await validateOpenClawConfig(notes);
-	} catch (err) {
-		installError = normalizeError(err);
-	}
-
-	if (gatewayState.serviceWasLoaded && gatewayState.restoreCommand) {
-		try {
-			await execOpenClawCommand(gatewayState.restoreCommand);
-			if (gatewayState.restoreNote) {
-				notes.push(gatewayState.restoreNote);
-			}
-		} catch (err) {
-			restartError = normalizeError(err);
-		}
-	}
-
-	if (installError && restartError) {
-		throw new Error(
-			`${installError.message} OpenClaw plugin install also failed to restart the gateway service: ${restartError.message}`,
-		);
-	}
-	if (installError) {
-		throw installError;
-	}
-	if (restartError) {
-		throw new Error(
-			`Installed the TAP OpenClaw plugin, but failed to restart the OpenClaw gateway service: ${restartError.message}`,
-		);
-	}
+	await cleanupLegacyOpenClawSkillLink(openClawDir, skillSource, notes);
+	await execOpenClawCommand(["plugins", "install", "--link", pluginSource]);
+	notes.push("Installed or refreshed the TAP OpenClaw plugin link.");
+	await validateOpenClawConfig(notes);
+	notes.push("If the OpenClaw Gateway is running, it will auto-reload the updated plugin config.");
 
 	return { installed: true };
 }
@@ -312,34 +257,6 @@ async function cleanupLegacyOpenClawSkillLink(
 			"Found an existing ~/.openclaw/skills/trusted-agents entry that is not a symlink. OpenClaw plugin mode does not use generic TAP skills; remove or rename it if Gateway logs TAP skill-path warnings.",
 		);
 	}
-}
-
-async function prepareOpenClawPluginInstall(
-	notes: string[],
-): Promise<PreparedOpenClawPluginInstall> {
-	const status = await getOpenClawGatewayStatus();
-	const serviceWasLoaded = status.service?.loaded === true;
-	const openClawListeners = getOpenClawListeners(status.port?.listeners);
-
-	if (!serviceWasLoaded && openClawListeners.length > 0) {
-		const listeners = formatOpenClawListeners(openClawListeners);
-		throw new Error(
-			`OpenClaw gateway is already running outside the managed service${listeners ? ` (${listeners})` : ""}. Stop that gateway process before running \`tap install --runtime openclaw\`. OpenClaw restarts the gateway when \`plugins.*\` config changes.`,
-		);
-	}
-
-	if (!serviceWasLoaded) {
-		return { serviceWasLoaded: false };
-	}
-
-	await execOpenClawCommand(["gateway", "stop"]);
-	notes.push("Stopped the OpenClaw gateway service before updating plugin config.");
-	return resolveOpenClawGatewayRestorePlan(status.service);
-}
-
-async function getOpenClawGatewayStatus(): Promise<OpenClawGatewayStatus> {
-	const status = await execOpenClawJsonCommand(["gateway", "status", "--json", "--no-probe"]);
-	return status as OpenClawGatewayStatus;
 }
 
 async function validateOpenClawConfig(notes: string[]): Promise<void> {
@@ -383,8 +300,9 @@ async function execOpenClawJsonCommand(args: string[]): Promise<Record<string, u
 	try {
 		parsed = JSON.parse(trimmed);
 	} catch (err) {
+		const normalizedErr = err instanceof Error ? err : new Error(String(err));
 		throw new Error(
-			`OpenClaw returned invalid JSON for: openclaw ${args.join(" ")} (${normalizeError(err).message})`,
+			`OpenClaw returned invalid JSON for: openclaw ${args.join(" ")} (${normalizedErr.message})`,
 		);
 	}
 
@@ -395,70 +313,8 @@ async function execOpenClawJsonCommand(args: string[]): Promise<Record<string, u
 	return parsed;
 }
 
-function formatOpenClawListeners(listeners: OpenClawGatewayListener[] | undefined): string {
-	if (!Array.isArray(listeners) || listeners.length === 0) {
-		return "";
-	}
-
-	return listeners
-		.slice(0, 2)
-		.map((listener) => {
-			const pid = typeof listener.pid === "number" ? `pid ${listener.pid}` : null;
-			const command =
-				typeof listener.commandLine === "string" && listener.commandLine.trim()
-					? listener.commandLine.trim()
-					: typeof listener.command === "string" && listener.command.trim()
-						? listener.command.trim()
-						: null;
-			return [pid, command].filter(Boolean).join(" ");
-		})
-		.filter(Boolean)
-		.join(", ");
-}
-
-function getOpenClawListeners(
-	listeners: OpenClawGatewayListener[] | undefined,
-): OpenClawGatewayListener[] {
-	if (!Array.isArray(listeners)) {
-		return [];
-	}
-
-	return listeners.filter((listener) => isOpenClawListener(listener));
-}
-
-function isOpenClawListener(listener: OpenClawGatewayListener): boolean {
-	const raw = `${listener.commandLine ?? ""} ${listener.command ?? ""}`.trim().toLowerCase();
-	return raw.includes("openclaw");
-}
-
-function resolveOpenClawGatewayRestorePlan(
-	service: OpenClawGatewayStatus["service"],
-): PreparedOpenClawPluginInstall {
-	if (isOpenClawLaunchAgent(service)) {
-		return {
-			serviceWasLoaded: true,
-			restoreCommand: ["gateway", "install", "--force"],
-			restoreNote: "Restored the OpenClaw LaunchAgent with the updated plugin config.",
-		};
-	}
-
-	return {
-		serviceWasLoaded: true,
-		restoreCommand: ["gateway", "start"],
-		restoreNote: "Restarted the OpenClaw gateway service with the updated plugin config.",
-	};
-}
-
-function isOpenClawLaunchAgent(service: OpenClawGatewayStatus["service"]): boolean {
-	return service?.label === "LaunchAgent";
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeError(err: unknown): Error {
-	return err instanceof Error ? err : new Error(String(err));
 }
 
 function looksLikeLegacyTapSkillTarget(path: string): boolean {
