@@ -23,9 +23,10 @@ export function classifyTapEvent(event: TapEmitEventPayload): TapEventBucket | n
 			return "escalate";
 
 		case "action/request":
-			// receipt_status "received" = permission grant request (already handled synchronously)
-			// receipt_status "queued" = transfer request (pending async processing)
-			return event.receipt_status === "received" ? "auto-handle" : "escalate";
+			// All action/request sub-types start as auto-handle.
+			// Transfer requests (receipt_status "queued") are promoted to escalation
+			// later by the approveTransfer hook if no grants cover them.
+			return "auto-handle";
 
 		case "connection/result":
 			return "notify";

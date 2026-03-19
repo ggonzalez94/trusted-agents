@@ -70,13 +70,15 @@ describe("classifyTapEvent", () => {
 				expect(classifyTapEvent(event)).toBe("escalate");
 			}
 		});
+	});
 
-		it("classifies action/request with receipt_status 'queued' as escalate (transfer)", () => {
+	describe("deferred escalation for transfer requests", () => {
+		it("classifies action/request with receipt_status 'queued' as auto-handle (escalation deferred to approveTransfer hook)", () => {
 			const event = makeEvent({
 				method: "action/request",
 				receipt_status: "queued",
 			});
-			expect(classifyTapEvent(event)).toBe("escalate");
+			expect(classifyTapEvent(event)).toBe("auto-handle");
 		});
 	});
 

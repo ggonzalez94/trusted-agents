@@ -394,6 +394,13 @@ export class OpenClawTapRegistry {
 							});
 							return true;
 						}
+						// No grants cover this request — escalate for user approval
+						notificationQueue.upgrade(requestId, "escalation", {
+							oneLiner: `Transfer request from ${contact.peerDisplayName}: ${request.amount} ${request.asset} — needs approval`,
+						});
+						void this.triggerEscalation(
+							`Transfer request from ${contact.peerDisplayName} (${request.amount} ${request.asset}) requires approval`,
+						);
 						return null;
 					},
 					approveConnection: async () => {
@@ -481,11 +488,13 @@ export class OpenClawTapRegistry {
 		queue.push(notification);
 
 		if (bucket === "escalate") {
-			void this.triggerEscalation(event);
+			void this.triggerEscalation(
+				`Incoming ${event.method} from agent #${event.from} requires attention`,
+			);
 		}
 	}
 
-	private async triggerEscalation(event: TapEmitEventPayload): Promise<void> {
+	private async triggerEscalation(description: string): Promise<void> {
 		try {
 			// Dynamic path construction prevents Vite from statically resolving
 			// these imports. At runtime inside Gateway, the modules resolve fine;
@@ -499,10 +508,9 @@ export class OpenClawTapRegistry {
 					requestHeartbeatNow: (opts?: { reason?: string; coalesceMs?: number }) => void;
 				}>,
 			]);
-			systemEventsModule.enqueueSystemEvent(
-				`TAP: Incoming ${event.method} from agent #${event.from} requires attention`,
-				{ sessionKey: "agent:main:main" },
-			);
+			systemEventsModule.enqueueSystemEvent(`TAP: ${description}`, {
+				sessionKey: "agent:main:main",
+			});
 			heartbeatModule.requestHeartbeatNow({
 				reason: "tap-escalation",
 				coalesceMs: 2000,
