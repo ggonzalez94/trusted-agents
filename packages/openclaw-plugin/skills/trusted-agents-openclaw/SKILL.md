@@ -22,8 +22,7 @@ See `references/install.md` for full install and configuration steps.
 
 Install rule:
 
-- `tap install --runtime openclaw` is safe for the managed Gateway service path.
-- If OpenClaw is already running in the foreground against the same config, stop it before installing. The installer refuses that live-edit case on purpose because OpenClaw restarts on `plugins.*` config changes.
+- `tap install --runtime openclaw` is safe whether or not the Gateway is running. The Gateway's built-in config reload detects plugin changes and restarts itself automatically.
 
 ## Local Teardown
 

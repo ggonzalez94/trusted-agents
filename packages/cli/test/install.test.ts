@@ -35,24 +35,16 @@ describe("tap install", () => {
 		originalPath = process.env.PATH;
 		process.env.HOME = homeDir;
 		process.env.PATH = `${binDir}:${originalPath ?? ""}`;
-		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = idleGatewayStatusJson();
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = JSON.stringify({ valid: true });
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
-		process.env.FAKE_OPENCLAW_GATEWAY_STOP_EXIT_CODE = "";
-		process.env.FAKE_OPENCLAW_GATEWAY_START_EXIT_CODE = "";
-		process.env.FAKE_OPENCLAW_GATEWAY_INSTALL_EXIT_CODE = "";
 		process.exitCode = undefined;
 	});
 
 	afterEach(async () => {
 		process.env.HOME = originalHome;
 		process.env.PATH = originalPath;
-		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = "";
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = "";
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
-		process.env.FAKE_OPENCLAW_GATEWAY_STOP_EXIT_CODE = "";
-		process.env.FAKE_OPENCLAW_GATEWAY_START_EXIT_CODE = "";
-		process.env.FAKE_OPENCLAW_GATEWAY_INSTALL_EXIT_CODE = "";
 		process.exitCode = undefined;
 		await rm(tempRoot, { recursive: true, force: true });
 	});
@@ -71,7 +63,6 @@ describe("tap install", () => {
 		);
 
 		const pluginLog = await readFile(join(tempRoot, "openclaw.log"), "utf-8");
-		expect(pluginLog).toContain("gateway status --json --no-probe");
 		expect(pluginLog).toContain("plugins install --link");
 		expect(pluginLog).toContain("config validate --json");
 		expect(pluginLog).toContain(join(sourceDir, "packages", "openclaw-plugin"));
@@ -87,7 +78,6 @@ describe("tap install", () => {
 		);
 
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
-			"gateway status --json --no-probe",
 			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
 			"config validate --json",
 		]);
@@ -107,7 +97,6 @@ describe("tap install", () => {
 			true,
 		);
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
-			"gateway status --json --no-probe",
 			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
 			"config validate --json",
 		]);
@@ -121,62 +110,13 @@ describe("tap install", () => {
 		);
 	});
 
-	it("stops and restarts a non-LaunchAgent OpenClaw gateway service when it is already loaded", async () => {
+	it("does not check or manipulate gateway state during plugin install", async () => {
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
-		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = runningServiceGatewayStatusJson("Systemd");
 
 		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
 
-		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
-			"gateway status --json --no-probe",
-			"gateway stop",
-			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
-			"config validate --json",
-			"gateway start",
-		]);
-	});
-
-	it("reinstalls the LaunchAgent instead of using gateway start after a managed macOS install", async () => {
-		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
-		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = runningServiceGatewayStatusJson("LaunchAgent");
-
-		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
-
-		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
-			"gateway status --json --no-probe",
-			"gateway stop",
-			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
-			"config validate --json",
-			"gateway install --force",
-		]);
-	});
-
-	it("refuses to install while an unmanaged OpenClaw gateway process is already running", async () => {
-		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
-		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = runningForegroundGatewayStatusJson();
-
-		const stdout = await captureStdout(async () => {
-			await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
-		});
-
-		expect(process.exitCode).toBe(1);
-		expect(stdout).toContain("already running outside the managed service");
-		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
-			"gateway status --json --no-probe",
-		]);
-	});
-
-	it("does not refuse install when a non-OpenClaw process owns the configured port", async () => {
-		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
-		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = busyNonOpenClawPortStatusJson();
-
-		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
-
-		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
-			"gateway status --json --no-probe",
-			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
-			"config validate --json",
-		]);
+		const log = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(log).not.toContainEqual(expect.stringContaining("gateway"));
 	});
 });
 
@@ -204,15 +144,6 @@ async function writeFakeOpenClaw(binDir: string, logPath: string): Promise<void>
 		`#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${logPath}"
 
-if [[ "$1" == "gateway" && "$2" == "status" ]]; then
-  status_json="$FAKE_OPENCLAW_GATEWAY_STATUS_JSON"
-  if [[ -z "$status_json" ]]; then
-    status_json='${idleGatewayStatusJson()}'
-  fi
-  printf '%s\\n' "$status_json"
-  exit 0
-fi
-
 if [[ "$1" == "config" && "$2" == "validate" ]]; then
   validate_json="$FAKE_OPENCLAW_CONFIG_VALIDATE_JSON"
   if [[ -z "$validate_json" ]]; then
@@ -224,18 +155,6 @@ fi
 
 if [[ "$1" == "plugins" && "$2" == "install" ]]; then
   exit "\${FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE:-0}"
-fi
-
-if [[ "$1" == "gateway" && "$2" == "stop" ]]; then
-  exit "\${FAKE_OPENCLAW_GATEWAY_STOP_EXIT_CODE:-0}"
-fi
-
-if [[ "$1" == "gateway" && "$2" == "start" ]]; then
-  exit "\${FAKE_OPENCLAW_GATEWAY_START_EXIT_CODE:-0}"
-fi
-
-if [[ "$1" == "gateway" && "$2" == "install" ]]; then
-  exit "\${FAKE_OPENCLAW_GATEWAY_INSTALL_EXIT_CODE:-0}"
 fi
 `,
 	);
@@ -261,56 +180,4 @@ async function readCommandLog(path: string): Promise<string[]> {
 		.split("\n")
 		.map((line) => line.trim())
 		.filter(Boolean);
-}
-
-async function captureStdout(run: () => Promise<void>): Promise<string> {
-	let output = "";
-	const originalWrite = process.stdout.write.bind(process.stdout);
-	process.stdout.write = ((chunk: string | Uint8Array) => {
-		output += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf-8");
-		return true;
-	}) as typeof process.stdout.write;
-	try {
-		await run();
-		return output;
-	} finally {
-		process.stdout.write = originalWrite;
-	}
-}
-
-function idleGatewayStatusJson(): string {
-	return JSON.stringify({
-		service: { loaded: false },
-		port: { status: "free", listeners: [] },
-	});
-}
-
-function runningServiceGatewayStatusJson(label: string): string {
-	return JSON.stringify({
-		service: { loaded: true, label },
-		port: {
-			status: "busy",
-			listeners: [{ pid: 4242, command: "node", commandLine: "openclaw-gateway" }],
-		},
-	});
-}
-
-function runningForegroundGatewayStatusJson(): string {
-	return JSON.stringify({
-		service: { loaded: false },
-		port: {
-			status: "busy",
-			listeners: [{ pid: 7777, command: "node", commandLine: "openclaw-gateway" }],
-		},
-	});
-}
-
-function busyNonOpenClawPortStatusJson(): string {
-	return JSON.stringify({
-		service: { loaded: false },
-		port: {
-			status: "busy",
-			listeners: [{ pid: 9898, command: "python", commandLine: "python -m http.server 18789" }],
-		},
-	});
 }
