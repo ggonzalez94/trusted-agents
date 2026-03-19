@@ -116,7 +116,7 @@ describe("tap install", () => {
 		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
 
 		const log = await readCommandLog(join(tempRoot, "openclaw.log"));
-		expect(log).not.toContain(expect.stringContaining("gateway"));
+		expect(log).not.toContainEqual(expect.stringContaining("gateway"));
 	});
 });
 
