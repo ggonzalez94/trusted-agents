@@ -22,24 +22,17 @@ export class TapNotificationQueue {
 		this.maxSize = maxSize;
 	}
 
-	push(notification: TapNotification): void {
+	/** Returns true if the notification was newly enqueued, false if it replaced
+	 *  an existing entry with the same messageId (dedup — suppresses wake-up). */
+	push(notification: TapNotification): boolean {
+		const idx = this.items.findIndex((n) => n.messageId === notification.messageId);
+		if (idx !== -1) {
+			this.items[idx] = notification;
+			return false;
+		}
 		this.items.push(notification);
 		this.evictIfNeeded();
-	}
-
-	upgrade(
-		messageId: string,
-		newType: TapNotification["type"],
-		updates?: Partial<Pick<TapNotification, "oneLiner" | "detail" | "requestId">>,
-	): void {
-		const item = this.items.find((n) => n.messageId === messageId);
-		if (!item) return;
-		item.type = newType;
-		if (updates) {
-			if (updates.oneLiner !== undefined) item.oneLiner = updates.oneLiner;
-			if (updates.detail !== undefined) item.detail = updates.detail;
-			if (updates.requestId !== undefined) item.requestId = updates.requestId;
-		}
+		return true;
 	}
 
 	drain(): TapNotification[] {

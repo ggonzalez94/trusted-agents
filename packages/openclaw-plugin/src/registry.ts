@@ -388,11 +388,38 @@ export class OpenClawTapRegistry {
 						this.handleEmitEvent(name, notificationQueue, payload);
 					},
 					approveTransfer: async ({ requestId, contact, request, activeTransferGrants }) => {
+						// The hook fires BEFORE emitEvent in the core runtime's async task
+						// flow, so we push new notifications here instead of upgrading —
+						// the classifier returns null for transfer requests to avoid duplicates.
 						if (activeTransferGrants.length > 0) {
-							notificationQueue.upgrade(requestId, "summary", {
+							notificationQueue.push({
+								type: "summary",
+								identity: name,
+								timestamp: new Date().toISOString(),
+								method: "action/request",
+								from: contact.peerAgentId,
+								fromName: contact.peerDisplayName,
+								messageId: requestId,
+								detail: { asset: request.asset, amount: request.amount },
 								oneLiner: `Approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName} (covered by grant)`,
 							});
 							return true;
+						}
+						const enqueued = notificationQueue.push({
+							type: "escalation",
+							identity: name,
+							timestamp: new Date().toISOString(),
+							method: "action/request",
+							from: contact.peerAgentId,
+							fromName: contact.peerDisplayName,
+							messageId: requestId,
+							detail: { asset: request.asset, amount: request.amount },
+							oneLiner: `Transfer request from ${contact.peerDisplayName}: ${request.amount} ${request.asset} — needs approval`,
+						});
+						if (enqueued) {
+							void this.triggerEscalation(
+								`Transfer request from ${contact.peerDisplayName} (${request.amount} ${request.asset}) requires approval`,
+							);
 						}
 						return null;
 					},
@@ -478,14 +505,16 @@ export class OpenClawTapRegistry {
 			oneLiner: this.buildOneLiner(event),
 		};
 
-		queue.push(notification);
+		const enqueued = queue.push(notification);
 
-		if (bucket === "escalate") {
-			void this.triggerEscalation(event);
+		if (bucket === "escalate" && enqueued) {
+			void this.triggerEscalation(
+				`Incoming ${event.method} from agent #${event.from} requires attention`,
+			);
 		}
 	}
 
-	private async triggerEscalation(event: TapEmitEventPayload): Promise<void> {
+	private async triggerEscalation(description: string): Promise<void> {
 		try {
 			// Dynamic path construction prevents Vite from statically resolving
 			// these imports. At runtime inside Gateway, the modules resolve fine;
@@ -499,10 +528,9 @@ export class OpenClawTapRegistry {
 					requestHeartbeatNow: (opts?: { reason?: string; coalesceMs?: number }) => void;
 				}>,
 			]);
-			systemEventsModule.enqueueSystemEvent(
-				`TAP: Incoming ${event.method} from agent #${event.from} requires attention`,
-				{ sessionKey: "agent:main:main" },
-			);
+			systemEventsModule.enqueueSystemEvent(`TAP: ${description}`, {
+				sessionKey: "agent:main:main",
+			});
 			heartbeatModule.requestHeartbeatNow({
 				reason: "tap-escalation",
 				coalesceMs: 2000,

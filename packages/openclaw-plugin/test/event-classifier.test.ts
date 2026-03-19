@@ -70,13 +70,15 @@ describe("classifyTapEvent", () => {
 				expect(classifyTapEvent(event)).toBe("escalate");
 			}
 		});
+	});
 
-		it("classifies action/request with receipt_status 'queued' as escalate (transfer)", () => {
+	describe("transfer requests owned by approveTransfer hook", () => {
+		it("returns null for action/request with receipt_status 'queued' (notification owned by approveTransfer hook)", () => {
 			const event = makeEvent({
 				method: "action/request",
 				receipt_status: "queued",
 			});
-			expect(classifyTapEvent(event)).toBe("escalate");
+			expect(classifyTapEvent(event)).toBeNull();
 		});
 	});
 

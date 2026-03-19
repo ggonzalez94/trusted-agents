@@ -23,9 +23,11 @@ export function classifyTapEvent(event: TapEmitEventPayload): TapEventBucket | n
 			return "escalate";
 
 		case "action/request":
-			// receipt_status "received" = permission grant request (already handled synchronously)
-			// receipt_status "queued" = transfer request (pending async processing)
-			return event.receipt_status === "received" ? "auto-handle" : "escalate";
+			// receipt_status "received" = permission grant request (handled synchronously)
+			// Transfer requests (receipt_status "queued") are NOT classified here because
+			// the approveTransfer hook fires BEFORE emitEvent in the core runtime's
+			// async task flow. The hook owns the notification lifecycle for transfers.
+			return event.receipt_status === "received" ? "auto-handle" : null;
 
 		case "connection/result":
 			return "notify";
