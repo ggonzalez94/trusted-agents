@@ -17,6 +17,14 @@ describe("resolveOpenClawMainSessionKey", () => {
 		).toBe("agent:alpha-agent:primary");
 	});
 
+	it("sanitizes mainKey containing colons or special characters", () => {
+		expect(
+			resolveOpenClawMainSessionKey({
+				session: { mainKey: "foo:bar:baz" },
+			}),
+		).toBe("agent:main:foo-bar-baz");
+	});
+
 	it("uses the global session when OpenClaw runs in global scope", () => {
 		expect(
 			resolveOpenClawMainSessionKey({

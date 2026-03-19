@@ -43,5 +43,18 @@ function normalizeAgentId(value: string | undefined): string {
 
 function normalizeMainKey(value: string | undefined): string {
 	const trimmed = value?.trim() ?? "";
-	return trimmed ? trimmed.toLowerCase() : DEFAULT_MAIN_KEY;
+	if (!trimmed) {
+		return DEFAULT_MAIN_KEY;
+	}
+	if (VALID_TOKEN_RE.test(trimmed)) {
+		return trimmed.toLowerCase();
+	}
+	return (
+		trimmed
+			.toLowerCase()
+			.replace(INVALID_TOKEN_RE, "-")
+			.replace(LEADING_DASH_RE, "")
+			.replace(TRAILING_DASH_RE, "")
+			.slice(0, 64) || DEFAULT_MAIN_KEY
+	);
 }
