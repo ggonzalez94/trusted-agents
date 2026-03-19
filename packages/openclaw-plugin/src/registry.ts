@@ -13,6 +13,8 @@ import {
 import { generateInvite } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
+import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
+import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
 
 interface ManagedTapRuntime {
 	definition: TapOpenClawIdentityConfig;
@@ -25,6 +27,7 @@ interface ManagedTapRuntime {
 
 export class OpenClawTapRegistry {
 	private readonly runtimes = new Map<string, ManagedTapRuntime>();
+	private readonly notificationQueues = new Map<string, TapNotificationQueue>();
 	private startPromise: Promise<void> | null = null;
 	private started = false;
 
@@ -32,6 +35,14 @@ export class OpenClawTapRegistry {
 		private readonly pluginConfig: TapOpenClawPluginConfig,
 		private readonly logger: PluginLogger,
 	) {}
+
+	drainNotifications(): TapNotification[] {
+		const all: TapNotification[] = [];
+		for (const queue of this.notificationQueues.values()) {
+			all.push(...queue.drain());
+		}
+		return all;
+	}
 
 	listConfiguredIdentities(): string[] {
 		return this.pluginConfig.identities.map((identity) => identity.name);
@@ -360,17 +371,33 @@ export class OpenClawTapRegistry {
 			requireAgentId: true,
 		});
 		const context = buildDefaultTapRuntimeContext(config);
+		const notificationQueue = new TapNotificationQueue();
+		this.notificationQueues.set(name, notificationQueue);
 		const runtime: ManagedTapRuntime = {
 			definition,
 			config,
 			service: new TapMessagingService(context, {
-				unsafeAutoApproveActions: definition.unsafeApproveActions,
 				ownerLabel: `openclaw:${definition.name}`,
 				hooks: {
 					executeTransfer: async (serviceConfig, request) =>
 						await executeOnchainTransfer(serviceConfig, request),
 					log: (level, message) => {
 						logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
+					},
+					emitEvent: (payload) => {
+						this.handleEmitEvent(name, notificationQueue, payload);
+					},
+					approveTransfer: async ({ requestId, contact, request, activeTransferGrants }) => {
+						if (activeTransferGrants.length > 0) {
+							notificationQueue.upgrade(requestId, "summary", {
+								oneLiner: `Approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName} (covered by grant)`,
+							});
+							return true;
+						}
+						return null;
+					},
+					approveConnection: async () => {
+						return null; // Always escalate to user
 					},
 				},
 			}),
@@ -404,6 +431,7 @@ export class OpenClawTapRegistry {
 				await existing.service.stop().catch(() => {});
 			});
 			this.runtimes.delete(name);
+			this.notificationQueues.delete(name);
 		}
 
 		const runtime = await this.ensureRuntime(name);
@@ -428,6 +456,81 @@ export class OpenClawTapRegistry {
 				}
 			});
 		}, runtime.definition.reconcileIntervalMinutes * 60_000);
+	}
+
+	private handleEmitEvent(
+		identity: string,
+		queue: TapNotificationQueue,
+		payload: Record<string, unknown>,
+	): void {
+		const event = payload as TapEmitEventPayload;
+		const bucket = classifyTapEvent(event);
+		if (bucket === null) return;
+
+		const notification: TapNotification = {
+			type: bucket === "auto-handle" ? "summary" : bucket === "escalate" ? "escalation" : "info",
+			identity,
+			timestamp: (event.timestamp as string) ?? new Date().toISOString(),
+			method: event.method,
+			from: event.from,
+			messageId: String(event.id),
+			detail: payload,
+			oneLiner: this.buildOneLiner(event),
+		};
+
+		queue.push(notification);
+
+		if (bucket === "escalate") {
+			void this.triggerEscalation(event);
+		}
+	}
+
+	private async triggerEscalation(event: TapEmitEventPayload): Promise<void> {
+		try {
+			// Dynamic path construction prevents Vite from statically resolving
+			// these imports. At runtime inside Gateway, the modules resolve fine;
+			// outside Gateway (e.g., tests), the catch block silently absorbs the error.
+			const base = "openclaw/plugin-sdk/infra";
+			const [systemEventsModule, heartbeatModule] = await Promise.all([
+				import(/* @vite-ignore */ `${base}/system-events`) as Promise<{
+					enqueueSystemEvent: (text: string, options: { sessionKey: string }) => boolean;
+				}>,
+				import(/* @vite-ignore */ `${base}/heartbeat-wake`) as Promise<{
+					requestHeartbeatNow: (opts?: { reason?: string; coalesceMs?: number }) => void;
+				}>,
+			]);
+			systemEventsModule.enqueueSystemEvent(
+				`TAP: Incoming ${event.method} from agent #${event.from} requires attention`,
+				{ sessionKey: "agent:main:main" },
+			);
+			heartbeatModule.requestHeartbeatNow({
+				reason: "tap-escalation",
+				coalesceMs: 2000,
+			});
+		} catch {
+			// System event and heartbeat are best-effort.
+			// If they fail (e.g., not running inside Gateway), the notification
+			// still queues and will be picked up on the next agent turn.
+		}
+	}
+
+	private buildOneLiner(event: TapEmitEventPayload): string {
+		switch (event.method) {
+			case "message/send":
+				return `Received message from agent #${event.from}`;
+			case "action/result":
+				return `Action result received from agent #${event.from}`;
+			case "permissions/update":
+				return `Grant update from agent #${event.from}`;
+			case "connection/request":
+				return `Connection request from agent #${event.from}`;
+			case "connection/result":
+				return `Connection confirmed with agent #${event.from}`;
+			case "action/request":
+				return `Action request from agent #${event.from}`;
+			default:
+				return `TAP event: ${event.method} from agent #${event.from}`;
+		}
 	}
 
 	private resolveIdentitySelection(identity?: string): string[] {

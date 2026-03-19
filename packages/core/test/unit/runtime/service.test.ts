@@ -1103,11 +1103,11 @@ describe("TapMessagingService", () => {
 				transport,
 				trustStore: createMemoryTrustStore([contact]),
 				hooks: {
+					approveTransfer: async () => true,
 					executeTransfer: vi.fn(async () => ({
 						txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const,
 					})),
 				},
-				serviceOptions: { unsafeAutoApproveActions: true },
 			},
 		);
 
@@ -1270,8 +1270,7 @@ describe("TapMessagingService", () => {
 			{
 				transport,
 				trustStore: createMemoryTrustStore([contact]),
-				hooks: { executeTransfer },
-				serviceOptions: { unsafeAutoApproveActions: true },
+				hooks: { approveTransfer: async () => true, executeTransfer },
 			},
 		);
 		const originalPutOutbound = requestJournal.putOutbound.bind(requestJournal);
@@ -1325,9 +1324,9 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
-	it("rejects transfer approvals without a matching grant before consulting hooks", async () => {
+	it("rejects transfer without matching grants when no approveTransfer hook is registered", async () => {
 		const contact: Contact = {
-			connectionId: "conn-transfer-1",
+			connectionId: "conn-transfer-no-hook",
 			peerAgentId: PEER_AGENT.agentId,
 			peerChain: PEER_AGENT.chain,
 			peerOwnerAddress: PEER_AGENT.ownerAddress,
@@ -1338,7 +1337,65 @@ describe("TapMessagingService", () => {
 			lastContactAt: "2026-03-08T00:00:00.000Z",
 			status: "active",
 		};
-		const approveTransfer = vi.fn(async () => true);
+		const executeTransfer = vi.fn(async () => ({
+			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
+		}));
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { executeTransfer },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Please send funds",
+			{
+				type: "transfer/request",
+				actionId: "transfer-action-no-hook",
+				asset: "native",
+				amount: "0.1",
+				chain: "eip155:84532",
+				toAddress: ALICE.address,
+			},
+			"transfer/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-no-hook",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await service.stop();
+
+		expect(executeTransfer).not.toHaveBeenCalled();
+		const result = parseTransferActionResponse(transport.sentMessages[0]!.message);
+		expect(transport.sentMessages[0]?.message.method).toBe("action/result");
+		expect(result?.status).toBe("rejected");
+	});
+
+	it("leaves transfer pending when approveTransfer hook returns null and no grants match", async () => {
+		const contact: Contact = {
+			connectionId: "conn-transfer-hook-null",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const approveTransfer = vi.fn(async () => null);
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
 		}));
@@ -1359,7 +1416,7 @@ describe("TapMessagingService", () => {
 			"Please send funds",
 			{
 				type: "transfer/request",
-				actionId: "transfer-action-1",
+				actionId: "transfer-hook-null-1",
 				asset: "native",
 				amount: "0.1",
 				chain: "eip155:84532",
@@ -1371,21 +1428,31 @@ describe("TapMessagingService", () => {
 		await expect(
 			transport.handlers.onRequest?.({
 				from: contact.peerAgentId,
-				senderInboxId: "peer-inbox-2",
+				senderInboxId: "peer-inbox-hook-null",
 				message: request,
 			}),
 		).resolves.toEqual({ status: "queued" });
 
-		await service.stop();
+		await sleep(50);
 
-		expect(approveTransfer).not.toHaveBeenCalled();
+		expect(approveTransfer).toHaveBeenCalledOnce();
 		expect(executeTransfer).not.toHaveBeenCalled();
-		const result = parseTransferActionResponse(transport.sentMessages[0]!.message);
-		expect(transport.sentMessages[0]?.message.method).toBe("action/result");
-		expect(result?.status).toBe("rejected");
+		expect(await service.listPendingRequests()).toEqual([
+			expect.objectContaining({
+				requestId: String(request.id),
+				method: "action/request",
+				peerAgentId: PEER_AGENT.agentId,
+			}),
+		]);
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(0);
+
+		await service.stop();
 	});
 
-	it("allows unsafe transfer auto-approval without matching grants", async () => {
+	it("allows hook-based transfer approval without matching grants", async () => {
 		const contact: Contact = {
 			connectionId: "conn-transfer-2",
 			peerAgentId: PEER_AGENT.agentId,
@@ -1407,8 +1474,7 @@ describe("TapMessagingService", () => {
 			{
 				transport,
 				trustStore: createMemoryTrustStore([contact]),
-				hooks: { executeTransfer },
-				serviceOptions: { unsafeAutoApproveActions: true },
+				hooks: { approveTransfer: async () => true, executeTransfer },
 			},
 		);
 
@@ -1630,5 +1696,411 @@ describe("TapMessagingService", () => {
 
 		const nextContact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
 		expect(nextContact?.permissions.grantedByPeer.grants).toEqual([]);
+	});
+
+	it("defers connection request when approveConnection hook returns null", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => null);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-defer-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(approveConnection).toHaveBeenCalledOnce();
+		expect(approveConnection).toHaveBeenCalledWith({
+			peerAgentId: PEER_AGENT.agentId,
+			peerName: PEER_AGENT.registrationFile.name,
+			peerChain: PEER_AGENT.chain,
+		});
+		// No connection/result should have been sent
+		expect(
+			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
+		).toHaveLength(0);
+		// No contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		// Journal entry should still be pending (NOT completed)
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				direction: "inbound",
+				kind: "request",
+				method: "connection/request",
+				status: "pending",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("rejects connection request when approveConnection hook returns false", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => false);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-reject-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(approveConnection).toHaveBeenCalledOnce();
+		// A connection/result with rejected status should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as {
+			status?: string;
+			reason?: string;
+		};
+		expect(resultParams?.status).toBe("rejected");
+		expect(resultParams?.reason).toContain("declined by operator");
+		// No contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("accepts connection request when approveConnection hook returns true", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => true);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-accept-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(approveConnection).toHaveBeenCalledOnce();
+		// An accepted connection/result should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as { status?: string };
+		expect(resultParams?.status).toBe("accepted");
+		// Contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("auto-accepts connection request when no approveConnection hook is registered", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				// No hooks — default behavior
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-auto-accept-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		// Contact should have been created (auto-accept)
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("resolvePending approves a deferred connection request", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => null);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-resolve-approve-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		// Verify it's deferred
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "pending",
+				method: "connection/request",
+			}),
+		);
+
+		// Now resolve it with approval
+		const report = await service.resolvePending(String(request.id), true);
+
+		expect(report.pendingRequests).toEqual([]);
+		// Contact should now be created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		// An accepted connection/result should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as { status?: string };
+		expect(resultParams?.status).toBe("accepted");
+
+		await service.stop();
+	});
+
+	it("resolvePending rejects a deferred connection request", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const approveConnection = vi.fn(async () => null);
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { approveConnection },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-resolve-reject-connection",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		// Verify it's deferred
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "pending",
+				method: "connection/request",
+			}),
+		);
+
+		// Now resolve it with rejection
+		const report = await service.resolvePending(String(request.id), false);
+
+		expect(report.pendingRequests).toEqual([]);
+		// No contact should have been created
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+		// Journal entry should be completed
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		// A rejection connection/result should have been sent
+		const connectionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "connection/result",
+		);
+		expect(connectionResults).toHaveLength(1);
+		const resultParams = connectionResults[0]?.message.params as {
+			status?: string;
+			reason?: string;
+		};
+		expect(resultParams?.status).toBe("rejected");
+		expect(resultParams?.reason).toContain("declined by operator");
+
+		await service.stop();
+	});
+
+	it("resolvePending rejects non-connection and non-action requests", async () => {
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		// Manually insert a message/send journal entry to simulate a non-resolvable request
+		await requestJournal.claimInbound({
+			requestId: "msg-send-123",
+			requestKey: "test:message/send:msg-send-123",
+			direction: "inbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: PEER_AGENT.agentId,
+		});
+
+		await expect(service.resolvePending("msg-send-123", true)).rejects.toThrow(
+			"cannot be resolved manually",
+		);
 	});
 });

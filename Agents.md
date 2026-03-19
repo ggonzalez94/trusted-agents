@@ -235,9 +235,12 @@ File: `packages/sdk/src/orchestrator.ts`
 - Registration tx can be on other chains
 - IPFS x402 payment still uses Base mainnet USDC
 
-13. Permissions are not globally enforced by transport:
-- `PermissionEngine` exists but is not auto-wired into CLI message handling
-- Enforcement is caller responsibility
+13. Transfer approval is grant-based:
+- `decideTransfer()` in `TapMessagingService` calls `findApplicableTransferGrants()` to check for matching active grants
+- If no grants match and an `approveTransfer` hook is registered, the hook decides (can return `null` to leave pending)
+- If no grants match and no hook is registered, the request is rejected
+- The OpenClaw plugin wires `approveTransfer` to auto-approve when grants cover it and leave pending otherwise
+- CLI does not wire `approveTransfer` — no-grant requests are rejected
 
 14. Conversation logging is wired into CLI messaging flows:
 - `message send`, `request-funds`, listener processing, and reconciliation append conversation entries
@@ -253,6 +256,11 @@ File: `packages/sdk/src/orchestrator.ts`
 - `packages/openclaw-plugin` starts one `TapMessagingService` per configured TAP identity
 - OpenClaw agents should use the `tap_gateway` tool for transport-active operations when the plugin is installed
 - `tap message sync` remains the safe fallback when the plugin is not installed
+- The plugin wires `emitEvent` to classify inbound messages and push to a per-identity in-memory `TapNotificationQueue`
+- Escalation events (connection requests, ungrantable transfers) trigger `requestHeartbeatNow()` + `enqueueSystemEvent()` to wake the agent
+- A `before_prompt_build` hook drains the notification queue and injects `[TAP Notifications]` into the agent's context
+- Connection requests always defer for user approval via the `approveConnection` hook (returns `null`)
+- `resolvePending` handles both `ACTION_REQUEST` and `CONNECTION_REQUEST` entries
 
 17. SDK connect requirement:
 - `TrustedAgentsOrchestrator.connect()` returns an explicit error unless `transport` or `xmtp` config is provided

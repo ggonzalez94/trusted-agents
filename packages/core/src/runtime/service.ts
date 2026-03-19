@@ -163,7 +163,14 @@ interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 	response: TransferActionResponse;
 }
 
+export interface TapConnectionApprovalContext {
+	peerAgentId: number;
+	peerName: string;
+	peerChain: string;
+}
+
 export interface TapServiceHooks {
+	approveConnection?: (context: TapConnectionApprovalContext) => Promise<boolean | null>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null>;
 	executeTransfer?: (
 		config: TrustedAgentsConfig,
@@ -175,7 +182,6 @@ export interface TapServiceHooks {
 }
 
 export interface TapServiceOptions {
-	unsafeAutoApproveActions?: boolean;
 	ownerLabel?: string;
 	commandOutbox?: FileTapCommandOutbox;
 	outboxPollIntervalMs?: number;
@@ -251,7 +257,6 @@ export interface TapRequestFundsResult {
 export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
-	private readonly unsafeAutoApproveActions: boolean;
 	private readonly ownerLabel: string;
 	private readonly ownerLock: TransportOwnerLock;
 	private readonly pendingConnectStore: FilePendingConnectStore;
@@ -276,7 +281,6 @@ export class TapMessagingService {
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
 		this.context = context;
 		this.hooks = options.hooks ?? {};
-		this.unsafeAutoApproveActions = options.unsafeAutoApproveActions ?? false;
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
 		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
@@ -375,11 +379,13 @@ export class TapMessagingService {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
 		}
 
-		if (entry.method !== ACTION_REQUEST) {
+		if (entry.method !== ACTION_REQUEST && entry.method !== CONNECTION_REQUEST) {
 			throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 		}
 
-		this.decisionOverrides.transfers.set(requestId, approve);
+		if (entry.method === ACTION_REQUEST) {
+			this.decisionOverrides.transfers.set(requestId, approve);
+		}
 		try {
 			return await this.executionMutex.runExclusive(
 				async () =>
@@ -399,6 +405,8 @@ export class TapMessagingService {
 
 						if (latestEntry.method === ACTION_REQUEST) {
 							await this.resolvePendingTransferRequest(latestEntry);
+						} else if (latestEntry.method === CONNECTION_REQUEST) {
+							await this.resolvePendingConnectionRequest(latestEntry, approve);
 						} else {
 							throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 						}
@@ -408,7 +416,9 @@ export class TapMessagingService {
 					}),
 			);
 		} finally {
-			this.decisionOverrides.transfers.delete(requestId);
+			if (entry.method === ACTION_REQUEST) {
+				this.decisionOverrides.transfers.delete(requestId);
+			}
 		}
 	}
 
@@ -1064,8 +1074,10 @@ export class TapMessagingService {
 			}
 
 			this.enqueue(requestKey, async () => {
-				await this.processConnectionRequest(envelope.message);
-				await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+				const result = await this.processConnectionRequest(envelope.message);
+				if (result === "processed") {
+					await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+				}
 			});
 			this.emitEvent({
 				direction: "incoming",
@@ -1235,7 +1247,10 @@ export class TapMessagingService {
 		return { status };
 	}
 
-	private async processConnectionRequest(message: ProtocolMessage): Promise<void> {
+	private async processConnectionRequest(
+		message: ProtocolMessage,
+		options?: { skipApprovalHook?: boolean },
+	): Promise<"processed" | "deferred"> {
 		const params = parseConnectionRequest(message);
 
 		// Cheap local check first — avoids resolving a peer for misrouted requests
@@ -1256,7 +1271,40 @@ export class TapMessagingService {
 				"warn",
 				`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}): ${inviteRejectionReason}`,
 			);
-			return;
+			return "processed";
+		}
+
+		if (this.hooks.approveConnection && !options?.skipApprovalHook) {
+			const peer = await this.context.resolver.resolveWithCache(
+				params.from.agentId,
+				params.from.chain,
+			);
+			const decision = await this.hooks.approveConnection({
+				peerAgentId: peer.agentId,
+				peerName: peer.registrationFile.name,
+				peerChain: peer.chain,
+			});
+			if (decision === null) {
+				this.log(
+					"info",
+					`Deferred connection request from ${peer.registrationFile.name} (#${peer.agentId}); resolve it later with resolvePending`,
+				);
+				return "deferred";
+			}
+			if (decision === false) {
+				await this.sendConnectionResult(peer, {
+					requestId: String(message.id),
+					from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+					status: "rejected",
+					reason: "Connection request declined by operator",
+					timestamp: nowISO(),
+				});
+				this.log(
+					"info",
+					`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}) via approveConnection hook`,
+				);
+				return "processed";
+			}
 		}
 
 		const outcome = await handleConnectionRequest({
@@ -1271,6 +1319,7 @@ export class TapMessagingService {
 			"info",
 			`Accepted connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
 		);
+		return "processed";
 	}
 
 	private async validateInboundInvite(
@@ -1359,6 +1408,34 @@ export class TapMessagingService {
 		}
 
 		await this.processTransferRequest(contact, entry.requestId, request);
+	}
+
+	private async resolvePendingConnectionRequest(
+		entry: RequestJournalEntry,
+		approve: boolean,
+	): Promise<void> {
+		const pendingRequest = parsePendingConnectionRequest(entry.metadata);
+		if (!pendingRequest) {
+			throw new ValidationError(`Cannot parse pending connection request: ${entry.requestId}`);
+		}
+
+		if (approve) {
+			await this.processConnectionRequest(pendingRequest.message, { skipApprovalHook: true });
+		} else {
+			const params = parseConnectionRequest(pendingRequest.message);
+			const peer = await this.context.resolver.resolveWithCache(
+				params.from.agentId,
+				params.from.chain,
+			);
+			await this.sendConnectionResult(peer, {
+				requestId: entry.requestId,
+				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+				status: "rejected",
+				reason: "Connection request declined by operator",
+				timestamp: nowISO(),
+			});
+		}
+		await this.context.requestJournal.updateStatus(entry.requestId, "completed");
 	}
 
 	private async processTransferRequest(
@@ -1660,25 +1737,27 @@ export class TapMessagingService {
 		if (override === false) {
 			return false;
 		}
-
-		if (this.unsafeAutoApproveActions) {
-			this.log(
-				"warn",
-				`Unsafely auto-approving action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-			);
+		if (override === true) {
 			return true;
 		}
 
 		if (transferGrants.length === 0) {
+			if (this.hooks.approveTransfer) {
+				return (
+					(await this.hooks.approveTransfer({
+						requestId,
+						contact,
+						request,
+						activeTransferGrants: transferGrants,
+						ledgerPath: getPermissionLedgerPath(this.context.config.dataDir),
+					})) ?? null
+				);
+			}
 			this.log(
 				"warn",
 				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,
 			);
 			return false;
-		}
-
-		if (override === true) {
-			return true;
 		}
 
 		return (
@@ -1729,9 +1808,11 @@ export class TapMessagingService {
 				continue;
 			}
 			try {
-				await this.processConnectionRequest(pendingRequest.message);
-				await this.context.requestJournal.updateStatus(entry.requestId, "completed");
-				processed += 1;
+				const result = await this.processConnectionRequest(pendingRequest.message);
+				if (result === "processed") {
+					await this.context.requestJournal.updateStatus(entry.requestId, "completed");
+					processed += 1;
+				}
 			} catch (error: unknown) {
 				this.log(
 					"warn",

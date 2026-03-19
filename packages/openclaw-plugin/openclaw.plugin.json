@@ -15,7 +15,6 @@
           "properties": {
             "name": { "type": "string" },
             "dataDir": { "type": "string" },
-            "unsafeApproveActions": { "type": "boolean" },
             "reconcileIntervalMinutes": { "type": "number", "minimum": 1 }
           },
           "required": ["dataDir"]
@@ -35,10 +34,6 @@
     "identities[].dataDir": {
       "label": "TAP Data Dir",
       "help": "Path to the TAP data directory created by `tap init`."
-    },
-    "identities[].unsafeApproveActions": {
-      "label": "Unsafe Approve Actions",
-      "help": "Unsafely approve inbound transfer requests without grant checks."
     },
     "identities[].reconcileIntervalMinutes": {
       "label": "Reconcile Interval Minutes",

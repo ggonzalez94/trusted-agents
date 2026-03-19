@@ -29,6 +29,25 @@ Install rule:
 
 Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `tap remove --unsafe-wipe-data-dir --yes --data-dir <path>` to wipe one TAP data dir outside plugin mode. This only removes local TAP files. It does not unregister the agent on-chain, notify peers, or clean up OpenClaw plugin identity config that still references that `dataDir`. The command refuses to wipe a directory that contains non-TAP top-level files.
 
+## Inbound Message Notifications
+
+The TAP plugin notifies the agent in real time when messages arrive via XMTP streaming. No polling required — the plugin's streaming listener handles delivery automatically.
+
+**Escalations** wake the agent immediately (via heartbeat) for decisions:
+- Connection requests — always require user approval since they establish trust with a new peer
+- Transfer requests not covered by standing grants — need explicit user approval
+- Use `tap_gateway resolve_pending` with `requestId` and `approve: true/false` to act on escalations
+
+**Summaries** appear in the next agent turn as one-liners:
+- Messages from connected peers
+- Auto-approved transfers (when a standing grant covers the request)
+- Grant updates and permission requests from peers
+
+**Info** items are purely informational:
+- Connection confirmations for outbound requests
+
+Transfer approval is grant-based: if a peer has published a matching transfer grant, the plugin auto-approves within grant limits and surfaces a summary. Everything outside grants escalates for user review.
+
 ## tap_gateway Actions
 
 ### Health and Recovery
@@ -40,7 +59,7 @@ Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `t
 ### Connections
 
 - **create_invite**: Generate a signed invite URL. Params: `expiresInSeconds` (optional).
-- **connect**: Send an asynchronous trust request using an invite URL. Params: `inviteUrl` (required). The peer does not need to be online at the same moment; the plugin runtime or a later sync can resolve the request. Valid invites auto-accept on receipt.
+- **connect**: Send an asynchronous trust request using an invite URL. Params: `inviteUrl` (required). The peer does not need to be online at the same moment; the plugin runtime or a later sync can resolve the request. Inbound connection requests from peers are deferred for user approval — they appear as escalation notifications.
 
 ### Messaging
 
@@ -58,7 +77,7 @@ Use `tap remove --dry-run` to inspect local TAP state before deleting it, and `t
 ### Pending Action Approvals
 
 - **list_pending**: List queued inbound action requests awaiting approval.
-- **resolve_pending**: Approve or reject a pending action request. Params: `requestId` (required — from `list_pending`), `approve` (required boolean). Before deciding, inspect `tap permissions show <peer>` and the permissions ledger.
+- **resolve_pending**: Approve or reject a pending request (transfer or connection). Params: `requestId` (required — from `list_pending` or an escalation notification), `approve` (required boolean). For transfers, inspect `tap permissions show <peer>` and the permissions ledger before deciding. For connection requests, verify the peer's identity before accepting.
 
 ### Read-Only CLI (Safe in Plugin Mode)
 
