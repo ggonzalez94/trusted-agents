@@ -22,10 +22,12 @@ export class TapNotificationQueue {
 		this.maxSize = maxSize;
 	}
 
-	push(notification: TapNotification): void {
-		if (this.items.some((n) => n.messageId === notification.messageId)) return;
+	/** Returns true if the notification was enqueued, false if deduplicated. */
+	push(notification: TapNotification): boolean {
+		if (this.items.some((n) => n.messageId === notification.messageId)) return false;
 		this.items.push(notification);
 		this.evictIfNeeded();
+		return true;
 	}
 
 	drain(): TapNotification[] {

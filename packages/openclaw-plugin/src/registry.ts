@@ -405,7 +405,7 @@ export class OpenClawTapRegistry {
 							});
 							return true;
 						}
-						notificationQueue.push({
+						const enqueued = notificationQueue.push({
 							type: "escalation",
 							identity: name,
 							timestamp: new Date().toISOString(),
@@ -416,9 +416,11 @@ export class OpenClawTapRegistry {
 							detail: { asset: request.asset, amount: request.amount },
 							oneLiner: `Transfer request from ${contact.peerDisplayName}: ${request.amount} ${request.asset} — needs approval`,
 						});
-						void this.triggerEscalation(
-							`Transfer request from ${contact.peerDisplayName} (${request.amount} ${request.asset}) requires approval`,
-						);
+						if (enqueued) {
+							void this.triggerEscalation(
+								`Transfer request from ${contact.peerDisplayName} (${request.amount} ${request.asset}) requires approval`,
+							);
+						}
 						return null;
 					},
 					approveConnection: async () => {
