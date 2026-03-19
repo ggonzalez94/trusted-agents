@@ -80,7 +80,6 @@ export class OpenClawTapRegistry {
 				});
 			});
 		}
-		this.notificationQueues.clear();
 		this.started = false;
 	}
 

@@ -1737,6 +1737,9 @@ export class TapMessagingService {
 		if (override === false) {
 			return false;
 		}
+		if (override === true) {
+			return true;
+		}
 
 		if (transferGrants.length === 0) {
 			if (this.hooks.approveTransfer) {
@@ -1755,10 +1758,6 @@ export class TapMessagingService {
 				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,
 			);
 			return false;
-		}
-
-		if (override === true) {
-			return true;
 		}
 
 		return (
