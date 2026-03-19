@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { access, lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -12,6 +13,8 @@ import type { GlobalOptions } from "../types.js";
 const execFileAsync = promisify(execFile);
 
 const SUPPORTED_RUNTIMES = ["claude", "codex", "openclaw"] as const;
+const DEFAULT_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS = 60_000;
+const DEFAULT_OPENCLAW_GATEWAY_WAIT_POLL_MS = 500;
 
 type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 
@@ -29,6 +32,13 @@ interface RuntimeInstallResult {
 	plugin_installed?: boolean;
 	plugin_target?: string;
 	notes: string[];
+}
+
+interface OpenClawGatewayStatus {
+	serviceLoaded: boolean;
+	runtimeStatus: string | null;
+	runtimePid: number | null;
+	rpcOk: boolean;
 }
 
 export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOptions): Promise<void> {
@@ -221,11 +231,25 @@ async function installOpenClawPlugin(
 		throw new Error("OpenClaw CLI not found on PATH. Install OpenClaw or omit --runtime openclaw.");
 	}
 
+	const gatewayStatusBeforeInstall = await getOpenClawGatewayStatus();
+	const waitForGatewayReload = isHealthyOpenClawGatewayStatus(gatewayStatusBeforeInstall);
+
 	await cleanupLegacyOpenClawSkillLink(openClawDir, skillSource, notes);
 	await execOpenClawCommand(["plugins", "install", "--link", pluginSource]);
 	notes.push("Installed or refreshed the TAP OpenClaw plugin link.");
 	await validateOpenClawConfig(notes);
-	notes.push("If the OpenClaw Gateway is running, it will auto-reload the updated plugin config.");
+
+	if (waitForGatewayReload) {
+		await waitForOpenClawGatewayReload(gatewayStatusBeforeInstall, notes);
+	} else if (gatewayStatusBeforeInstall?.serviceLoaded) {
+		notes.push(
+			"The OpenClaw Gateway service was not healthy before install, so TAP updated the plugin link without waiting for runtime readiness.",
+		);
+	} else {
+		notes.push(
+			"The OpenClaw Gateway was not running during install. Start it after configuring TAP identities.",
+		);
+	}
 
 	return { installed: true };
 }
@@ -280,6 +304,107 @@ async function validateOpenClawConfig(notes: string[]): Promise<void> {
 		throw new Error(`OpenClaw config validation failed after plugin install: ${detail}`);
 	}
 	notes.push("Validated the OpenClaw config after plugin install.");
+}
+
+async function getOpenClawGatewayStatus(): Promise<OpenClawGatewayStatus> {
+	const result = await execOpenClawJsonCommand(["gateway", "status", "--json"]);
+	return parseOpenClawGatewayStatus(result);
+}
+
+async function readOpenClawGatewayStatus(): Promise<OpenClawGatewayStatus | null> {
+	try {
+		return await getOpenClawGatewayStatus();
+	} catch {
+		return null;
+	}
+}
+
+function parseOpenClawGatewayStatus(result: Record<string, unknown>): OpenClawGatewayStatus {
+	const service = isRecord(result.service) ? result.service : {};
+	const runtime = isRecord(service.runtime) ? service.runtime : {};
+	const rpc = isRecord(result.rpc) ? result.rpc : {};
+	const rawPid = runtime.pid;
+
+	return {
+		serviceLoaded: service.loaded === true,
+		runtimeStatus: typeof runtime.status === "string" ? runtime.status : null,
+		runtimePid: typeof rawPid === "number" && Number.isFinite(rawPid) && rawPid > 0 ? rawPid : null,
+		rpcOk: rpc.ok === true,
+	};
+}
+
+function isHealthyOpenClawGatewayStatus(
+	status: OpenClawGatewayStatus | null,
+): status is OpenClawGatewayStatus & { runtimePid: number } {
+	return (
+		status?.serviceLoaded === true &&
+		status.runtimeStatus === "running" &&
+		typeof status.runtimePid === "number" &&
+		status.rpcOk
+	);
+}
+
+async function waitForOpenClawGatewayReload(
+	statusBeforeInstall: OpenClawGatewayStatus & { runtimePid: number },
+	notes: string[],
+): Promise<void> {
+	const timeoutMs = readPositiveIntegerEnv(
+		"TAP_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS",
+		DEFAULT_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS,
+	);
+	const pollMs = readPositiveIntegerEnv(
+		"TAP_OPENCLAW_GATEWAY_WAIT_POLL_MS",
+		DEFAULT_OPENCLAW_GATEWAY_WAIT_POLL_MS,
+	);
+	const attempts = Math.max(1, Math.ceil(timeoutMs / pollMs));
+	let lastStatus: OpenClawGatewayStatus | null = statusBeforeInstall;
+
+	notes.push("Detected a running OpenClaw Gateway and waiting for the plugin reload to finish.");
+
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
+		await sleep(pollMs);
+		lastStatus = await readOpenClawGatewayStatus();
+		if (
+			isHealthyOpenClawGatewayStatus(lastStatus) &&
+			lastStatus.runtimePid !== statusBeforeInstall.runtimePid
+		) {
+			notes.push(
+				`Waited for the OpenClaw Gateway to reload the TAP plugin (pid ${statusBeforeInstall.runtimePid} -> ${lastStatus.runtimePid}).`,
+			);
+			return;
+		}
+	}
+
+	throw new Error(
+		`OpenClaw installed the TAP plugin link, but the running Gateway did not reload it within ${timeoutMs}ms. ${describeOpenClawGatewayStatus(lastStatus)} Wait for active Gateway work to drain or run \`openclaw gateway restart\`, then retry.`,
+	);
+}
+
+function describeOpenClawGatewayStatus(status: OpenClawGatewayStatus | null): string {
+	if (status === null) {
+		return "Gateway status could not be read during the reload wait.";
+	}
+
+	const parts = [
+		`serviceLoaded=${String(status.serviceLoaded)}`,
+		`runtimeStatus=${status.runtimeStatus ?? "unknown"}`,
+		`runtimePid=${status.runtimePid ?? "unknown"}`,
+		`rpcOk=${String(status.rpcOk)}`,
+	];
+	return `Last observed Gateway status: ${parts.join(", ")}.`;
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+	const rawValue = process.env[name];
+	if (!rawValue) {
+		return fallback;
+	}
+
+	const value = Number(rawValue);
+	if (!Number.isInteger(value) || value <= 0) {
+		return fallback;
+	}
+	return value;
 }
 
 async function execOpenClawCommand(args: string[]): Promise<{ stdout: string; stderr: string }> {

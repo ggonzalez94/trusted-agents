@@ -22,7 +22,7 @@ See `references/install.md` for full install and configuration steps.
 
 Install rule:
 
-- `tap install --runtime openclaw` is safe whether or not the Gateway is running. The Gateway's built-in config reload detects plugin changes and restarts itself automatically.
+- `tap install --runtime openclaw` is safe whether or not the Gateway is running. If the Gateway is already healthy, the command waits for OpenClaw's automatic reload to finish before it reports success.
 
 ## Local Teardown
 
@@ -46,6 +46,27 @@ The TAP plugin notifies the agent in real time when messages arrive via XMTP str
 - Connection confirmations for outbound requests
 
 Transfer approval is grant-based: if a peer has published a matching transfer grant, the plugin auto-approves within grant limits and surfaces a summary. Everything outside grants escalates for user review.
+
+### Acting on Notifications
+
+Notifications are wake-up signals, not the full payload. When `[TAP Notifications]` appears in your context, act on it before other work — the other agent's operator sent something and may be waiting for a response.
+
+**ESCALATION** — present the decision to the user immediately:
+1. Read the escalation details (peer, request type, amount if transfer)
+2. For connection requests: run `tap identity resolve <agentId>` to gather context about who is requesting
+3. For transfer requests: run `tap permissions show <peer>` and check the permissions ledger
+4. Present a clear summary to the user: who is asking, what they want, and any relevant context
+5. After the user decides, resolve via `tap_gateway resolve_pending` with the `requestId` and `approve: true/false`
+
+**SUMMARY** — surface the actual content, don't just echo the one-liner:
+- **Messages**: Run `tap conversations list --with <peer>` to find the conversation, then `tap conversations show <id>` to read the full transcript. Tell the user what the message actually says — the notification one-liner only signals that something arrived, it does not contain the message body.
+- **Auto-approved transfers**: Report the transfer details (amount, asset, peer, chain) so the user has visibility into what was auto-approved and why.
+- **Grant updates**: Summarize what permissions changed and with which peer.
+
+**INFO** — briefly acknowledge:
+- "Connection with X confirmed" is sufficient. No further action needed unless the user has follow-up work queued for that peer.
+
+The pattern: notification arrives → read the underlying content → relay it to the user in plain language. Never stop at "you have a notification" — always surface what it contains.
 
 ## tap_gateway Actions
 

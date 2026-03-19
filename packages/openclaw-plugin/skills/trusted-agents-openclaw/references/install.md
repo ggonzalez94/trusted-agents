@@ -25,7 +25,7 @@ OpenClaw uses the plugin-bundled skill tree. This path does not install the gene
 
 Installer behavior:
 
-- The installer does not stop or restart the Gateway. OpenClaw's built-in config reload detects `plugins.*` changes and restarts the Gateway automatically.
+- The installer does not force a stop/start cycle. If the Gateway is already running and healthy, it waits for OpenClaw's built-in config reload to restart the Gateway onto the refreshed plugin before returning.
 - If a TAP-managed legacy `~/.openclaw/skills/trusted-agents` symlink exists, the installer removes it. OpenClaw plugin mode should use the plugin-bundled skill tree only.
 - OpenClaw already allowlists the plugin during `plugins install`, so you do not need a separate `plugins.allow` step for this repo install path.
 
@@ -35,7 +35,7 @@ Low-level manual plugin link:
 openclaw plugins install --link ./packages/openclaw-plugin
 ```
 
-That raw OpenClaw command only links the plugin. It does not clean up legacy `~/.openclaw/skills/trusted-agents` entries for you.
+That raw OpenClaw command only links the plugin. It does not clean up legacy `~/.openclaw/skills/trusted-agents` entries for you or wait for a running Gateway to reload onto the refreshed plugin.
 
 After install:
 
@@ -46,7 +46,7 @@ After install:
 openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/tap-data","reconcileIntervalMinutes":10}]' --json
 ```
 
-3. The Gateway auto-reloads on plugin config changes. If the Gateway is not running, start it after configuring identities.
+3. The Gateway auto-reloads on plugin config changes. If the Gateway was not running during install, start it after configuring identities.
 4. Verify the runtime with `tap_gateway` action `status`.
 5. Use plugin mode only when `status.configured` is `true`, the `identities` list is non-empty, and `status.warnings` is empty.
 6. If more than one identity is configured, include `identity` in each `tap_gateway` tool call.

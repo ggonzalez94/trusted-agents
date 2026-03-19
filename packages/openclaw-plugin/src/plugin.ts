@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { parseTapOpenClawPluginConfig, tapOpenClawPluginConfigSchema } from "./config.js";
+import { resolveOpenClawMainSessionKey } from "./main-session.js";
 import { OpenClawTapRegistry } from "./registry.js";
 import { createTapGatewayTool } from "./tool.js";
 
@@ -11,7 +12,10 @@ const plugin = {
 	configSchema: tapOpenClawPluginConfigSchema,
 	register(api: OpenClawPluginApi) {
 		const pluginConfig = parseTapOpenClawPluginConfig(api.pluginConfig);
-		const registry = new OpenClawTapRegistry(pluginConfig, api.logger);
+		const registry = new OpenClawTapRegistry(pluginConfig, api.logger, {
+			sessionKey: resolveOpenClawMainSessionKey(api.config),
+			system: api.runtime.system,
+		});
 
 		api.registerService({
 			id: "trusted-agents-tap-runtime",

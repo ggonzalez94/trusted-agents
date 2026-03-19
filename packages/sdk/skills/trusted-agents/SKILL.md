@@ -66,7 +66,7 @@ Install TAP runtime integrations after the CLI is built.
 
 - `claude` / `codex`: link the generic TAP skill tree into that host.
 - `openclaw`: install the OpenClaw TAP plugin only. OpenClaw uses the plugin-bundled skill tree, not `~/.openclaw/skills/trusted-agents`.
-- `openclaw` safety: `tap install` does not stop or restart the Gateway. OpenClaw's built-in config reload detects plugin changes and restarts the Gateway automatically.
+- `openclaw` safety: `tap install` does not force a stop/start cycle. If the Gateway is already healthy, the command waits for OpenClaw's automatic reload to finish before returning.
 
 ```bash
 tap install
