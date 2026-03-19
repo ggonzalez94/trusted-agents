@@ -22,9 +22,14 @@ export class TapNotificationQueue {
 		this.maxSize = maxSize;
 	}
 
-	/** Returns true if the notification was enqueued, false if deduplicated. */
+	/** Returns true if the notification was newly enqueued, false if it replaced
+	 *  an existing entry with the same messageId (dedup — suppresses wake-up). */
 	push(notification: TapNotification): boolean {
-		if (this.items.some((n) => n.messageId === notification.messageId)) return false;
+		const idx = this.items.findIndex((n) => n.messageId === notification.messageId);
+		if (idx !== -1) {
+			this.items[idx] = notification;
+			return false;
+		}
 		this.items.push(notification);
 		this.evictIfNeeded();
 		return true;

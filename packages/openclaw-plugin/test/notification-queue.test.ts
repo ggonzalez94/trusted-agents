@@ -66,17 +66,25 @@ describe("TapNotificationQueue", () => {
 	});
 
 	describe("deduplication", () => {
-		it("returns false and drops push when messageId already exists in queue", () => {
+		it("returns false and replaces existing entry when messageId matches", () => {
 			const queue = new TapNotificationQueue();
-			const first = makeNotification({ messageId: "dup", type: "summary", oneLiner: "first" });
-			const second = makeNotification({ messageId: "dup", type: "escalation", oneLiner: "second" });
+			const first = makeNotification({
+				messageId: "dup",
+				type: "escalation",
+				oneLiner: "needs approval",
+			});
+			const second = makeNotification({
+				messageId: "dup",
+				type: "summary",
+				oneLiner: "auto-approved",
+			});
 
 			expect(queue.push(first)).toBe(true);
 			expect(queue.push(second)).toBe(false);
 
 			const items = queue.drain();
 			expect(items).toHaveLength(1);
-			expect(items[0]!.oneLiner).toBe("first");
+			expect(items[0]!.oneLiner).toBe("auto-approved");
 			expect(items[0]!.type).toBe("summary");
 		});
 
