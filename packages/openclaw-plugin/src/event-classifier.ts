@@ -1,6 +1,7 @@
 export interface TapEmitEventPayload {
 	direction: string;
 	from: number;
+	fromName?: string;
 	method: string;
 	id: string | number;
 	receipt_status: string;

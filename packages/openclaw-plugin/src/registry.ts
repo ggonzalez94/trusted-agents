@@ -508,6 +508,7 @@ export class OpenClawTapRegistry {
 			timestamp: (event.timestamp as string) ?? new Date().toISOString(),
 			method: event.method,
 			from: event.from,
+			fromName: event.fromName,
 			messageId: String(event.id),
 			detail: payload,
 			oneLiner: this.buildOneLiner(event),
@@ -516,8 +517,9 @@ export class OpenClawTapRegistry {
 		const enqueued = queue.push(notification);
 
 		if (bucket === "escalate" && enqueued) {
+			const peer = event.fromName ?? `agent #${event.from}`;
 			void this.triggerEscalation(
-				`Incoming ${event.method} from agent #${event.from} requires attention`,
+				`Incoming ${event.method} from ${peer} requires attention`,
 			);
 		}
 	}
@@ -545,21 +547,22 @@ export class OpenClawTapRegistry {
 	}
 
 	private buildOneLiner(event: TapEmitEventPayload): string {
+		const peer = event.fromName ?? `agent #${event.from}`;
 		switch (event.method) {
 			case "message/send":
-				return `Received message from agent #${event.from}`;
+				return `Received message from ${peer}`;
 			case "action/result":
-				return `Action result received from agent #${event.from}`;
+				return `Action result received from ${peer}`;
 			case "permissions/update":
-				return `Grant update from agent #${event.from}`;
+				return `Grant update from ${peer}`;
 			case "connection/request":
-				return `Connection request from agent #${event.from}`;
+				return `Connection request from ${peer}`;
 			case "connection/result":
-				return `Connection confirmed with agent #${event.from}`;
+				return `Connection confirmed with ${peer}`;
 			case "action/request":
-				return `Action request from agent #${event.from}`;
+				return `Action request from ${peer}`;
 			default:
-				return `TAP event: ${event.method} from agent #${event.from}`;
+				return `TAP event: ${event.method} from ${peer}`;
 		}
 	}
 
