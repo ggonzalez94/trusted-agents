@@ -375,8 +375,8 @@ async function waitForOpenClawGatewayReload(
 		}
 	}
 
-	throw new Error(
-		`OpenClaw installed the TAP plugin link, but the running Gateway did not reload it within ${timeoutMs}ms. ${describeOpenClawGatewayStatus(lastStatus)} Wait for active Gateway work to drain or run \`openclaw gateway restart\`, then retry.`,
+	notes.push(
+		`Warning: OpenClaw installed the TAP plugin link, but the running Gateway did not reload within ${timeoutMs}ms. ${describeOpenClawGatewayStatus(lastStatus)} Run \`openclaw gateway restart\` if needed.`,
 	);
 }
 

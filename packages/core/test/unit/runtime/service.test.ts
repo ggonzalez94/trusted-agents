@@ -854,7 +854,7 @@ describe("TapMessagingService", () => {
 				senderInboxId: "peer-inbox-stale-result",
 				message: staleRejectedResult,
 			}),
-		).resolves.toEqual({ status: "received" });
+		).resolves.toEqual({ status: "duplicate" });
 
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
 		expect(await requestJournal.getByRequestId("req-stale-1")).toBeNull();
@@ -1157,7 +1157,7 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
-	it("resolves queued transfer requests from local journal state", async () => {
+	it("auto-approves grant-covered transfer when no approveTransfer hook is registered", async () => {
 		const contact: Contact = {
 			connectionId: "conn-manual-transfer-1",
 			peerAgentId: PEER_AGENT.agentId,
@@ -1226,22 +1226,14 @@ describe("TapMessagingService", () => {
 
 		await sleep(50);
 
-		expect(await service.listPendingRequests()).toEqual([
-			expect.objectContaining({
-				requestId: String(request.id),
-				method: "action/request",
-				peerAgentId: PEER_AGENT.agentId,
-			}),
-		]);
+		// Grant-covered transfer should be auto-approved without needing resolvePending
+		expect(await service.listPendingRequests()).toEqual([]);
+		expect(executeTransfer).toHaveBeenCalledOnce();
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
 
-		const report = await service.resolvePending(String(request.id), true);
 		const actionResult = transport.sentMessages.find(
 			(entry) => entry.message.method === "action/result",
 		);
-
-		expect(report.pendingRequests).toEqual([]);
-		expect(executeTransfer).toHaveBeenCalledOnce();
-		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
 		expect(actionResult).toBeDefined();
 		expect(parseTransferActionResponse(actionResult!.message)?.status).toBe("completed");
 
@@ -2074,6 +2066,54 @@ describe("TapMessagingService", () => {
 		};
 		expect(resultParams?.status).toBe("rejected");
 		expect(resultParams?.reason).toContain("declined by operator");
+
+		await service.stop();
+	});
+
+	it("does not crash when emitEvent hook throws", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const emitEvent = vi.fn(() => {
+			throw new Error("boom from emitEvent");
+		});
+		const log = vi.fn();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { emitEvent, log },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		// Should not throw even though emitEvent hook throws
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-emit-crash",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		expect(emitEvent).toHaveBeenCalled();
+		expect(log).toHaveBeenCalledWith(
+			"warn",
+			expect.stringContaining("emitEvent hook threw: boom from emitEvent"),
+		);
 
 		await service.stop();
 	});

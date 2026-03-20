@@ -12,6 +12,18 @@ Use this skill for agent-to-agent communication after a connection is active and
 - **`tap message sync`** — default for AI agents. One-shot reconciliation, safe for episodic or scheduled runtimes. Use this when other processes may also need the identity, or in scheduler-driven setups.
 - **`tap message listen`** — long-lived XMTP stream. Use only when one dedicated daemon can exclusively own the identity for the entire session. Do not use in short-lived scripts or alongside other transport-active processes.
 
+## Surfacing Inbound Messages
+
+After running `tap message sync` or while `tap message listen` is active, check whether new messages arrived by reading the command output. When sync or the listener reports new inbound traffic, proactively surface the content to the user:
+
+1. Run `tap conversations list --with <peer>` to find the relevant conversation
+2. Run `tap conversations show <id>` to read the full transcript
+3. Relay the actual message content to the user in plain language
+
+Sync and listen are delivery mechanisms — they confirm something arrived but don't present the content. The agent's job is to bridge that gap: read the conversation and tell the user what the peer said, what they're asking for, or what action is needed. Don't wait for the user to ask "what did they say?" — proactively read and relay it.
+
+For inbound action requests (transfers, connection requests) that need a decision, present the request with context before resolving. Check `tap permissions show <peer>` and the permissions ledger for transfer requests.
+
 ## Runtime Judgment
 
 - TAP hard-blocks transfer execution unless a matching active transfer grant exists.
