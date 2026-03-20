@@ -2078,6 +2078,54 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
+	it("does not crash when emitEvent hook throws", async () => {
+		const trustStore = createMemoryTrustStore();
+		const transport = new FakeTransport();
+		const emitEvent = vi.fn(() => {
+			throw new Error("boom from emitEvent");
+		});
+		const log = vi.fn();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				hooks: { emitEvent, log },
+			},
+		);
+
+		await service.start();
+		const { invite } = await generateInvite({
+			agentId: 1,
+			chain: "eip155:84532",
+			privateKey: ALICE.privateKey,
+			expirySeconds: 3600,
+		});
+
+		const request = buildConnectionRequest({
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			invite,
+			timestamp: "2026-03-08T00:00:00.000Z",
+		});
+
+		// Should not throw even though emitEvent hook throws
+		await expect(
+			transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-emit-crash",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		expect(emitEvent).toHaveBeenCalled();
+		expect(log).toHaveBeenCalledWith(
+			"warn",
+			expect.stringContaining("emitEvent hook threw: boom from emitEvent"),
+		);
+
+		await service.stop();
+	});
+
 	it("resolvePending rejects non-connection and non-action requests", async () => {
 		const transport = new FakeTransport();
 		const trustStore = createMemoryTrustStore();

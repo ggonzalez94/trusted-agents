@@ -921,10 +921,17 @@ export class TapMessagingService {
 	}
 
 	private emitEvent(payload: Record<string, unknown>): void {
-		this.hooks.emitEvent?.({
-			timestamp: nowISO(),
-			...payload,
-		});
+		try {
+			this.hooks.emitEvent?.({
+				timestamp: nowISO(),
+				...payload,
+			});
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`emitEvent hook threw: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 	}
 
 	private log(level: "info" | "warn" | "error", message: string): void {
