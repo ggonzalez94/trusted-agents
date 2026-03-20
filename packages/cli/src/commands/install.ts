@@ -2,12 +2,13 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
+import { commandExists } from "../lib/shell.js";
 import type { GlobalOptions } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -445,21 +446,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function looksLikeLegacyTapSkillTarget(path: string): boolean {
 	const suffix = join("packages", "sdk", "skills", "trusted-agents");
 	return path.endsWith(suffix);
-}
-
-async function commandExists(command: string): Promise<boolean> {
-	const pathVar = process.env.PATH ?? "";
-	for (const entry of pathVar.split(delimiter)) {
-		if (!entry) {
-			continue;
-		}
-		const candidate = join(entry, command);
-		try {
-			await access(candidate);
-			return true;
-		} catch {}
-	}
-	return false;
 }
 
 async function pathExists(path: string): Promise<boolean> {
