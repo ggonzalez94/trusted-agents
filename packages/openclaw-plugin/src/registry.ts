@@ -86,6 +86,8 @@ export class OpenClawTapRegistry {
 				});
 			});
 		}
+		this.runtimes.clear();
+		this.notificationQueues.clear();
 		this.started = false;
 	}
 
