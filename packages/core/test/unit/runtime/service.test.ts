@@ -1157,7 +1157,7 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
-	it("resolves queued transfer requests from local journal state", async () => {
+	it("auto-approves grant-covered transfer when no approveTransfer hook is registered", async () => {
 		const contact: Contact = {
 			connectionId: "conn-manual-transfer-1",
 			peerAgentId: PEER_AGENT.agentId,
@@ -1226,22 +1226,14 @@ describe("TapMessagingService", () => {
 
 		await sleep(50);
 
-		expect(await service.listPendingRequests()).toEqual([
-			expect.objectContaining({
-				requestId: String(request.id),
-				method: "action/request",
-				peerAgentId: PEER_AGENT.agentId,
-			}),
-		]);
+		// Grant-covered transfer should be auto-approved without needing resolvePending
+		expect(await service.listPendingRequests()).toEqual([]);
+		expect(executeTransfer).toHaveBeenCalledOnce();
+		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
 
-		const report = await service.resolvePending(String(request.id), true);
 		const actionResult = transport.sentMessages.find(
 			(entry) => entry.message.method === "action/result",
 		);
-
-		expect(report.pendingRequests).toEqual([]);
-		expect(executeTransfer).toHaveBeenCalledOnce();
-		expect((await requestJournal.getByRequestId(String(request.id)))?.status).toBe("completed");
 		expect(actionResult).toBeDefined();
 		expect(parseTransferActionResponse(actionResult!.message)?.status).toBe("completed");
 

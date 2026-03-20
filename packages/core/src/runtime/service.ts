@@ -1767,8 +1767,11 @@ export class TapMessagingService {
 			return false;
 		}
 
+		if (!this.hooks.approveTransfer) {
+			return true; // Covered by grant — no hook needed to confirm
+		}
 		return (
-			(await this.hooks.approveTransfer?.({
+			(await this.hooks.approveTransfer({
 				requestId,
 				contact,
 				request,
