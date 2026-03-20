@@ -23,6 +23,7 @@ export async function connectCommand(
 	inviteUrl: string,
 	autoApprove: boolean,
 	opts: GlobalOptions,
+	waitSeconds?: number,
 ): Promise<void> {
 	const startTime = Date.now();
 
@@ -98,6 +99,38 @@ export async function connectCommand(
 		);
 
 		if (isQueuedTapCommandPending(outcome)) {
+			if (waitSeconds) {
+				const pollIntervalMs = 3000;
+				const deadline = Date.now() + waitSeconds * 1000;
+
+				info(`Connect queued. Waiting up to ${waitSeconds}s for connection to become active...`, opts);
+
+				while (Date.now() < deadline) {
+					await new Promise((r) => setTimeout(r, pollIntervalMs));
+					const contacts = await ctx.trustStore.getContacts();
+					const match = contacts.find(
+						(c) => c.peerAgentId === peerAgent.agentId && c.status === "active",
+					);
+					if (match) {
+						info(`Connection with ${match.peerDisplayName} is now active.`, opts);
+						success(
+							{
+								connection_id: match.connectionId,
+								peer_name: match.peerDisplayName,
+								peer_agent_id: match.peerAgentId,
+								status: "active",
+								waited: true,
+							},
+							opts,
+							startTime,
+						);
+						return;
+					}
+				}
+
+				info(`Timed out waiting. Run 'tap message sync' later to check.`, opts);
+			}
+
 			success(
 				{
 					...queuedTapCommandPendingFields(outcome),
@@ -124,6 +157,45 @@ export async function connectCommand(
 			opts,
 			startTime,
 		);
+
+		if (waitSeconds && result.status !== "active") {
+			const pollIntervalMs = 3000;
+			const deadline = Date.now() + waitSeconds * 1000;
+
+			info(`Waiting up to ${waitSeconds}s for connection to become active...`, opts);
+
+			while (Date.now() < deadline) {
+				await new Promise((r) => setTimeout(r, pollIntervalMs));
+
+				try {
+					await service.syncOnce();
+				} catch {
+					// Transport may be owned by another process
+				}
+
+				const contacts = await ctx.trustStore.getContacts();
+				const match = contacts.find(
+					(c) => c.peerAgentId === peerAgent.agentId && c.status === "active",
+				);
+				if (match) {
+					info(`Connection with ${match.peerDisplayName} is now active.`, opts);
+					success(
+						{
+							connection_id: match.connectionId,
+							peer_name: match.peerDisplayName,
+							peer_agent_id: match.peerAgentId,
+							status: "active",
+							waited: true,
+						},
+						opts,
+						startTime,
+					);
+					return;
+				}
+			}
+
+			info(`Timed out waiting for connection. Run 'tap message sync' later to check.`, opts);
+		}
 	} catch (err) {
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
