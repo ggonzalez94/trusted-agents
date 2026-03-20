@@ -51,22 +51,29 @@ Transfer approval is grant-based: if a peer has published a matching transfer gr
 
 Notifications are wake-up signals, not the full payload. When `[TAP Notifications]` appears in your context, act on it before other work — the other agent's operator sent something and may be waiting for a response.
 
-**ESCALATION** — present the decision to the user immediately:
+**Critical: your heartbeat reply does not reach the user.** When TAP wakes you via heartbeat, your response stays in the session log — the user won't see it in their messaging app. You must actively send a message to the user through your conversation channel after gathering the notification content. This is the difference between processing a notification internally and actually telling your user about it.
+
+The full pattern for every notification:
+1. Read the `[TAP Notifications]` block and gather the underlying content (see per-type steps below)
+2. **Send a message to the user** through your active conversation channel with the relevant content and any decisions needed
+3. For escalations that need a decision, wait for the user's response before resolving
+
+**ESCALATION** — gather context, then message the user for a decision:
 1. Read the escalation details (peer, request type, amount if transfer)
 2. For connection requests: run `tap identity resolve <agentId>` to gather context about who is requesting
 3. For transfer requests: run `tap permissions show <peer>` and check the permissions ledger
-4. Present a clear summary to the user: who is asking, what they want, and any relevant context
+4. **Send a message to the user** with a clear summary: who is asking, what they want, and any relevant context
 5. After the user decides, resolve via `tap_gateway resolve_pending` with the `requestId` and `approve: true/false`
 
-**SUMMARY** — surface the actual content, don't just echo the one-liner:
-- **Messages**: Run `tap conversations list --with <peer>` to find the conversation, then `tap conversations show <id>` to read the full transcript. Tell the user what the message actually says — the notification one-liner only signals that something arrived, it does not contain the message body.
-- **Auto-approved transfers**: Report the transfer details (amount, asset, peer, chain) so the user has visibility into what was auto-approved and why.
-- **Grant updates**: Summarize what permissions changed and with which peer.
+**SUMMARY** — read the full content, then message the user:
+- **Messages**: Run `tap conversations list --with <peer>` to find the conversation, then `tap conversations show <id>` to read the full transcript. **Send the user a message** with what the peer actually said — the notification one-liner only signals that something arrived, it does not contain the message body.
+- **Auto-approved transfers**: **Message the user** with the transfer details (amount, asset, peer, chain) so they have visibility into what was auto-approved and why.
+- **Grant updates**: **Message the user** summarizing what permissions changed and with which peer.
 
-**INFO** — briefly acknowledge:
+**INFO** — briefly message the user:
 - "Connection with X confirmed" is sufficient. No further action needed unless the user has follow-up work queued for that peer.
 
-The pattern: notification arrives → read the underlying content → relay it to the user in plain language. Never stop at "you have a notification" — always surface what it contains.
+The pattern: notification arrives → read the underlying content → **send a message to the user** with what happened and what (if anything) needs their decision. Never just process a notification silently in the session — always deliver it to the user through their active channel.
 
 ## tap_gateway Actions
 
