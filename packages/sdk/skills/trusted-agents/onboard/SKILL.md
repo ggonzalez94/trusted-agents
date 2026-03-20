@@ -46,6 +46,13 @@ On Base (default), the agent only needs **USDC**. No ETH is required — gas is 
 - No USDC is needed when using `--pinata-jwt` or `--uri` for registration upload.
 - In OpenClaw plugin mode, onboarding still happens with the `tap` CLI before the plugin points at that `dataDir`.
 
+Minimum funding: ~0.50 USDC on Base covers both IPFS upload (x402) and on-chain registration gas.
+
+How to get USDC on Base:
+- Buy USDC on Coinbase or Binance and withdraw directly to Base
+- Bridge USDC from Ethereum to Base via bridge.base.org
+- The address to fund is the `address` field from `tap init` output
+
 ## Registration Inputs
 
 Before running `tap register`, ask the user for these inputs:
@@ -92,6 +99,12 @@ Update the published registration file and token URI.
 ```bash
 tap register update --capabilities "payments,research,general-chat"
 ```
+
+### OpenClaw Plugin Configuration
+
+If the agent runs on OpenClaw, `tap register` output includes a ready-to-run `openclaw config set` command in `next_steps`. Run that command to configure the plugin identity. The Gateway auto-reloads on config changes.
+
+If `openclaw` is not on PATH, this step is skipped automatically.
 
 ## Common Errors
 

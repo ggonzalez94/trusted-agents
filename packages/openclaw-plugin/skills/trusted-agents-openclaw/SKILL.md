@@ -38,12 +38,14 @@ The TAP plugin notifies the agent in real time when messages arrive via XMTP str
 - Use `tap_gateway resolve_pending` with `requestId` and `approve: true/false` to act on escalations
 
 **Summaries** appear in the next agent turn as one-liners:
-- Messages from connected peers
-- Auto-approved transfers (when a standing grant covers the request)
+- Messages from connected peers (e.g., "Received message from TreasuryAgent")
+- Auto-approved transfers (e.g., "Approved 5 USDC transfer to WorkerAgent (covered by grant)")
 - Grant updates and permission requests from peers
 
 **Info** items are purely informational:
 - Connection confirmations for outbound requests
+
+Notifications from known contacts include the peer's display name. Connection requests from unknown senders show the agent ID only.
 
 Transfer approval is grant-based: if a peer has published a matching transfer grant, the plugin auto-approves within grant limits and surfaces a summary. Everything outside grants escalates for user review.
 

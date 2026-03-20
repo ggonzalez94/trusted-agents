@@ -39,17 +39,11 @@ That raw OpenClaw command only links the plugin. It does not clean up legacy `~/
 
 After install:
 
-1. Onboard the TAP identity with `tap init` and `tap register`.
-2. Configure one or more TAP identities in OpenClaw:
-
-```bash
-openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/tap-data","reconcileIntervalMinutes":10}]' --json
-```
-
-3. The Gateway auto-reloads on plugin config changes. If the Gateway was not running during install, start it after configuring identities.
-4. Verify the runtime with `tap_gateway` action `status`.
-5. Use plugin mode only when `status.configured` is `true`, the `identities` list is non-empty, and `status.warnings` is empty.
-6. If more than one identity is configured, include `identity` in each `tap_gateway` tool call.
-7. For read-only `tap` CLI inspection in multi-identity mode, use the matching `dataDir` from `status.identities[]` and pass `--data-dir <path>`.
-8. Use `tap_gateway` for transport-active operations once the plugin is active.
-9. If the Gateway warns `No TAP identities are configured`, that is expected until step 2 is done; it is not an install race by itself.
+1. Onboard the TAP identity with `tap init` and `tap register`. When `openclaw` is on PATH, `tap register` output includes the exact `openclaw config set` command to configure the plugin identity. Run that command.
+2. The Gateway auto-reloads on plugin config changes. If the Gateway was not running during install, start it after configuring identities.
+3. Verify the runtime with `tap_gateway` action `status`.
+4. Use plugin mode only when `status.configured` is `true`, the `identities` list is non-empty, and `status.warnings` is empty.
+5. If more than one identity is configured, include `identity` in each `tap_gateway` tool call.
+6. For read-only `tap` CLI inspection in multi-identity mode, use the matching `dataDir` from `status.identities[]` and pass `--data-dir <path>`.
+7. Use `tap_gateway` for transport-active operations once the plugin is active.
+8. If the Gateway warns `No TAP identities are configured`, that is expected until step 1 is done; it is not an install race by itself.

@@ -40,6 +40,8 @@ Prerequisites:
 - An **active** connection with the peer
 - The peer has published a `transfer/request` grant to this agent (visible in `grantedByPeer`)
 
+If `grantedByPeer` has no matching `transfer/request` grant, TAP logs a warning before sending. The request is still sent — the peer may have updated grants that haven't synced yet — but rejection is likely.
+
 Flow:
 1. Send: `tap message request-funds <peer> --asset usdc --amount 5`
 2. TAP checks for a matching active transfer grant from the peer — hard-blocks if none exists
