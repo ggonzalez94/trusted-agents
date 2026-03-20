@@ -673,6 +673,16 @@ export class TapMessagingService {
 	private async requestFundsInternal(input: TapRequestFundsInput): Promise<TapRequestFundsResult> {
 		return await this.withTransportSession(async () => {
 			const contact = await this.requireActiveContact(input.peer);
+			const peerTransferGrants = findActiveGrantsByScope(
+				contact.permissions.grantedByPeer,
+				"transfer/request",
+			);
+			if (peerTransferGrants.length === 0) {
+				this.log(
+					"warn",
+					`No matching transfer/request grant found in grantedByPeer for ${contact.peerDisplayName}. The peer may reject this request.`,
+				);
+			}
 			const requestPayload = {
 				type: "transfer/request" as const,
 				actionId: generateNonce(),
