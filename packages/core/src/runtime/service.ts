@@ -1204,15 +1204,15 @@ export class TapMessagingService {
 		message: ProtocolMessage;
 	}): Promise<{ status: "received" | "duplicate" }> {
 		if (envelope.message.method === CONNECTION_RESULT) {
-			await this.handleConnectionResult(envelope.message);
+			const status = await this.handleConnectionResult(envelope.message);
 			this.emitEvent({
 				direction: "incoming",
 				from: envelope.from,
 				method: envelope.message.method,
 				id: envelope.message.id,
-				receipt_status: "received",
+				receipt_status: status,
 			});
-			return { status: "received" };
+			return { status };
 		}
 
 		const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
@@ -1583,7 +1583,9 @@ export class TapMessagingService {
 		}
 	}
 
-	private async handleConnectionResult(message: ProtocolMessage): Promise<void> {
+	private async handleConnectionResult(
+		message: ProtocolMessage,
+	): Promise<"received" | "duplicate"> {
 		const result = parseConnectionResult(message);
 		const [pendingConnect, existingContact] = await Promise.all([
 			this.pendingConnectStore.get(result.requestId),
@@ -1596,13 +1598,13 @@ export class TapMessagingService {
 					"info",
 					`Ignoring duplicate connection result from ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
 				);
-				return;
+				return "duplicate";
 			}
 			this.log(
 				"warn",
 				`Ignoring unsolicited connection result from agent #${result.from.agentId} on ${result.from.chain}`,
 			);
-			return;
+			return "duplicate";
 		}
 
 		if (
@@ -1618,7 +1620,7 @@ export class TapMessagingService {
 				"info",
 				`Connection rejected by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
 			);
-			return;
+			return "received";
 		}
 
 		const establishedAt = result.timestamp;
@@ -1645,6 +1647,7 @@ export class TapMessagingService {
 			"info",
 			`Connection accepted by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
 		);
+		return "received";
 	}
 
 	private async handleActionResult(from: number, message: ProtocolMessage): Promise<void> {

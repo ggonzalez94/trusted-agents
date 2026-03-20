@@ -854,7 +854,7 @@ describe("TapMessagingService", () => {
 				senderInboxId: "peer-inbox-stale-result",
 				message: staleRejectedResult,
 			}),
-		).resolves.toEqual({ status: "received" });
+		).resolves.toEqual({ status: "duplicate" });
 
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
 		expect(await requestJournal.getByRequestId("req-stale-1")).toBeNull();
