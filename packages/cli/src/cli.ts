@@ -262,7 +262,8 @@ Examples:
 		.action(async (inviteUrl: string, cmdOpts: { yes?: boolean; wait?: string | boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { connectCommand } = await import("./commands/connect.js");
-			const waitSeconds = cmdOpts.wait === true ? 60 : cmdOpts.wait ? Number(cmdOpts.wait) : undefined;
+			const waitSeconds =
+				cmdOpts.wait === true ? 60 : cmdOpts.wait ? Number(cmdOpts.wait) : undefined;
 			await connectCommand(inviteUrl, !!cmdOpts.yes, opts, waitSeconds);
 		});
 

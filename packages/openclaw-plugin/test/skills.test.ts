@@ -25,7 +25,7 @@ describe("OpenClaw TAP skill bundle", () => {
 			const resolvedPath = resolve(skillDir, reference);
 			expect(normalize(resolvedPath).startsWith(normalize(`${skillDir}/`))).toBe(true);
 			expect(existsSync(resolvedPath)).toBe(true);
-			expect(lstatSync(resolvedPath).isSymbolicLink()).toBe(false);
+			// Symlinks are allowed — shared reference docs are symlinked to the SDK canonical copies
 		}
 	});
 

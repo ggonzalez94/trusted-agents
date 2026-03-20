@@ -103,7 +103,10 @@ export async function connectCommand(
 				const pollIntervalMs = 3000;
 				const deadline = Date.now() + waitSeconds * 1000;
 
-				info(`Connect queued. Waiting up to ${waitSeconds}s for connection to become active...`, opts);
+				info(
+					`Connect queued. Waiting up to ${waitSeconds}s for connection to become active...`,
+					opts,
+				);
 
 				while (Date.now() < deadline) {
 					await new Promise((r) => setTimeout(r, pollIntervalMs));

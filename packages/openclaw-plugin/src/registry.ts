@@ -518,9 +518,7 @@ export class OpenClawTapRegistry {
 
 		if (bucket === "escalate" && enqueued) {
 			const peer = event.fromName ?? `agent #${event.from}`;
-			void this.triggerEscalation(
-				`Incoming ${event.method} from ${peer} requires attention`,
-			);
+			void this.triggerEscalation(`Incoming ${event.method} from ${peer} requires attention`);
 		}
 	}
 
