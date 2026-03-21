@@ -23,20 +23,15 @@ TAP is a local-first protocol for personal AI agents to discover each other, est
 
 ### Agent mode
 
-Tell your agent:
+Copy-paste this to your AI agent:
+
+> Read the TAP skill at https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/packages/sdk/skills/trusted-agents/SKILL.md and then follow it to install TAP and set me up.
+
+The skill teaches your agent how to install the `tap` CLI, create an on-chain identity, fund it, and register — walking you through each decision one step at a time.
+
+If your agent already has the TAP skill installed (via `tap install`), you can just say:
 
 > Install Trusted Agents Protocol from github.com/ggonzalez94/trusted-agents and set me up.
-
-The install script gives your agent the `tap` CLI and loads the TAP skill tree, which guides it through identity setup, funding, registration, connections, and permissions — it will walk you through each decision one step at a time.
-
-If your agent needs the install command directly:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
-```
-
-For agents without the skill tree loaded, the full operational guide is at:
-[`packages/sdk/skills/trusted-agents/SKILL.md`](https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/packages/sdk/skills/trusted-agents/SKILL.md)
 
 ### Manual mode
 

@@ -64,16 +64,17 @@ When this file conflicts with code, code wins.
 
 ## Skills Layout
 
-- Generic TAP skills live in `packages/sdk/skills/trusted-agents/`.
-- OpenClaw plugin skills live in `packages/openclaw-plugin/skills/trusted-agents-openclaw/`.
+There is one unified TAP skill that covers both CLI and OpenClaw plugin mode:
+
+- **Canonical location:** `packages/sdk/skills/trusted-agents/SKILL.md` + `references/permissions-v1.md`
+- **OpenClaw plugin:** `packages/openclaw-plugin/skills/trusted-agents-openclaw/` contains symlinks to the canonical files above.
+- Both hosts get the same skill content. OpenClaw-specific sections are gated with "Skip this section if you're not running inside OpenClaw Gateway."
 
 Installation expectations:
 
-- OpenClaw plugin install loads the plugin skill directory from `packages/openclaw-plugin/openclaw.plugin.json`.
-- That plugin install does **not** automatically install the generic TAP skill tree from `packages/sdk/skills/trusted-agents/`.
-- `tap install --runtime openclaw` should match that plugin-only OpenClaw result; it is a convenience wrapper, not a second OpenClaw skill-install mode.
-- Outside OpenClaw plugin mode, hosts should install the generic TAP skills from `packages/sdk/skills/trusted-agents/` into whatever skill directory that host uses.
-- In this repo, skill files under `packages/*/skills/...` are the canonical source. Any copies under `~/.local/share/...`, `~/.openclaw/...`, or other host-specific paths are installed mirrors, not the source of truth.
+- OpenClaw plugin install loads the plugin skill directory from `packages/openclaw-plugin/openclaw.plugin.json`, which follows the symlinks to the canonical skill.
+- `tap install --runtime openclaw` installs the plugin; `tap install --runtime claude` installs the skill for Claude Code. Both point at the same underlying content.
+- In this repo, `packages/sdk/skills/trusted-agents/` is the single source of truth. The OpenClaw symlinks and any host-specific installed copies are mirrors.
 
 ## Read Order For Fast Orientation
 1. `packages/core/src/protocol/*` (wire protocol)
@@ -298,19 +299,17 @@ File: `packages/sdk/src/orchestrator.ts`
 - Validate both unit tests and optional XMTP integration test
 
 ### Adding/changing/removing a CLI command
-- Update `packages/sdk/skills/trusted-agents/SKILL.md` (the single generic TAP skill).
-- If the change is also relevant in OpenClaw plugin mode, update `packages/openclaw-plugin/skills/trusted-agents-openclaw/SKILL.md` too.
+- Update `packages/sdk/skills/trusted-agents/SKILL.md` (the single unified skill). The OpenClaw plugin symlinks to this file, so both hosts update automatically.
 - Every CLI command must appear in the skill file as a documented command.
-- Each skill tree is a single `SKILL.md` plus one reference file (`references/permissions-v1.md`). No sub-skill directories.
-- The generic skill covers all `tap` CLI commands. The OpenClaw skill covers the same commands plus `tap_gateway` actions and notification handling.
+- OpenClaw-specific content (tap_gateway actions, notifications) lives in the "OpenClaw Plugin Mode" section, gated with "Skip this section if you're not running inside OpenClaw Gateway."
 - Keep skills concise: command syntax + flags + one example + errors. No internal implementation details.
-- Every `SKILL.md` must have YAML frontmatter with `name` and `description`
+- The `SKILL.md` must have YAML frontmatter with `name` and `description`
 
 ### Changing TAP skill/reference semantics
-- The generic TAP skill tree lives in `packages/sdk/skills/trusted-agents/`.
-- The OpenClaw plugin skill tree lives in `packages/openclaw-plugin/skills/trusted-agents-openclaw/`.
-- When there is a meaningful TAP behavior, permission, runtime-mode, install, or operator-guidance change, update both folders if both host modes rely on that guidance.
-- If you intentionally document different behavior between generic TAP and OpenClaw plugin mode, make that divergence explicit instead of allowing the trees to drift silently.
+- The unified skill lives in `packages/sdk/skills/trusted-agents/SKILL.md`. OpenClaw symlinks to it.
+- Edit only the canonical file. The symlinks ensure both hosts see the same content.
+- OpenClaw-specific content goes in the "OpenClaw Plugin Mode" section with clear gating ("Skip this section if not OpenClaw").
+- If you add OpenClaw-specific behavior, also add the corresponding "In OpenClaw plugin mode, use X instead" note in the relevant command section.
 
 ## Build/Test Commands Agents Should Actually Use
 ```bash

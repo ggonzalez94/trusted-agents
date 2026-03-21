@@ -1,6 +1,6 @@
 ---
 name: trusted-agents
-description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, and request funds. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP."
+description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, and request funds. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill inside OpenClaw Gateway when the `tap_gateway` tool is available or when handling TAP notifications.
 ---
 
 # Trusted Agents Protocol
@@ -30,6 +30,12 @@ tap balance          → Check funding
 tap contacts list    → Empty? See Connect
 ```
 
+If you're inside **OpenClaw Gateway** and `tap_gateway` is available, also check:
+
+```
+tap_gateway status   → Plugin configured? Warnings?
+```
+
 Decision flow:
 
 ```
@@ -39,9 +45,11 @@ tap not installed ──→ Install
         │
    agent_id < 0 ──→ Onboard (fund + register)
         │
-   no contacts ──→ Connect (invite or connect)
+   [OpenClaw] tap_gateway available? ──→ Configure plugin if needed
         │
-   waiting on async ──→ tap message sync
+   no contacts ──→ Connect
+        │
+   waiting on async ──→ tap message sync (or tap_gateway sync)
         │
    ready ──→ message, transfer, manage permissions
 ```
@@ -60,11 +68,19 @@ Remote install (no clone needed):
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-The installer builds, links `tap` to PATH, and sets up skills for your host. After install, continue with Onboard.
+The installer builds, links `tap` to PATH, and sets up skills for your host.
+
+**OpenClaw plugin install:**
+
+```bash
+tap install --runtime openclaw
+```
+
+The plugin does not force a Gateway stop/start cycle. If the Gateway is already running, it waits for the automatic reload.
 
 ## Onboard
 
-Already registered? `tap config show` shows `agent_id >= 0` → skip to Connect.
+Already registered? `tap config show` shows `agent_id >= 0` → skip to Connect (or Configure Plugin if on OpenClaw).
 
 ### Step 1: Create the wallet
 
@@ -117,6 +133,20 @@ To update a registration later:
 tap register update --capabilities "transfer,research,general-chat"
 ```
 
+### Step 4: Configure the OpenClaw plugin (OpenClaw only)
+
+Skip this step if you're not running inside OpenClaw Gateway.
+
+`tap register` output includes a ready-to-run `openclaw config set` command. Run it. The Gateway auto-reloads on config changes.
+
+Verify the plugin is healthy:
+
+```
+tap_gateway status
+```
+
+Status should show the identity as configured with no warnings.
+
 ## Connect
 
 Connections establish trust between two agents. They don't grant permissions — that's a separate step.
@@ -138,6 +168,8 @@ tap contacts remove <connectionId>
 
 `--wait` polls for the connection to become active (default: 60s). Without it, returns immediately as `pending`.
 
+In OpenClaw plugin mode, use `tap_gateway create_invite` and `tap_gateway connect` instead of the CLI commands.
+
 ## Permissions
 
 Connections create trust. **Grants** define what each side is allowed to ask the other to do.
@@ -153,6 +185,8 @@ tap permissions grant WorkerAgent --file ./grants.json --note "weekly payment po
 tap permissions request TreasuryAgent --file ./request.json --note "need weekly budget"
 tap permissions revoke WorkerAgent --grant-id worker-weekly-usdc --note "budget paused"
 ```
+
+In OpenClaw plugin mode, use `tap_gateway publish_grants` and `tap_gateway request_grants` for write operations. Read-only commands (`tap permissions show`) are safe to use alongside the plugin.
 
 ### Grant templates
 
@@ -191,7 +225,7 @@ See `references/permissions-v1.md` for the full JSON spec with all fields and ad
 ## Messages
 
 - **`tap message sync`** — one-shot reconciliation. Default for AI agents and scheduled runtimes. Safe alongside other processes.
-- **`tap message listen`** — long-lived XMTP stream. Use only when one dedicated process exclusively owns the identity.
+- **`tap message listen`** — long-lived XMTP stream. Use only when one dedicated process exclusively owns the identity. Do not use inside OpenClaw — the plugin handles streaming.
 
 Keep exactly one transport owner per TAP identity.
 
@@ -205,6 +239,8 @@ tap conversations list --with TreasuryAgent
 tap conversations show conv-abc123
 ```
 
+In OpenClaw plugin mode, use `tap_gateway send_message` instead of the CLI for sending. Conversation reading commands are safe alongside the plugin.
+
 ## Transfer Requests
 
 Transfer requests ask a peer to send ETH or USDC. TAP hard-blocks execution unless a matching active grant exists — there is no override.
@@ -213,9 +249,78 @@ Transfer requests ask a peer to send ETH or USDC. TAP hard-blocks execution unle
 tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
 ```
 
+In OpenClaw plugin mode, use `tap_gateway request_funds` instead.
+
 Flow: send request → peer evaluates against grants → auto-approve if covered, operator review if not → result arrives on next sync.
 
 Before approving inbound transfers, inspect `tap permissions show <peer>` and `<dataDir>/notes/permissions-ledger.md`.
+
+## OpenClaw Plugin Mode
+
+**Skip this section entirely if you're not running inside OpenClaw Gateway.**
+
+### When to use `tap_gateway` vs CLI
+
+**Use `tap_gateway` when:**
+- `tap_gateway status` shows a configured identity with no warnings
+- You need to connect, send messages, manage grants, request funds, or resolve pending actions
+
+**Fall back to `tap` CLI when:**
+- Plugin is not installed or configured
+- `tap_gateway status` shows unresolvable warnings
+- You only need read-only operations (contacts, permissions, conversations)
+
+In fallback mode, use `tap message sync` on heartbeat. Do not run `tap message listen` in shell background jobs.
+
+### tap_gateway Actions
+
+| Action | Params | Purpose |
+|---|---|---|
+| `status` | — | Check runtime health. Non-empty `warnings` means problems to fix. |
+| `sync` | — | Force one-time message reconciliation. |
+| `restart` | — | Stop and restart a degraded runtime. |
+| `create_invite` | `expiresInSeconds` (opt) | Generate a signed invite URL. |
+| `connect` | `inviteUrl` (required) | Send async trust request. |
+| `send_message` | `peer`, `text`, `scope` (opt) | Send text to an active contact. |
+| `publish_grants` | `peer`, `grantSet`, `note` (opt) | Publish grants (sets `grantedByMe`). |
+| `request_grants` | `peer`, `grantSet`, `note` (opt) | Ask peer to publish grants to you. |
+| `request_funds` | `peer`, `asset`, `amount`, `chain` (opt), `toAddress` (opt), `note` (opt) | Ask peer to send ETH or USDC. Hard-blocked without matching grant. |
+| `list_pending` | — | List queued inbound requests awaiting approval. |
+| `resolve_pending` | `requestId`, `approve` (bool) | Approve or reject a pending request. |
+
+### Handling Notifications
+
+When `[TAP Notifications]` appears in your context, act on it **before other work**. The other agent's operator may be waiting for a response.
+
+**Critical:** Your heartbeat reply does NOT reach the user through their messaging app. You must actively send a message to the user through your conversation channel after processing each notification. Never process a notification silently.
+
+**ESCALATION** — needs the user's decision:
+1. Read the escalation details (peer, request type, amount if transfer)
+2. For connection requests: `tap identity resolve <agentId>` to learn who's asking
+3. For transfer requests: `tap permissions show <peer>` and check the permissions ledger
+4. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
+5. Wait for the user's decision
+6. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`
+
+**SUMMARY** — inform the user:
+- **Messages**: Run `tap conversations list --with <peer>` then `tap conversations show <id>` to get the actual content. **Send the user a message** with what the peer actually said.
+- **Auto-approved transfers**: **Message the user** with transfer details for visibility.
+- **Grant updates**: **Message the user** summarizing what changed.
+
+**INFO** — "Connection with X confirmed" is sufficient.
+
+The pattern: notification → read underlying content → **message the user**.
+
+### Read-Only CLI (Safe in Plugin Mode)
+
+```bash
+tap contacts list / show <peer>
+tap permissions show <peer>
+tap conversations list / show <id>
+tap balance / config show / identity show / identity resolve
+```
+
+For multi-identity setups: get `dataDir` from `tap_gateway status`, then pass `--data-dir <path>`.
 
 ## Utility Commands
 
@@ -240,6 +345,8 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
 | Error | Fix |
 |---|---|
 | `agent_id` missing or < 0 | Complete onboarding — fund wallet and register |
+| `No TAP identities configured` | (OpenClaw) Run the `openclaw config set` command from `tap register` output |
+| `tap_gateway` warnings | (OpenClaw) Check warnings, `tap_gateway restart` |
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
