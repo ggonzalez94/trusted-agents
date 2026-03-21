@@ -1,0 +1,89 @@
+{
+  "skill_name": "trusted-agents",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "You are an OpenClaw Gateway agent with the tap_gateway tool available. You just received this in your context:\n\n[TAP Notifications]\n- SUMMARY: Received message from ResearchBot\n\nThe conversation with ResearchBot shows their latest message is: \"Hey, I finished the market analysis you asked about. The key finding is that competitor X launched a new product last week that undercuts our pricing by 15%. Want me to dig deeper into their pricing strategy?\"\n\nYou have an active connection with ResearchBot and they have a general-chat grant. What do you do?",
+      "expected_output": "The agent should: 1) Read the conversation to get the full message content, 2) Respond automatically to ResearchBot via tap_gateway send_message acknowledging the finding and answering their question, 3) Message the user/operator summarizing what ResearchBot said and how the agent responded",
+      "assertions": [
+        {
+          "name": "reads_conversation",
+          "description": "Agent reads the conversation to get the actual message content (tap conversations list/show)",
+          "type": "contains_any",
+          "values": ["tap conversations", "conversations list", "conversations show"]
+        },
+        {
+          "name": "auto_responds_to_peer",
+          "description": "Agent sends a reply to ResearchBot using tap_gateway send_message",
+          "type": "contains_any",
+          "values": ["tap_gateway send_message", "send_message", "tap_gateway.*send"]
+        },
+        {
+          "name": "informs_operator",
+          "description": "Agent messages the user/operator about what happened",
+          "type": "contains_any",
+          "values": ["message the user", "inform", "operator", "let you know", "ResearchBot said", "here's what"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "You are an OpenClaw Gateway agent with the tap_gateway tool available. You just received this in your context:\n\n[TAP Notifications]\n- ESCALATION: Connection request from agent #42 requires attention\n- SUMMARY: Approved 2.5 usdc transfer to WorkerBot (covered by grant)\n- INFO: Connection confirmed with AnalyticsBot\n\nHow do you handle each of these?",
+      "expected_output": "The agent should handle all three notifications in priority order: 1) ESCALATION first - resolve the agent identity, present details to user, wait for approval decision, 2) SUMMARY - inform user about the auto-approved transfer, 3) INFO - tell user about the confirmed connection. The agent should message the user about ALL of them.",
+      "assertions": [
+        {
+          "name": "handles_escalation_first",
+          "description": "Agent addresses the escalation (connection request) before other notifications",
+          "type": "contains_any",
+          "values": ["identity resolve", "resolve.*42", "connection request", "who's asking"]
+        },
+        {
+          "name": "surfaces_auto_approved_transfer",
+          "description": "Agent informs the operator about the auto-approved transfer",
+          "type": "contains_any",
+          "values": ["2.5 usdc", "WorkerBot", "auto-approved", "covered by grant", "transfer"]
+        },
+        {
+          "name": "surfaces_connection_confirmed",
+          "description": "Agent tells the operator about the connection confirmation",
+          "type": "contains_any",
+          "values": ["AnalyticsBot", "connection confirmed", "confirmed"]
+        },
+        {
+          "name": "messages_user_about_all",
+          "description": "Agent explicitly communicates all three notifications to the user",
+          "type": "manual",
+          "values": []
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "You are an OpenClaw Gateway agent with the tap_gateway tool available. You just received this in your context:\n\n[TAP Notifications]\n- SUMMARY: Received message from LegalBot\n\nThe conversation with LegalBot shows their latest message is: \"We need to discuss the contract terms for the partnership with Acme Corp. There are several clauses in section 4.2 that I'm not comfortable with - particularly the liability limitations and the IP assignment terms. Can you review and let me know your position?\"\n\nYou are a general-purpose assistant agent. You don't have legal expertise. What do you do?",
+      "expected_output": "The agent should recognize this requires human judgment (legal contract review is beyond its capability), NOT attempt to auto-respond with legal opinions, and instead escalate to the operator by telling them what LegalBot said and asking for guidance on how to respond.",
+      "assertions": [
+        {
+          "name": "does_not_give_legal_advice",
+          "description": "Agent does NOT respond to LegalBot with substantive legal opinions about the contract",
+          "type": "manual",
+          "values": []
+        },
+        {
+          "name": "escalates_to_operator",
+          "description": "Agent surfaces the message to the operator and asks for guidance",
+          "type": "contains_any",
+          "values": ["ask for guidance", "need your input", "requires your", "what should I", "how should I respond", "your decision", "escalat"]
+        },
+        {
+          "name": "relays_message_content",
+          "description": "Agent tells the operator what LegalBot actually said, including key details",
+          "type": "contains_any",
+          "values": ["contract terms", "section 4.2", "liability", "IP assignment", "Acme Corp"]
+        }
+      ],
+      "files": []
+    }
+  ]
+}

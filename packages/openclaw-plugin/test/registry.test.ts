@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TapEmitEventPayload } from "../src/event-classifier.js";
+import { TapNotificationQueue } from "../src/notification-queue.js";
 import { OpenClawTapRegistry } from "../src/registry.js";
 
 function createLogger() {
@@ -134,6 +136,103 @@ describe("OpenClawTapRegistry", () => {
 			reason: "hook:tap-escalation",
 			coalesceMs: 2000,
 			sessionKey: "agent:alpha:primary",
+		});
+	});
+
+	describe("handleEmitEvent triggers escalation for all classified events", () => {
+		function makeEvent(overrides: Partial<TapEmitEventPayload> = {}): TapEmitEventPayload {
+			return {
+				direction: "incoming",
+				from: 42,
+				fromName: "TestPeer",
+				method: "message/send",
+				id: "msg-1",
+				receipt_status: "delivered",
+				timestamp: "2026-03-21T00:00:00.000Z",
+				...overrides,
+			};
+		}
+
+		function createRegistryWithEscalation() {
+			const logger = createLogger();
+			const enqueueSystemEvent = vi.fn();
+			const requestHeartbeatNow = vi.fn();
+			const registry = new OpenClawTapRegistry({ identities: [] }, logger, {
+				sessionKey: "agent:test:primary",
+				system: { enqueueSystemEvent, requestHeartbeatNow },
+			});
+			return { registry, enqueueSystemEvent, requestHeartbeatNow };
+		}
+
+		it("triggers escalation for message/send (auto-handle bucket)", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "message/send" }));
+
+			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
+			expect(queue.peek()).toHaveLength(1);
+			expect(queue.peek()[0]!.type).toBe("summary");
+		});
+
+		it("triggers escalation for permissions/update (auto-handle bucket)", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "permissions/update" }));
+
+			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
+			expect(queue.peek()[0]!.type).toBe("summary");
+		});
+
+		it("triggers escalation for action/result (auto-handle bucket)", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "action/result" }));
+
+			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
+			expect(queue.peek()[0]!.type).toBe("summary");
+		});
+
+		it("triggers escalation for connection/result (notify bucket)", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "connection/result" }));
+
+			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
+			expect(queue.peek()[0]!.type).toBe("info");
+		});
+
+		it("triggers escalation for connection/request (escalate bucket)", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "connection/request" }));
+
+			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
+			expect(queue.peek()[0]!.type).toBe("escalation");
+		});
+
+		it("does not trigger escalation for duplicate notifications", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "message/send", id: "dup-1" }));
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "message/send", id: "dup-1" }));
+
+			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
+		});
+
+		it("does not trigger escalation for null-classified events", () => {
+			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
+			const queue = new TapNotificationQueue();
+
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ direction: "outgoing" }));
+
+			expect(requestHeartbeatNow).not.toHaveBeenCalled();
+			expect(queue.peek()).toHaveLength(0);
 		});
 	});
 
