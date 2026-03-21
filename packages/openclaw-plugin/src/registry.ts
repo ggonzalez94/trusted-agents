@@ -336,12 +336,11 @@ export class OpenClawTapRegistry {
 			}
 		}
 
-		if (failures.length === 0) {
-			return;
+		if (failures.length > 0) {
+			this.logger.warn(
+				`[trusted-agents-tap] ${failures.length}/${this.pluginConfig.identities.length} TAP identities failed to start: ${failures.join("; ")}. Plugin will continue in degraded mode — use tap_gateway action "restart" to retry.`,
+			);
 		}
-
-		await this.stop();
-		throw new Error(`Failed to start TAP runtimes: ${failures.join("; ")}`);
 	}
 
 	private async ensureRuntimeForAction(identity?: string): Promise<ManagedTapRuntime> {

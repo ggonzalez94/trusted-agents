@@ -29,6 +29,7 @@ const MESSAGE_SORT_BY_SENT_AT = 0 as const;
 const SORT_DIRECTION_ASCENDING = 0 as const;
 
 const RECONNECT_DELAY_MS = 5_000;
+const CLIENT_CREATE_TIMEOUT_MS = 30_000;
 const INBOUND_REQUEST_DEDUPE_TTL_MS = 10 * 60 * 1_000;
 const MAX_TRACKED_INBOUND_REQUESTS = 4_096;
 
@@ -90,13 +91,20 @@ export class XmtpTransport implements TransportProvider {
 			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
 		}
 
-		this.client = await Client.create(signer, {
+		const clientPromise = Client.create(signer, {
 			env: this.config.env ?? "production",
 			dbEncryptionKey,
 			...(this.config.dbPath
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
 		});
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			setTimeout(
+				() => reject(new TransportError("XMTP Client.create() timed out")),
+				CLIENT_CREATE_TIMEOUT_MS,
+			);
+		});
+		this.client = await Promise.race([clientPromise, timeoutPromise]);
 
 		this.running = true;
 		await this.populateInboxIdCache();

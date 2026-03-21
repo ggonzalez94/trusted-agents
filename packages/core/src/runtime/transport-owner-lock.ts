@@ -69,6 +69,12 @@ export class TransportOwnerLock {
 					await rm(this.lockPath, { force: true });
 					continue;
 				}
+				// Same logical owner re-acquiring means the previous instance crashed
+				// without releasing the lock. Always treat as stale.
+				if (currentOwner && currentOwner.owner === this.owner) {
+					await rm(this.lockPath, { force: true });
+					continue;
+				}
 				if (currentOwner && isProcessAlive(currentOwner.pid)) {
 					throw new TransportOwnershipError(
 						`TAP transport is already owned by ${currentOwner.owner} (pid ${currentOwner.pid}) for this data dir`,

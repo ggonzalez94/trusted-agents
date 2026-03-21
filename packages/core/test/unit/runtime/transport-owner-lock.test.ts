@@ -89,6 +89,40 @@ describe("TransportOwnerLock", () => {
 		);
 	});
 
+	it("reclaims stale lock from same logical owner (restart scenario)", async () => {
+		const dataDir = await createDataDir();
+		const lockPath = join(dataDir, ".transport.lock");
+		const realDataDir = await import("node:fs/promises").then((m) => m.realpath(dataDir));
+
+		// Simulate a stale lock left by a crashed process with the same owner label
+		// but a live PID (simulates PID recycling by using current PID)
+		await writeFile(
+			lockPath,
+			JSON.stringify(
+				{
+					pid: process.pid,
+					owner: "openclaw:myagent",
+					acquiredAt: "2026-01-01T00:00:00.000Z",
+					dataDirRealpath: realDataDir,
+				},
+				null,
+				"\t",
+			),
+			"utf-8",
+		);
+
+		// Same owner label should reclaim even though PID appears alive
+		const lock = new TransportOwnerLock(dataDir, "openclaw:myagent");
+		await lock.acquire();
+
+		expect(await lock.inspect()).toEqual(
+			expect.objectContaining({
+				pid: process.pid,
+				owner: "openclaw:myagent",
+			}),
+		);
+	});
+
 	it("reclaims copied lock files that point at a different data dir", async () => {
 		const originalDir = await createDataDir();
 		const copiedDir = await createDataDir();

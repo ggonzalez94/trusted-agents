@@ -20,7 +20,14 @@ const plugin = {
 		api.registerService({
 			id: "trusted-agents-tap-runtime",
 			start: async () => {
-				await registry.start();
+				try {
+					await registry.start();
+				} catch (error: unknown) {
+					// Never let startup failures crash the gateway — degrade gracefully.
+					api.logger.error(
+						`[trusted-agents-tap] Service start failed: ${error instanceof Error ? error.message : String(error)}. TAP will run in degraded mode — use tap_gateway action "restart" to retry.`,
+					);
+				}
 			},
 			stop: async () => {
 				await registry.stop();
