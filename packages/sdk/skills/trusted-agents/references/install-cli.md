@@ -2,19 +2,19 @@
 
 Use this when TAP is not installed yet.
 
-## Remote install (recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
-```
-
-## From a local clone
+## From a local clone (use this when you are inside the trusted-agents repo)
 
 ```bash
 bash scripts/install.sh
 ```
 
-Do not clone the repo and build manually — the installer handles cloning, building, linking, and skill setup in one step.
+## Remote install (use when user does not have the repo cloned)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
+```
+
+The installer handles building, linking, and skill setup in one step. Do not clone the repo and build manually.
 
 ## Result
 

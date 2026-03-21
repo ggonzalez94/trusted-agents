@@ -7,6 +7,17 @@ description: Operate a Trusted Agents Protocol agent with the `tap` CLI: onboard
 
 Use this skill when working with the `tap` CLI.
 
+## Action-First Rule
+
+**Execute commands before asking questions.** When a user asks to install, set up, or onboard TAP:
+
+1. Run the Status Assessment commands immediately (don't explain what you're going to do — just do it)
+2. Let the command outputs determine what step to take next
+3. Only ask the user a question when you have reached a step that genuinely requires their input
+4. Ask **one question at a time**, act on the answer, then ask the next question if needed
+
+Do not present an overview, table, or summary of TAP before acting. Do not bundle multiple questions into one message.
+
 ## Mental Model
 
 - Capabilities are public labels in the on-chain registration file.
@@ -18,7 +29,10 @@ Use this skill when working with the `tap` CLI.
 
 ## Chain Selection
 
-Use mainnet chains only: `base` (default) or `taiko`. Do not suggest testnets to users.
+**NEVER suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) to users. Do not include them in tables, comparisons, or options. The only valid chains are:
+
+- `base` (Base mainnet) — default, recommended
+- `taiko` (Taiko mainnet)
 
 ## Status Assessment
 

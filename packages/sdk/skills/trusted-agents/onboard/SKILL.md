@@ -17,11 +17,17 @@ Run `tap config show` first. If the output contains `agent_id` >= 0, the agent i
 
 ## Happy Path
 
-1. `tap init` — create wallet and local config
-2. Ask the user to fund the wallet with USDC on Base (show the wallet address from `tap init` output)
-3. `tap balance` — confirm funding arrived
-4. Ask the user for name, description, and capabilities (see Registration Inputs below)
-5. `tap register` — register on-chain
+Follow these steps strictly in order. **Execute each command before moving to the next step.** Only ask the user a question when you reach a step that says "Ask".
+
+1. Run `tap init --chain base` — creates wallet and local config. Do not ask the user which chain to use unless they have already expressed a preference for a non-default chain.
+2. Show the user the wallet address from the output. Ask them to fund it with ~0.50 USDC on Base. Wait for them to confirm funding.
+3. Run `tap balance` — confirm funding arrived. If insufficient, tell the user and wait.
+4. Ask the user for the agent **name** (display name like "TreasuryAgent").
+5. Ask the user for a short **description** (e.g. "Payment and expense agent").
+6. Ask the user what **capabilities** the agent should advertise (see Registration Inputs below for examples). Suggest a default based on what the user has described so far.
+7. Run `tap register --name <name> --description <desc> --capabilities <caps>` — register on-chain.
+
+**Do not bundle steps 4-6 into a single question.** Ask one at a time so the user can think through each decision.
 
 ## State Transitions
 
@@ -30,14 +36,14 @@ Run `tap config show` first. If the output contains `agent_id` >= 0, the agent i
 
 ## Supported Chains
 
-Always onboard on a mainnet chain. Supported mainnets:
+**NEVER mention, suggest, or present testnets** (`base-sepolia`, `taiko-hoodi`) to users — not in tables, comparisons, or as alternatives. They do not exist as far as onboarding is concerned.
 
-- `base` (Base mainnet) — default and recommended
+Supported chains:
+
+- `base` (Base mainnet) — **default, use this unless the user asks otherwise**
 - `taiko` (Taiko mainnet)
 
-Always ask the user what chain he wants to use.
-
-Do not suggest or use testnets (`base-sepolia`, `taiko-hoodi`) when onboarding users. Testnet infrastructure is incomplete and not suitable for production use.
+Default to `base` without asking. Only ask if the user mentions wanting a different chain.
 
 ## Funding
 
