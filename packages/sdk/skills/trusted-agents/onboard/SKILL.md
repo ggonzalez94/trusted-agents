@@ -35,6 +35,8 @@ Always onboard on a mainnet chain. Supported mainnets:
 - `base` (Base mainnet) — default and recommended
 - `taiko` (Taiko mainnet)
 
+Always ask the user what chain he wants to use.
+
 Do not suggest or use testnets (`base-sepolia`, `taiko-hoodi`) when onboarding users. Testnet infrastructure is incomplete and not suitable for production use.
 
 ## Funding
@@ -46,12 +48,7 @@ On Base (default), the agent only needs **USDC**. No ETH is required — gas is 
 - No USDC is needed when using `--pinata-jwt` or `--uri` for registration upload.
 - In OpenClaw plugin mode, onboarding still happens with the `tap` CLI before the plugin points at that `dataDir`.
 
-Minimum funding: ~0.50 USDC on Base covers both IPFS upload (x402) and on-chain registration gas.
-
-How to get USDC on Base:
-- Buy USDC on Coinbase or Binance and withdraw directly to Base
-- Bridge USDC from Ethereum to Base via bridge.base.org
-- The address to fund is the `address` field from `tap init` output
+Minimum funding: ~0.50 USDC on Base covers both IPFS upload (x402) and on-chain registration gas. Ask the user clearly to fund the wallet and what tokens he needs based on the chain that he chose
 
 ## Registration Inputs
 

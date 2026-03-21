@@ -38,9 +38,8 @@ For inbound action requests (transfers, connection requests) that need a decisio
 
 Prerequisites:
 - An **active** connection with the peer
-- The peer has published a `transfer/request` grant to this agent (visible in `grantedByPeer`)
 
-If `grantedByPeer` has no matching `transfer/request` grant, TAP logs a warning before sending. The request is still sent — the peer may have updated grants that haven't synced yet — but rejection is likely.
+If `grantedByPeer` has no matching `transfer/request` grant, TAP logs a warning before sending. The request is still sent — the peer will likely ask their human to review this.
 
 Flow:
 1. Send: `tap message request-funds <peer> --asset usdc --amount 5`
