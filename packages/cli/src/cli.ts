@@ -247,6 +247,7 @@ Examples:
 		.command("connect <invite-url>")
 		.description("Send a connection request from an invite")
 		.option("--yes", "Auto-approve connection (no interactive prompt)")
+		.option("--wait [seconds]", "Wait for connection to become active (default: 60s)")
 		.addHelpText(
 			"after",
 			`
@@ -254,12 +255,16 @@ Connect establishes trust only. Publish or request grants separately after the c
 
 Examples:
   tap connect "<invite-url>" --yes
+  tap connect "<invite-url>" --yes --wait
+  tap connect "<invite-url>" --yes --wait 120
 `,
 		)
-		.action(async (inviteUrl: string, cmdOpts: { yes?: boolean }) => {
+		.action(async (inviteUrl: string, cmdOpts: { yes?: boolean; wait?: string | boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { connectCommand } = await import("./commands/connect.js");
-			await connectCommand(inviteUrl, !!cmdOpts.yes, opts);
+			const waitSeconds =
+				cmdOpts.wait === true ? 60 : cmdOpts.wait ? Number(cmdOpts.wait) : undefined;
+			await connectCommand(inviteUrl, !!cmdOpts.yes, opts, waitSeconds);
 		});
 
 	const permissions = program.command("permissions").description("Manage directional grants");

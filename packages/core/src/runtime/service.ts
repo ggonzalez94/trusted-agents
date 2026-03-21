@@ -673,6 +673,16 @@ export class TapMessagingService {
 	private async requestFundsInternal(input: TapRequestFundsInput): Promise<TapRequestFundsResult> {
 		return await this.withTransportSession(async () => {
 			const contact = await this.requireActiveContact(input.peer);
+			const peerTransferGrants = findActiveGrantsByScope(
+				contact.permissions.grantedByPeer,
+				"transfer/request",
+			);
+			if (peerTransferGrants.length === 0) {
+				this.log(
+					"warn",
+					`No matching transfer/request grant found in grantedByPeer for ${contact.peerDisplayName}. The peer may reject this request.`,
+				);
+			}
 			const requestPayload = {
 				type: "transfer/request" as const,
 				actionId: generateNonce(),
@@ -1128,6 +1138,7 @@ export class TapMessagingService {
 			this.emitEvent({
 				direction: "incoming",
 				from: envelope.from,
+				fromName: contact.peerDisplayName,
 				method: envelope.message.method,
 				id: envelope.message.id,
 				receipt_status: status,
@@ -1149,6 +1160,7 @@ export class TapMessagingService {
 			this.emitEvent({
 				direction: "incoming",
 				from: envelope.from,
+				fromName: contact.peerDisplayName,
 				method: envelope.message.method,
 				id: envelope.message.id,
 				receipt_status: status,
@@ -1168,6 +1180,7 @@ export class TapMessagingService {
 			this.emitEvent({
 				direction: "incoming",
 				from: envelope.from,
+				fromName: contact.peerDisplayName,
 				method: envelope.message.method,
 				id: envelope.message.id,
 				receipt_status: status,
@@ -1191,6 +1204,7 @@ export class TapMessagingService {
 		this.emitEvent({
 			direction: "incoming",
 			from: envelope.from,
+			fromName: contact.peerDisplayName,
 			method: envelope.message.method,
 			id: envelope.message.id,
 			receipt_status: status,
@@ -1236,8 +1250,9 @@ export class TapMessagingService {
 			return { status: "duplicate" };
 		}
 
+		let peerName: string | undefined;
 		if (envelope.message.method === ACTION_RESULT) {
-			await this.handleActionResult(envelope.from, envelope.message);
+			peerName = await this.handleActionResult(envelope.from, envelope.message);
 		} else {
 			throw new ValidationError(`Unsupported result method: ${envelope.message.method}`);
 		}
@@ -1247,6 +1262,7 @@ export class TapMessagingService {
 		this.emitEvent({
 			direction: "incoming",
 			from: envelope.from,
+			...(peerName ? { fromName: peerName } : {}),
 			method: envelope.message.method,
 			id: envelope.message.id,
 			receipt_status: status,
@@ -1650,7 +1666,10 @@ export class TapMessagingService {
 		return "received";
 	}
 
-	private async handleActionResult(from: number, message: ProtocolMessage): Promise<void> {
+	private async handleActionResult(
+		from: number,
+		message: ProtocolMessage,
+	): Promise<string | undefined> {
 		const contact = await findContactForMessage(this.context, from, message);
 		if (contact) {
 			await this.appendConversationLogSafe(contact, message, "incoming");
@@ -1659,7 +1678,7 @@ export class TapMessagingService {
 
 		const response = parseTransferActionResponse(message);
 		if (!response) {
-			return;
+			return contact?.peerDisplayName;
 		}
 
 		if (contact) {
@@ -1690,6 +1709,7 @@ export class TapMessagingService {
 				`Received transfer ${response.status} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
 			);
 		}
+		return contact?.peerDisplayName;
 	}
 
 	private async sendConnectionResult(

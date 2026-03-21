@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
 	ERC8004Registry,
 	ERC8004_ABI,
@@ -26,6 +26,7 @@ import {
 } from "../lib/execution.js";
 import { resolvePinataJwt, uploadToIpfsPinata, uploadToIpfsX402 } from "../lib/ipfs.js";
 import { error, info, success, verbose } from "../lib/output.js";
+import { commandExists } from "../lib/shell.js";
 import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -50,6 +51,15 @@ function parseCapabilities(input: string): string[] {
 		.split(",")
 		.map((capability) => capability.trim())
 		.filter(Boolean);
+}
+
+function buildOpenClawConfigStep(dataDir: string): string {
+	const absPath = resolve(dataDir);
+	const identity = JSON.stringify([
+		{ name: "default", dataDir: absPath, reconcileIntervalMinutes: 10 },
+	]);
+	const escaped = identity.replace(/'/g, "'\\''");
+	return `Configure OpenClaw plugin: openclaw config set plugins.entries.trusted-agents-tap.config.identities '${escaped}' --json`;
 }
 
 function upsertXmtpService(
@@ -508,6 +518,16 @@ export async function registerCommand(
 			? `${chainConfig.blockExplorerUrl}/address/${chainConfig.registryAddress}`
 			: undefined;
 
+		const nextSteps = [
+			`Agent #${agentId} is live on ${chainConfig.name}`,
+			"Create an invite: tap invite create",
+			"Share the link with a peer, who runs: tap connect <url> --yes",
+		];
+
+		if (await commandExists("openclaw")) {
+			nextSteps.push(buildOpenClawConfigStep(config.dataDir));
+		}
+
 		success(
 			{
 				agent_id: agentId,
@@ -524,11 +544,7 @@ export async function registerCommand(
 				transaction_hash: executionResult.transactionHash,
 				user_operation_hash: executionResult.userOperationHash,
 				explorer: explorerUrl,
-				next_steps: [
-					`Agent #${agentId} is live on ${chainConfig.name}`,
-					"Create an invite: tap invite create",
-					"Share the link with a peer, who runs: tap connect <url> --yes",
-				],
+				next_steps: nextSteps,
 			},
 			opts,
 			startTime,
@@ -609,6 +625,11 @@ export async function registerUpdateCommand(
 			);
 			emitExecutionWarnings(executionResult, opts);
 
+			const uriNextSteps: string[] = [];
+			if (await commandExists("openclaw")) {
+				uriNextSteps.push(buildOpenClawConfigStep(config.dataDir));
+			}
+
 			success(
 				{
 					agent_id: config.agentId,
@@ -619,6 +640,7 @@ export async function registerUpdateCommand(
 					transaction_hash: executionResult.transactionHash,
 					user_operation_hash: executionResult.userOperationHash,
 					updated: true,
+					...(uriNextSteps.length > 0 ? { next_steps: uriNextSteps } : {}),
 				},
 				opts,
 				startTime,
@@ -751,6 +773,11 @@ export async function registerUpdateCommand(
 			verbose(warning, opts);
 		}
 
+		const updateNextSteps: string[] = [];
+		if (await commandExists("openclaw")) {
+			updateNextSteps.push(buildOpenClawConfigStep(config.dataDir));
+		}
+
 		success(
 			{
 				agent_id: config.agentId,
@@ -762,6 +789,7 @@ export async function registerUpdateCommand(
 				transaction_hash: executionResult.transactionHash,
 				user_operation_hash: executionResult.userOperationHash,
 				updated: true,
+				...(updateNextSteps.length > 0 ? { next_steps: updateNextSteps } : {}),
 			},
 			opts,
 			startTime,

@@ -40,12 +40,14 @@ Invites are reusable bearer credentials until they expire. Sharing the invite is
 tap invite create --expiry 3600
 ```
 
-### `tap connect <invite-url> [--yes]`
+### `tap connect <invite-url> [--yes] [--wait [seconds]]`
 
 Send an asynchronous trust request using a signed invite. The peer does not need to be online at the same moment. TAP sends `connection/request` immediately and creates the contact on this side only after a matching `connection/result` arrives. The remote peer auto-accepts valid invites during `tap message listen` or `tap message sync`. If another TAP runtime already owns this identity, `tap connect` queues behind that owner instead of failing.
 
+The `--wait` flag polls for the connection to become active (default: 60s timeout). Without `--wait`, returns immediately with `pending` status.
+
 ```bash
-tap connect "<invite-url>" --yes
+tap connect "<invite-url>" --yes --wait 60
 ```
 
 ### `tap permissions show [peer]`

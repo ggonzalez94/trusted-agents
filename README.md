@@ -17,52 +17,81 @@ TAP is a local-first protocol for personal AI agents to discover each other, est
 
 4. **Directional permissions** — Owners control what each peer agent is allowed to ask for. Grants are scoped (e.g. "can request up to 10 USDC per week") and stored locally.
 
-5. **Account abstraction using EIP-7702** - Your agent only needs USDC and he can register in the 8004 registry, pay for his own transactions, and do anything on-chain.
+5. **Account abstraction using EIP-7702 or ERC-4337** — Your agent only needs USDC and it can register in the 8004 registry, pay for its own transactions, and do anything on-chain.
 
-## Install
+## Get Started
 
-From GitHub:
+### Agent mode
+
+Tell your agent:
+
+> Install and configure Trusted Agents Protocol from github.com/ggonzalez94/trusted-agents.
+> Let's choose the chain, name, and capabilities together.
+
+The install script gives your agent the `tap` CLI and loads the TAP skill tree, which guides it through identity setup, funding, registration, connections, and permissions — no further instructions needed.
+
+If your agent needs the install command directly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-Or just tell your agent: "install and configure github.com/ggonzalez94/trusted-agents"  
-Your agent should guide you trough the rest of the configuration steps.
+For agents without the skill tree loaded, the full operational guide is at:
+[`packages/sdk/skills/trusted-agents/SKILL.md`](https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/packages/sdk/skills/trusted-agents/SKILL.md)
 
-From a local clone:
+### Manual mode
+
+<details>
+<summary>Step-by-step instructions for humans or agents without skill support</summary>
+
+#### Prerequisites
+
+- Node.js 18+ or Bun
+- USDC on the chain you want to register on (Base recommended — only needs USDC, no ETH)
+
+#### 1. Install
 
 ```bash
-bash scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-This gives you the `tap` command globally.
+From a local clone: `bash scripts/install.sh`
+
+For OpenClaw, also run:
 
 ```bash
 tap install --runtime openclaw
 ```
 
-For OpenClaw, this installs the TAP Gateway plugin from this repo. It does not link the generic TAP skill tree into `~/.openclaw/skills`.
-
-### Prerequisites
-
-- Node.js 18+ or Bun
-- Funds on the chain you want to register the agent on(if the chain supports EIP-7702 you only need USDC, otherwise you also need ETH)
-
-## Quick Start
-
-### Initialize and register an agent
+#### 2. Initialize
 
 ```bash
-tap init
-tap balance                    # check wallet funding
+tap init --chain base
+```
+
+#### 3. Fund the wallet
+
+Your agent needs ~$0.50 USDC on Base to register.
+
+- **Coinbase or Binance**: withdraw USDC directly to Base using the address from `tap init`
+- **Bridge**: send USDC from another chain via [bridge.base.org](https://bridge.base.org)
+
+```bash
+tap balance    # confirm funding arrived
+```
+
+#### 4. Register
+
+```bash
 tap register \
   --name "MyAgent" \
   --description "Personal assistant" \
-  --capabilities "general-chat,scheduling, transfer"
+  --capabilities "general-chat,transfer"
 ```
 
-### Connect two agents
+On OpenClaw, `tap register` output includes the plugin config command — run it to wire your identity into Gateway.
+
+#### 5. Connect two agents
 
 On agent A:
 ```bash
@@ -72,29 +101,13 @@ tap invite create
 
 On agent B:
 ```bash
-tap connect "<invite-url>" --yes
+tap connect "<invite-url>" --yes --wait 60
 ```
 
-`tap connect` establishes trust only. If agent A is not already listening, run `tap message sync` on A to accept the request and `tap message sync` on B to ingest the later `connection/result`.
+If not using `--wait`, run `tap message sync` on both sides to process the connection handshake.
 
-### Send messages
+#### 6. Grant permissions
 
-```bash
-tap message send PeerAgent "What's on the agenda today?" --scope general-chat
-tap message sync                         # pull incoming messages
-tap conversations list --with PeerAgent  # review the conversation
-```
-
-### Manage permissions
-
-```bash
-tap permissions show PeerAgent
-tap permissions grant PeerAgent --file ./grants/budget.json --note "weekly budget"
-tap permissions request PeerAgent --file ./grants/request.json --note "need transfer approval"
-tap permissions revoke PeerAgent --grant-id weekly-usdc --note "paused"
-```
-
-A grant file looks like this:
 ```json
 {
   "version": "tap-grants/v1",
@@ -108,25 +121,19 @@ A grant file looks like this:
 }
 ```
 
-## Telling Your Agent About TAP
-
-If your agent runs on [OpenClaw](https://openclaw.ai), use the managed TAP install path:
-
 ```bash
-tap install --runtime openclaw
+tap permissions grant PeerAgent --file ./grants/budget.json --note "weekly budget"
 ```
 
-This is the preferred OpenClaw mode. Use the plugin-backed `tap_gateway` surface for transport-active TAP work.
-
-If you intentionally need the low-level OpenClaw command, you can still run:
+#### 7. Send messages
 
 ```bash
-openclaw plugins install --link ./packages/openclaw-plugin
+tap message send PeerAgent "What's on the agenda today?" --scope general-chat
+tap message sync                         # pull incoming messages
+tap conversations list --with PeerAgent  # review the conversation
 ```
 
-That path only links the plugin. It does not run TAP's Gateway stop/restore logic and it does not clean up legacy `~/.openclaw/skills/trusted-agents` entries.
-
-For other agent frameworks, point them at the [TAP skill files](./packages/sdk/skills/trusted-agents/) which describe available commands, expected inputs, and error handling — everything an LLM needs to use `tap` effectively.
+</details>
 
 ## Runtime Modes
 
@@ -145,11 +152,20 @@ Keep exactly one transport owner per TAP identity — don't run `listen` and the
 | **Setup** | `install` |
 | **Onboarding** | `init`, `register`, `register update`, `balance` |
 | **Identity** | `config show/set`, `identity show/resolve/resolve-self` |
-| **Connections** | `invite create/list`, `connect`, `contacts list/show/remove` |
+| **Connections** | `invite create`, `connect`, `contacts list/show/remove` |
 | **Permissions** | `permissions show/grant/request/revoke` |
 | **Messaging** | `message send/request-funds/sync/listen`, `conversations list/show` |
 
 Run `tap <command> --help` for details on any command.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `Insufficient funds` | Fund your wallet with USDC on Base (minimum ~$0.50). Run `tap balance` to check. |
+| `TransportOwnershipError` | Another TAP process owns this identity. In OpenClaw, use `tap_gateway` instead. Otherwise stop the other process. |
+| `Invalid or expired invite` | Invites are time-limited. Create a new one with `tap invite create`. |
+| `Contact not active` | Connection handshake incomplete. Run `tap message sync` on both sides. |
 
 ## Development
 
@@ -182,6 +198,8 @@ All per-agent state lives under one root (default `~/.trustedagents`):
 ├── config.yaml
 ├── identity/agent.key
 ├── contacts.json
+├── request-journal.json
+├── pending-connects.json
 ├── conversations/<id>.json
 └── xmtp/<inboxId>.db3
 ```

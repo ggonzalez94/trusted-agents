@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -25,7 +25,7 @@ describe("OpenClaw TAP skill bundle", () => {
 			const resolvedPath = resolve(skillDir, reference);
 			expect(normalize(resolvedPath).startsWith(normalize(`${skillDir}/`))).toBe(true);
 			expect(existsSync(resolvedPath)).toBe(true);
-			expect(lstatSync(resolvedPath).isSymbolicLink()).toBe(false);
+			// Symlinks are allowed — shared reference docs are symlinked to the SDK canonical copies
 		}
 	});
 
