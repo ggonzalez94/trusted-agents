@@ -298,17 +298,13 @@ File: `packages/sdk/src/orchestrator.ts`
 - Validate both unit tests and optional XMTP integration test
 
 ### Adding/changing/removing a CLI command
-- Update the relevant skill file in `packages/sdk/skills/trusted-agents/`
-- If the change is also relevant in OpenClaw plugin mode, update the mirrored skill/reference in `packages/openclaw-plugin/skills/trusted-agents-openclaw/` too.
-- Every CLI command must appear in exactly one skill file as a documented command
-- Skill structure maps to command domains:
-  - `SKILL.md` (root): utility commands — `balance`, `config`, `identity`
-  - `onboard/SKILL.md`: `init`, `register`, `register update`
-  - `connections/SKILL.md`: `invite`, `connect`, `contacts`
-  - `messaging/SKILL.md`: `message`, `conversations`
+- Update `packages/sdk/skills/trusted-agents/SKILL.md` (the single generic TAP skill).
+- If the change is also relevant in OpenClaw plugin mode, update `packages/openclaw-plugin/skills/trusted-agents-openclaw/SKILL.md` too.
+- Every CLI command must appear in the skill file as a documented command.
+- Each skill tree is a single `SKILL.md` plus one reference file (`references/permissions-v1.md`). No sub-skill directories.
+- The generic skill covers all `tap` CLI commands. The OpenClaw skill covers the same commands plus `tap_gateway` actions and notification handling.
 - Keep skills concise: command syntax + flags + one example + errors. No internal implementation details.
 - Every `SKILL.md` must have YAML frontmatter with `name` and `description`
-- Cross-references between skills (e.g., "use `tap contacts list` to check") are fine; duplicate primary docs are not
 
 ### Changing TAP skill/reference semantics
 - The generic TAP skill tree lives in `packages/sdk/skills/trusted-agents/`.
