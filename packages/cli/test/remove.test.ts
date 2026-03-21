@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { removeCommand } from "../src/commands/remove.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as removeCommandModule from "../src/commands/remove.js";
 import { runCli } from "./helpers/run-cli.js";
 
 describe("tap remove", () => {
@@ -35,6 +35,17 @@ describe("tap remove", () => {
 			configurable: true,
 		});
 		process.exitCode = undefined;
+		vi.spyOn(removeCommandModule.removeRuntime, "probeRemoveNativeBalance").mockResolvedValue({
+			context: null,
+			probe: {
+				checked: false,
+				chain: null,
+				chain_name: null,
+				address: null,
+				native_balance_wei: null,
+				native_balance_eth: null,
+			},
+		});
 		await seedAgentData(dataDir);
 	});
 
@@ -48,6 +59,7 @@ describe("tap remove", () => {
 		process.stdin.once = origStdinOnce;
 		process.stdin.setEncoding = origStdinSetEncoding;
 		process.exitCode = undefined;
+		vi.restoreAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
@@ -74,7 +86,7 @@ describe("tap remove", () => {
 	});
 
 	it("requires the explicit wipe flag before removing data", async () => {
-		await removeCommand({}, { json: true, dataDir });
+		await removeCommandModule.removeCommand({}, { json: true, dataDir });
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -84,7 +96,7 @@ describe("tap remove", () => {
 	});
 
 	it("requires --yes in non-interactive mode", async () => {
-		await removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -104,7 +116,10 @@ describe("tap remove", () => {
 			return process.stdin;
 		}) as typeof process.stdin.once;
 
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -128,7 +143,10 @@ describe("tap remove", () => {
 			"utf-8",
 		);
 
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		expect(process.exitCode).toBe(1);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -140,7 +158,10 @@ describe("tap remove", () => {
 	it("refuses to wipe a data dir that contains non-TAP top-level entries", async () => {
 		await writeFile(join(dataDir, "README.md"), "not tap-managed\n", "utf-8");
 
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -151,7 +172,10 @@ describe("tap remove", () => {
 
 	it("removes the entire data dir in non-interactive mode when explicitly confirmed", async () => {
 		const resolvedDataDir = await realpath(dataDir);
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -166,7 +190,10 @@ describe("tap remove", () => {
 		await mkdir(emptyDataDir, { recursive: true });
 		stdoutWrites = [];
 
-		await removeCommand({ dryRun: true }, { json: true, dataDir: emptyDataDir });
+		await removeCommandModule.removeCommand(
+			{ dryRun: true },
+			{ json: true, dataDir: emptyDataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -177,7 +204,7 @@ describe("tap remove", () => {
 	});
 
 	it("refuses external config paths for remove", async () => {
-		await removeCommand(
+		await removeCommandModule.removeCommand(
 			{ dryRun: true },
 			{ json: true, dataDir, config: join(tmpDir, "outside-config.yaml") },
 		);
@@ -191,7 +218,7 @@ describe("tap remove", () => {
 	it("refuses data dirs with unexpected top-level entries", async () => {
 		await writeFile(join(dataDir, "keep.txt"), "keep\n", "utf-8");
 
-		await removeCommand({ dryRun: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand({ dryRun: true }, { json: true, dataDir });
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -200,7 +227,10 @@ describe("tap remove", () => {
 		expect(output.data.paths_to_remove).not.toContain(join(dataDir, "keep.txt"));
 
 		stdoutWrites = [];
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		const blocked = JSON.parse(stdoutWrites[0]!);
 		expect(blocked.ok).toBe(false);
@@ -217,7 +247,7 @@ describe("tap remove", () => {
 		const resolvedActualDataDir = await realpath(actualDataDir);
 		stdoutWrites = [];
 
-		await removeCommand(
+		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
 			{ json: true, dataDir: linkedDataDir },
 		);
@@ -227,6 +257,48 @@ describe("tap remove", () => {
 		expect(output.data.data_dir).toBe(resolvedActualDataDir);
 		expect(output.data.removed_paths).toContain(join(resolvedActualDataDir, "config.yaml"));
 		expect(existsSync(actualDataDir)).toBe(false);
+	});
+
+	it("offers optional balance transfer before interactive wipe", async () => {
+		Object.defineProperty(process.stdin, "isTTY", {
+			value: true,
+			configurable: true,
+		});
+		process.stdin.setEncoding = (() => process.stdin) as typeof process.stdin.setEncoding;
+		const answers = ["no\n", "no\n"];
+		process.stdin.once = ((_: string, handler: (data: string) => void) => {
+			handler(answers.shift() ?? "no\n");
+			return process.stdin;
+		}) as typeof process.stdin.once;
+
+		vi.spyOn(removeCommandModule.removeRuntime, "probeRemoveNativeBalance").mockResolvedValue({
+			context: {
+				config: {} as never,
+				chain: "eip155:8453",
+				chainConfig: { name: "Base" } as never,
+				address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+				nativeBalanceWei: 1000000000000000000n,
+				nativeBalanceEth: "1",
+			},
+			probe: {
+				checked: true,
+				chain: "eip155:8453",
+				chain_name: "Base",
+				address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+				native_balance_wei: "1000000000000000000",
+				native_balance_eth: "1",
+			},
+		});
+
+		await removeCommandModule.removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.ok).toBe(true);
+		expect(output.data.removed).toBe(false);
+		expect(output.data.aborted).toBe(true);
+		expect(output.data.funds_transfer.attempted).toBe(false);
+		expect(output.data.funds_transfer.skipped_reason).toContain("declined");
+		expect(existsSync(dataDir)).toBe(true);
 	});
 });
 

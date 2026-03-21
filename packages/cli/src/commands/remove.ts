@@ -2,17 +2,22 @@ import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+	type ChainConfig,
 	type TransportOwnerInfo,
 	TransportOwnerLock,
+	type TrustedAgentsConfig,
+	ValidationError,
 	isProcessAlive,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
+import { formatUnits, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
-import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
+import { loadConfig, resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { promptYesNo } from "../lib/prompt.js";
+import { promptInput, promptYesNo } from "../lib/prompt.js";
+import { buildPublicClient, buildWalletClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RemoveOptions {
@@ -29,6 +34,46 @@ interface DataDirInspection {
 	hasManagedEntries: boolean;
 	managedEntries: string[];
 	unexpectedEntries: string[];
+}
+
+export interface RemoveBalanceContext {
+	config: TrustedAgentsConfig;
+	chain: string;
+	chainConfig: ChainConfig;
+	address: `0x${string}`;
+	nativeBalanceWei: bigint;
+	nativeBalanceEth: string;
+}
+
+export interface RemoveBalanceProbe {
+	checked: boolean;
+	chain: string | null;
+	chain_name: string | null;
+	address: string | null;
+	native_balance_wei: string | null;
+	native_balance_eth: string | null;
+	warning?: string;
+}
+
+export interface RemoveBalanceProbeResult {
+	context: RemoveBalanceContext | null;
+	probe: RemoveBalanceProbe;
+}
+
+interface RemoveTransferResult {
+	txHash: `0x${string}`;
+	amountWei: bigint;
+	gasReserveWei: bigint;
+}
+
+export interface RemoveFundsTransferOutcome {
+	attempted: boolean;
+	skipped_reason?: string;
+	to_address?: string;
+	amount_wei?: string;
+	amount_eth?: string;
+	gas_reserve_wei?: string;
+	tx_hash?: string;
 }
 
 export interface RemovePlan {
@@ -60,7 +105,20 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 	const startTime = Date.now();
 
 	try {
+		const interactive = isInteractiveSession();
 		const plan = await buildRemovePlan(opts);
+		const warnings = [...plan.warnings];
+		const balanceProbe =
+			interactive && !cmdOpts.dryRun
+				? await removeRuntime.probeRemoveNativeBalance(opts)
+				: skippedBalanceProbe(
+						cmdOpts.dryRun
+							? "On-chain balance check skipped during dry-run."
+							: "On-chain balance check skipped in non-interactive mode.",
+					);
+		if (balanceProbe.probe.warning) {
+			warnings.push(balanceProbe.probe.warning);
+		}
 
 		if (cmdOpts.dryRun) {
 			success(
@@ -73,11 +131,12 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 					paths_to_remove: plan.pathsToRemove,
 					live_transport_owner: plan.liveTransportOwner,
 					blocking_reasons: plan.blockingReasons,
+					balance_check: balanceProbe.probe,
 					can_remove:
 						plan.liveTransportOwner === null &&
 						plan.blockingReasons.length === 0 &&
 						plan.pathsToRemove.length > 0,
-					warnings: plan.warnings,
+					warnings,
 				},
 				opts,
 				startTime,
@@ -120,7 +179,8 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 					agent_id: plan.agentId,
 					address: plan.address,
 					removed_paths: [],
-					warnings: [...plan.warnings, "No local TAP data was found to remove."],
+					balance_check: balanceProbe.probe,
+					warnings: [...warnings, "No local TAP data was found to remove."],
 				},
 				opts,
 				startTime,
@@ -128,7 +188,7 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 			return;
 		}
 
-		if (!isInteractiveSession() && !cmdOpts.yes) {
+		if (!interactive && !cmdOpts.yes) {
 			error(
 				"VALIDATION_ERROR",
 				"Non-interactive removal requires both --unsafe-wipe-data-dir and --yes.",
@@ -138,7 +198,25 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 			return;
 		}
 
-		if (isInteractiveSession()) {
+		let fundsTransfer: RemoveFundsTransferOutcome;
+		if (interactive) {
+			fundsTransfer = await maybeTransferRemainingNativeFunds(balanceProbe);
+		} else {
+			fundsTransfer = {
+				attempted: false,
+				skipped_reason:
+					balanceProbe.context && balanceProbe.context.nativeBalanceWei > 0n
+						? "Non-interactive mode skipped optional funds transfer. Re-run interactively to move funds before wiping local data."
+						: "No interactive transfer step in non-interactive mode.",
+			};
+			if (balanceProbe.context && balanceProbe.context.nativeBalanceWei > 0n) {
+				warnings.push(
+					"Non-interactive mode skipped optional funds transfer. Re-run interactively to move funds before wiping local data.",
+				);
+			}
+		}
+
+		if (interactive) {
 			const confirmed = await promptYesNo(
 				`Remove local TAP agent data at ${plan.dataDir}? This deletes the entire data dir and cannot be undone. [y/N] `,
 			);
@@ -148,6 +226,8 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 						removed: false,
 						aborted: true,
 						data_dir: plan.dataDir,
+						balance_check: balanceProbe.probe,
+						funds_transfer: fundsTransfer,
 						reason: "Confirmation declined. No local TAP data was removed.",
 					},
 					opts,
@@ -167,7 +247,9 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 				agent_id: plan.agentId,
 				address: plan.address,
 				removed_paths: plan.pathsToRemove,
-				warnings: plan.warnings,
+				balance_check: balanceProbe.probe,
+				funds_transfer: fundsTransfer,
+				warnings,
 			},
 			opts,
 			startTime,
@@ -177,6 +259,198 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 		process.exitCode = exitCodeForError(err);
 	}
 }
+
+function skippedBalanceProbe(reason: string): RemoveBalanceProbeResult {
+	return {
+		context: null,
+		probe: {
+			checked: false,
+			chain: null,
+			chain_name: null,
+			address: null,
+			native_balance_wei: null,
+			native_balance_eth: null,
+			warning: reason,
+		},
+	};
+}
+
+export async function probeRemoveNativeBalance(
+	opts: GlobalOptions,
+): Promise<RemoveBalanceProbeResult> {
+	try {
+		const config = await loadConfig(opts, { requireAgentId: false });
+		const chain = config.chain;
+		const chainConfig = config.chains[chain];
+		if (!chainConfig) {
+			return {
+				context: null,
+				probe: {
+					checked: false,
+					chain,
+					chain_name: null,
+					address: null,
+					native_balance_wei: null,
+					native_balance_eth: null,
+					warning: `Could not read on-chain balance because chain ${chain} is not configured.`,
+				},
+			};
+		}
+
+		const address = privateKeyToAccount(config.privateKey).address;
+		const publicClient = buildPublicClient(chainConfig);
+		const nativeBalanceWei = await publicClient.getBalance({ address });
+		const context: RemoveBalanceContext = {
+			config,
+			chain,
+			chainConfig,
+			address,
+			nativeBalanceWei,
+			nativeBalanceEth: formatUnits(nativeBalanceWei, 18),
+		};
+
+		return {
+			context,
+			probe: {
+				checked: true,
+				chain,
+				chain_name: chainConfig.name,
+				address,
+				native_balance_wei: nativeBalanceWei.toString(),
+				native_balance_eth: context.nativeBalanceEth,
+			},
+		};
+	} catch (err) {
+		return {
+			context: null,
+			probe: {
+				checked: false,
+				chain: null,
+				chain_name: null,
+				address: null,
+				native_balance_wei: null,
+				native_balance_eth: null,
+				warning: `On-chain balance check skipped: ${err instanceof Error ? err.message : String(err)}`,
+			},
+		};
+	}
+}
+
+export async function transferRemainingNativeBalance(
+	balanceContext: RemoveBalanceContext,
+	toAddress: `0x${string}`,
+): Promise<RemoveTransferResult> {
+	const account = privateKeyToAccount(balanceContext.config.privateKey);
+	const publicClient = buildPublicClient(balanceContext.chainConfig);
+	const walletClient = buildWalletClient(
+		balanceContext.config.privateKey,
+		balanceContext.chainConfig,
+	);
+	const gasEstimate = await publicClient.estimateGas({
+		account: account.address,
+		to: toAddress,
+		value: 0n,
+		data: "0x",
+	});
+	const fees = await publicClient.estimateFeesPerGas();
+	const gasPrice = fees.maxFeePerGas ?? fees.gasPrice;
+	if (gasPrice === undefined) {
+		throw new Error("Could not estimate gas price for the native transfer.");
+	}
+	const gasReserveWei = gasEstimate * gasPrice;
+	if (balanceContext.nativeBalanceWei <= gasReserveWei) {
+		throw new ValidationError(
+			`Current balance ${balanceContext.nativeBalanceEth} ETH is not enough to cover transfer gas.`,
+		);
+	}
+
+	const amountWei = balanceContext.nativeBalanceWei - gasReserveWei;
+	const txRequest: Parameters<typeof walletClient.sendTransaction>[0] = {
+		account,
+		chain: walletClient.chain,
+		to: toAddress,
+		value: amountWei,
+		gas: gasEstimate,
+		data: "0x",
+	};
+	if (fees.maxFeePerGas !== undefined) {
+		txRequest.maxFeePerGas = fees.maxFeePerGas;
+		if (fees.maxPriorityFeePerGas !== undefined) {
+			txRequest.maxPriorityFeePerGas = fees.maxPriorityFeePerGas;
+		}
+	} else if (fees.gasPrice !== undefined) {
+		txRequest.gasPrice = fees.gasPrice;
+	}
+
+	const txHash = await walletClient.sendTransaction(txRequest);
+	const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+	if (receipt.status === "reverted") {
+		throw new Error(
+			`Transfer transaction ${txHash} reverted on ${balanceContext.chainConfig.name}.`,
+		);
+	}
+
+	return {
+		txHash,
+		amountWei,
+		gasReserveWei,
+	};
+}
+
+async function maybeTransferRemainingNativeFunds(
+	balanceProbe: RemoveBalanceProbeResult,
+): Promise<RemoveFundsTransferOutcome> {
+	const balanceContext = balanceProbe.context;
+	if (!balanceContext) {
+		return {
+			attempted: false,
+			skipped_reason: "On-chain balance unavailable; skipped optional funds transfer.",
+		};
+	}
+	if (balanceContext.nativeBalanceWei === 0n) {
+		return {
+			attempted: false,
+			skipped_reason: "No native balance to transfer before removal.",
+		};
+	}
+
+	const transferPrompt = await promptYesNo(
+		`Current ${balanceContext.chainConfig.name} balance for ${balanceContext.address}: ${balanceContext.nativeBalanceEth} ETH. Send remaining funds to another address before local wipe? [y/N] `,
+	);
+	if (!transferPrompt) {
+		return {
+			attempted: false,
+			skipped_reason: "Operator declined optional funds transfer.",
+		};
+	}
+
+	const destinationInput = await promptInput("Destination EVM address for remaining funds: ");
+	if (!destinationInput) {
+		throw new ValidationError("Destination address is required to transfer remaining funds.");
+	}
+	if (!isAddress(destinationInput)) {
+		throw new ValidationError(`Invalid destination address: ${destinationInput}`);
+	}
+	const toAddress = destinationInput as `0x${string}`;
+	if (toAddress.toLowerCase() === balanceContext.address.toLowerCase()) {
+		throw new ValidationError("Destination address must differ from the current agent address.");
+	}
+
+	const transfer = await removeRuntime.transferRemainingNativeBalance(balanceContext, toAddress);
+	return {
+		attempted: true,
+		to_address: toAddress,
+		amount_wei: transfer.amountWei.toString(),
+		amount_eth: formatUnits(transfer.amountWei, 18),
+		gas_reserve_wei: transfer.gasReserveWei.toString(),
+		tx_hash: transfer.txHash,
+	};
+}
+
+export const removeRuntime = {
+	probeRemoveNativeBalance,
+	transferRemainingNativeBalance,
+};
 
 export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> {
 	const dataDir = await resolveRemoveDataDir(opts);
