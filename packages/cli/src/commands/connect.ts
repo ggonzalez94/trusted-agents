@@ -148,18 +148,6 @@ export async function connectCommand(
 		}
 
 		const result = outcome.result;
-		success(
-			{
-				connection_id: result.connectionId,
-				peer_name: result.peerName,
-				peer_agent_id: result.peerAgentId,
-				status: result.status,
-				...queuedTapCommandResultFields(outcome),
-				receipt: result.receipt,
-			},
-			opts,
-			startTime,
-		);
 
 		if (waitSeconds && result.status !== "active") {
 			const pollIntervalMs = 3000;
@@ -199,6 +187,19 @@ export async function connectCommand(
 
 			info(`Timed out waiting for connection. Run 'tap message sync' later to check.`, opts);
 		}
+
+		success(
+			{
+				connection_id: result.connectionId,
+				peer_name: result.peerName,
+				peer_agent_id: result.peerAgentId,
+				status: result.status,
+				...queuedTapCommandResultFields(outcome),
+				receipt: result.receipt,
+			},
+			opts,
+			startTime,
+		);
 	} catch (err) {
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
