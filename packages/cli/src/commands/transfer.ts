@@ -7,7 +7,7 @@ import {
 } from "trusted-agents-core";
 import type { ChainConfig } from "trusted-agents-core";
 import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
-import { getUsdcAsset } from "../lib/assets.js";
+import { getUsdcAsset, normalizeAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -151,14 +151,6 @@ export async function transferCommand(
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
 	}
-}
-
-function normalizeAsset(asset: string): "native" | "usdc" {
-	const normalized = asset.trim().toLowerCase();
-	if (normalized === "native" || normalized === "usdc") {
-		return normalized;
-	}
-	throw new ValidationError(`Unsupported asset: ${asset}. Use "native" or "usdc".`);
 }
 
 function normalizeRecipientAddress(toAddress: string): `0x${string}` {
