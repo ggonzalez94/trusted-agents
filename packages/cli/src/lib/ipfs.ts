@@ -10,6 +10,8 @@ function trimTrailingSlash(url: string): string {
 	return url.replace(/\/+$/, "");
 }
 
+const TAIKO_CHAINS = new Set(["eip155:167000", "eip155:167013"]);
+
 export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | undefined {
 	if (!value) {
 		return undefined;
@@ -27,6 +29,22 @@ export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | 
 	throw new Error(
 		`Invalid IPFS provider: ${value}. Expected one of: ${IPFS_UPLOAD_PROVIDERS.join(", ")}`,
 	);
+}
+
+/**
+ * Resolve `auto` to a concrete provider based on chain and available credentials.
+ *
+ * - Taiko chains → `tack` (x402 on Taiko)
+ * - Pinata JWT present → `pinata`
+ * - Otherwise → `x402` (Pinata x402 on Base)
+ */
+export function resolveAutoProvider(
+	chain: string,
+	pinataJwt?: string,
+): Exclude<IpfsUploadProvider, "auto"> {
+	if (pinataJwt) return "pinata";
+	if (TAIKO_CHAINS.has(chain)) return "tack";
+	return "x402";
 }
 
 export function resolveTackApiUrl(configValue?: string): string {

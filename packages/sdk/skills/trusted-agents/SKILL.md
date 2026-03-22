@@ -94,12 +94,16 @@ This generates a fresh wallet and local config.
 
 ### Step 2: Fund the wallet
 
-Show the user their wallet address from the `tap init` output. Ask them to fund it with **~0.50 USDC on Base**.
+Show the user their wallet address from the `tap init` output. Ask them to fund it.
 
-- On Base, only USDC is needed — gas is covered by EIP-7702 with Circle Paymaster. No ETH required.
-- On Taiko, native gas tokens are used instead.
-- By default, IPFS upload (for the registration file) pays with Base mainnet USDC via x402.
-- Optional: use Tack on Taiko with `--ipfs-provider tack` or `tap config set ipfs.provider tack`.
+Your chain determines everything — registration chain, gas payment, and IPFS upload provider:
+
+| Chain | Fund with | Gas | IPFS upload |
+|---|---|---|---|
+| Base | ~0.50 USDC on Base | EIP-7702 + Circle Paymaster (no ETH needed) | Pinata x402 (Base USDC) |
+| Taiko | USDC on Taiko | EIP-4337 + Servo Paymaster | Tack x402 (Taiko USDC) — endpoint: `https://tack-api-production.up.railway.app` |
+
+IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
 
 Confirm with `tap balance` before continuing.
 
@@ -124,7 +128,6 @@ Then register:
 
 ```bash
 tap register --name "TreasuryAgent" --description "Payment agent" --capabilities "transfer,general-chat"
-# Optional provider override: --ipfs-provider auto|x402|pinata|tack
 ```
 
 Registration uploads the agent's metadata to IPFS and registers an ERC-8004 token on-chain. When it completes, the agent is live and ready to connect.
@@ -330,7 +333,6 @@ For multi-identity setups: get `dataDir` from `tap_gateway status`, then pass `-
 tap balance [chain]                    # ETH + USDC balances
 tap config show                        # Resolved config (secrets redacted)
 tap config set <key> <value>           # Update one config value
-tap config set ipfs.provider tack      # Use Tack for registration IPFS uploads
 tap identity show                      # Wallet address, agent ID, chain
 tap identity resolve <id> [chain]      # Look up another agent
 tap identity resolve-self              # Check own published registration
@@ -353,7 +355,7 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
-| `Insufficient funds` | Fund the wallet with USDC (Base) or native gas (other chains) |
+| `Insufficient funds` | Fund the wallet with USDC — on Base for Base agents, on Taiko for Taiko agents |
 | `Invalid or expired invite` | Create a fresh invite |
 | `Contact not active yet` | Peer hasn't synced — run `tap message sync` |
 | `Peer not found in contacts` | Connect first or check the name/agent ID |

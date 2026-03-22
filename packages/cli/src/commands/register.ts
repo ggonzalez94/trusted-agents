@@ -26,6 +26,7 @@ import {
 	getExecutionPreview,
 } from "../lib/execution.js";
 import {
+	resolveAutoProvider,
 	resolveIpfsUploadProvider,
 	resolvePinataJwt,
 	resolveTackApiUrl,
@@ -358,7 +359,7 @@ async function ensureX402UploadFunding(
  * Provider resolution:
  * - `--ipfs-provider` flag
  * - `config.yaml` `ipfs.provider`
- * - `auto` fallback (x402 by default, Pinata when a JWT is present)
+ * - `auto` fallback: Taiko → tack, Pinata JWT present → pinata, else → x402
  */
 async function resolveAgentURI(
 	params: {
@@ -407,7 +408,9 @@ async function resolveAgentURI(
 	}
 	const jwt = resolvePinataJwt(params.pinataJwt);
 	const effectiveProvider: Exclude<IpfsUploadProvider, "auto"> =
-		configuredProvider === "auto" ? (jwt ? "pinata" : "x402") : configuredProvider;
+		configuredProvider === "auto"
+			? resolveAutoProvider(params.config.chain, jwt)
+			: configuredProvider;
 
 	// 3. x402 via Pinata endpoint (Base mainnet USDC)
 	if (effectiveProvider === "x402") {

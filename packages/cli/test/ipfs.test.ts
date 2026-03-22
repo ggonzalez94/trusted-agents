@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_TACK_API_ENDPOINT,
+	resolveAutoProvider,
 	resolveIpfsUploadProvider,
 	resolvePinataJwt,
 	resolveTackApiUrl,
@@ -42,6 +43,21 @@ describe("ipfs", () => {
 
 	it("rejects unknown upload providers", () => {
 		expect(() => resolveIpfsUploadProvider("unknown-provider")).toThrow("Invalid IPFS provider");
+	});
+
+	it("auto-selects tack for Taiko chains", () => {
+		expect(resolveAutoProvider("eip155:167000")).toBe("tack");
+		expect(resolveAutoProvider("eip155:167013")).toBe("tack");
+	});
+
+	it("auto-selects x402 for Base chains", () => {
+		expect(resolveAutoProvider("eip155:8453")).toBe("x402");
+		expect(resolveAutoProvider("eip155:84532")).toBe("x402");
+	});
+
+	it("auto prefers pinata when JWT is present regardless of chain", () => {
+		expect(resolveAutoProvider("eip155:167000", "jwt")).toBe("pinata");
+		expect(resolveAutoProvider("eip155:8453", "jwt")).toBe("pinata");
 	});
 
 	it("resolves tack API URL with defaults and env override", () => {
