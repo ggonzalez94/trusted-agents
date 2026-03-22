@@ -59,6 +59,8 @@ accept  → done (terminal)
 reject  → done (terminal)
 ```
 
+`cancel` operates post-acceptance (after a meeting is confirmed) and is not part of the negotiation state machine.
+
 No protocol-level round limits. Agents decide when to give up and send `reject`.
 
 ### Proposal Payload
@@ -423,7 +425,7 @@ src/scheduling/
   - **`onRequest`**: When scope is `scheduling/request`, route to `schedulingHandler.handleProposal()` instead of `decideTransfer()`
   - **`handleActionResult`**: Currently hardcoded to `parseTransferActionResponse` and silently ignores non-transfer results (returns early). Must be extended with scope-based dispatch to route `scheduling/request` results to `schedulingHandler.handleResponse()` for processing `scheduling/accept`, `scheduling/reject`, and `scheduling/cancel` payloads.
   - **`resolvePending`**: Currently hardcodes all `ACTION_REQUEST` entries as transfer requests (`decisionOverrides.transfers.set(...)` → `resolvePendingTransferRequest`). Must be extended with scope-based dispatch so scheduling pending entries route to `schedulingHandler.resolvePending()` instead.
-  - **`TapPendingRequestDetails` union type**: Currently `type TapPendingRequestDetails = TapPendingTransferDetails`. Must add `TapPendingSchedulingDetails` variant so that `tap message sync`, pending status output, and OpenClaw notification drain can surface scheduling-specific metadata (title, slots, schedulingId).
+  - **`TapPendingRequestDetails` union type**: Currently `type TapPendingRequestDetails = TapPendingTransferDetails`. Must add `TapPendingSchedulingDetails` variant so that `tap message sync`, pending status output, and OpenClaw notification drain can surface scheduling-specific metadata (title, slots, schedulingId). Note: `parsePendingRequestDetails` (which currently guards on `metadata.type !== "transfer"`) must also be updated to handle the scheduling variant.
   - Add hooks: `approveScheduling` + `confirmMeeting` + `onMeetingConfirmed`
 - No changes to: protocol/methods.ts, permissions/types.ts, transport, trust store, conversation logger, request journal
 
