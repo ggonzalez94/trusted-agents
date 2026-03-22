@@ -8,7 +8,7 @@ import { motion } from "framer-motion";
 
 function NftIcon() {
 	return (
-		<svg width={16} height={16} viewBox="0 0 20 20" fill="none">
+		<svg width={16} height={16} viewBox="0 0 20 20" fill="none" aria-hidden="true">
 			<path
 				d="M10 1l7.66 4.42v8.84L10 18.68 2.34 14.26V5.42L10 1z"
 				stroke="currentColor"
@@ -20,7 +20,7 @@ function NftIcon() {
 
 function MessageIcon() {
 	return (
-		<svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+		<svg width={16} height={16} viewBox="0 0 24 24" fill="none" aria-hidden="true">
 			<path
 				d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"
 				stroke="currentColor"
@@ -34,7 +34,7 @@ function MessageIcon() {
 
 function CodeIcon() {
 	return (
-		<svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+		<svg width={16} height={16} viewBox="0 0 24 24" fill="none" aria-hidden="true">
 			<path
 				d="M16 18l6-6-6-6M8 6l-6 6 6 6"
 				stroke="currentColor"
@@ -48,29 +48,16 @@ function CodeIcon() {
 
 function WalletIcon() {
 	return (
-		<svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-			<rect
-				x="2"
-				y="6"
-				width="20"
-				height="14"
-				rx="2"
-				stroke="currentColor"
-				strokeWidth="1.5"
-			/>
-			<path
-				d="M2 10h20M16 14.5h2"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
+		<svg width={16} height={16} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+			<rect x="2" y="6" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M2 10h20M16 14.5h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
 }
 
 function OpenSourceIcon() {
 	return (
-		<svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+		<svg width={16} height={16} viewBox="0 0 24 24" fill="none" aria-hidden="true">
 			<circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
 			<path
 				d="M12 3c-2 3.33-3 6.67-3 10s1 6.67 3 10M12 3c2 3.33 3 6.67 3 10s-1 6.67-3 10M3 12h18"

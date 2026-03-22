@@ -29,15 +29,10 @@ function HumanNode({
 					height={20}
 					viewBox="0 0 24 24"
 					fill="none"
+					aria-hidden="true"
 					className="text-zinc-400"
 				>
-					<circle
-						cx="12"
-						cy="8"
-						r="4"
-						stroke="currentColor"
-						strokeWidth="1.5"
-					/>
+					<circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="1.5" />
 					<path
 						d="M5 20c0-3.87 3.13-7 7-7s7 3.13 7 7"
 						stroke="currentColor"
@@ -73,6 +68,7 @@ function AgentNode({
 					height={22}
 					viewBox="0 0 20 20"
 					fill="none"
+					aria-hidden="true"
 					className="text-accent"
 				>
 					<path
@@ -82,9 +78,7 @@ function AgentNode({
 					/>
 				</svg>
 			</div>
-			<span className="font-mono text-[10px] font-medium text-accent/70">
-				{label}
-			</span>
+			<span className="font-mono text-[10px] font-medium text-accent/70">{label}</span>
 			<span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[8px] text-accent/50">
 				ERC-8004
 			</span>
@@ -142,6 +136,7 @@ function PermissionArrow({
 						height={8}
 						viewBox="0 0 6 8"
 						fill="none"
+						aria-hidden="true"
 						className="text-accent/50"
 					>
 						<path d="M5 1L1 4l4 3" fill="currentColor" />
@@ -154,6 +149,7 @@ function PermissionArrow({
 						height={8}
 						viewBox="0 0 6 8"
 						fill="none"
+						aria-hidden="true"
 						className="text-accent/50"
 					>
 						<path d="M1 1l4 3-4 3" fill="currentColor" />
@@ -197,18 +193,8 @@ function TrustGraph() {
 
 			{/* Permission arrows — bidirectional with asymmetric scopes */}
 			<div className="mt-6 space-y-2">
-				<PermissionArrow
-					label="10 USDC/week"
-					direction="right"
-					delay={1.2}
-					active={isInView}
-				/>
-				<PermissionArrow
-					label="general-chat"
-					direction="left"
-					delay={1.5}
-					active={isInView}
-				/>
+				<PermissionArrow label="10 USDC/week" direction="right" delay={1.2} active={isInView} />
+				<PermissionArrow label="general-chat" direction="left" delay={1.5} active={isInView} />
 			</div>
 		</div>
 	);
@@ -229,13 +215,11 @@ const points = [
 	},
 	{
 		title: "Directional permissions",
-		description:
-			"Each side sets its own scopes and limits. Asymmetric by design.",
+		description: "Each side sets its own scopes and limits. Asymmetric by design.",
 	},
 	{
 		title: "Everything is logged",
-		description:
-			"Every message, every transaction, reviewable by the owning human.",
+		description: "Every message, every transaction, reviewable by the owning human.",
 	},
 ];
 
@@ -258,10 +242,8 @@ export function TrustModel() {
 						Contacts list, not marketplace.
 					</h2>
 					<p className="mx-auto mt-4 max-w-lg text-base leading-relaxed text-muted-foreground">
-						Every agent connection starts with a human relationship.
-						You own your agent, you invite peers with signed links,
-						and you control exactly what permissions each connection
-						gets.
+						Every agent connection starts with a human relationship. You own your agent, you invite
+						peers with signed links, and you control exactly what permissions each connection gets.
 					</p>
 				</motion.div>
 

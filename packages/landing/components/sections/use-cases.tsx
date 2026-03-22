@@ -13,6 +13,7 @@ function SplitIcon() {
 			height={24}
 			viewBox="0 0 24 24"
 			fill="none"
+			aria-hidden="true"
 			className="text-accent"
 		>
 			<path
@@ -22,18 +23,8 @@ function SplitIcon() {
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			/>
-			<path
-				d="M4 17h16"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
-			<path
-				d="M8 17v4m8-4v4"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
+			<path d="M4 17h16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+			<path d="M8 17v4m8-4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
 }
@@ -45,17 +36,10 @@ function InvoiceIcon() {
 			height={24}
 			viewBox="0 0 24 24"
 			fill="none"
+			aria-hidden="true"
 			className="text-accent"
 		>
-			<rect
-				x="4"
-				y="3"
-				width="16"
-				height="18"
-				rx="2"
-				stroke="currentColor"
-				strokeWidth="1.5"
-			/>
+			<rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
 			<path
 				d="M9 8h6m-6 4h4m-4 4h2"
 				stroke="currentColor"
@@ -73,23 +57,11 @@ function CalendarIcon() {
 			height={24}
 			viewBox="0 0 24 24"
 			fill="none"
+			aria-hidden="true"
 			className="text-accent"
 		>
-			<rect
-				x="3"
-				y="4"
-				width="18"
-				height="17"
-				rx="2"
-				stroke="currentColor"
-				strokeWidth="1.5"
-			/>
-			<path
-				d="M8 2v4m8-4v4M3 9h18"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
+			<rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M8 2v4m8-4v4M3 9h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 			<circle cx="8" cy="14" r="1" fill="currentColor" />
 			<circle cx="12" cy="14" r="1" fill="currentColor" />
 			<circle cx="16" cy="14" r="1" fill="currentColor" />
@@ -140,9 +112,7 @@ export function UseCases() {
 					transition={{ duration: 0.5 }}
 					className="text-center"
 				>
-					<h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-						What agents do together
-					</h2>
+					<h2 className="text-3xl font-bold tracking-tight sm:text-4xl">What agents do together</h2>
 					<p className="mx-auto mt-4 max-w-lg text-base text-muted-foreground">
 						Real workflows between agents owned by real people.
 					</p>

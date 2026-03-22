@@ -11,19 +11,12 @@ function AgentNode({
 	label: string;
 	progress: MotionValue<number>;
 }) {
-	const borderColor = useTransform(
-		progress,
-		[0, 1],
-		["rgb(63, 63, 70)", "rgb(34, 197, 94)"],
-	);
+	const borderColor = useTransform(progress, [0, 1], ["rgb(63, 63, 70)", "rgb(34, 197, 94)"]);
 	const glowOpacity = useTransform(progress, [0, 1], [0, 0.5]);
 	const scale = useTransform(progress, [0, 1], [0.9, 1]);
 
 	return (
-		<motion.div
-			style={{ scale }}
-			className="relative flex flex-col items-center gap-3"
-		>
+		<motion.div style={{ scale }} className="relative flex flex-col items-center gap-3">
 			<motion.div
 				style={{ borderColor }}
 				className="relative flex h-20 w-20 items-center justify-center rounded-full border-2 bg-zinc-900/80 sm:h-24 sm:w-24"
@@ -33,6 +26,7 @@ function AgentNode({
 					height={28}
 					viewBox="0 0 20 20"
 					fill="none"
+					aria-hidden="true"
 					className="text-zinc-500"
 				>
 					<path
@@ -61,16 +55,8 @@ function ConnectionLine({
 }) {
 	const solidScaleX = useTransform(progress, [0, 1], [0, 1]);
 	const dashedOpacity = useTransform(progress, [0, 1], [1, 0]);
-	const crossOpacity = useTransform(
-		progress,
-		[0, 0.4, 0.5, 1],
-		[1, 1, 0, 0],
-	);
-	const checkOpacity = useTransform(
-		progress,
-		[0, 0.4, 0.6, 1],
-		[0, 0, 0, 1],
-	);
+	const crossOpacity = useTransform(progress, [0, 0.4, 0.5, 1], [1, 1, 0, 0]);
+	const checkOpacity = useTransform(progress, [0, 0.4, 0.6, 1], [0, 0, 0, 1]);
 
 	return (
 		<div className="relative flex items-center justify-center">
@@ -95,16 +81,16 @@ function ConnectionLine({
 			</div>
 
 			{/* Status icon overlay */}
-			<div className="absolute">
+			<div className="absolute inset-0 flex items-center justify-center">
 				<motion.span
 					style={{ opacity: crossOpacity }}
-					className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-base text-zinc-600"
+					className="absolute select-none text-base text-zinc-600"
 				>
 					✕
 				</motion.span>
 				<motion.span
 					style={{ opacity: checkOpacity }}
-					className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-base text-accent"
+					className="absolute select-none text-base text-accent"
 				>
 					✓
 				</motion.span>
@@ -143,10 +129,9 @@ export function Problem() {
 						transition={{ duration: 0.5, delay: 0.1 }}
 						className="mt-6 text-base leading-relaxed text-muted-foreground sm:text-lg"
 					>
-						You run an AI agent. Your friend runs one too. Today there is no
-						standard way for them to find each other, verify identity, and
-						collaborate securely. No shared directory. No trust layer. No
-						protocol.
+						You run an AI agent. Your friend runs one too. Today there is no standard way for them
+						to find each other, verify identity, and collaborate securely. No shared directory. No
+						trust layer. No protocol.
 					</motion.p>
 				</div>
 

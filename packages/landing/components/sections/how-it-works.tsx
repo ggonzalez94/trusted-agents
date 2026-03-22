@@ -48,17 +48,13 @@ function Terminal({
 				<span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
 				<span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
 				<span className="h-2.5 w-2.5 rounded-full bg-zinc-700" />
-				<span className="ml-3 font-mono text-[10px] text-zinc-600">
-					terminal
-				</span>
+				<span className="ml-3 font-mono text-[10px] text-zinc-600">terminal</span>
 			</div>
 
 			{/* Body */}
 			<div className="p-4">
 				<div className="flex items-start gap-2">
-					<span className="select-none font-mono text-sm text-accent">
-						$
-					</span>
+					<span className="select-none font-mono text-sm text-accent">$</span>
 					<pre className="font-mono text-sm text-zinc-300">
 						{typed}
 						{!done && (
@@ -83,9 +79,7 @@ function Terminal({
 						transition={{ duration: 0.3, delay: 0.2 }}
 						className="mt-3 border-t border-zinc-800/40 pt-3"
 					>
-						<pre className="font-mono text-xs leading-relaxed text-zinc-500">
-							{output}
-						</pre>
+						<pre className="font-mono text-xs leading-relaxed text-zinc-500">{output}</pre>
 					</motion.div>
 				)}
 			</div>
@@ -103,9 +97,7 @@ function RegisterVisual({ active }: { active: boolean }) {
 			<motion.div
 				initial={{ opacity: 0, scale: 0.8, rotateY: -20 }}
 				animate={
-					active
-						? { opacity: 1, scale: 1, rotateY: 0 }
-						: { opacity: 0, scale: 0.8, rotateY: -20 }
+					active ? { opacity: 1, scale: 1, rotateY: 0 } : { opacity: 0, scale: 0.8, rotateY: -20 }
 				}
 				transition={{ duration: 0.6, delay: 0.8 }}
 				className="relative w-56"
@@ -113,9 +105,7 @@ function RegisterVisual({ active }: { active: boolean }) {
 				{/* NFT Card */}
 				<div className="rounded-xl border border-zinc-700/80 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 p-5">
 					<div className="flex items-center justify-between">
-						<span className="font-mono text-xs text-zinc-500">
-							ERC-8004
-						</span>
+						<span className="font-mono text-xs text-zinc-500">ERC-8004</span>
 						<motion.div
 							animate={
 								active
@@ -143,6 +133,7 @@ function RegisterVisual({ active }: { active: boolean }) {
 								height={20}
 								viewBox="0 0 20 20"
 								fill="none"
+								aria-hidden="true"
 								className="text-accent"
 							>
 								<path
@@ -153,12 +144,8 @@ function RegisterVisual({ active }: { active: boolean }) {
 							</svg>
 						</div>
 						<div>
-							<p className="text-sm font-semibold text-zinc-200">
-								MyAgent
-							</p>
-							<p className="font-mono text-[10px] text-zinc-500">
-								tokenId #4281
-							</p>
+							<p className="text-sm font-semibold text-zinc-200">MyAgent</p>
+							<p className="font-mono text-[10px] text-zinc-500">tokenId #4281</p>
 						</div>
 					</div>
 
@@ -191,11 +178,7 @@ function InviteVisual({ active }: { active: boolean }) {
 				{/* Invite card */}
 				<motion.div
 					initial={{ opacity: 0, y: 10 }}
-					animate={
-						active
-							? { opacity: 1, y: 0 }
-							: { opacity: 0, y: 10 }
-					}
+					animate={active ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }}
 					transition={{ duration: 0.5, delay: 0.8 }}
 					className="w-56 rounded-xl border border-zinc-700/80 bg-zinc-900 p-4"
 				>
@@ -205,6 +188,7 @@ function InviteVisual({ active }: { active: boolean }) {
 							height={14}
 							viewBox="0 0 16 16"
 							fill="none"
+							aria-hidden="true"
 							className="text-accent"
 						>
 							<path
@@ -222,39 +206,26 @@ function InviteVisual({ active }: { active: boolean }) {
 								strokeLinejoin="round"
 							/>
 						</svg>
-						<span className="font-mono text-xs text-zinc-400">
-							invite link
-						</span>
+						<span className="font-mono text-xs text-zinc-400">invite link</span>
 					</div>
 
 					<div className="mt-3 rounded-lg bg-zinc-950 px-3 py-2">
 						<p className="truncate font-mono text-[10px] text-zinc-500">
-							tap://invite/0x8a3f...e7b2
+							https://trustedagents.link/connect?agentId=4281&amp;chain=eip155%3A8453&amp;...
 						</p>
 					</div>
 
 					<div className="mt-3 flex items-center gap-2 text-[10px] text-zinc-600">
-						<svg
-							width={10}
-							height={10}
-							viewBox="0 0 16 16"
-							fill="none"
-						>
+						<svg width={10} height={10} viewBox="0 0 16 16" fill="none" aria-hidden="true">
 							<path
 								d="M8 4v4l2.5 1.5"
 								stroke="currentColor"
 								strokeWidth="1.5"
 								strokeLinecap="round"
 							/>
-							<circle
-								cx="8"
-								cy="8"
-								r="6.5"
-								stroke="currentColor"
-								strokeWidth="1.5"
-							/>
+							<circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
 						</svg>
-						<span className="font-mono">signed &middot; expires 7d</span>
+						<span className="font-mono">signed &middot; expires 24h</span>
 					</div>
 				</motion.div>
 
@@ -290,11 +261,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 			{/* Agent A */}
 			<motion.div
 				initial={{ opacity: 0, x: -20 }}
-				animate={
-					active
-						? { opacity: 1, x: 0 }
-						: { opacity: 0, x: -20 }
-				}
+				animate={active ? { opacity: 1, x: 0 } : { opacity: 0, x: -20 }}
 				transition={{ duration: 0.5, delay: 0.8 }}
 				className="flex flex-col items-center gap-2"
 			>
@@ -304,6 +271,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 						height={20}
 						viewBox="0 0 20 20"
 						fill="none"
+						aria-hidden="true"
 						className="text-zinc-500"
 					>
 						<path
@@ -313,9 +281,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 						/>
 					</svg>
 				</div>
-				<span className="font-mono text-[10px] text-zinc-500">
-					You
-				</span>
+				<span className="font-mono text-[10px] text-zinc-500">You</span>
 			</motion.div>
 
 			{/* Handshake bridge */}
@@ -330,11 +296,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 				{/* Checkmarks */}
 				<motion.div
 					initial={{ opacity: 0, scale: 0 }}
-					animate={
-						active
-							? { opacity: 1, scale: 1 }
-							: { opacity: 0, scale: 0 }
-					}
+					animate={active ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0 }}
 					transition={{ duration: 0.3, delay: 1.8 }}
 					className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
 				>
@@ -344,6 +306,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 							height={12}
 							viewBox="0 0 16 16"
 							fill="none"
+							aria-hidden="true"
 							className="text-accent"
 						>
 							<path
@@ -361,11 +324,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 			{/* Agent B */}
 			<motion.div
 				initial={{ opacity: 0, x: 20 }}
-				animate={
-					active
-						? { opacity: 1, x: 0 }
-						: { opacity: 0, x: 20 }
-				}
+				animate={active ? { opacity: 1, x: 0 } : { opacity: 0, x: 20 }}
 				transition={{ duration: 0.5, delay: 1.0 }}
 				className="flex flex-col items-center gap-2"
 			>
@@ -375,6 +334,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 						height={20}
 						viewBox="0 0 20 20"
 						fill="none"
+						aria-hidden="true"
 						className="text-zinc-500"
 					>
 						<path
@@ -384,9 +344,7 @@ function ConnectVisual({ active }: { active: boolean }) {
 						/>
 					</svg>
 				</div>
-				<span className="font-mono text-[10px] text-zinc-500">
-					Peer
-				</span>
+				<span className="font-mono text-[10px] text-zinc-500">Peer</span>
 			</motion.div>
 		</div>
 	);
@@ -418,9 +376,9 @@ function MessageVisual({ active }: { active: boolean }) {
 	return (
 		<div className="flex h-full items-center justify-center">
 			<div className="w-56 space-y-3">
-				{bubbles.map((b, i) => (
+				{bubbles.map((b) => (
 					<motion.div
-						key={i}
+						key={`${b.label}-${b.text}`}
 						initial={{
 							opacity: 0,
 							x: b.from === "left" ? -12 : 12,
@@ -436,9 +394,7 @@ function MessageVisual({ active }: { active: boolean }) {
 						transition={{ duration: 0.4, delay: b.delay }}
 						className={`flex flex-col ${b.from === "right" ? "items-end" : "items-start"}`}
 					>
-						<span className="mb-1 font-mono text-[9px] text-zinc-600">
-							{b.label}
-						</span>
+						<span className="mb-1 font-mono text-[9px] text-zinc-600">{b.label}</span>
 						<div
 							className={`rounded-lg px-3 py-2 text-xs ${
 								b.isTransfer
@@ -449,9 +405,7 @@ function MessageVisual({ active }: { active: boolean }) {
 							}`}
 						>
 							{b.isTransfer && (
-								<span className="mr-1.5 inline-block font-mono text-[10px] text-accent/60">
-									$
-								</span>
+								<span className="mr-1.5 inline-block font-mono text-[10px] text-accent/60">$</span>
 							)}
 							{b.text}
 						</div>
@@ -472,7 +426,7 @@ const steps = [
 		title: "Register on-chain",
 		description:
 			"Your agent gets a verifiable on-chain identity as an ERC-8004 NFT. One transaction, ~$0.50 USDC.",
-		command: 'tap init --chain base && tap register --name "MyAgent"',
+		command: 'tap register --name MyAgent --description "Chat agent" --capabilities general-chat',
 		output: "✓ Agent registered  tokenId #4281  chain eip155:8453",
 		Visual: RegisterVisual,
 	},
@@ -482,7 +436,7 @@ const steps = [
 		description:
 			"Generate a signed invite link. Share it however you want — text, email, QR. No centralized directory.",
 		command: "tap invite create",
-		output: "✓ Invite created  tap://invite/0x8a3f...e7b2  expires 7d",
+		output: "✓ Invite created  https://trustedagents.link/connect?...  expires 24h",
 		Visual: InviteVisual,
 	},
 	{
@@ -490,7 +444,7 @@ const steps = [
 		title: "Connect with trust",
 		description:
 			"On-chain identity verification. Cryptographic handshake. Trusted connection established.",
-		command: 'tap connect "tap://invite/0x8a3f...e7b2" --yes',
+		command: 'tap connect "<invite-url>" --yes',
 		output: "✓ Connected to PeerAgent  status active",
 		Visual: ConnectVisual,
 	},
@@ -531,21 +485,13 @@ function StepRow({
 			{/* Terminal side */}
 			<div className={reversed ? "md:order-2" : ""}>
 				<div className="mb-5">
-					<span className="font-mono text-sm font-medium text-accent">
-						{step.number}
-					</span>
-					<h3 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">
-						{step.title}
-					</h3>
+					<span className="font-mono text-sm font-medium text-accent">{step.number}</span>
+					<h3 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">{step.title}</h3>
 					<p className="mt-2 text-sm leading-relaxed text-muted-foreground sm:text-base">
 						{step.description}
 					</p>
 				</div>
-				<Terminal
-					command={step.command}
-					output={step.output}
-					active={isInView}
-				/>
+				<Terminal command={step.command} output={step.output} active={isInView} />
 			</div>
 
 			{/* Visual side */}
@@ -573,9 +519,7 @@ export function HowItWorks() {
 					transition={{ duration: 0.5 }}
 					className="text-center"
 				>
-					<h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-						How it works
-					</h2>
+					<h2 className="text-3xl font-bold tracking-tight sm:text-4xl">How it works</h2>
 					<p className="mx-auto mt-4 max-w-lg text-base text-muted-foreground">
 						Four steps. Two agents. One trusted connection.
 					</p>

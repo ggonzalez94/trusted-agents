@@ -35,6 +35,7 @@ function HexIcon() {
 			height={18}
 			viewBox="0 0 20 20"
 			fill="none"
+			aria-hidden="true"
 			className="text-accent"
 		>
 			<path
@@ -66,9 +67,7 @@ function AgentCard({
 				<div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800/80">
 					<HexIcon />
 				</div>
-				<span className="text-sm font-semibold tracking-tight">
-					{agent.name}
-				</span>
+				<span className="text-sm font-semibold tracking-tight">{agent.name}</span>
 				<div className="ml-auto h-2 w-2 animate-pulse rounded-full bg-accent shadow-[0_0_6px_rgba(34,197,94,0.5)]" />
 			</div>
 
@@ -76,9 +75,7 @@ function AgentCard({
 				<span className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-accent">
 					{agent.chain}
 				</span>
-				<span className="font-mono text-[10px] text-zinc-500">
-					eip155:{agent.chainId}
-				</span>
+				<span className="font-mono text-[10px] text-zinc-500">eip155:{agent.chainId}</span>
 			</div>
 
 			<div className="mt-2.5 flex flex-wrap gap-1">
@@ -111,9 +108,9 @@ function TrustBridge() {
 			<div className="absolute -inset-y-3 inset-x-0 bg-gradient-to-r from-transparent via-accent/8 to-transparent blur-md" />
 
 			{/* Forward particles */}
-			{FORWARD_PARTICLES.map((p, i) => (
+			{FORWARD_PARTICLES.map((p) => (
 				<motion.div
-					key={`f${i}`}
+					key={`f-${p.delay}-${p.duration}-${p.size}`}
 					className="absolute left-0 top-1/2 -translate-y-1/2 rounded-full bg-accent"
 					style={{
 						width: p.size,
@@ -134,9 +131,9 @@ function TrustBridge() {
 			))}
 
 			{/* Reverse particles */}
-			{REVERSE_PARTICLES.map((p, i) => (
+			{REVERSE_PARTICLES.map((p) => (
 				<motion.div
-					key={`r${i}`}
+					key={`r-${p.delay}-${p.duration}-${p.size}`}
 					className="absolute right-0 top-1/2 -translate-y-1/2 rounded-full bg-accent/60"
 					style={{
 						width: p.size,
@@ -166,8 +163,7 @@ export function Hero() {
 			<div
 				className="absolute inset-0 opacity-40"
 				style={{
-					backgroundImage:
-						"radial-gradient(circle, rgba(255,255,255,0.07) 1px, transparent 1px)",
+					backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.07) 1px, transparent 1px)",
 					backgroundSize: "32px 32px",
 				}}
 			/>
@@ -219,8 +215,7 @@ export function Hero() {
 						transition={{ duration: 0.6, delay: 0.6, ease: "easeOut" }}
 						className="text-4xl font-bold tracking-tight sm:text-5xl md:text-7xl"
 					>
-						Your agent. Their agent.{" "}
-						<span className="text-accent">Connected.</span>
+						Your agent. Their agent. <span className="text-accent">Connected.</span>
 					</motion.h1>
 
 					<motion.p
@@ -229,8 +224,8 @@ export function Hero() {
 						transition={{ duration: 0.6, delay: 0.75, ease: "easeOut" }}
 						className="mx-auto mt-6 max-w-2xl text-base text-muted-foreground sm:text-lg md:text-xl"
 					>
-						A local-first protocol for AI agents to discover, trust, and
-						transact&nbsp;&mdash; on behalf of the humans who own them.
+						A local-first protocol for AI agents to discover, trust, and transact&nbsp;&mdash; on
+						behalf of the humans who own them.
 					</motion.p>
 
 					<motion.div
