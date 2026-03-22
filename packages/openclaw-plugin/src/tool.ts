@@ -14,6 +14,9 @@ const ACTIONS = [
 	"publish_grants",
 	"request_grants",
 	"request_funds",
+	"request_meeting",
+	"respond_meeting",
+	"cancel_meeting",
 	"list_pending",
 	"resolve_pending",
 ] as const;
@@ -58,6 +61,21 @@ export const TapGatewayToolSchema = Type.Object(
 		expiresInSeconds: Type.Optional(
 			Type.Number({ description: "Invite expiry in seconds", minimum: 1 }),
 		),
+		title: Type.Optional(Type.String({ description: "Meeting title" })),
+		duration: Type.Optional(
+			Type.Number({ description: "Meeting duration in minutes", minimum: 1 }),
+		),
+		preferred: Type.Optional(
+			Type.String({ description: "Preferred meeting time in ISO 8601 format" }),
+		),
+		location: Type.Optional(Type.String({ description: "Optional meeting location" })),
+		schedulingId: Type.Optional(Type.String({ description: "Scheduling request ID" })),
+		meetingAction: Type.Optional(
+			Type.Union([Type.Literal("accept"), Type.Literal("reject")], {
+				description: "Response action for a meeting request (accept or reject)",
+			}),
+		),
+		reason: Type.Optional(Type.String({ description: "Optional reason for rejection or cancellation" })),
 	},
 	{ additionalProperties: false },
 );
@@ -78,6 +96,13 @@ interface TapGatewayToolParams {
 	chain?: string;
 	toAddress?: string;
 	expiresInSeconds?: number;
+	title?: string;
+	duration?: number;
+	preferred?: string;
+	location?: string;
+	schedulingId?: string;
+	meetingAction?: "accept" | "reject";
+	reason?: string;
 }
 
 export function createTapGatewayTool(registry: OpenClawTapRegistry): AnyAgentTool {
@@ -141,6 +166,29 @@ async function executeTapGatewayAction(
 				chain: optionalString(params.chain),
 				toAddress: normalizeAddress(params.toAddress),
 				note: optionalString(params.note),
+			});
+		case "request_meeting":
+			return await registry.requestMeeting({
+				identity: params.identity,
+				peer: requireString(params.peer, "peer"),
+				title: requireString(params.title, "title"),
+				duration: typeof params.duration === "number" ? params.duration : 60,
+				preferred: optionalString(params.preferred),
+				location: optionalString(params.location),
+				note: optionalString(params.note),
+			});
+		case "respond_meeting":
+			return await registry.respondMeeting({
+				identity: params.identity,
+				schedulingId: requireString(params.schedulingId, "schedulingId"),
+				action: requireString(params.meetingAction, "meetingAction"),
+				reason: optionalString(params.reason),
+			});
+		case "cancel_meeting":
+			return await registry.cancelMeeting({
+				identity: params.identity,
+				schedulingId: requireString(params.schedulingId, "schedulingId"),
+				reason: optionalString(params.reason),
 			});
 		case "list_pending":
 			return await registry.listPending(params.identity);
