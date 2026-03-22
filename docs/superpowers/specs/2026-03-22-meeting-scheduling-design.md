@@ -33,6 +33,8 @@ AI scheduling is a $2B+ market growing 30%+ YoY, but cross-user scheduling betwe
 
 All scheduling messages use scope `scheduling/request` (sub-scope of the already-declared `scheduling`).
 
+**Clarification: "scope" vs "type"** — The grant `scope` field is `"scheduling/request"` and controls whether an agent is authorized to negotiate. The payload `type` field (`scheduling/propose`, `scheduling/counter`, etc.) discriminates the message kind within the negotiation. These are distinct concepts operating at different layers.
+
 ### Message Types
 
 Every scheduling message is an `action/request` or `action/result` with a `type` field in the data payload:
@@ -102,7 +104,7 @@ interface SchedulingReject {
 
 ### Key Design Decisions
 
-- **`schedulingId`** ties the entire negotiation together across multiple `action/request` / `action/result` messages — similar to how `actionId` tracks individual request/response pairs, but at the conversation level.
+- **`schedulingId`** ties the entire negotiation together across multiple `action/request` / `action/result` messages — similar to how `actionId` tracks individual request/response pairs, but at the conversation level. Format: `sch_` prefix + 20 random alphanumeric characters (e.g., `sch_a1b2c3d4e5f6g7h8i9j0`).
 - **Counters are just new proposals** — same payload shape as `propose`, just different `type`. The agent can include entirely new slots or overlap with previous ones.
 - **Cancel exists** because accepted meetings may need to be un-accepted. It's informational — the receiving agent updates their calendar accordingly.
 
@@ -195,8 +197,8 @@ Inbound scheduling/propose or scheduling/counter
   → Is sender a known, active contact? (trust store check)
     → No: reject
   → Does sender have an active grant with scope "scheduling/request"?
-    → No grant + no approveScheduling hook: defer for manual decision
-    → No grant + hook registered: call hook (returns true/false/null)
+    → No grant + no approveScheduling hook: reject (matches transfer behavior)
+    → No grant + hook registered: call hook (returns true/false/null; null = defer as pending)
     → Grant exists: evaluate constraints, then auto-negotiate
   → Calendar provider available?
     → Yes: getAvailability() → find overlapping free slots
@@ -417,7 +419,12 @@ src/scheduling/
 ```
 
 **Modified files:**
-- `runtime/service.ts`: Route `scheduling/request` scope to `SchedulingHandler`, add `approveScheduling` + `confirmMeeting` + `onMeetingConfirmed` hooks
+- `runtime/service.ts`:
+  - **`onRequest`**: When scope is `scheduling/request`, route to `schedulingHandler.handleProposal()` instead of `decideTransfer()`
+  - **`handleActionResult`**: Currently hardcoded to `parseTransferActionResponse` and silently ignores non-transfer results (returns early). Must be extended with scope-based dispatch to route `scheduling/request` results to `schedulingHandler.handleResponse()` for processing `scheduling/accept`, `scheduling/reject`, and `scheduling/cancel` payloads.
+  - **`resolvePending`**: Currently hardcodes all `ACTION_REQUEST` entries as transfer requests (`decisionOverrides.transfers.set(...)` → `resolvePendingTransferRequest`). Must be extended with scope-based dispatch so scheduling pending entries route to `schedulingHandler.resolvePending()` instead.
+  - **`TapPendingRequestDetails` union type**: Currently `type TapPendingRequestDetails = TapPendingTransferDetails`. Must add `TapPendingSchedulingDetails` variant so that `tap message sync`, pending status output, and OpenClaw notification drain can surface scheduling-specific metadata (title, slots, schedulingId).
+  - Add hooks: `approveScheduling` + `confirmMeeting` + `onMeetingConfirmed`
 - No changes to: protocol/methods.ts, permissions/types.ts, transport, trust store, conversation logger, request journal
 
 ### CLI (`packages/cli/`)
