@@ -120,7 +120,7 @@
     {
       "id": 5,
       "prompt": "I'd like to register my agent on Taiko instead of Base. I have tap installed but haven't initialized yet. What do I need to know about funding and IPFS uploads on Taiko?",
-      "expected_output": "The agent should init with --chain taiko, explain that Taiko uses EIP-4337 with Servo Paymaster, USDC on Taiko for gas, and that IPFS uploads automatically use Tack (x402 on Taiko). Should mention the Tack endpoint URL. Should NOT tell the user to fund with Base USDC or manually set --ipfs-provider.",
+      "expected_output": "The agent should init with --chain taiko, explain that Taiko uses EOA transactions with native gas plus USDC on Taiko for Tack IPFS uploads. Should mention the Tack endpoint URL. Should NOT tell the user to fund with Base USDC or manually set --ipfs-provider.",
       "assertions": [
         {
           "name": "uses_taiko_chain",

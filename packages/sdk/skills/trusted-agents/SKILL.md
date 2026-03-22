@@ -101,7 +101,7 @@ Your chain determines everything — registration chain, gas payment, and IPFS u
 | Chain | Fund with | Gas | IPFS upload |
 |---|---|---|---|
 | Base | ~0.50 USDC on Base | EIP-7702 + Circle Paymaster (no ETH needed) | Pinata x402 (Base USDC) |
-| Taiko | USDC on Taiko | EIP-4337 + Servo Paymaster | Tack x402 (Taiko USDC) — endpoint: `https://tack-api-production.up.railway.app` |
+| Taiko | Native gas + USDC on Taiko | EOA (direct transactions) | Tack x402 (Taiko USDC) — endpoint: `https://tack-api-production.up.railway.app` |
 
 IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
 
@@ -355,7 +355,7 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
-| `Insufficient funds` | Fund the wallet with USDC — on Base for Base agents, on Taiko for Taiko agents |
+| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or native gas + USDC on Taiko (Taiko agents) |
 | `Invalid or expired invite` | Create a fresh invite |
 | `Contact not active yet` | Peer hasn't synced — run `tap message sync` |
 | `Peer not found in contacts` | Connect first or check the name/agent ID |
