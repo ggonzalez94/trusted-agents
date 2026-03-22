@@ -438,26 +438,36 @@ describe("execution", () => {
 	});
 
 	it("executes Taiko 4337 user operations with Servo", async () => {
-		const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
-			if (functionName === "getAddress") return EXECUTION_ADDRESS;
-			if (functionName === "getNonce") return 0n;
-			if (functionName === "nonces") return 7n;
-			if (functionName === "name") return "USD Coin";
-			if (functionName === "version") return "2";
-			throw new Error(`unexpected function ${functionName}`);
-		});
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		const readContract = vi.fn(
+			async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return 0n;
+				if (functionName === "nonces") {
+					if (args?.[0] !== OWNER_ADDRESS) {
+						throw new Error("permit nonce must be loaded for EOA owner");
+					}
+					return 7n;
+				}
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				throw new Error(`unexpected function ${functionName}`);
+			},
+		);
 		buildChainPublicClient.mockReturnValue({
 			readContract,
 			verifyTypedData: vi.fn().mockResolvedValue(true),
 			waitForTransactionReceipt: vi.fn(),
 			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
 			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x"),
 		});
 		buildChainWalletClient.mockReturnValue({
 			chain: { id: 167000 },
 			sendTransaction: vi.fn(),
 		});
-		mockRpcFetch(({ method }) => {
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
 				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
 					status: 200,
@@ -548,6 +558,138 @@ describe("execution", () => {
 		expect(createBundlerClient).toHaveBeenCalledOnce();
 		expect(getUserOperationHash).toHaveBeenCalledOnce();
 		expect(toSimple7702SmartAccount).not.toHaveBeenCalled();
+		expect(readContract).toHaveBeenCalledWith(
+			expect.objectContaining({
+				functionName: "nonces",
+				args: [OWNER_ADDRESS],
+			}),
+		);
+		const stubRequest = requests.find((request) => request.method === "pm_getPaymasterStubData");
+		const stubUserOperation = stubRequest?.params[0] as Record<string, unknown>;
+		expect(stubUserOperation.factory).toBe(SERVO_FACTORY_ADDRESS);
+		expect(stubUserOperation).toHaveProperty("factoryData");
+		expect(stubUserOperation).not.toHaveProperty("initCode");
+		const sendRequest = requests.find((request) => request.method === "eth_sendUserOperation");
+		const sentUserOperation = sendRequest?.params[0] as Record<string, unknown>;
+		expect(sentUserOperation.factory).toBe(SERVO_FACTORY_ADDRESS);
+		expect(sentUserOperation).toHaveProperty("factoryData");
+		expect(sentUserOperation).not.toHaveProperty("initCode");
+		expect(sentUserOperation).not.toHaveProperty("paymasterAndData");
+	});
+
+	it("omits Servo factory deployment fields when account is already deployed", async () => {
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return 11n;
+				if (functionName === "nonces") return 8n;
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				throw new Error(`unexpected function ${functionName}`);
+			}),
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x6001600155"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							paymaster: "0x9999999999999999999999999999999999999999",
+							paymasterData: "0x12",
+							paymasterAndData: "0x999999999999999999999999999999999999999912",
+							callGasLimit: "0x88d8",
+							verificationGasLimit: "0x1d4c8",
+							preVerificationGas: "0x5274",
+							paymasterVerificationGasLimit: "0xea60",
+							paymasterPostOpGasLimit: "0xafc8",
+							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+							maxTokenCostMicros: "1000000",
+							validUntil: 1900000000,
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "eth_sendUserOperation") {
+				return new Response(
+					JSON.stringify({
+						result: "0xservohash",
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+		createBundlerClient.mockReturnValue({
+			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
+				receipt: {
+					transactionHash: "0xservotx",
+					logs: [],
+				},
+			}),
+		});
+
+		const { executeContractCalls } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		await executeContractCalls(config, config.chains[config.chain]!, [
+			{
+				to: "0x3000000000000000000000000000000000000003",
+				data: "0x1234",
+			},
+		]);
+
+		const stubRequest = requests.find((request) => request.method === "pm_getPaymasterStubData");
+		const stubUserOperation = stubRequest?.params[0] as Record<string, unknown>;
+		expect(stubUserOperation).not.toHaveProperty("factory");
+		expect(stubUserOperation).not.toHaveProperty("factoryData");
+		expect(stubUserOperation).not.toHaveProperty("initCode");
+		const sendRequest = requests.find((request) => request.method === "eth_sendUserOperation");
+		const sentUserOperation = sendRequest?.params[0] as Record<string, unknown>;
+		expect(sentUserOperation).not.toHaveProperty("factory");
+		expect(sentUserOperation).not.toHaveProperty("factoryData");
+		expect(sentUserOperation).not.toHaveProperty("initCode");
 	});
 
 	it("stops eoa multi-call execution on the first reverted transaction", async () => {

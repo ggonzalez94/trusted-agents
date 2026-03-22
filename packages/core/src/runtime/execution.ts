@@ -803,13 +803,12 @@ function parseServoQuote(value: unknown): ServoQuoteResponse {
 	};
 }
 
-function buildServoInitCode(factoryAddress: Address, owner: Address): Hex {
-	const factoryData = encodeFunctionData({
+function buildServoFactoryData(owner: Address): Hex {
+	return encodeFunctionData({
 		abi: SERVO_ACCOUNT_FACTORY_ABI,
 		functionName: "createAccount",
 		args: [owner, SERVO_ACCOUNT_SALT],
 	});
-	return `${factoryAddress.toLowerCase()}${factoryData.slice(2)}` as Hex;
 }
 
 function buildServoCallData(calls: ExecutionCall[]): Hex {
@@ -1234,13 +1233,22 @@ async function executeEip4337Calls(
 	})) as bigint;
 
 	const { maxFeePerGas, maxPriorityFeePerGas } = await resolveEip1559Fees(context.publicClient);
-	const initCode = buildServoInitCode(providerConfig.accountFactoryAddress, context.owner.address);
+	const accountCode = await context.publicClient.getCode({
+		address: context.executionAddress,
+	});
+	const deploymentFields =
+		accountCode && accountCode !== "0x"
+			? {}
+			: {
+					factory: providerConfig.accountFactoryAddress,
+					factoryData: buildServoFactoryData(context.owner.address),
+				};
 	const callData = buildServoCallData(calls);
 
 	const draftUserOperation = {
 		sender: context.executionAddress,
 		nonce: toHex(nonce),
-		initCode,
+		...deploymentFields,
 		callData,
 		maxFeePerGas: toHex(maxFeePerGas),
 		maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
@@ -1260,7 +1268,7 @@ async function executeEip4337Calls(
 		address: stubQuote.tokenAddress,
 		abi: ERC20_NONCES_ABI,
 		functionName: "nonces",
-		args: [context.executionAddress],
+		args: [context.owner.address],
 	})) as bigint;
 
 	let tokenName = "USD Coin";
@@ -1296,7 +1304,7 @@ async function executeEip4337Calls(
 		types: USDC_PERMIT_TYPES,
 		primaryType: "Permit",
 		message: {
-			owner: context.executionAddress,
+			owner: context.owner.address,
 			spender: stubQuote.paymaster,
 			value: permitValue,
 			nonce: permitNonce,
@@ -1319,13 +1327,11 @@ async function executeEip4337Calls(
 		]),
 	);
 
-	const factoryData = `0x${initCode.slice(42)}` as Hex;
 	const userOperationHashForSignature = getUserOperationHash({
 		userOperation: {
 			sender: context.executionAddress,
 			nonce,
-			factory: providerConfig.accountFactoryAddress,
-			factoryData,
+			...deploymentFields,
 			callData,
 			callGasLimit: BigInt(finalQuote.callGasLimit),
 			verificationGasLimit: BigInt(finalQuote.verificationGasLimit),
@@ -1355,9 +1361,10 @@ async function executeEip4337Calls(
 				callGasLimit: finalQuote.callGasLimit,
 				verificationGasLimit: finalQuote.verificationGasLimit,
 				preVerificationGas: finalQuote.preVerificationGas,
+				paymaster: finalQuote.paymaster,
+				paymasterData: finalQuote.paymasterData,
 				paymasterVerificationGasLimit: finalQuote.paymasterVerificationGasLimit,
 				paymasterPostOpGasLimit: finalQuote.paymasterPostOpGasLimit,
-				paymasterAndData: finalQuote.paymasterAndData,
 				signature: userOperationSignature,
 			},
 			context.entryPoint.address,
