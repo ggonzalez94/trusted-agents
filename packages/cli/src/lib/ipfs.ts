@@ -34,16 +34,17 @@ export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | 
 /**
  * Resolve `auto` to a concrete provider based on chain and available credentials.
  *
- * - Taiko chains → `tack` (x402 on Taiko)
- * - Pinata JWT present → `pinata`
- * - Otherwise → `x402` (Pinata x402 on Base)
+ * Priority: chain-specific provider first, then explicit credentials, then default.
+ * 1. Taiko chains → `tack` (x402 on Taiko — chain always wins)
+ * 2. Pinata JWT present → `pinata` (explicit credential for non-Taiko chains)
+ * 3. Otherwise → `x402` (Pinata x402 on Base)
  */
 export function resolveAutoProvider(
 	chain: string,
 	pinataJwt?: string,
 ): Exclude<IpfsUploadProvider, "auto"> {
-	if (pinataJwt) return "pinata";
 	if (TAIKO_CHAINS.has(chain)) return "tack";
+	if (pinataJwt) return "pinata";
 	return "x402";
 }
 
