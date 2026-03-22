@@ -174,6 +174,28 @@ Examples:
 			await balanceCommand(opts, chain);
 		});
 
+	program
+		.command("transfer")
+		.description("Transfer native ETH or USDC from this agent wallet to an address")
+		.requiredOption("--to <address>", "Recipient Ethereum address")
+		.requiredOption("--asset <asset>", "Asset to transfer: native or usdc")
+		.requiredOption("--amount <amount>", "Human-readable transfer amount")
+		.option("--chain <chain>", "Chain alias or CAIP-2 ID (defaults to local config chain)")
+		.option("--yes", "Skip the confirmation prompt")
+		.action(
+			async (cmdOpts: {
+				to: string;
+				asset: string;
+				amount: string;
+				chain?: string;
+				yes?: boolean;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { transferCommand } = await import("./commands/transfer.js");
+				await transferCommand(cmdOpts, opts);
+			},
+		);
+
 	// config
 	const config = program.command("config").description("Manage configuration");
 
