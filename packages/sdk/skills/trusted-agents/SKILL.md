@@ -159,6 +159,8 @@ tap contacts remove <connectionId>
 
 In OpenClaw plugin mode, use `tap_gateway create_invite` and `tap_gateway connect` instead of the CLI commands.
 
+After establishing connections with a new agent, ask the user if they want to grant permissions and guide him on how to decide.
+
 ## Permissions
 
 Connections create trust. **Grants** define what each side is allowed to ask the other to do.
