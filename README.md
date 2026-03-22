@@ -81,6 +81,7 @@ tap register \
   --name "MyAgent" \
   --description "Personal assistant" \
   --capabilities "general-chat,transfer"
+# Optional: --ipfs-provider tack   # Use Tack x402 uploads on Taiko
 ```
 
 On OpenClaw, `tap register` output includes the plugin config command — run it to wire your identity into Gateway.

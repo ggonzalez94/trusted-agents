@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolvePinataJwt } from "../src/lib/ipfs.js";
+import {
+	DEFAULT_TACK_API_ENDPOINT,
+	resolveIpfsUploadProvider,
+	resolvePinataJwt,
+	resolveTackApiUrl,
+} from "../src/lib/ipfs.js";
 
 describe("ipfs", () => {
 	it("should prefer flag value over env var", () => {
@@ -27,5 +32,24 @@ describe("ipfs", () => {
 		// not a JWT. The function signature enforces no account requirement.
 		// Integration test would need a funded wallet on Base.
 		expect(typeof resolvePinataJwt).toBe("function");
+	});
+
+	it("parses supported upload providers", () => {
+		expect(resolveIpfsUploadProvider("tack")).toBe("tack");
+		expect(resolveIpfsUploadProvider("X402")).toBe("x402");
+		expect(resolveIpfsUploadProvider()).toBeUndefined();
+	});
+
+	it("rejects unknown upload providers", () => {
+		expect(() => resolveIpfsUploadProvider("unknown-provider")).toThrow("Invalid IPFS provider");
+	});
+
+	it("resolves tack API URL with defaults and env override", () => {
+		process.env.TAP_TACK_API_URL = "";
+		expect(resolveTackApiUrl()).toBe(DEFAULT_TACK_API_ENDPOINT);
+
+		process.env.TAP_TACK_API_URL = "https://example.test/tack/";
+		expect(resolveTackApiUrl()).toBe("https://example.test/tack");
+		process.env.TAP_TACK_API_URL = "";
 	});
 });

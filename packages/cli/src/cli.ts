@@ -123,6 +123,7 @@ Examples:
 		.requiredOption("--capabilities <list>", "Comma-separated capabilities")
 		.option("--uri <url>", "Pre-hosted registration file URI (skips IPFS upload)")
 		.option("--pinata-jwt <token>", "Pinata JWT for IPFS upload (or set TAP_PINATA_JWT)")
+		.option("--ipfs-provider <provider>", "IPFS upload provider: auto, x402, pinata, or tack")
 		.action(
 			async (cmdOpts: {
 				name: string;
@@ -130,6 +131,7 @@ Examples:
 				capabilities: string;
 				uri?: string;
 				pinataJwt?: string;
+				ipfsProvider?: string;
 			}) => {
 				const opts = program.opts<GlobalOptions>();
 				const { registerCommand } = await import("./commands/register.js");
@@ -145,6 +147,7 @@ Examples:
 		.option("--capabilities <list>", "Comma-separated capabilities")
 		.option("--uri <url>", "Pre-hosted registration file URI (skips IPFS upload)")
 		.option("--pinata-jwt <token>", "Pinata JWT for IPFS upload")
+		.option("--ipfs-provider <provider>", "IPFS upload provider: auto, x402, pinata, or tack")
 		.action(
 			async (cmdOpts: {
 				name?: string;
@@ -152,6 +155,7 @@ Examples:
 				capabilities?: string;
 				uri?: string;
 				pinataJwt?: string;
+				ipfsProvider?: string;
 			}) => {
 				const opts = program.opts<GlobalOptions>();
 				const { registerUpdateCommand } = await import("./commands/register.js");

@@ -91,6 +91,17 @@ describe("config set", () => {
 		expect(config.xmtp?.env).toBe("1234");
 	});
 
+	it("normalizes camelCase IPFS keys to the yaml schema", async () => {
+		await configSetCommand("ipfs.tackApiUrl", "https://tack.example.test", {
+			json: true,
+			dataDir: tmpDir,
+		});
+
+		const config = await readFile(join(tmpDir, "config.yaml"), "utf-8");
+		expect(config).toContain("tack_api_url: https://tack.example.test");
+		expect(config).not.toContain("tackApiUrl:");
+	});
+
 	it("rejects split-brain config and data-dir overrides", async () => {
 		const otherDir = join(tmpDir, "other-agent");
 		await mkdir(otherDir, { recursive: true });

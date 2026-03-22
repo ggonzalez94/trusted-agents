@@ -19,6 +19,10 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 				mode: config.execution?.mode,
 				paymaster_provider: config.execution?.paymasterProvider,
 			},
+			ipfs: {
+				provider: config.ipfs?.provider ?? "auto",
+				tack_api_url: config.ipfs?.tackApiUrl,
+			},
 			xmtp_env: config.xmtpEnv ?? "production",
 			chains: Object.fromEntries(
 				Object.entries(config.chains).map(([k, v]) => [

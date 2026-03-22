@@ -8,6 +8,7 @@ import type {
 	ChainConfig,
 	ExecutionMode,
 	ExecutionPaymasterProvider,
+	IpfsUploadProvider,
 	TrustedAgentsConfig,
 } from "./types.js";
 
@@ -23,6 +24,10 @@ interface StoredYamlConfig {
 	xmtp?: {
 		env?: "dev" | "production" | "local";
 		db_encryption_key?: string;
+	};
+	ipfs?: {
+		provider?: IpfsUploadProvider;
+		tack_api_url?: string;
 	};
 	chains?: Record<
 		string,
@@ -119,6 +124,10 @@ export async function loadTrustedAgentConfigFromDataDir(
 		resolveCacheMaxEntries: DEFAULT_CONFIG.resolveCacheMaxEntries,
 		xmtpEnv: yaml?.xmtp?.env ?? DEFAULT_CONFIG.xmtpEnv,
 		xmtpDbEncryptionKey: yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined,
+		ipfs: {
+			provider: yaml?.ipfs?.provider ?? DEFAULT_CONFIG.ipfs?.provider,
+			tackApiUrl: yaml?.ipfs?.tack_api_url,
+		},
 		execution: {
 			mode: executionMode,
 			...(paymasterProvider ? { paymasterProvider } : {}),

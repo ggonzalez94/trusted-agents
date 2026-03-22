@@ -9,6 +9,7 @@ import {
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
+	IpfsUploadProvider,
 	RegistrationFile,
 	RegistrationFileExecution,
 	TrustedAgentsConfig,
@@ -24,7 +25,14 @@ import {
 	executeContractCalls,
 	getExecutionPreview,
 } from "../lib/execution.js";
-import { resolvePinataJwt, uploadToIpfsPinata, uploadToIpfsX402 } from "../lib/ipfs.js";
+import {
+	resolveIpfsUploadProvider,
+	resolvePinataJwt,
+	resolveTackApiUrl,
+	uploadToIpfsPinata,
+	uploadToIpfsTack,
+	uploadToIpfsX402,
+} from "../lib/ipfs.js";
 import { error, info, success, verbose } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
 import { buildPublicClient } from "../lib/wallet.js";
@@ -36,6 +44,7 @@ export interface RegisterOptions {
 	capabilities: string;
 	uri?: string;
 	pinataJwt?: string;
+	ipfsProvider?: string;
 }
 
 export interface RegisterUpdateOptions {
@@ -44,6 +53,7 @@ export interface RegisterUpdateOptions {
 	capabilities?: string;
 	uri?: string;
 	pinataJwt?: string;
+	ipfsProvider?: string;
 }
 
 function parseCapabilities(input: string): string[] {
@@ -343,7 +353,12 @@ async function ensureX402UploadFunding(
 /**
  * Resolve URI for registration metadata.
  *
- * Priority: --uri (skip upload) > cached CID > x402 > Pinata JWT (legacy)
+ * Priority: --uri (skip upload) > cached CID > selected provider
+ *
+ * Provider resolution:
+ * - `--ipfs-provider` flag
+ * - `config.yaml` `ipfs.provider`
+ * - `auto` fallback (x402 by default, Pinata when a JWT is present)
  */
 async function resolveAgentURI(
 	params: {
@@ -353,6 +368,7 @@ async function resolveAgentURI(
 		dataDir: string;
 		uri?: string;
 		pinataJwt?: string;
+		ipfsProvider?: string;
 		nameHint: string;
 	},
 	opts: GlobalOptions,
@@ -381,9 +397,20 @@ async function resolveAgentURI(
 		verbose("Cached CID not reachable via gateway, re-uploading...", opts);
 	}
 
-	// 3. Try x402 (always pays with USDC on Base mainnet — no account needed)
+	let configuredProvider: IpfsUploadProvider;
+	try {
+		configuredProvider =
+			resolveIpfsUploadProvider(params.ipfsProvider ?? params.config.ipfs?.provider) ?? "auto";
+	} catch (err) {
+		error("VALIDATION_ERROR", err instanceof Error ? err.message : String(err), opts);
+		return null;
+	}
 	const jwt = resolvePinataJwt(params.pinataJwt);
-	if (!jwt) {
+	const effectiveProvider: Exclude<IpfsUploadProvider, "auto"> =
+		configuredProvider === "auto" ? (jwt ? "pinata" : "x402") : configuredProvider;
+
+	// 3. x402 via Pinata endpoint (Base mainnet USDC)
+	if (effectiveProvider === "x402") {
 		info(
 			"Uploading registration file to IPFS via x402 (paying with USDC on Base mainnet)...",
 			opts,
@@ -406,6 +433,7 @@ x402 requires USDC on Base mainnet (not testnet) to pay for IPFS pinning.
 Send USDC to your messaging identity / EOA on Base (chain ID 8453).
 
 Alternatives:
+  --ipfs-provider tack   Use Tack x402 upload on Taiko instead
   --pinata-jwt <token>  Use a Pinata API key instead (works on any chain)
   --uri <url>           Skip IPFS upload with a pre-hosted registration file`,
 				opts,
@@ -414,7 +442,48 @@ Alternatives:
 		}
 	}
 
-	// 4. Pinata JWT (authenticated API)
+	// 4. x402 via Tack endpoint (Taiko mainnet USDC)
+	if (effectiveProvider === "tack") {
+		info(
+			"Uploading registration file to IPFS via Tack x402 (paying with USDC on Taiko mainnet)...",
+			opts,
+		);
+		try {
+			const ipfs = await uploadToIpfsTack(params.registrationFile, params.privateKey, {
+				apiUrl: resolveTackApiUrl(params.config.ipfs?.tackApiUrl),
+			});
+			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
+			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
+			await saveIpfsCache(params.dataDir, cache);
+			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			error(
+				"UPLOAD_ERROR",
+				`IPFS upload via Tack failed: ${msg}
+
+Tack x402 uploads require USDC on Taiko mainnet (chain ID 167000).
+
+Alternatives:
+  --ipfs-provider x402  Use Pinata x402 on Base mainnet
+  --pinata-jwt <token>  Use Pinata API upload
+  --uri <url>           Skip IPFS upload with a pre-hosted registration file`,
+				opts,
+			);
+			return null;
+		}
+	}
+
+	// 5. Pinata JWT (authenticated API)
+	if (!jwt) {
+		error(
+			"VALIDATION_ERROR",
+			"Pinata provider selected but no JWT was provided. Set TAP_PINATA_JWT or pass --pinata-jwt.",
+			opts,
+		);
+		return null;
+	}
+
 	info("Uploading registration file to IPFS via Pinata...", opts);
 	const ipfs = await uploadToIpfsPinata(params.registrationFile, jwt, `tap-${params.nameHint}`);
 	info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
@@ -474,6 +543,7 @@ export async function registerCommand(
 				dataDir: config.dataDir,
 				uri: cmdOpts.uri,
 				pinataJwt: cmdOpts.pinataJwt,
+				ipfsProvider: cmdOpts.ipfsProvider,
 				nameHint: cmdOpts.name,
 			},
 			opts,
@@ -737,6 +807,7 @@ export async function registerUpdateCommand(
 				privateKey: config.privateKey,
 				dataDir: config.dataDir,
 				pinataJwt: cmdOpts.pinataJwt,
+				ipfsProvider: cmdOpts.ipfsProvider,
 				nameHint: registrationFile.name,
 			},
 			opts,

@@ -3,6 +3,8 @@ export type {
 	ExecutionConfig,
 	ExecutionMode,
 	ExecutionPaymasterProvider,
+	IpfsConfig,
+	IpfsUploadProvider,
 	TrustedAgentsConfig,
 } from "./types.js";
 export { BASE_MAINNET, BASE_SEPOLIA, DEFAULT_CHAINS, DEFAULT_CONFIG } from "./defaults.js";

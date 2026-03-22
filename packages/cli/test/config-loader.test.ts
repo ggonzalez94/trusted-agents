@@ -123,6 +123,28 @@ describe("config-loader", () => {
 			expect(config.execution?.paymasterProvider).toBeUndefined();
 		});
 
+		it("loads optional IPFS provider settings from config", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
+			await mkdir(tmpDir, { recursive: true });
+			await writeFile(
+				join(tmpDir, "config.yaml"),
+				[
+					"agent_id: 1",
+					"chain: base",
+					"ipfs:",
+					"  provider: tack",
+					"  tack_api_url: https://tack.example.test",
+					"",
+				].join("\n"),
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir: tmpDir });
+			expect(config.ipfs?.provider).toBe("tack");
+			expect(config.ipfs?.tackApiUrl).toBe("https://tack.example.test");
+		});
+
 		it("defaults to Base mainnet when no config file exists", async () => {
 			const dataDir = join(tmpDir, "mainnet-default");
 			await mkdir(join(dataDir, "identity"), { recursive: true });

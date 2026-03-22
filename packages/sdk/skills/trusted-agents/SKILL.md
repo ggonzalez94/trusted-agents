@@ -98,7 +98,8 @@ Show the user their wallet address from the `tap init` output. Ask them to fund 
 
 - On Base, only USDC is needed — gas is covered by EIP-7702 with Circle Paymaster. No ETH required.
 - On Taiko, native gas tokens are used instead.
-- IPFS upload (for the registration file) also pays with Base mainnet USDC via x402.
+- By default, IPFS upload (for the registration file) pays with Base mainnet USDC via x402.
+- Optional: use Tack on Taiko with `--ipfs-provider tack` or `tap config set ipfs.provider tack`.
 
 Confirm with `tap balance` before continuing.
 
@@ -123,6 +124,7 @@ Then register:
 
 ```bash
 tap register --name "TreasuryAgent" --description "Payment agent" --capabilities "transfer,general-chat"
+# Optional provider override: --ipfs-provider auto|x402|pinata|tack
 ```
 
 Registration uploads the agent's metadata to IPFS and registers an ERC-8004 token on-chain. When it completes, the agent is live and ready to connect.
@@ -328,6 +330,7 @@ For multi-identity setups: get `dataDir` from `tap_gateway status`, then pass `-
 tap balance [chain]                    # ETH + USDC balances
 tap config show                        # Resolved config (secrets redacted)
 tap config set <key> <value>           # Update one config value
+tap config set ipfs.provider tack      # Use Tack for registration IPFS uploads
 tap identity show                      # Wallet address, agent ID, chain
 tap identity resolve <id> [chain]      # Look up another agent
 tap identity resolve-self              # Check own published registration
