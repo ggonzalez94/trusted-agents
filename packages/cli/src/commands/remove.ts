@@ -204,17 +204,13 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 		if (interactive) {
 			fundsTransfer = await maybeTransferRemainingNativeFunds(balanceProbe);
 		} else {
-			fundsTransfer = {
-				attempted: false,
-				skipped_reason:
-					balanceProbe.context && balanceProbe.context.nativeBalanceWei > 0n
-						? "Non-interactive mode skipped optional funds transfer. Re-run interactively to move funds before wiping local data."
-						: "No interactive transfer step in non-interactive mode.",
-			};
-			if (balanceProbe.context && balanceProbe.context.nativeBalanceWei > 0n) {
-				warnings.push(
-					"Non-interactive mode skipped optional funds transfer. Re-run interactively to move funds before wiping local data.",
-				);
+			const hasPositiveBalance = (balanceProbe.context?.nativeBalanceWei ?? 0n) > 0n;
+			const reason = hasPositiveBalance
+				? "Non-interactive mode skipped optional funds transfer. Re-run interactively to move funds before wiping local data."
+				: "No interactive transfer step in non-interactive mode.";
+			fundsTransfer = { attempted: false, skipped_reason: reason };
+			if (hasPositiveBalance) {
+				warnings.push(reason);
 			}
 		}
 
