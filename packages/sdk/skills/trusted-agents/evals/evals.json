@@ -174,6 +174,144 @@
         }
       ],
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "schedule a meeting with Bob for this Saturday",
+      "expected_output": "Agent should use tap message request-meeting with Bob as the peer, infer a reasonable title and duration, and use Saturday as the preferred time. Should check if calendar is configured first.",
+      "assertions": [
+        {
+          "name": "uses_request_meeting_command",
+          "description": "Agent uses the tap message request-meeting command",
+          "type": "contains_any",
+          "values": ["request-meeting", "request_meeting"]
+        },
+        {
+          "name": "addresses_bob_as_peer",
+          "description": "Agent targets Bob as the peer",
+          "type": "contains_any",
+          "values": ["Bob", "bob"]
+        },
+        {
+          "name": "includes_title",
+          "description": "Agent includes a meeting title",
+          "type": "contains_any",
+          "values": ["--title", "title"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "I need to set up dinner with Alice on Saturday evening, maybe around 7pm. We usually go for about 2 hours.",
+      "expected_output": "Agent should use tap message request-meeting with Alice, --title something like 'Dinner', --duration 120, --preferred with a Saturday 7pm UTC-converted time. Should mention the schedulingId in the output.",
+      "assertions": [
+        {
+          "name": "uses_scheduling_command",
+          "description": "Agent uses the meeting scheduling command",
+          "type": "contains_any",
+          "values": ["request-meeting", "request_meeting"]
+        },
+        {
+          "name": "sets_duration_around_120",
+          "description": "Agent sets duration to approximately 120 minutes",
+          "type": "contains_any",
+          "values": ["120", "--duration"]
+        },
+        {
+          "name": "targets_alice",
+          "description": "Agent addresses Alice as the peer",
+          "type": "contains_any",
+          "values": ["Alice", "alice"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "check my calendar",
+      "expected_output": "Agent should run tap calendar check to verify calendar provider status and show upcoming availability.",
+      "assertions": [
+        {
+          "name": "uses_calendar_check",
+          "description": "Agent uses the tap calendar check command",
+          "type": "contains_any",
+          "values": ["calendar check", "tap calendar"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "cancel my meeting with Bob",
+      "expected_output": "Agent should look up the scheduling ID for the meeting with Bob (via pending requests or conversations) and then use tap message cancel-meeting with the schedulingId.",
+      "assertions": [
+        {
+          "name": "uses_cancel_command",
+          "description": "Agent uses the cancel-meeting command",
+          "type": "contains_any",
+          "values": ["cancel-meeting", "cancel_meeting"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "You are an OpenClaw Gateway agent with the tap_gateway tool available. You just received this in your context:\n\n[TAP Notifications]\n- ESCALATION: Scheduling proposal from ResearchBot — 'Weekly sync' (60 min) proposed for Friday 3pm ET\n\nThe user's calendar shows they're free Friday 3pm-5pm ET. What do you do?",
+      "expected_output": "Agent should surface the proposal to the user with the details (who, what, when), explain the time works with their calendar, and ask for confirmation before accepting. Should use tap_gateway respond_meeting to accept after user confirms.",
+      "assertions": [
+        {
+          "name": "surfaces_proposal_details",
+          "description": "Agent presents the scheduling details to the user",
+          "type": "contains_any",
+          "values": ["Weekly sync", "ResearchBot", "Friday", "3pm"]
+        },
+        {
+          "name": "asks_for_confirmation",
+          "description": "Agent asks the user to confirm before accepting",
+          "type": "contains_any",
+          "values": ["confirm", "approve", "accept", "want me to", "shall I", "would you like"]
+        },
+        {
+          "name": "uses_respond_meeting",
+          "description": "Agent uses respond_meeting to handle the proposal",
+          "type": "contains_any",
+          "values": ["respond_meeting", "respond-meeting"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "I want Bob's agent to be able to schedule meetings with me but only during weekdays, business hours. How do I set that up?",
+      "expected_output": "Agent should guide the user to publish a scheduling grant with constraints: allowedDays for weekdays, allowedTimeRange for business hours, and a timezone. Should use tap permissions grant with a JSON file.",
+      "assertions": [
+        {
+          "name": "uses_scheduling_scope",
+          "description": "Agent uses the scheduling/request scope in the grant",
+          "type": "contains_any",
+          "values": ["scheduling/request", "scheduling"]
+        },
+        {
+          "name": "includes_day_constraints",
+          "description": "Agent includes allowedDays constraint for weekdays",
+          "type": "contains_any",
+          "values": ["allowedDays", "mon", "tue", "wed", "thu", "fri"]
+        },
+        {
+          "name": "includes_time_constraints",
+          "description": "Agent includes allowedTimeRange for business hours",
+          "type": "contains_any",
+          "values": ["allowedTimeRange", "09:00", "18:00", "business hours"]
+        },
+        {
+          "name": "uses_permissions_grant",
+          "description": "Agent uses tap permissions grant to publish the grant",
+          "type": "contains_any",
+          "values": ["permissions grant", "tap permissions grant", "publish_grants"]
+        }
+      ],
+      "files": []
     }
   ]
 }

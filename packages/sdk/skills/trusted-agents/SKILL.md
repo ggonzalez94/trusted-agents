@@ -1,6 +1,6 @@
 ---
 name: trusted-agents
-description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, and request funds. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill inside OpenClaw Gateway when the `tap_gateway` tool is available or when handling TAP notifications.
+description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, request funds, and schedule meetings. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, schedule meetings or dinners, check calendar availability, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill when the user mentions scheduling, meetings, dinners, calendar setup, or coordinating times with another agent. Also use inside OpenClaw Gateway when the `tap_gateway` tool is available or when handling TAP notifications.
 ---
 
 # Trusted Agents Protocol
@@ -51,7 +51,7 @@ tap not installed ──→ Install
         │
    waiting on async ──→ tap message sync (or tap_gateway sync)
         │
-   ready ──→ message, transfer, manage permissions
+   ready ──→ message, transfer, schedule meetings, manage permissions
 ```
 
 ## Install
@@ -122,7 +122,8 @@ Suggest a default based on what the user has described so far:
 | General assistant | `general-chat` |
 | Payment / treasury | `transfer,general-chat` |
 | Research agent | `research,general-chat` |
-| Full-featured | `transfer,research,general-chat` |
+| Full-featured | `transfer,research,scheduling,general-chat` |
+| Scheduling-capable | `scheduling,general-chat` |
 
 Then register:
 
@@ -217,13 +218,32 @@ In OpenClaw plugin mode, use `tap_gateway publish_grants` and `tap_gateway reque
 ]
 ```
 
+**Scheduling (weekdays only):**
+```json
+[{
+  "grantId": "peer-scheduling",
+  "scope": "scheduling/request",
+  "constraints": {
+    "maxDurationMinutes": 120,
+    "allowedDays": ["mon", "tue", "wed", "thu", "fri"],
+    "allowedTimeRange": { "start": "09:00", "end": "18:00" },
+    "timezone": "America/New_York"
+  }
+}]
+```
+
+**Scheduling (open):**
+```json
+[{ "grantId": "peer-scheduling-open", "scope": "scheduling/request" }]
+```
+
 See `references/permissions-v1.md` for the full JSON spec with all fields and additional templates.
 
 | Scope | Purpose |
 |---|---|
 | `general-chat` | Conversational exchange |
 | `research` | Questions, information gathering |
-| `scheduling` | Calendar actions |
+| `scheduling/request` | Meeting scheduling — propose, counter, accept, reject, cancel |
 | `transfer/request` | Value movement |
 | `permissions/request-grants` | Ask for permissions |
 
@@ -260,6 +280,67 @@ Flow: send request → peer evaluates against grants → auto-approve if covered
 
 Before approving inbound transfers, inspect `tap permissions show <peer>` and `<dataDir>/notes/permissions-ledger.md`.
 
+## Meeting Scheduling
+
+Schedule meetings with connected peers. Agents negotiate times autonomously (checking calendars, finding overlapping availability, counter-proposing), but always ask the human for final confirmation before accepting.
+
+### Setup calendar (optional but recommended)
+
+```bash
+tap calendar setup --provider google    # Walk through Google Calendar auth
+tap calendar check                      # Verify connection works
+```
+
+Without a calendar provider, scheduling still works — you just respond to proposals manually instead of the agent auto-checking availability.
+
+### Request a meeting
+
+```bash
+tap message request-meeting BobAgent --title "Dinner" --duration 90 --preferred "2026-03-28T19:00:00Z" --note "That Italian place?"
+```
+
+- `--preferred` is optional. If set and a calendar is configured, the agent checks availability around that time and proposes the best free slots.
+- If no preferred time or no calendar, the preferred time becomes the single proposed slot.
+- Returns a `schedulingId` you use to track this negotiation.
+
+### Respond to a proposal
+
+```bash
+tap message respond-meeting sch_abc123 --accept
+tap message respond-meeting sch_abc123 --reject --reason "Busy that week"
+```
+
+When your agent has a calendar configured and a scheduling grant covers the request, it auto-negotiates (checks your calendar, counters if no overlap) and surfaces the best matching slot for your approval. You just confirm with `--accept`.
+
+### Cancel a confirmed meeting
+
+```bash
+tap message cancel-meeting sch_abc123 --reason "Something came up"
+```
+
+Sends cancellation to the peer and removes the event from your calendar.
+
+### How negotiation works
+
+1. Alice's agent checks her calendar, sends a proposal with ranked time slots
+2. Bob's agent checks Bob's calendar against the proposal:
+   - **Overlap found** → surfaces the best slot for Bob's approval
+   - **No overlap** → auto-counters with Bob's available slots
+   - **No calendar** → defers to Bob for manual decision
+3. When agents converge on a slot, both humans confirm
+4. Calendar events are created on both sides
+
+Grants authorize auto-negotiation (the agent handles the back-and-forth), not auto-acceptance — the human always confirms the final booking. Without a grant, every inbound proposal is surfaced for manual decision.
+
+### Scheduling grant constraints
+
+| Constraint | Type | Purpose |
+|---|---|---|
+| `maxDurationMinutes` | number | Reject proposals longer than this |
+| `allowedDays` | string[] | Allowed days: `["mon","tue","wed","thu","fri"]` |
+| `allowedTimeRange` | `{ start, end }` | Business hours in local time, e.g., `"09:00"` to `"18:00"` |
+| `timezone` | string | IANA timezone for interpreting day/time constraints |
+
 ## OpenClaw Plugin Mode
 
 **Skip this section entirely if you're not running inside OpenClaw Gateway.**
@@ -290,6 +371,9 @@ In fallback mode, use `tap message sync` on heartbeat. Do not run `tap message l
 | `publish_grants` | `peer`, `grantSet`, `note` (opt) | Publish grants (sets `grantedByMe`). |
 | `request_grants` | `peer`, `grantSet`, `note` (opt) | Ask peer to publish grants to you. |
 | `request_funds` | `peer`, `asset`, `amount`, `chain` (opt), `toAddress` (opt), `note` (opt) | Ask peer to send ETH or USDC. Hard-blocked without matching grant. |
+| `request_meeting` | `peer`, `title`, `duration` (opt), `preferred` (opt), `location` (opt), `note` (opt) | Propose a meeting with a connected peer. |
+| `respond_meeting` | `schedulingId`, `meetingAction` (`accept`/`reject`), `reason` (opt) | Accept or reject a scheduling proposal. |
+| `cancel_meeting` | `schedulingId`, `reason` (opt) | Cancel a confirmed meeting. |
 | `list_pending` | — | List queued inbound requests awaiting approval. |
 | `resolve_pending` | `requestId`, `approve` (bool) | Approve or reject a pending request. |
 
@@ -300,12 +384,13 @@ All non-rejected inbound events wake the agent immediately. When `[TAP Notificat
 **Critical:** Your heartbeat reply does NOT reach the user through their messaging app. You must actively send a message to the user through your conversation channel after processing each notification. Never process a notification silently.
 
 **ESCALATION** — needs the user's decision:
-1. Read the escalation details (peer, request type, amount if transfer)
+1. Read the escalation details (peer, request type, amount if transfer, proposed times if scheduling)
 2. For connection requests: `tap identity resolve <agentId>` to learn who's asking
 3. For transfer requests: `tap permissions show <peer>` and check the permissions ledger
-4. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
-5. Wait for the user's decision
-6. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`
+4. For scheduling proposals: show the proposed times in the user's timezone, the meeting title, and who's asking
+5. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
+6. Wait for the user's decision
+7. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`, or use `tap_gateway respond_meeting` for scheduling
 
 **SUMMARY** — act and inform the user:
 - **Messages**: Run `tap conversations list --with <peer>` then `tap conversations show <id>` to get the actual content. Read the message, understand the context, and **respond automatically** using `tap_gateway send_message`. If the message is ambiguous, requires human judgment, or you genuinely don't know how to respond, **tell the user** what the peer said and ask for guidance instead. Always **message the user** with what the peer said and how you responded (or that you need their input).
@@ -361,3 +446,6 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
 | `Peer not found in contacts` | Connect first or check the name/agent ID |
 | `Grant not found` | The revoke target doesn't exist — check `tap permissions show` |
 | `tap remove` blocked | Stop the live transport owner first |
+| `No calendar provider configured` | Run `tap calendar setup --provider google` |
+| `Google Workspace CLI (gws) is not installed` | Install with `npm install -g @googleworkspace/cli` |
+| `No matching scheduling grant` | Peer needs to publish a `scheduling/request` grant to you |
