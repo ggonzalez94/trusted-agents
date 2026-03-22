@@ -179,7 +179,11 @@ describe("OpenClawTapRegistry", () => {
 			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
 			const queue = new TapNotificationQueue();
 
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "permissions/update" }));
+			(registry as never).handleEmitEvent(
+				"test",
+				queue,
+				makeEvent({ method: "permissions/update" }),
+			);
 
 			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
 			expect(queue.peek()[0]!.type).toBe("summary");
@@ -199,7 +203,11 @@ describe("OpenClawTapRegistry", () => {
 			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
 			const queue = new TapNotificationQueue();
 
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "connection/result" }));
+			(registry as never).handleEmitEvent(
+				"test",
+				queue,
+				makeEvent({ method: "connection/result" }),
+			);
 
 			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
 			expect(queue.peek()[0]!.type).toBe("info");
@@ -209,7 +217,11 @@ describe("OpenClawTapRegistry", () => {
 			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
 			const queue = new TapNotificationQueue();
 
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "connection/request" }));
+			(registry as never).handleEmitEvent(
+				"test",
+				queue,
+				makeEvent({ method: "connection/request" }),
+			);
 
 			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
 			expect(queue.peek()[0]!.type).toBe("escalation");
@@ -219,8 +231,16 @@ describe("OpenClawTapRegistry", () => {
 			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
 			const queue = new TapNotificationQueue();
 
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "message/send", id: "dup-1" }));
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "message/send", id: "dup-1" }));
+			(registry as never).handleEmitEvent(
+				"test",
+				queue,
+				makeEvent({ method: "message/send", id: "dup-1" }),
+			);
+			(registry as never).handleEmitEvent(
+				"test",
+				queue,
+				makeEvent({ method: "message/send", id: "dup-1" }),
+			);
 
 			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
 		});
