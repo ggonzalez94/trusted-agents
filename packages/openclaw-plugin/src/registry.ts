@@ -280,6 +280,45 @@ export class OpenClawTapRegistry {
 		return await runtime.mutex.runExclusive(async () => await runtime.service.requestFunds(input));
 	}
 
+	async transfer(params: {
+		identity?: string;
+		asset: "native" | "usdc";
+		amount: string;
+		chain?: string;
+		toAddress: `0x${string}`;
+	}): Promise<{
+		identity: string;
+		status: "submitted";
+		asset: string;
+		amount: string;
+		chain: string;
+		to_address: string;
+		tx_hash: string;
+	}> {
+		const runtime = await this.ensureRuntimeForAction(params.identity);
+		const chain = params.chain ?? runtime.config.chain;
+		const result = await runtime.mutex.runExclusive(
+			async () =>
+				await executeOnchainTransfer(runtime.config, {
+					type: "transfer/request",
+					actionId: `gateway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+					asset: params.asset,
+					amount: params.amount,
+					chain,
+					toAddress: params.toAddress,
+				}),
+		);
+		return {
+			identity: runtime.definition.name,
+			status: "submitted",
+			asset: params.asset,
+			amount: params.amount,
+			chain,
+			to_address: params.toAddress,
+			tx_hash: result.txHash,
+		};
+	}
+
 	async listPending(identity?: string) {
 		const names = this.resolveIdentitySelection(identity);
 		const results = await Promise.all(

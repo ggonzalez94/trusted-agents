@@ -14,6 +14,7 @@ const ACTIONS = [
 	"publish_grants",
 	"request_grants",
 	"request_funds",
+	"transfer",
 	"list_pending",
 	"resolve_pending",
 ] as const;
@@ -85,7 +86,7 @@ export function createTapGatewayTool(registry: OpenClawTapRegistry): AnyAgentToo
 		name: "tap_gateway",
 		label: "TAP Gateway",
 		description:
-			"Operate the Trusted Agents Protocol inside OpenClaw Gateway. Use this when the TAP OpenClaw plugin is installed for status, sync, connect, messaging, grant updates, fund requests, and pending approval resolution.",
+			"Operate the Trusted Agents Protocol inside OpenClaw Gateway. Use this when the TAP OpenClaw plugin is installed for status, sync, connect, messaging, grant updates, fund requests, direct transfers, and pending approval resolution.",
 		parameters: TapGatewayToolSchema,
 		async execute(_toolCallId, params) {
 			return json(await executeTapGatewayAction(registry, params as TapGatewayToolParams));
@@ -142,6 +143,14 @@ async function executeTapGatewayAction(
 				toAddress: normalizeAddress(params.toAddress),
 				note: optionalString(params.note),
 			});
+		case "transfer":
+			return await registry.transfer({
+				identity: params.identity,
+				asset: params.asset ?? "native",
+				amount: requireString(params.amount, "amount"),
+				chain: optionalString(params.chain),
+				toAddress: requireAddress(params.toAddress, "toAddress"),
+			});
 		case "list_pending":
 			return await registry.listPending(params.identity);
 		case "resolve_pending":
@@ -180,6 +189,16 @@ function optionalString(value: string | undefined): string | undefined {
 function requireBoolean(value: boolean | undefined, name: string): boolean {
 	if (typeof value !== "boolean") {
 		throw new Error(`${name} is required`);
+	}
+	return value;
+}
+
+function requireAddress(value: string | undefined, name: string): `0x${string}` {
+	if (value === undefined || value.trim().length === 0) {
+		throw new Error(`${name} is required`);
+	}
+	if (!isEthereumAddress(value)) {
+		throw new Error(`Invalid Ethereum address: ${value}`);
 	}
 	return value;
 }

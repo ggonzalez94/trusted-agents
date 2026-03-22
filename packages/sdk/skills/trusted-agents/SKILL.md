@@ -247,6 +247,28 @@ Flow: send request → peer evaluates against grants → auto-approve if covered
 
 Before approving inbound transfers, inspect `tap permissions show <peer>` and `<dataDir>/notes/permissions-ledger.md`.
 
+## Direct Transfers
+
+Direct transfers send funds from the local agent wallet to any EVM address (no peer request, no XMTP).
+
+```bash
+tap transfer --to <address> --asset <native|usdc> --amount <amount> [--chain <chain>] [--yes]
+```
+
+Example:
+
+```bash
+tap transfer --to 0x1111111111111111111111111111111111111111 --asset usdc --amount 5 --chain base
+```
+
+Validation errors:
+- invalid `--to` address
+- invalid/non-positive `--amount`
+- unsupported `--asset` (must be `native` or `usdc`)
+- unknown chain or `usdc` on a chain without a configured USDC token
+
+In OpenClaw plugin mode, use `tap_gateway transfer` with `asset`, `amount`, `toAddress`, and optionally `chain` (defaults to configured chain, must be CAIP-2).
+
 ## OpenClaw Plugin Mode
 
 **Skip this section entirely if you're not running inside OpenClaw Gateway.**
