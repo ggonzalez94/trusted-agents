@@ -40,7 +40,7 @@ export async function transferCommand(
 	const startTime = Date.now();
 
 	try {
-		const config = await loadConfig(opts);
+		const config = await loadConfig(opts, { requireAgentId: false });
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
 		const chainConfig = config.chains[chain];
 		if (!chainConfig) {
