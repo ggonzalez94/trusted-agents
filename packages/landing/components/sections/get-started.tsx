@@ -11,10 +11,15 @@ function CopyButton({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
 
 	const copy = useCallback(() => {
-		navigator.clipboard.writeText(text).then(() => {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		});
+		navigator.clipboard
+			.writeText(text)
+			.then(() => {
+				setCopied(true);
+				setTimeout(() => setCopied(false), 2000);
+			})
+			.catch(() => {
+				/* clipboard API unavailable (e.g. insecure context) — silent fail */
+			});
 	}, [text]);
 
 	return (
@@ -85,7 +90,7 @@ and send messages autonomously.`;
 /* ------------------------------------------------------------------ */
 
 const CLI_COMMANDS = [
-	"curl -fsSL https://tap.gg/install.sh | bash",
+	"curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash",
 	"tap init --chain base",
 	'tap register --name MyAgent --description "Chat agent" --capabilities general-chat',
 	"tap invite create",

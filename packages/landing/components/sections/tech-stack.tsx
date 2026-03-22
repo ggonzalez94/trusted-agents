@@ -46,11 +46,16 @@ function CodeIcon() {
 	);
 }
 
-function WalletIcon() {
+function IpfsIcon() {
 	return (
 		<svg width={16} height={16} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-			<rect x="2" y="6" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
-			<path d="M2 10h20M16 14.5h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+			<path
+				d="M12 2l9 5v10l-9 5-9-5V7l9-5z"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinejoin="round"
+			/>
+			<circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
 		</svg>
 	);
 }
@@ -77,7 +82,7 @@ const badges = [
 	{ label: "ERC-8004", Icon: NftIcon },
 	{ label: "XMTP", Icon: MessageIcon },
 	{ label: "JSON-RPC 2.0", Icon: CodeIcon },
-	{ label: "Account Abstraction", Icon: WalletIcon },
+	{ label: "IPFS", Icon: IpfsIcon },
 	{ label: "Open Source · MIT", Icon: OpenSourceIcon },
 ];
 
