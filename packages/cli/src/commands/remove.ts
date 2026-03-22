@@ -8,12 +8,14 @@ import {
 	type TrustedAgentsConfig,
 	ValidationError,
 	isProcessAlive,
+	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
-import { loadConfig, resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
+import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
+import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
@@ -110,7 +112,7 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 		const warnings = [...plan.warnings];
 		const balanceProbe =
 			interactive && !cmdOpts.dryRun
-				? await removeRuntime.probeRemoveNativeBalance(opts)
+				? await removeRuntime.probeRemoveNativeBalance(plan.dataDir, plan.configPath)
 				: skippedBalanceProbe(
 						cmdOpts.dryRun
 							? "On-chain balance check skipped during dry-run."
@@ -276,10 +278,11 @@ function skippedBalanceProbe(reason: string): RemoveBalanceProbeResult {
 }
 
 export async function probeRemoveNativeBalance(
-	opts: GlobalOptions,
+	dataDir: string,
+	configPath: string,
 ): Promise<RemoveBalanceProbeResult> {
 	try {
-		const config = await loadConfig(opts, { requireAgentId: false });
+		const config = await loadRemoveTargetConfig(dataDir, configPath);
 		const chain = config.chain;
 		const chainConfig = config.chains[chain];
 		if (!chainConfig) {
@@ -346,6 +349,8 @@ export async function transferRemainingNativeBalance(
 		balanceContext.config.privateKey,
 		balanceContext.chainConfig,
 	);
+	const currentBalanceWei = await publicClient.getBalance({ address: account.address });
+	const currentBalanceEth = formatUnits(currentBalanceWei, 18);
 	const gasEstimate = await publicClient.estimateGas({
 		account: account.address,
 		to: toAddress,
@@ -358,13 +363,13 @@ export async function transferRemainingNativeBalance(
 		throw new Error("Could not estimate gas price for the native transfer.");
 	}
 	const gasReserveWei = gasEstimate * gasPrice;
-	if (balanceContext.nativeBalanceWei <= gasReserveWei) {
+	if (currentBalanceWei <= gasReserveWei) {
 		throw new ValidationError(
-			`Current balance ${balanceContext.nativeBalanceEth} ETH is not enough to cover transfer gas.`,
+			`Current balance ${currentBalanceEth} ETH is not enough to cover transfer gas.`,
 		);
 	}
 
-	const amountWei = balanceContext.nativeBalanceWei - gasReserveWei;
+	const amountWei = currentBalanceWei - gasReserveWei;
 	const txRequest: Parameters<typeof walletClient.sendTransaction>[0] = {
 		account,
 		chain: walletClient.chain,
@@ -451,6 +456,19 @@ export const removeRuntime = {
 	probeRemoveNativeBalance,
 	transferRemainingNativeBalance,
 };
+
+async function loadRemoveTargetConfig(
+	dataDir: string,
+	configPath: string,
+): Promise<TrustedAgentsConfig> {
+	const config = await loadTrustedAgentConfigFromDataDir(dataDir, {
+		requireAgentId: false,
+		configPath,
+		extraChains: ALL_CHAINS,
+	});
+	const normalizedChain = resolveChainAlias(config.chain);
+	return normalizedChain === config.chain ? config : { ...config, chain: normalizedChain };
+}
 
 export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> {
 	const dataDir = await resolveRemoveDataDir(opts);
