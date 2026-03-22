@@ -161,6 +161,7 @@ Run `tap <command> --help` for details on any command.
 | `TransportOwnershipError` | Another TAP process owns this identity. In OpenClaw, use `tap_gateway` instead. Otherwise stop the other process. |
 | `Invalid or expired invite` | Invites are time-limited. Create a new one with `tap invite create`. |
 | `Contact not active` | Connection handshake incomplete. Run `tap message sync` on both sides. |
+| OpenClaw Gateway is down | Run `openclaw gateway restart`. If that doesn't work, run `openclaw gateway install` then `openclaw gateway start`. |
 
 ## Development
 
