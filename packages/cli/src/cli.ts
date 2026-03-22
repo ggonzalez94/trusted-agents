@@ -60,6 +60,7 @@ export function createCli(): Command {
 			"after",
 			`
 This only removes local TAP state under the resolved data dir. It does not unregister the agent on-chain, notify peers, or update external host config that still points at the same data dir.
+Interactive runs show the current native on-chain balance and can optionally transfer remaining funds before the final wipe confirmation.
 The command also refuses to wipe a directory that contains non-TAP top-level files.
 
 Examples:

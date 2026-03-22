@@ -333,10 +333,10 @@ tap install                            # Auto-detect host
 tap install --runtime claude           # Claude Code skill install
 tap install --runtime openclaw         # OpenClaw plugin install
 tap remove --dry-run                   # Preview what would be deleted
-tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
+tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode offers balance sweep first)
 ```
 
-`tap remove` is local only — does not unregister on-chain or notify peers.
+`tap remove` is local only — does not unregister on-chain or notify peers. In interactive sessions it also shows the current native on-chain balance and can optionally transfer remaining funds before final wipe confirmation.
 
 ## Common Errors
 
