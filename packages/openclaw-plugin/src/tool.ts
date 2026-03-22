@@ -75,7 +75,9 @@ export const TapGatewayToolSchema = Type.Object(
 				description: "Response action for a meeting request (accept or reject)",
 			}),
 		),
-		reason: Type.Optional(Type.String({ description: "Optional reason for rejection or cancellation" })),
+		reason: Type.Optional(
+			Type.String({ description: "Optional reason for rejection or cancellation" }),
+		),
 	},
 	{ additionalProperties: false },
 );
