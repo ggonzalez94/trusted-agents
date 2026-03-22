@@ -82,6 +82,8 @@ export {
 	type TapRequestFundsInput,
 	type TapRequestFundsResult,
 	type TapRequestGrantSetResult,
+	type TapRequestMeetingInput,
+	type TapRequestMeetingResult,
 	type TapSendMessageResult,
 	type TapServiceHooks,
 	type TapServiceOptions,

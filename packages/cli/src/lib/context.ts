@@ -8,6 +8,7 @@ import {
 import type {
 	ChainConfig,
 	IAgentResolver,
+	ICalendarProvider,
 	IConversationLogger,
 	IRequestJournal,
 	ITrustStore,
@@ -15,6 +16,8 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { buildChainPublicClient } from "trusted-agents-core";
+import { GoogleCalendarCliProvider } from "./calendar/google-calendar.js";
+import { readCalendarProvider } from "./calendar/setup.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
 
 export interface CliContext {
@@ -23,6 +26,7 @@ export interface CliContext {
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
 	requestJournal: IRequestJournal;
+	calendarProvider?: ICalendarProvider;
 }
 
 export interface CliContextWithTransport extends CliContext {
@@ -46,7 +50,9 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 	const conversationLogger = new FileConversationLogger(config.dataDir);
 	const requestJournal = new FileRequestJournal(config.dataDir);
 
-	return { config, trustStore, resolver, conversationLogger, requestJournal };
+	const calendarProvider = resolveCalendarProvider(config.dataDir);
+
+	return { config, trustStore, resolver, conversationLogger, requestJournal, calendarProvider };
 }
 
 export function buildContextWithTransport(config: TrustedAgentsConfig): CliContextWithTransport {
@@ -71,4 +77,12 @@ export function buildContextWithTransport(config: TrustedAgentsConfig): CliConte
 	);
 
 	return { ...ctx, transport };
+}
+
+function resolveCalendarProvider(dataDir: string): ICalendarProvider | undefined {
+	const provider = readCalendarProvider(dataDir);
+	if (provider === "google") {
+		return new GoogleCalendarCliProvider();
+	}
+	return undefined;
 }

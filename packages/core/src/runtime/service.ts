@@ -287,6 +287,21 @@ export interface TapRequestFundsResult {
 	asyncResult?: TransferActionResponse;
 }
 
+export interface TapRequestMeetingInput {
+	peer: string;
+	proposal: SchedulingProposal;
+}
+
+export interface TapRequestMeetingResult {
+	receipt: TransportReceipt;
+	schedulingId: string;
+	peerName: string;
+	peerAgentId: number;
+	title: string;
+	duration: number;
+	slotCount: number;
+}
+
 export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
@@ -829,6 +844,89 @@ export class TapMessagingService {
 		});
 	}
 
+	async requestMeeting(input: TapRequestMeetingInput): Promise<TapRequestMeetingResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.requestMeetingInternal(input),
+		);
+	}
+
+	private async requestMeetingInternal(
+		input: TapRequestMeetingInput,
+	): Promise<TapRequestMeetingResult> {
+		return await this.withTransportSession(async () => {
+			const contact = await this.requireActiveContact(input.peer);
+			const { proposal } = input;
+			const peerSchedulingGrants = findActiveGrantsByScope(
+				contact.permissions.grantedByPeer,
+				"scheduling/request",
+			);
+			if (peerSchedulingGrants.length === 0) {
+				this.log(
+					"warn",
+					`No matching scheduling/request grant found in grantedByPeer for ${contact.peerDisplayName}. The peer may reject this request.`,
+				);
+			}
+
+			const request = buildOutgoingActionRequest(
+				contact,
+				buildSchedulingProposalText(proposal),
+				proposal as unknown as Record<string, unknown>,
+				"scheduling/request",
+			);
+			const requestId = String(request.id);
+			const timestamp = nowISO();
+
+			await this.appendLedger({
+				timestamp,
+				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				direction: "local",
+				event: "scheduling-request-sent",
+				scope: "scheduling/request",
+				action_id: proposal.schedulingId,
+				note: proposal.note ?? `Meeting: ${proposal.title}`,
+			});
+
+			await this.context.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${request.method}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: request.method,
+				peerAgentId: contact.peerAgentId,
+				status: "pending",
+			});
+
+			let receipt: TransportReceipt;
+			try {
+				receipt = await this.context.transport.send(contact.peerAgentId, request, {
+					peerAddress: contact.peerAgentAddress,
+				});
+			} catch (error: unknown) {
+				if (!isTransportReceiptTimeout(error)) {
+					await this.context.requestJournal.delete(requestId);
+				}
+				throw error;
+			}
+
+			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
+			if (journalEntry?.status !== "completed") {
+				await this.context.requestJournal.updateStatus(requestId, "acked");
+			}
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+			await this.touchContactSafe(contact.connectionId);
+
+			return {
+				receipt,
+				schedulingId: proposal.schedulingId,
+				peerName: contact.peerDisplayName,
+				peerAgentId: contact.peerAgentId,
+				title: proposal.title,
+				duration: proposal.duration,
+				slotCount: proposal.slots.length,
+			};
+		});
+	}
+
 	private async runMaintenanceCycle(reconcile: boolean): Promise<number> {
 		if (!reconcile) {
 			return await this.processOutboxInternal();
@@ -894,6 +992,8 @@ export class TapMessagingService {
 				);
 			case "request-funds":
 				return await this.requestFundsInternal(job.payload.input);
+			case "request-meeting":
+				return await this.requestMeetingInternal(job.payload.input);
 			default:
 				return assertNever(job);
 		}

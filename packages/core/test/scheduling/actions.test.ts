@@ -163,8 +163,11 @@ describe("parseSchedulingActionRequest", () => {
 	it("returns null when schedulingId is missing", () => {
 		const msg = makeProposalMessage({ schedulingId: undefined });
 		// Remove the key entirely so it's missing
-		const data = (msg.params as any).message.parts[1].data;
-		delete data.schedulingId;
+		const params = msg.params as Record<string, unknown>;
+		const message = params.message as Record<string, unknown>;
+		const parts = message.parts as Array<Record<string, unknown>>;
+		const data = parts[1].data as Record<string, unknown>;
+		data.schedulingId = undefined;
 		expect(parseSchedulingActionRequest(msg)).toBeNull();
 	});
 
@@ -266,8 +269,11 @@ describe("parseSchedulingActionResponse — accept", () => {
 
 	it("returns null when acceptedSlot is missing", () => {
 		const msg = makeAcceptMessage();
-		const data = (msg.params as any).message.parts[1].data;
-		delete data.acceptedSlot;
+		const params = msg.params as Record<string, unknown>;
+		const message = (params as Record<string, unknown>).message as Record<string, unknown>;
+		const parts = message.parts as Array<Record<string, unknown>>;
+		const data = parts[1].data as Record<string, unknown>;
+		data.acceptedSlot = undefined;
 		expect(parseSchedulingActionResponse(msg)).toBeNull();
 	});
 
@@ -330,7 +336,7 @@ describe("parseSchedulingActionResponse — common failures", () => {
 
 	it("returns null when requestId is missing", () => {
 		const msg = makeAcceptMessage();
-		delete (msg.params as any).requestId;
+		(msg.params as Record<string, unknown>).requestId = undefined;
 		expect(parseSchedulingActionResponse(msg)).toBeNull();
 	});
 
