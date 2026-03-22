@@ -49,7 +49,7 @@ describe("OpenClawTapRegistry", () => {
 		);
 	});
 
-	it("fails startup when a configured identity cannot start", async () => {
+	it("continues in degraded mode when a configured identity cannot start", async () => {
 		const logger = createLogger();
 		const registry = new OpenClawTapRegistry(
 			{
@@ -67,9 +67,12 @@ describe("OpenClawTapRegistry", () => {
 		vi.spyOn(registry as never, "ensureRuntime").mockResolvedValue({} as never);
 		vi.spyOn(registry as never, "startRuntime").mockRejectedValue(new Error("boom"));
 
-		await expect(registry.start()).rejects.toThrow("Failed to start TAP runtimes: alpha: boom");
+		await registry.start();
 		expect(logger.warn).toHaveBeenCalledWith(
 			"[trusted-agents-tap:alpha] Failed to start TAP runtime: boom",
+		);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining("Plugin will continue in degraded mode"),
 		);
 	});
 
