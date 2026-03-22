@@ -264,7 +264,7 @@ Validation errors:
 - unsupported `--asset` (must be `native` or `usdc`)
 - unknown chain or `usdc` on a chain without a configured USDC token
 
-In OpenClaw plugin mode there is currently no `tap_gateway` direct-transfer action; use `tap transfer` (or a wallet tool) when this is needed.
+In OpenClaw plugin mode, use `tap_gateway transfer` with `asset`, `amount`, `toAddress`, and optionally `chain` (defaults to configured chain, must be CAIP-2).
 
 ## OpenClaw Plugin Mode
 

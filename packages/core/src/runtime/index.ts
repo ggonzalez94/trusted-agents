@@ -88,7 +88,7 @@ export {
 	type TapSyncReport,
 	type TapTransferApprovalContext,
 } from "./service.js";
-export { executeOnchainTransfer } from "./transfer-executor.js";
+export { ERC20_TRANSFER_ABI, executeOnchainTransfer } from "./transfer-executor.js";
 export {
 	isProcessAlive,
 	TransportOwnerLock,

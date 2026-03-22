@@ -236,6 +236,35 @@ describe("tap transfer", () => {
 		expect(output.data?.chain).toBe("eip155:8453");
 	});
 
+	it("passes the USDC contract address (not recipient) to gas estimation", async () => {
+		const estimateGas = vi.fn().mockResolvedValue(65000n);
+		vi.mocked(walletLib.buildPublicClient).mockReturnValue({
+			estimateGas,
+			estimateFeesPerGas: vi.fn().mockResolvedValue({
+				gasPrice: 1000000000n,
+				maxFeePerGas: 2000000000n,
+				maxPriorityFeePerGas: 1000000000n,
+			}),
+		} as never);
+
+		await transferCommand(
+			{
+				to: "0x1111111111111111111111111111111111111111",
+				asset: "usdc",
+				amount: "10",
+				chain: "base-sepolia",
+				yes: true,
+			},
+			{ json: true },
+		);
+
+		expect(estimateGas).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+			}),
+		);
+	});
+
 	it("cancels cleanly when confirmation is declined", async () => {
 		vi.mocked(promptLib.promptYesNo).mockResolvedValueOnce(false);
 

@@ -1,6 +1,12 @@
-import { ValidationError, executeOnchainTransfer, isEthereumAddress } from "trusted-agents-core";
+import { randomUUID } from "node:crypto";
+import {
+	ERC20_TRANSFER_ABI,
+	ValidationError,
+	executeOnchainTransfer,
+	isEthereumAddress,
+} from "trusted-agents-core";
 import type { ChainConfig } from "trusted-agents-core";
-import { encodeFunctionData, parseEther, parseUnits } from "viem";
+import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
 import { getUsdcAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
@@ -10,19 +16,6 @@ import { error, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
-
-const ERC20_TRANSFER_ABI = [
-	{
-		type: "function",
-		name: "transfer",
-		stateMutability: "nonpayable",
-		inputs: [
-			{ name: "to", type: "address" },
-			{ name: "amount", type: "uint256" },
-		],
-		outputs: [{ name: "success", type: "bool" }],
-	},
-] as const;
 
 interface TransferCommandOptions {
 	to: string;
@@ -72,11 +65,11 @@ export async function transferCommand(
 		const execution = await getExecutionPreview(config, chainConfig);
 		const gasEstimate = await estimateTransferGasAndFees({
 			chainConfig,
-			chain,
 			asset,
 			amount,
 			toAddress,
 			executionAddress: execution.executionAddress,
+			erc20ContractAddress: usdcAsset?.address,
 			erc20Decimals: usdcAsset?.decimals,
 		});
 
@@ -112,7 +105,7 @@ export async function transferCommand(
 
 		const transfer = await executeOnchainTransfer(config, {
 			type: "transfer/request",
-			actionId: `local-${Date.now()}`,
+			actionId: `local-${randomUUID()}`,
 			asset,
 			amount,
 			chain,
@@ -172,7 +165,7 @@ function normalizeRecipientAddress(toAddress: string): `0x${string}` {
 	if (!isEthereumAddress(toAddress)) {
 		throw new ValidationError(`Invalid recipient address: ${toAddress}`);
 	}
-	return toAddress;
+	return getAddress(toAddress);
 }
 
 function normalizeAmount(amount: string): string {
@@ -203,16 +196,15 @@ function assertAmountIsParsable(
 
 async function estimateTransferGasAndFees(input: {
 	chainConfig: ChainConfig;
-	chain: string;
 	asset: "native" | "usdc";
 	amount: string;
 	toAddress: `0x${string}`;
 	executionAddress: `0x${string}`;
+	erc20ContractAddress?: `0x${string}`;
 	erc20Decimals?: number;
 }): Promise<TransferGasEstimate> {
 	try {
 		const publicClient = buildPublicClient(input.chainConfig);
-		const usdc = getUsdcAsset(input.chain);
 		const [fees, gasUnits] = await Promise.all([
 			publicClient.estimateFeesPerGas(),
 			input.asset === "native"
@@ -224,7 +216,7 @@ async function estimateTransferGasAndFees(input: {
 					})
 				: publicClient.estimateGas({
 						account: input.executionAddress,
-						to: usdc?.address ?? input.toAddress,
+						to: input.erc20ContractAddress!,
 						value: 0n,
 						data: encodeFunctionData({
 							abi: ERC20_TRANSFER_ABI,
