@@ -1,5 +1,67 @@
+import type { IpfsUploadProvider } from "trusted-agents-core";
+
 const PINATA_X402_ENDPOINT = "https://402.pinata.cloud/v1/pin/public";
 const PINATA_API_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
+export const DEFAULT_TACK_API_ENDPOINT = "https://tack-api-production.up.railway.app";
+
+const IPFS_UPLOAD_PROVIDERS = ["auto", "x402", "pinata", "tack"] as const;
+
+function trimTrailingSlash(url: string): string {
+	return url.replace(/\/+$/, "");
+}
+
+const TAIKO_CHAINS = new Set(["eip155:167000", "eip155:167013"]);
+
+export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | undefined {
+	if (!value) {
+		return undefined;
+	}
+
+	const normalized = value.trim().toLowerCase();
+	if (!normalized) {
+		return undefined;
+	}
+
+	if ((IPFS_UPLOAD_PROVIDERS as readonly string[]).includes(normalized)) {
+		return normalized as IpfsUploadProvider;
+	}
+
+	throw new Error(
+		`Invalid IPFS provider: ${value}. Expected one of: ${IPFS_UPLOAD_PROVIDERS.join(", ")}`,
+	);
+}
+
+/**
+ * Resolve `auto` to a concrete provider based on chain and available credentials.
+ *
+ * - Taiko chains → `tack` (x402 on Taiko)
+ * - Pinata JWT present → `pinata`
+ * - Otherwise → `x402` (Pinata x402 on Base)
+ */
+export function resolveAutoProvider(
+	chain: string,
+	pinataJwt?: string,
+): Exclude<IpfsUploadProvider, "auto"> {
+	if (pinataJwt) return "pinata";
+	if (TAIKO_CHAINS.has(chain)) return "tack";
+	return "x402";
+}
+
+export function resolveTackApiUrl(configValue?: string): string {
+	const envValue = process.env.TAP_TACK_API_URL;
+	const url = trimTrailingSlash(envValue?.trim() || configValue || DEFAULT_TACK_API_ENDPOINT);
+
+	try {
+		const parsed = new URL(url);
+		if (!["http:", "https:"].includes(parsed.protocol)) {
+			throw new Error("invalid protocol");
+		}
+	} catch {
+		throw new Error(`Invalid Tack API URL: ${url}`);
+	}
+
+	return url;
+}
 
 /**
  * Upload JSON to IPFS via Pinata's x402 endpoint.
@@ -79,6 +141,63 @@ export async function uploadToIpfsX402(
 
 	if (!cid) {
 		throw new Error("Could not determine IPFS CID from upload response");
+	}
+
+	return { cid, uri: `ipfs://${cid}` };
+}
+
+/**
+ * Upload JSON to IPFS through Tack's x402 `/upload` endpoint.
+ *
+ * Pays with USDC on Taiko Alethia (eip155:167000).
+ * Requires USDC on the wallet derived from `privateKey` on Taiko mainnet.
+ */
+export async function uploadToIpfsTack(
+	json: unknown,
+	privateKey: `0x${string}`,
+	options?: { apiUrl?: string },
+): Promise<{ cid: string; uri: string }> {
+	const { x402Client, wrapFetchWithPayment } = await import("@x402/fetch");
+	const { ExactEvmScheme } = await import("@x402/evm/exact/client");
+	const { toClientEvmSigner } = await import("@x402/evm");
+	const { privateKeyToAccount } = await import("viem/accounts");
+	const { createPublicClient, http } = await import("viem");
+	const { taiko } = await import("viem/chains");
+
+	const account = privateKeyToAccount(privateKey);
+	const publicClient = createPublicClient({
+		chain: taiko,
+		transport: http(taiko.rpcUrls.default.http[0] ?? "https://rpc.mainnet.taiko.xyz"),
+	});
+	const signer = toClientEvmSigner(account, publicClient);
+
+	const client = new x402Client();
+	client.register("eip155:*", new ExactEvmScheme(signer));
+	const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+
+	const content = JSON.stringify(json);
+	const blob = new Blob([content], { type: "application/json" });
+	const formData = new FormData();
+	formData.append("file", blob, "registration.json");
+
+	const apiUrl = trimTrailingSlash(options?.apiUrl ?? resolveTackApiUrl());
+	const response = await fetchWithPayment(`${apiUrl}/upload`, {
+		method: "POST",
+		body: formData,
+	});
+	if (!response.ok) {
+		const text = await response.text().catch(() => "");
+		throw new Error(`Tack upload failed (HTTP ${response.status}): ${text}`);
+	}
+
+	const result = (await response.json()) as {
+		cid?: string;
+		IpfsHash?: string;
+		data?: { cid?: string };
+	};
+	const cid = result.cid ?? result.IpfsHash ?? result.data?.cid;
+	if (!cid) {
+		throw new Error("Tack response missing cid");
 	}
 
 	return { cid, uri: `ipfs://${cid}` };

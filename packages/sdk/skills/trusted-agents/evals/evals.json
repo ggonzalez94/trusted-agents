@@ -84,6 +84,96 @@
         }
       ],
       "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "I want to set up a new TAP agent on Base mainnet. I already have tap installed. Walk me through the onboarding process. My wallet has 1 USDC on Base.",
+      "expected_output": "The agent should guide through init with --chain base, show the funding table (Base uses USDC, Circle Paymaster, Pinata x402), confirm balance, then register. Should NOT mention Tack or Taiko unless asked. IPFS upload should be described as automatic via Pinata x402 on Base.",
+      "assertions": [
+        {
+          "name": "uses_base_chain",
+          "description": "Agent runs tap init with base chain",
+          "type": "contains_any",
+          "values": ["tap init --chain base", "--chain base", "init --chain base"]
+        },
+        {
+          "name": "mentions_usdc_funding",
+          "description": "Agent mentions USDC funding on Base",
+          "type": "contains_any",
+          "values": ["USDC", "usdc"]
+        },
+        {
+          "name": "does_not_suggest_tack_unprompted",
+          "description": "Agent does not mention Tack or Taiko when setting up on Base",
+          "type": "excludes_all",
+          "values": ["tack", "Tack", "taiko", "Taiko"]
+        },
+        {
+          "name": "proceeds_to_register",
+          "description": "Agent guides toward registration after funding",
+          "type": "contains_any",
+          "values": ["tap register", "register --name"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "I'd like to register my agent on Taiko instead of Base. I have tap installed but haven't initialized yet. What do I need to know about funding and IPFS uploads on Taiko?",
+      "expected_output": "The agent should init with --chain taiko, explain that Taiko uses EIP-4337 with Servo Paymaster, USDC on Taiko for gas, and that IPFS uploads automatically use Tack (x402 on Taiko). Should mention the Tack endpoint URL. Should NOT tell the user to fund with Base USDC or manually set --ipfs-provider.",
+      "assertions": [
+        {
+          "name": "uses_taiko_chain",
+          "description": "Agent runs tap init with taiko chain",
+          "type": "contains_any",
+          "values": ["tap init --chain taiko", "--chain taiko", "init --chain taiko"]
+        },
+        {
+          "name": "mentions_tack_for_ipfs",
+          "description": "Agent mentions Tack as the IPFS provider for Taiko",
+          "type": "contains_any",
+          "values": ["Tack", "tack"]
+        },
+        {
+          "name": "mentions_taiko_usdc",
+          "description": "Agent mentions USDC on Taiko (not Base) for Taiko agents",
+          "type": "contains_any",
+          "values": ["USDC on Taiko", "Taiko USDC", "Taiko mainnet"]
+        },
+        {
+          "name": "does_not_require_base_usdc",
+          "description": "Agent does not tell the user to fund Base USDC for a Taiko agent",
+          "type": "excludes_all",
+          "values": ["USDC on Base mainnet", "Base mainnet USDC for IPFS", "send USDC to Base"]
+        }
+      ],
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "My agent is on Taiko and I just ran tap register but it failed with an IPFS upload error. The error says 'Tack upload failed'. What should I check?",
+      "expected_output": "The agent should check USDC balance on Taiko (since Tack x402 pays with Taiko USDC), suggest tap balance to verify funds, and mention alternatives like --ipfs-provider x402 (Base) or --pinata-jwt as fallbacks. Should reference the Tack endpoint URL for debugging.",
+      "assertions": [
+        {
+          "name": "checks_taiko_balance",
+          "description": "Agent suggests checking balance on Taiko",
+          "type": "contains_any",
+          "values": ["tap balance", "balance", "USDC on Taiko", "fund"]
+        },
+        {
+          "name": "suggests_alternatives",
+          "description": "Agent mentions alternative IPFS providers as fallback",
+          "type": "contains_any",
+          "values": ["--ipfs-provider", "pinata", "x402", "alternative"]
+        },
+        {
+          "name": "references_tack_endpoint",
+          "description": "Agent references the Tack endpoint or service for debugging",
+          "type": "contains_any",
+          "values": ["tack-api-production", "railway.app", "Tack", "tack"]
+        }
+      ],
+      "files": []
     }
   ]
 }

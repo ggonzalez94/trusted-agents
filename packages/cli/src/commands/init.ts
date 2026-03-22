@@ -122,7 +122,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 						`Agent address: ${address}`,
 						`${chainLabel} currently uses direct EOA transactions in this CLI.`,
 						`Fund this address with native gas on ${chainLabel}.`,
-						"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
+						"IPFS uploads auto-select based on chain (Tack on Taiko, Pinata x402 on Base). Override with --ipfs-provider or --pinata-jwt.",
 					];
 
 		const result = {

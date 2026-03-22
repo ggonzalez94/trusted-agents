@@ -17,6 +17,7 @@ const CONFIG_KEY_SEGMENT_ALIASES: Record<string, string> = {
 	paymasterProvider: "paymaster_provider",
 	registryAddress: "registry_address",
 	rpcUrl: "rpc_url",
+	tackApiUrl: "tack_api_url",
 };
 
 const NUMERIC_CONFIG_PATHS = new Set([
