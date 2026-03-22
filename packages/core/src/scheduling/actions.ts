@@ -55,18 +55,13 @@ function isValidTimeSlot(slot: unknown): slot is TimeSlot {
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
-export function parseSchedulingActionRequest(
-	message: ProtocolMessage,
-): SchedulingProposal | null {
+export function parseSchedulingActionRequest(message: ProtocolMessage): SchedulingProposal | null {
 	if (message.method !== ACTION_REQUEST) {
 		return null;
 	}
 
 	const data = extractMessageData(message);
-	if (
-		!data ||
-		(data.type !== "scheduling/propose" && data.type !== "scheduling/counter")
-	) {
+	if (!data || (data.type !== "scheduling/propose" && data.type !== "scheduling/counter")) {
 		return null;
 	}
 
@@ -162,9 +157,7 @@ export function parseSchedulingActionResponse(
 		return {
 			type: data.type as "scheduling/reject" | "scheduling/cancel",
 			schedulingId: data.schedulingId,
-			...(typeof data.reason === "string" && data.reason.length > 0
-				? { reason: data.reason }
-				: {}),
+			...(typeof data.reason === "string" && data.reason.length > 0 ? { reason: data.reason } : {}),
 		};
 	}
 
@@ -182,6 +175,7 @@ export function buildSchedulingAcceptText(accept: SchedulingAccept): string {
 }
 
 export function buildSchedulingRejectText(reject: SchedulingReject): string {
-	const base = reject.type === "scheduling/cancel" ? "Cancelled meeting" : "Declined meeting request";
+	const base =
+		reject.type === "scheduling/cancel" ? "Cancelled meeting" : "Declined meeting request";
 	return reject.reason ? `${base}: ${reject.reason}` : base;
 }

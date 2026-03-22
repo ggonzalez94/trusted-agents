@@ -1,5 +1,5 @@
-import { findActiveGrantsByScope } from "../runtime/grants.js";
 import type { PermissionGrant, PermissionGrantSet } from "../permissions/types.js";
+import { findActiveGrantsByScope } from "../runtime/grants.js";
 import type { SchedulingProposal } from "./types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { ACTION_REQUEST, ACTION_RESULT } from "../../src/protocol/methods.js";
-import type { ProtocolMessage } from "../../src/transport/interface.js";
 import {
 	buildSchedulingAcceptText,
 	buildSchedulingProposalText,
@@ -8,7 +7,12 @@ import {
 	parseSchedulingActionRequest,
 	parseSchedulingActionResponse,
 } from "../../src/scheduling/actions.js";
-import type { SchedulingAccept, SchedulingProposal, SchedulingReject } from "../../src/scheduling/types.js";
+import type {
+	SchedulingAccept,
+	SchedulingProposal,
+	SchedulingReject,
+} from "../../src/scheduling/types.js";
+import type { ProtocolMessage } from "../../src/transport/interface.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -130,7 +134,9 @@ describe("parseSchedulingActionRequest", () => {
 	});
 
 	it("parses a valid scheduling/counter message", () => {
-		const result = parseSchedulingActionRequest(makeProposalMessage({ type: "scheduling/counter" }));
+		const result = parseSchedulingActionRequest(
+			makeProposalMessage({ type: "scheduling/counter" }),
+		);
 		expect(result).not.toBeNull();
 		expect(result?.type).toBe("scheduling/counter");
 	});
@@ -149,7 +155,9 @@ describe("parseSchedulingActionRequest", () => {
 	});
 
 	it("returns null when data type is not scheduling/propose or scheduling/counter", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ type: "scheduling/accept" }))).toBeNull();
+		expect(
+			parseSchedulingActionRequest(makeProposalMessage({ type: "scheduling/accept" })),
+		).toBeNull();
 	});
 
 	it("returns null when schedulingId is missing", () => {
@@ -327,7 +335,10 @@ describe("parseSchedulingActionResponse — common failures", () => {
 	});
 
 	it("returns null when requestId is empty", () => {
-		const msg = { ...makeAcceptMessage(), params: { ...makeAcceptMessage().params, requestId: "" } };
+		const msg = {
+			...makeAcceptMessage(),
+			params: { ...makeAcceptMessage().params, requestId: "" },
+		};
 		expect(parseSchedulingActionResponse(msg)).toBeNull();
 	});
 
@@ -370,9 +381,9 @@ describe("buildSchedulingProposalText", () => {
 	});
 
 	it("works for counter proposals", () => {
-		expect(buildSchedulingProposalText({ ...proposal, type: "scheduling/counter", title: "Lunch" })).toBe(
-			"Proposing: Lunch (90 min) — 2 time slot(s)",
-		);
+		expect(
+			buildSchedulingProposalText({ ...proposal, type: "scheduling/counter", title: "Lunch" }),
+		).toBe("Proposing: Lunch (90 min) — 2 time slot(s)");
 	});
 });
 
@@ -386,9 +397,7 @@ describe("buildSchedulingAcceptText", () => {
 	};
 
 	it("returns the expected text", () => {
-		expect(buildSchedulingAcceptText(accept)).toBe(
-			"Accepted: meeting at 2026-03-28T23:00:00Z",
-		);
+		expect(buildSchedulingAcceptText(accept)).toBe("Accepted: meeting at 2026-03-28T23:00:00Z");
 	});
 });
 

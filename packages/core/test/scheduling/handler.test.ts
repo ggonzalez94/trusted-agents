@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGrantSet } from "../../src/permissions/index.js";
 import type { PermissionGrant } from "../../src/permissions/types.js";
-import type { AvailabilityWindow, ICalendarProvider } from "../../src/scheduling/calendar-provider.js";
+import type {
+	AvailabilityWindow,
+	ICalendarProvider,
+} from "../../src/scheduling/calendar-provider.js";
 import type { CalendarEvent } from "../../src/scheduling/calendar-provider.js";
 import type { SchedulingHooks } from "../../src/scheduling/handler.js";
 import { SchedulingHandler } from "../../src/scheduling/handler.js";

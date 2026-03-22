@@ -69,9 +69,7 @@ export function validateSchedulingProposal(proposal: SchedulingProposal): void {
 
 export function validateSchedulingAccept(accept: SchedulingAccept): void {
 	if (accept.type !== "scheduling/accept") {
-		throw new ValidationError(
-			`Invalid accept type: ${accept.type}. Must be scheduling/accept`,
-		);
+		throw new ValidationError(`Invalid accept type: ${accept.type}. Must be scheduling/accept`);
 	}
 	if (!accept.schedulingId || accept.schedulingId.trim() === "") {
 		throw new ValidationError("Accept schedulingId must not be empty");
