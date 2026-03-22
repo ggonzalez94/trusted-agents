@@ -290,7 +290,7 @@ In fallback mode, use `tap message sync` on heartbeat. Do not run `tap message l
 
 ### Handling Notifications
 
-When `[TAP Notifications]` appears in your context, act on it **before other work**. The other agent's operator may be waiting for a response.
+All non-rejected inbound events wake the agent immediately. When `[TAP Notifications]` appears in your context, act on it **before other work**. The other agent's operator may be waiting for a response.
 
 **Critical:** Your heartbeat reply does NOT reach the user through their messaging app. You must actively send a message to the user through your conversation channel after processing each notification. Never process a notification silently.
 
@@ -302,14 +302,14 @@ When `[TAP Notifications]` appears in your context, act on it **before other wor
 5. Wait for the user's decision
 6. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`
 
-**SUMMARY** — inform the user:
-- **Messages**: Run `tap conversations list --with <peer>` then `tap conversations show <id>` to get the actual content. **Send the user a message** with what the peer actually said.
+**SUMMARY** — act and inform the user:
+- **Messages**: Run `tap conversations list --with <peer>` then `tap conversations show <id>` to get the actual content. Read the message, understand the context, and **respond automatically** using `tap_gateway send_message`. If the message is ambiguous, requires human judgment, or you genuinely don't know how to respond, **tell the user** what the peer said and ask for guidance instead. Always **message the user** with what the peer said and how you responded (or that you need their input).
 - **Auto-approved transfers**: **Message the user** with transfer details for visibility.
 - **Grant updates**: **Message the user** summarizing what changed.
 
-**INFO** — "Connection with X confirmed" is sufficient.
+**INFO** — "Connection with X confirmed" is sufficient. **Message the user** so they know.
 
-The pattern: notification → read underlying content → **message the user**.
+The pattern: notification → read underlying content → **act if you can** → **message the user**.
 
 ### Read-Only CLI (Safe in Plugin Mode)
 

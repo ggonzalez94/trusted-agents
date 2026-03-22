@@ -399,7 +399,7 @@ export class OpenClawTapRegistry {
 						// flow, so we push new notifications here instead of upgrading —
 						// the classifier returns null for transfer requests to avoid duplicates.
 						if (activeTransferGrants.length > 0) {
-							notificationQueue.push({
+							const grantEnqueued = notificationQueue.push({
 								type: "summary",
 								identity: name,
 								timestamp: new Date().toISOString(),
@@ -410,6 +410,11 @@ export class OpenClawTapRegistry {
 								detail: { asset: request.asset, amount: request.amount },
 								oneLiner: `Approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName} (covered by grant)`,
 							});
+							if (grantEnqueued) {
+								void this.triggerEscalation(
+									`Auto-approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName}`,
+								);
+							}
 							return true;
 						}
 						const enqueued = notificationQueue.push({
@@ -515,9 +520,9 @@ export class OpenClawTapRegistry {
 
 		const enqueued = queue.push(notification);
 
-		if (bucket === "escalate" && enqueued) {
+		if (enqueued) {
 			const peer = event.fromName ?? `agent #${event.from}`;
-			void this.triggerEscalation(`Incoming ${event.method} from ${peer} requires attention`);
+			void this.triggerEscalation(`Incoming ${event.method} from ${peer}`);
 		}
 	}
 

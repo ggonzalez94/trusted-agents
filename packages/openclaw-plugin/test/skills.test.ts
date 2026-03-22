@@ -5,23 +5,18 @@ import { describe, expect, it } from "vitest";
 
 const skillDir = fileURLToPath(new URL("../skills/trusted-agents-openclaw", import.meta.url));
 const skillPath = join(skillDir, "SKILL.md");
-const sharedReferencePaths = [
-	"references/permissions-v1.md",
-	"references/permissions-ledger-v1.md",
-	"references/capability-map.md",
-] as const;
+const sharedReferencePaths = ["references/permissions-v1.md"] as const;
 
 describe("OpenClaw TAP skill bundle", () => {
 	it("keeps every referenced file inside the plugin skill tree", () => {
 		const markdown = readFileSync(skillPath, "utf-8");
-		const referencesSection = markdown.split("## References\n")[1] ?? "";
-		const references = referencesSection
-			.split("\n")
-			.map((line) => line.match(/^- `([^`]+)`$/)?.[1])
-			.filter((value): value is string => Boolean(value));
+		const references = [...markdown.matchAll(/references\/[a-zA-Z0-9_-]+\.md/g)].map(
+			(match) => match[0],
+		);
+		const unique = [...new Set(references)];
 
-		expect(references.length).toBeGreaterThan(0);
-		for (const reference of references) {
+		expect(unique.length).toBeGreaterThan(0);
+		for (const reference of unique) {
 			const resolvedPath = resolve(skillDir, reference);
 			expect(normalize(resolvedPath).startsWith(normalize(`${skillDir}/`))).toBe(true);
 			expect(existsSync(resolvedPath)).toBe(true);
