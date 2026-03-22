@@ -27,7 +27,10 @@ import {
 	buildChainWalletClient as buildWalletClient,
 } from "../common/index.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
-import { getDefaultExecutionModeForChain } from "../config/load.js";
+import {
+	getDefaultExecutionModeForChain,
+	getDefaultPaymasterProviderForMode,
+} from "../config/load.js";
 import type {
 	ChainConfig,
 	ExecutionMode,
@@ -382,10 +385,36 @@ function resolveExecutionMode(
 	return "eoa";
 }
 
-function requestedPaymasterProvider(config: TrustedAgentsConfig): ExecutionPaymasterProvider {
-	return (
-		config.execution?.paymasterProvider ?? DEFAULT_CONFIG.execution?.paymasterProvider ?? "circle"
+function isPaymasterProviderCompatible(
+	mode: "eip4337" | "eip7702",
+	provider: ExecutionPaymasterProvider,
+): boolean {
+	if (mode === "eip4337") {
+		return provider === "servo";
+	}
+
+	return provider === "circle" || provider === "candide";
+}
+
+function resolvePaymasterProvider(
+	config: TrustedAgentsConfig,
+	chainConfig: ChainConfig,
+	mode: "eip4337" | "eip7702",
+	warnings: string[],
+): ExecutionPaymasterProvider {
+	const configuredProvider = config.execution?.paymasterProvider;
+	const defaultProvider =
+		getDefaultPaymasterProviderForMode(mode) ??
+		DEFAULT_CONFIG.execution?.paymasterProvider ??
+		"circle";
+	if (!configuredProvider || isPaymasterProviderCompatible(mode, configuredProvider)) {
+		return configuredProvider ?? defaultProvider;
+	}
+
+	warnings.push(
+		`${configuredProvider} is not available for ${mode} execution on ${chainConfig.name}; using ${defaultProvider}`,
 	);
+	return defaultProvider;
 }
 
 function previewProviderConfig(
@@ -559,21 +588,22 @@ async function preflightProvider(
 		await assertBundlerSupportsEntryPoint(endpoint, ENTRY_POINT_07);
 
 		let accountFactoryAddress = SERVO_ACCOUNT_FACTORIES[chainConfig.caip2];
+		let capabilities: ServoCapabilities | undefined;
 		try {
-			const capabilities = await rpcRequest<ServoCapabilities>(endpoint, "pm_getCapabilities", []);
-			if (
-				capabilities.supportedChains?.length &&
-				!capabilities.supportedChains.some((item) => item.chainId === chainConfig.chainId)
-			) {
-				throw new Error(`Servo endpoint does not advertise ${chainConfig.name}`);
-			}
-			if (capabilities.accountFactoryAddress) {
-				accountFactoryAddress = getAddress(capabilities.accountFactoryAddress);
-			}
+			capabilities = await rpcRequest<ServoCapabilities>(endpoint, "pm_getCapabilities", []);
 		} catch (error) {
 			if (!accountFactoryAddress) {
 				throw error;
 			}
+		}
+		if (
+			capabilities?.supportedChains?.length &&
+			!capabilities.supportedChains.some((item) => item.chainId === chainConfig.chainId)
+		) {
+			throw new Error(`Servo endpoint does not advertise ${chainConfig.name}`);
+		}
+		if (capabilities?.accountFactoryAddress) {
+			accountFactoryAddress = getAddress(capabilities.accountFactoryAddress);
 		}
 
 		if (!accountFactoryAddress) {
@@ -905,7 +935,9 @@ async function resolveExecutionContext(
 		};
 	}
 
-	const paymasterProvider = pinnedPreview?.paymasterProvider ?? requestedPaymasterProvider(config);
+	const paymasterProvider =
+		pinnedPreview?.paymasterProvider ??
+		resolvePaymasterProvider(config, chainConfig, mode, warnings);
 	const providerConfig = requireProvider
 		? pinnedPreview?.paymasterProvider
 			? await preflightProvider(chainConfig, paymasterProvider)
@@ -916,7 +948,7 @@ async function resolveExecutionContext(
 		throw new Error(`No zero-config paymaster is available on ${chainConfig.name}`);
 	}
 
-	if (!providerConfig && !requireProvider) {
+	if (!providerConfig && !requireProvider && mode !== "eip4337") {
 		warnings.push(
 			`${paymasterProvider} is not available as a zero-config paymaster on ${chainConfig.name}`,
 		);
@@ -924,10 +956,6 @@ async function resolveExecutionContext(
 
 	if (mode === "eip4337") {
 		if (!providerConfig) {
-			if (requireProvider) {
-				throw new Error(`No zero-config paymaster is available on ${chainConfig.name}`);
-			}
-
 			warnings.push(
 				`${paymasterProvider} could not be resolved for ${chainConfig.name}; using eoa execution`,
 			);
@@ -1254,15 +1282,22 @@ async function executeEip4337Calls(
 		maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
 		signature: SERVO_DUMMY_SIGNATURE,
 	};
+	const chainIdHex = toHex(chainConfig.chainId);
 
 	const stubQuote = parseServoQuote(
 		await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterStubData", [
 			draftUserOperation,
 			context.entryPoint.address,
-			chainConfig.chainId,
+			chainIdHex,
 			{},
 		]),
 	);
+	const quotedUserOperation = {
+		...draftUserOperation,
+		callGasLimit: stubQuote.callGasLimit,
+		verificationGasLimit: stubQuote.verificationGasLimit,
+		preVerificationGas: stubQuote.preVerificationGas,
+	};
 
 	const permitNonce = (await context.publicClient.readContract({
 		address: stubQuote.tokenAddress,
@@ -1314,9 +1349,9 @@ async function executeEip4337Calls(
 
 	const finalQuote = parseServoQuote(
 		await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterData", [
-			draftUserOperation,
+			quotedUserOperation,
 			context.entryPoint.address,
-			chainConfig.chainId,
+			chainIdHex,
 			{
 				permit: {
 					value: permitValue.toString(),

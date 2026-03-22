@@ -179,6 +179,39 @@ describe("execution", () => {
 		expect(toSimple7702SmartAccount).toHaveBeenCalledOnce();
 	});
 
+	it("coerces Base eip4337 requests back to an eip7702-compatible paymaster", async () => {
+		mockRpcFetch(({ method }) => {
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_08] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+
+		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:8453", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, {
+			requireProvider: true,
+		});
+
+		expect(preview.mode).toBe("eip7702");
+		expect(preview.paymasterProvider).toBe("circle");
+		expect(preview.warnings).toContain(
+			"Base uses EIP-7702 as the default account-abstraction path in this runtime; using eip7702",
+		);
+		expect(preview.warnings).toContain(
+			"servo is not available for eip7702 execution on Base; using circle",
+		);
+	});
+
 	it("switches Taiko requests to eip4337 with Servo", async () => {
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {
@@ -222,6 +255,47 @@ describe("execution", () => {
 		expect(preview.executionAddress).toBe(EXECUTION_ADDRESS);
 		expect(preview.warnings[0]).toContain("uses EIP-4337");
 		expect(toSimple7702SmartAccount).not.toHaveBeenCalled();
+	});
+
+	it("fails fast when Servo explicitly reports the chain as unsupported", async () => {
+		mockRpcFetch(({ method }) => {
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 8453 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+
+		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+
+		await expect(
+			getExecutionPreview(config, config.chains[config.chain]!, {
+				requireProvider: true,
+			}),
+		).rejects.toThrow("Servo endpoint does not advertise Taiko");
 	});
 
 	it("uses Candide as the Base mainnet fallback when Circle preflight fails", async () => {
@@ -566,9 +640,18 @@ describe("execution", () => {
 		);
 		const stubRequest = requests.find((request) => request.method === "pm_getPaymasterStubData");
 		const stubUserOperation = stubRequest?.params[0] as Record<string, unknown>;
+		expect(stubRequest?.params[2]).toBe("0x28c58");
 		expect(stubUserOperation.factory).toBe(SERVO_FACTORY_ADDRESS);
 		expect(stubUserOperation).toHaveProperty("factoryData");
 		expect(stubUserOperation).not.toHaveProperty("initCode");
+		const paymasterDataRequest = requests.find(
+			(request) => request.method === "pm_getPaymasterData",
+		);
+		const quotedUserOperation = paymasterDataRequest?.params[0] as Record<string, unknown>;
+		expect(paymasterDataRequest?.params[2]).toBe("0x28c58");
+		expect(quotedUserOperation.callGasLimit).toBe("0x88d8");
+		expect(quotedUserOperation.verificationGasLimit).toBe("0x1d4c8");
+		expect(quotedUserOperation.preVerificationGas).toBe("0x5274");
 		const sendRequest = requests.find((request) => request.method === "eth_sendUserOperation");
 		const sentUserOperation = sendRequest?.params[0] as Record<string, unknown>;
 		expect(sentUserOperation.factory).toBe(SERVO_FACTORY_ADDRESS);
