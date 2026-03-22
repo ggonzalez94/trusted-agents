@@ -8,7 +8,7 @@ export interface ChainConfig {
 }
 
 export type ExecutionMode = "eoa" | "eip4337" | "eip7702";
-export type ExecutionPaymasterProvider = "circle" | "candide";
+export type ExecutionPaymasterProvider = "circle" | "candide" | "servo";
 
 export interface ExecutionConfig {
 	mode?: ExecutionMode;

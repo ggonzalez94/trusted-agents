@@ -50,15 +50,29 @@ export function resolveTrustedAgentConfigPath(dataDir: string): string {
 }
 
 export function getDefaultExecutionModeForChain(chain: string): ExecutionMode {
-	return ["base", "base-sepolia", "eip155:8453", "eip155:84532"].includes(chain)
-		? "eip7702"
-		: "eoa";
+	if (["base", "base-sepolia", "eip155:8453", "eip155:84532"].includes(chain)) {
+		return "eip7702";
+	}
+
+	if (["taiko", "taiko-mainnet", "eip155:167000"].includes(chain)) {
+		return "eip4337";
+	}
+
+	return "eoa";
 }
 
 export function getDefaultPaymasterProviderForMode(
 	mode: ExecutionMode,
 ): ExecutionPaymasterProvider | undefined {
-	return mode === "eoa" ? undefined : (DEFAULT_CONFIG.execution?.paymasterProvider ?? "circle");
+	if (mode === "eoa") {
+		return undefined;
+	}
+
+	if (mode === "eip4337") {
+		return "servo";
+	}
+
+	return DEFAULT_CONFIG.execution?.paymasterProvider ?? "circle";
 }
 
 export async function loadTrustedAgentConfigFromDataDir(

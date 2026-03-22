@@ -118,12 +118,19 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 							"Fund this address with Base Sepolia USDC for registration transactions.",
 							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
 						]
-				: [
-						`Agent address: ${address}`,
-						`${chainLabel} currently uses direct EOA transactions in this CLI.`,
-						`Fund this address with native gas on ${chainLabel}.`,
-						"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
-					];
+				: executionMode === "eip4337"
+					? [
+							`Agent owner address: ${address}`,
+							`${chainLabel} defaults to EIP-4337 with Servo Paymaster.`,
+							"Fund the Servo execution account with USDC (run `tap balance --json` to see `execution_address`).",
+							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same owner address or use --pinata-jwt / --uri.",
+						]
+					: [
+							`Agent address: ${address}`,
+							`${chainLabel} currently uses direct EOA transactions in this CLI.`,
+							`Fund this address with native gas on ${chainLabel}.`,
+							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
+						];
 
 		const result = {
 			address,

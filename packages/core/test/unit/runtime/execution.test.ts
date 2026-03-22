@@ -3,10 +3,12 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 
+const ENTRY_POINT_07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
 const ENTRY_POINT_08 = "0x0000000000000000000000000000000000000008" as Address;
 const EXECUTION_ADDRESS = "0x1000000000000000000000000000000000000001" as Address;
 const CIRCLE_PAYMASTER_ADDRESS = "0x0578cFB241215b77442a541325d6A4E6dFE700Ec" as Address;
 const CANDIDE_PAYMASTER_ADDRESS = "0x2000000000000000000000000000000000000002" as Address;
+const SERVO_FACTORY_ADDRESS = "0xCa245Ae9B786EF420Dc359430e5833b840880619" as Address;
 const OWNER_ADDRESS = privateKeyToAccount(
 	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
 ).address;
@@ -15,6 +17,7 @@ const toSimple7702SmartAccount = vi.fn();
 const createBundlerClient = vi.fn();
 const createPaymasterClient = vi.fn();
 const formatUserOperationRequest = vi.fn((value) => value);
+const getUserOperationHash = vi.fn();
 const signAuthorization = vi.fn();
 const buildChainPublicClient = vi.fn();
 const buildChainWalletClient = vi.fn();
@@ -23,8 +26,10 @@ vi.mock("viem/account-abstraction", () => ({
 	toSimple7702SmartAccount,
 	createBundlerClient,
 	createPaymasterClient,
+	entryPoint07Address: ENTRY_POINT_07,
 	entryPoint08Address: ENTRY_POINT_08,
 	formatUserOperationRequest,
+	getUserOperationHash,
 }));
 
 vi.mock("viem/actions", () => ({
@@ -122,15 +127,26 @@ describe("execution", () => {
 		createBundlerClient.mockReset();
 		createPaymasterClient.mockReset();
 		formatUserOperationRequest.mockClear();
+		getUserOperationHash.mockReset();
 		signAuthorization.mockReset();
 		buildChainPublicClient.mockReset();
 		buildChainWalletClient.mockReset();
 		global.fetch = vi.fn();
 		mock7702Account();
+		getUserOperationHash.mockReturnValue(`0x${"ab".repeat(32)}`);
 		buildChainPublicClient.mockReturnValue({
-			readContract: vi.fn().mockResolvedValue(maxUint256),
+			readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return 0n;
+				if (functionName === "nonces") return 0n;
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				return maxUint256;
+			}),
 			verifyTypedData: vi.fn().mockResolvedValue(true),
 			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
 		});
 		buildChainWalletClient.mockReturnValue({
 			chain: { id: 84532 },
@@ -163,18 +179,48 @@ describe("execution", () => {
 		expect(toSimple7702SmartAccount).toHaveBeenCalledOnce();
 	});
 
-	it("falls back to eoa on Taiko", async () => {
+	it("switches Taiko requests to eip4337 with Servo", async () => {
+		mockRpcFetch(({ method }) => {
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
 		const config = buildConfig("eip155:167000", {
 			mode: "eip7702",
-			paymasterProvider: "circle",
+			paymasterProvider: "servo",
 		});
-		const preview = await getExecutionPreview(config, config.chains[config.chain]!);
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, {
+			requireProvider: true,
+		});
 
 		expect(preview.requestedMode).toBe("eip7702");
-		expect(preview.mode).toBe("eoa");
-		expect(preview.paymasterProvider).toBeUndefined();
-		expect(preview.warnings[0]).toContain("zero-config account-abstraction path");
+		expect(preview.mode).toBe("eip4337");
+		expect(preview.paymasterProvider).toBe("servo");
+		expect(preview.executionAddress).toBe(EXECUTION_ADDRESS);
+		expect(preview.warnings[0]).toContain("uses EIP-4337");
 		expect(toSimple7702SmartAccount).not.toHaveBeenCalled();
 	});
 
@@ -377,7 +423,7 @@ describe("execution", () => {
 		});
 
 		const { executeContractCalls } = await import("../../../src/runtime/execution.js");
-		const config = buildConfig("eip155:167000", { mode: "eip7702" });
+		const config = buildConfig("eip155:167000", { mode: "eoa" });
 		const result = await executeContractCalls(config, config.chains[config.chain]!, [
 			{
 				to: "0x3000000000000000000000000000000000000003",
@@ -389,6 +435,119 @@ describe("execution", () => {
 		expect(result.mode).toBe("eoa");
 		expect(result.gasPaymentMode).toBe("native");
 		expect(result.userOperationHash).toBeUndefined();
+	});
+
+	it("executes Taiko 4337 user operations with Servo", async () => {
+		const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
+			if (functionName === "getAddress") return EXECUTION_ADDRESS;
+			if (functionName === "getNonce") return 0n;
+			if (functionName === "nonces") return 7n;
+			if (functionName === "name") return "USD Coin";
+			if (functionName === "version") return "2";
+			throw new Error(`unexpected function ${functionName}`);
+		});
+		buildChainPublicClient.mockReturnValue({
+			readContract,
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method }) => {
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							paymaster: "0x9999999999999999999999999999999999999999",
+							paymasterData: "0x12",
+							paymasterAndData: "0x999999999999999999999999999999999999999912",
+							callGasLimit: "0x88d8",
+							verificationGasLimit: "0x1d4c8",
+							preVerificationGas: "0x5274",
+							paymasterVerificationGasLimit: "0xea60",
+							paymasterPostOpGasLimit: "0xafc8",
+							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+							maxTokenCostMicros: "1000000",
+							validUntil: 1900000000,
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "eth_sendUserOperation") {
+				return new Response(
+					JSON.stringify({
+						result: "0xservohash",
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+
+		createBundlerClient.mockReturnValue({
+			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
+				receipt: {
+					transactionHash: "0xservotx",
+					logs: [],
+				},
+			}),
+		});
+
+		const { executeContractCalls } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		const result = await executeContractCalls(config, config.chains[config.chain]!, [
+			{
+				to: "0x3000000000000000000000000000000000000003",
+				data: "0x1234",
+			},
+		]);
+
+		expect(result.mode).toBe("eip4337");
+		expect(result.paymasterProvider).toBe("servo");
+		expect(result.gasPaymentMode).toBe("erc20-usdc");
+		expect(result.entryPointVersion).toBe("0.7");
+		expect(result.paymasterAddress).toBe("0x9999999999999999999999999999999999999999");
+		expect(result.userOperationHash).toBe("0xservohash");
+		expect(createBundlerClient).toHaveBeenCalledOnce();
+		expect(getUserOperationHash).toHaveBeenCalledOnce();
+		expect(toSimple7702SmartAccount).not.toHaveBeenCalled();
 	});
 
 	it("stops eoa multi-call execution on the first reverted transaction", async () => {

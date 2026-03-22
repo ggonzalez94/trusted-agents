@@ -9,12 +9,15 @@ import {
 	getAddress,
 	maxUint256,
 	parseErc6492Signature,
+	toHex,
 } from "viem";
 import {
 	createBundlerClient,
 	createPaymasterClient,
+	entryPoint07Address,
 	entryPoint08Address,
 	formatUserOperationRequest,
+	getUserOperationHash,
 	toSimple7702SmartAccount,
 } from "viem/account-abstraction";
 import { privateKeyToAccount } from "viem/accounts";
@@ -33,7 +36,7 @@ import type {
 } from "../config/types.js";
 import { getUsdcAsset } from "./assets.js";
 
-type EntryPointVersion = "0.8";
+type EntryPointVersion = "0.7" | "0.8";
 type GasPaymentMode = "erc20-usdc" | "native";
 
 interface EntryPointConfig {
@@ -61,16 +64,37 @@ interface CirclePermitMetadata {
 	nonce: bigint;
 }
 
+interface ServoCapabilities {
+	accountFactoryAddress?: string | null;
+	supportedChains?: Array<{ chainId?: number }>;
+}
+
+interface ServoQuoteResponse {
+	paymaster: Address;
+	paymasterData: Hex;
+	paymasterAndData: Hex;
+	callGasLimit: Hex;
+	verificationGasLimit: Hex;
+	preVerificationGas: Hex;
+	paymasterVerificationGasLimit: Hex;
+	paymasterPostOpGasLimit: Hex;
+	tokenAddress: Address;
+	maxTokenCostMicros: string;
+	validUntil: number;
+}
+
 interface AaProviderConfig {
 	provider: ExecutionPaymasterProvider;
 	bundlerUrl: string;
 	paymasterUrl?: string;
 	paymasterAddress?: Address;
+	entryPoint: EntryPointConfig;
+	accountFactoryAddress?: Address;
 }
 
 interface BaseExecutionContext {
 	requestedMode: ExecutionMode;
-	mode: "eoa" | "eip7702";
+	mode: "eoa" | "eip4337" | "eip7702";
 	messagingAddress: Address;
 	executionAddress: Address;
 	fundingAddress: Address;
@@ -85,12 +109,20 @@ interface EoaExecutionContext extends BaseExecutionContext {
 	mode: "eoa";
 }
 
-interface AaExecutionContext extends BaseExecutionContext {
+interface Eip7702ExecutionContext extends BaseExecutionContext {
 	mode: "eip7702";
 	account: Awaited<ReturnType<typeof toSimple7702SmartAccount>>;
 	entryPoint: EntryPointConfig;
 	providerConfig?: AaProviderConfig;
 }
+
+interface Eip4337ExecutionContext extends BaseExecutionContext {
+	mode: "eip4337";
+	entryPoint: EntryPointConfig;
+	providerConfig?: AaProviderConfig;
+}
+
+type AaExecutionContext = Eip7702ExecutionContext | Eip4337ExecutionContext;
 
 type ResolvedExecutionContext = EoaExecutionContext | AaExecutionContext;
 
@@ -102,7 +134,7 @@ export interface ExecutionCall {
 
 export interface ExecutionPreview {
 	requestedMode: ExecutionMode;
-	mode: "eoa" | "eip7702";
+	mode: "eoa" | "eip4337" | "eip7702";
 	messagingAddress: Address;
 	executionAddress: Address;
 	fundingAddress: Address;
@@ -120,9 +152,14 @@ export interface ExecutionSendResult extends ExecutionPreview {
 	userOperationHash?: Hex;
 }
 
-const ENTRY_POINT = {
+const ENTRY_POINT_08 = {
 	address: entryPoint08Address,
 	version: "0.8",
+} as const satisfies EntryPointConfig;
+
+const ENTRY_POINT_07 = {
+	address: entryPoint07Address,
+	version: "0.7",
 } as const satisfies EntryPointConfig;
 
 const CIRCLE_BUNDLER_URLS: Partial<Record<string, string>> = {
@@ -139,10 +176,20 @@ const CANDIDE_ENDPOINTS: Partial<Record<string, string>> = {
 	"eip155:8453": "https://api.candide.dev/public/v3/8453",
 };
 
+const SERVO_ENDPOINTS: Partial<Record<string, string>> = {
+	"eip155:167000": "https://api-production-cdfe.up.railway.app/rpc",
+};
+
+const SERVO_ACCOUNT_FACTORIES: Partial<Record<string, Address>> = {
+	"eip155:167000": "0xCa245Ae9B786EF420Dc359430e5833b840880619",
+};
+
 const CIRCLE_PAYMASTER_VERIFICATION_GAS_LIMIT = 200_000n;
 const CIRCLE_PAYMASTER_POST_OP_GAS_LIMIT = 15_000n;
 const CIRCLE_PERMIT_AMOUNT = 10_000_000n;
 const CANDIDE_ALLOWANCE_BUFFER = 1_000_000n;
+const SERVO_ACCOUNT_SALT = 0n;
+const SERVO_DUMMY_SIGNATURE = `0x${"00".repeat(65)}` as Hex;
 const CIRCLE_PERMIT_METADATA_CACHE = new Map<string, CirclePermitMetadata>();
 
 const ERC20_NAME_ABI = [
@@ -175,6 +222,67 @@ const ERC20_NONCES_ABI = [
 	},
 ] as const;
 
+const ENTRY_POINT_NONCE_ABI = [
+	{
+		type: "function",
+		name: "getNonce",
+		stateMutability: "view",
+		inputs: [
+			{ name: "sender", type: "address" },
+			{ name: "key", type: "uint192" },
+		],
+		outputs: [{ name: "", type: "uint256" }],
+	},
+] as const;
+
+const SERVO_ACCOUNT_FACTORY_ABI = [
+	{
+		type: "function",
+		name: "createAccount",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ name: "owner", type: "address" },
+			{ name: "salt", type: "uint256" },
+		],
+		outputs: [{ name: "", type: "address" }],
+	},
+	{
+		type: "function",
+		name: "getAddress",
+		stateMutability: "view",
+		inputs: [
+			{ name: "owner", type: "address" },
+			{ name: "salt", type: "uint256" },
+		],
+		outputs: [{ name: "", type: "address" }],
+	},
+] as const;
+
+const SERVO_ACCOUNT_ABI = [
+	{
+		type: "function",
+		name: "execute",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ name: "target", type: "address" },
+			{ name: "value", type: "uint256" },
+			{ name: "data", type: "bytes" },
+		],
+		outputs: [],
+	},
+	{
+		type: "function",
+		name: "executeBatch",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ name: "targets", type: "address[]" },
+			{ name: "values", type: "uint256[]" },
+			{ name: "calldatas", type: "bytes[]" },
+		],
+		outputs: [],
+	},
+] as const;
+
 const USDC_PERMIT_TYPES = {
 	EIP712Domain: [
 		{ name: "name", type: "string" },
@@ -193,6 +301,10 @@ const USDC_PERMIT_TYPES = {
 
 function isBaseChain(chainConfig: ChainConfig): boolean {
 	return chainConfig.chainId === 8453 || chainConfig.chainId === 84532;
+}
+
+function isTaikoMainnetChain(chainConfig: ChainConfig): boolean {
+	return chainConfig.chainId === 167000;
 }
 
 function circlePermitCacheKey(chain: string, sender: Address): string {
@@ -230,25 +342,44 @@ function resolveExecutionMode(
 	chainConfig: ChainConfig,
 	requestedMode: ExecutionMode,
 	warnings: string[],
-): "eoa" | "eip7702" {
+): "eoa" | "eip4337" | "eip7702" {
 	if (requestedMode === "eoa") {
 		return "eoa";
 	}
 
-	if (!isBaseChain(chainConfig)) {
+	if (requestedMode === "eip4337") {
+		if (isTaikoMainnetChain(chainConfig)) {
+			return "eip4337";
+		}
+
+		if (isBaseChain(chainConfig)) {
+			warnings.push(
+				`${chainConfig.name} uses EIP-7702 as the default account-abstraction path in this runtime; using eip7702`,
+			);
+			return "eip7702";
+		}
+
 		warnings.push(
 			`${chainConfig.name} does not have a zero-config account-abstraction path in this runtime yet; using eoa`,
 		);
 		return "eoa";
 	}
 
-	if (requestedMode === "eip4337") {
-		warnings.push(
-			`${chainConfig.name} uses EIP-7702 as the default account-abstraction path in this runtime; using eip7702`,
-		);
+	if (isBaseChain(chainConfig)) {
+		return "eip7702";
 	}
 
-	return "eip7702";
+	if (isTaikoMainnetChain(chainConfig)) {
+		warnings.push(
+			`${chainConfig.name} uses EIP-4337 as the account-abstraction path in this runtime; using eip4337`,
+		);
+		return "eip4337";
+	}
+
+	warnings.push(
+		`${chainConfig.name} does not have a zero-config account-abstraction path in this runtime yet; using eoa`,
+	);
+	return "eoa";
 }
 
 function requestedPaymasterProvider(config: TrustedAgentsConfig): ExecutionPaymasterProvider {
@@ -272,6 +403,22 @@ function previewProviderConfig(
 			provider,
 			bundlerUrl,
 			paymasterAddress,
+			entryPoint: ENTRY_POINT_08,
+		};
+	}
+
+	if (provider === "servo") {
+		const endpoint = SERVO_ENDPOINTS[chainConfig.caip2];
+		if (!endpoint) {
+			return undefined;
+		}
+
+		return {
+			provider,
+			bundlerUrl: endpoint,
+			paymasterUrl: endpoint,
+			entryPoint: ENTRY_POINT_07,
+			accountFactoryAddress: SERVO_ACCOUNT_FACTORIES[chainConfig.caip2],
 		};
 	}
 
@@ -284,6 +431,7 @@ function previewProviderConfig(
 		provider,
 		bundlerUrl: endpoint,
 		paymasterUrl: endpoint,
+		entryPoint: ENTRY_POINT_08,
 	};
 }
 
@@ -336,10 +484,13 @@ async function rpcRequest<TResult>(
 	return payload.result;
 }
 
-async function assertBundlerSupportsEntryPoint(bundlerUrl: string): Promise<void> {
+async function assertBundlerSupportsEntryPoint(
+	bundlerUrl: string,
+	entryPoint: EntryPointConfig,
+): Promise<void> {
 	const supported = await rpcRequest<string[]>(bundlerUrl, "eth_supportedEntryPoints", []);
-	if (!supported.some((address) => address.toLowerCase() === ENTRY_POINT.address.toLowerCase())) {
-		throw new Error(`Bundler does not expose EntryPoint ${ENTRY_POINT.version}`);
+	if (!supported.some((address) => address.toLowerCase() === entryPoint.address.toLowerCase())) {
+		throw new Error(`Bundler does not expose EntryPoint ${entryPoint.version}`);
 	}
 }
 
@@ -388,11 +539,53 @@ async function preflightProvider(
 			);
 		}
 
-		await assertBundlerSupportsEntryPoint(bundlerUrl);
+		await assertBundlerSupportsEntryPoint(bundlerUrl, ENTRY_POINT_08);
 		return {
 			provider,
 			bundlerUrl,
 			paymasterAddress,
+			entryPoint: ENTRY_POINT_08,
+		};
+	}
+
+	if (provider === "servo") {
+		const endpoint = SERVO_ENDPOINTS[chainConfig.caip2];
+		if (!endpoint) {
+			throw new Error(
+				`Servo is not available as a zero-config USDC paymaster on ${chainConfig.name}`,
+			);
+		}
+
+		await assertBundlerSupportsEntryPoint(endpoint, ENTRY_POINT_07);
+
+		let accountFactoryAddress = SERVO_ACCOUNT_FACTORIES[chainConfig.caip2];
+		try {
+			const capabilities = await rpcRequest<ServoCapabilities>(endpoint, "pm_getCapabilities", []);
+			if (
+				capabilities.supportedChains?.length &&
+				!capabilities.supportedChains.some((item) => item.chainId === chainConfig.chainId)
+			) {
+				throw new Error(`Servo endpoint does not advertise ${chainConfig.name}`);
+			}
+			if (capabilities.accountFactoryAddress) {
+				accountFactoryAddress = getAddress(capabilities.accountFactoryAddress);
+			}
+		} catch (error) {
+			if (!accountFactoryAddress) {
+				throw error;
+			}
+		}
+
+		if (!accountFactoryAddress) {
+			throw new Error(`Servo account factory is not configured for ${chainConfig.name}`);
+		}
+
+		return {
+			provider,
+			bundlerUrl: endpoint,
+			paymasterUrl: endpoint,
+			entryPoint: ENTRY_POINT_07,
+			accountFactoryAddress,
 		};
 	}
 
@@ -403,10 +596,10 @@ async function preflightProvider(
 		);
 	}
 
-	await assertBundlerSupportsEntryPoint(endpoint);
+	await assertBundlerSupportsEntryPoint(endpoint, ENTRY_POINT_08);
 	const tokenSupport = await resolveSupportedToken(
 		endpoint,
-		ENTRY_POINT.address,
+		ENTRY_POINT_08.address,
 		chainConfig.caip2,
 	);
 	if (!tokenSupport) {
@@ -418,6 +611,7 @@ async function preflightProvider(
 		bundlerUrl: endpoint,
 		paymasterUrl: endpoint,
 		paymasterAddress: tokenSupport.paymasterAddress,
+		entryPoint: ENTRY_POINT_08,
 	};
 }
 
@@ -554,6 +748,128 @@ async function buildCirclePaymasterResponse(
 	};
 }
 
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+	if (typeof value !== "object" || value === null) {
+		throw new Error(`${label} must be an object`);
+	}
+	return value as Record<string, unknown>;
+}
+
+function asHex(value: unknown, label: string): Hex {
+	if (typeof value !== "string" || !value.startsWith("0x")) {
+		throw new Error(`${label} must be a hex string`);
+	}
+	return value as Hex;
+}
+
+function asAddress(value: unknown, label: string): Address {
+	if (typeof value !== "string") {
+		throw new Error(`${label} must be an address`);
+	}
+	return getAddress(value);
+}
+
+function asDecimalString(value: unknown, label: string): string {
+	if (typeof value !== "string" || !/^\d+$/u.test(value)) {
+		throw new Error(`${label} must be a decimal string`);
+	}
+	return value;
+}
+
+function asNumber(value: unknown, label: string): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		throw new Error(`${label} must be a number`);
+	}
+	return value;
+}
+
+function parseServoQuote(value: unknown): ServoQuoteResponse {
+	const payload = asRecord(value, "Servo paymaster quote");
+	return {
+		paymaster: asAddress(payload.paymaster, "paymaster"),
+		paymasterData: asHex(payload.paymasterData, "paymasterData"),
+		paymasterAndData: asHex(payload.paymasterAndData, "paymasterAndData"),
+		callGasLimit: asHex(payload.callGasLimit, "callGasLimit"),
+		verificationGasLimit: asHex(payload.verificationGasLimit, "verificationGasLimit"),
+		preVerificationGas: asHex(payload.preVerificationGas, "preVerificationGas"),
+		paymasterVerificationGasLimit: asHex(
+			payload.paymasterVerificationGasLimit,
+			"paymasterVerificationGasLimit",
+		),
+		paymasterPostOpGasLimit: asHex(payload.paymasterPostOpGasLimit, "paymasterPostOpGasLimit"),
+		tokenAddress: asAddress(payload.tokenAddress, "tokenAddress"),
+		maxTokenCostMicros: asDecimalString(payload.maxTokenCostMicros, "maxTokenCostMicros"),
+		validUntil: asNumber(payload.validUntil, "validUntil"),
+	};
+}
+
+function buildServoInitCode(factoryAddress: Address, owner: Address): Hex {
+	const factoryData = encodeFunctionData({
+		abi: SERVO_ACCOUNT_FACTORY_ABI,
+		functionName: "createAccount",
+		args: [owner, SERVO_ACCOUNT_SALT],
+	});
+	return `${factoryAddress.toLowerCase()}${factoryData.slice(2)}` as Hex;
+}
+
+function buildServoCallData(calls: ExecutionCall[]): Hex {
+	if (calls.length === 1) {
+		const single = calls[0]!;
+		return encodeFunctionData({
+			abi: SERVO_ACCOUNT_ABI,
+			functionName: "execute",
+			args: [single.to, single.value ?? 0n, single.data ?? "0x"],
+		});
+	}
+
+	return encodeFunctionData({
+		abi: SERVO_ACCOUNT_ABI,
+		functionName: "executeBatch",
+		args: [
+			calls.map((call) => call.to),
+			calls.map((call) => call.value ?? 0n),
+			calls.map((call) => call.data ?? "0x"),
+		],
+	});
+}
+
+async function resolveServoExecutionAddress(
+	publicClient: ReturnType<typeof buildPublicClient>,
+	factoryAddress: Address,
+	owner: Address,
+): Promise<Address> {
+	const result = await publicClient.readContract({
+		address: factoryAddress,
+		abi: SERVO_ACCOUNT_FACTORY_ABI,
+		functionName: "getAddress",
+		args: [owner, SERVO_ACCOUNT_SALT],
+	});
+	return getAddress(result);
+}
+
+async function resolveEip1559Fees(
+	publicClient: ReturnType<typeof buildPublicClient>,
+): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+	try {
+		const fees = await publicClient.estimateFeesPerGas();
+		if (fees.maxFeePerGas !== undefined && fees.maxPriorityFeePerGas !== undefined) {
+			return {
+				maxFeePerGas: fees.maxFeePerGas,
+				maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+			};
+		}
+	} catch {
+		// Fallback to gas price below.
+	}
+
+	const gasPrice = await publicClient.getGasPrice();
+	const maxPriorityFeePerGas = gasPrice / 10n > 0n ? gasPrice / 10n : 1n;
+	return {
+		maxFeePerGas: gasPrice,
+		maxPriorityFeePerGas,
+	};
+}
+
 async function resolveExecutionContext(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
@@ -607,17 +923,53 @@ async function resolveExecutionContext(
 		);
 	}
 
+	if (mode === "eip4337") {
+		if (!providerConfig) {
+			if (requireProvider) {
+				throw new Error(`No zero-config paymaster is available on ${chainConfig.name}`);
+			}
+
+			warnings.push(
+				`${paymasterProvider} could not be resolved for ${chainConfig.name}; using eoa execution`,
+			);
+			return {
+				...baseContext,
+				mode: "eoa",
+			};
+		}
+
+		if (!providerConfig.accountFactoryAddress) {
+			throw new Error(`No Servo account factory is configured for ${chainConfig.name}`);
+		}
+
+		const executionAddress = await resolveServoExecutionAddress(
+			publicClient,
+			providerConfig.accountFactoryAddress,
+			owner.address,
+		);
+
+		return {
+			...baseContext,
+			mode,
+			executionAddress,
+			fundingAddress: executionAddress,
+			entryPoint: providerConfig.entryPoint,
+			paymasterProvider: providerConfig.provider,
+			providerConfig,
+		};
+	}
+
 	const account = await toSimple7702SmartAccount({
 		client: publicClient,
 		owner,
-		entryPoint: ENTRY_POINT.version,
+		entryPoint: ENTRY_POINT_08.version,
 	});
 
 	return {
 		...baseContext,
 		mode,
 		account,
-		entryPoint: ENTRY_POINT,
+		entryPoint: providerConfig?.entryPoint ?? ENTRY_POINT_08,
 		paymasterProvider: providerConfig?.provider ?? paymasterProvider,
 		providerConfig,
 	};
@@ -707,8 +1059,8 @@ async function executeEoaCalls(
 	};
 }
 
-async function executeAaCalls(
-	context: AaExecutionContext,
+async function executeEip7702Calls(
+	context: Eip7702ExecutionContext,
 	chainConfig: ChainConfig,
 	calls: ExecutionCall[],
 ): Promise<ExecutionSendResult> {
@@ -855,6 +1207,191 @@ async function executeAaCalls(
 	};
 }
 
+async function executeEip4337Calls(
+	context: Eip4337ExecutionContext,
+	chainConfig: ChainConfig,
+	calls: ExecutionCall[],
+): Promise<ExecutionSendResult> {
+	const providerConfig = context.providerConfig;
+	if (!providerConfig || providerConfig.provider !== "servo") {
+		throw new Error(`No Servo paymaster provider is configured for ${chainConfig.name}`);
+	}
+	if (!providerConfig.accountFactoryAddress) {
+		throw new Error(`No Servo account factory is configured for ${chainConfig.name}`);
+	}
+
+	const bundlerClient = createBundlerClient({
+		client: context.publicClient,
+		transport: http(providerConfig.bundlerUrl),
+	});
+	const paymasterEndpoint = providerConfig.paymasterUrl ?? providerConfig.bundlerUrl;
+
+	const nonce = (await context.publicClient.readContract({
+		address: context.entryPoint.address,
+		abi: ENTRY_POINT_NONCE_ABI,
+		functionName: "getNonce",
+		args: [context.executionAddress, 0n],
+	})) as bigint;
+
+	const { maxFeePerGas, maxPriorityFeePerGas } = await resolveEip1559Fees(context.publicClient);
+	const initCode = buildServoInitCode(providerConfig.accountFactoryAddress, context.owner.address);
+	const callData = buildServoCallData(calls);
+
+	const draftUserOperation = {
+		sender: context.executionAddress,
+		nonce: toHex(nonce),
+		initCode,
+		callData,
+		maxFeePerGas: toHex(maxFeePerGas),
+		maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+		signature: SERVO_DUMMY_SIGNATURE,
+	};
+
+	const stubQuote = parseServoQuote(
+		await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterStubData", [
+			draftUserOperation,
+			context.entryPoint.address,
+			chainConfig.chainId,
+			{},
+		]),
+	);
+
+	const permitNonce = (await context.publicClient.readContract({
+		address: stubQuote.tokenAddress,
+		abi: ERC20_NONCES_ABI,
+		functionName: "nonces",
+		args: [context.executionAddress],
+	})) as bigint;
+
+	let tokenName = "USD Coin";
+	let tokenVersion = "2";
+	try {
+		const [name, version] = await Promise.all([
+			context.publicClient.readContract({
+				address: stubQuote.tokenAddress,
+				abi: ERC20_NAME_ABI,
+				functionName: "name",
+			}),
+			context.publicClient.readContract({
+				address: stubQuote.tokenAddress,
+				abi: ERC20_VERSION_ABI,
+				functionName: "version",
+			}),
+		]);
+		tokenName = name;
+		tokenVersion = version;
+	} catch {
+		// USDC defaults are fine if metadata methods fail.
+	}
+
+	const permitValue = BigInt(stubQuote.maxTokenCostMicros);
+	const permitDeadline = BigInt(stubQuote.validUntil);
+	const permitSignature = await context.owner.signTypedData({
+		domain: {
+			name: tokenName,
+			version: tokenVersion,
+			chainId: BigInt(chainConfig.chainId),
+			verifyingContract: stubQuote.tokenAddress,
+		},
+		types: USDC_PERMIT_TYPES,
+		primaryType: "Permit",
+		message: {
+			owner: context.executionAddress,
+			spender: stubQuote.paymaster,
+			value: permitValue,
+			nonce: permitNonce,
+			deadline: permitDeadline,
+		},
+	});
+
+	const finalQuote = parseServoQuote(
+		await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterData", [
+			draftUserOperation,
+			context.entryPoint.address,
+			chainConfig.chainId,
+			{
+				permit: {
+					value: permitValue.toString(),
+					deadline: permitDeadline.toString(),
+					signature: permitSignature,
+				},
+			},
+		]),
+	);
+
+	const factoryData = `0x${initCode.slice(42)}` as Hex;
+	const userOperationHashForSignature = getUserOperationHash({
+		userOperation: {
+			sender: context.executionAddress,
+			nonce,
+			factory: providerConfig.accountFactoryAddress,
+			factoryData,
+			callData,
+			callGasLimit: BigInt(finalQuote.callGasLimit),
+			verificationGasLimit: BigInt(finalQuote.verificationGasLimit),
+			preVerificationGas: BigInt(finalQuote.preVerificationGas),
+			maxFeePerGas,
+			maxPriorityFeePerGas,
+			paymaster: finalQuote.paymaster,
+			paymasterData: finalQuote.paymasterData,
+			paymasterVerificationGasLimit: BigInt(finalQuote.paymasterVerificationGasLimit),
+			paymasterPostOpGasLimit: BigInt(finalQuote.paymasterPostOpGasLimit),
+			signature: SERVO_DUMMY_SIGNATURE,
+		},
+		entryPointAddress: context.entryPoint.address,
+		entryPointVersion: context.entryPoint.version,
+		chainId: chainConfig.chainId,
+	});
+	const userOperationSignature = await context.owner.signMessage({
+		message: { raw: userOperationHashForSignature },
+	});
+
+	const sentUserOperationHash = await rpcRequest<Hex>(
+		providerConfig.bundlerUrl,
+		"eth_sendUserOperation",
+		[
+			{
+				...draftUserOperation,
+				callGasLimit: finalQuote.callGasLimit,
+				verificationGasLimit: finalQuote.verificationGasLimit,
+				preVerificationGas: finalQuote.preVerificationGas,
+				paymasterVerificationGasLimit: finalQuote.paymasterVerificationGasLimit,
+				paymasterPostOpGasLimit: finalQuote.paymasterPostOpGasLimit,
+				paymasterAndData: finalQuote.paymasterAndData,
+				signature: userOperationSignature,
+			},
+			context.entryPoint.address,
+		],
+	);
+
+	const userOperationReceipt = await bundlerClient.waitForUserOperationReceipt({
+		hash: sentUserOperationHash,
+	});
+	const status = userOperationReceipt.receipt.status;
+	if (status === "reverted") {
+		throw new Error(
+			`User operation ${sentUserOperationHash} reverted in transaction ${userOperationReceipt.receipt.transactionHash}`,
+		);
+	}
+
+	return {
+		requestedMode: context.requestedMode,
+		mode: context.mode,
+		messagingAddress: context.messagingAddress,
+		executionAddress: context.executionAddress,
+		fundingAddress: context.fundingAddress,
+		paymasterProvider: context.paymasterProvider,
+		warnings: context.warnings,
+		entryPointAddress: context.entryPoint.address,
+		entryPointVersion: context.entryPoint.version,
+		gasPaymentMode: "erc20-usdc",
+		paymasterAddress: finalQuote.paymaster,
+		transactionReceipt: userOperationReceipt.receipt,
+		transactionHash: userOperationReceipt.receipt.transactionHash,
+		userOperationHash: sentUserOperationHash,
+	};
+}
+
 export async function executeContractCalls(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
@@ -872,5 +1409,9 @@ export async function executeContractCalls(
 		return executeEoaCalls(context, calls);
 	}
 
-	return executeAaCalls(context, chainConfig, calls);
+	if (context.mode === "eip7702") {
+		return executeEip7702Calls(context, chainConfig, calls);
+	}
+
+	return executeEip4337Calls(context, chainConfig, calls);
 }
