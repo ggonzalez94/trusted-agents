@@ -7,17 +7,6 @@ description: Operate a Trusted Agents Protocol agent with the `tap` CLI — inst
 
 TAP gives your AI agent a verifiable on-chain identity so it can connect, message, and transact with other agents. It combines ERC-8004 on-chain registration with XMTP encrypted messaging and a directional permission system. Think of it as a secure contact list where each contact comes with explicit permissions for what you can ask each other to do.
 
-## Action-First Rule
-
-Execute commands before asking questions. When a user asks to install, set up, or use TAP:
-
-1. Run the status check immediately — don't explain what you're about to do
-2. Let the command outputs tell you what's needed next
-3. Only ask the user when you genuinely need their input
-4. Ask **one question at a time**, act on the answer, then continue
-
-Do not present overviews, tables, or summaries of TAP before acting. Do not bundle multiple questions into one message.
-
 ## Status Check
 
 Run these to figure out where things stand:
@@ -56,19 +45,13 @@ tap not installed ──→ Install
 
 ## Install
 
-From within this repo:
-
-```bash
-bash scripts/install.sh
-```
-
 Remote install (no clone needed):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-The installer builds, links `tap` to PATH, and sets up skills for your host.
+The installer builds, links `tap` to PATH, and sets up skills for your host. If running inside openclaw, make sure the plugin is installed.
 
 **OpenClaw plugin install:**
 
@@ -76,7 +59,7 @@ The installer builds, links `tap` to PATH, and sets up skills for your host.
 tap install --runtime openclaw
 ```
 
-The plugin does not force a Gateway stop/start cycle. If the Gateway is already running, it waits for the automatic reload.
+**Do not offer the user to restart the gateway, the registered service will do it automatically. Doing it puts the gateway in an infinite restart loop**
 
 ## Onboard
 
@@ -111,9 +94,9 @@ Confirm with `tap balance` before continuing.
 
 Ask the user for these inputs **one at a time** — don't bundle them:
 
-1. **Name** — a display name like "TreasuryAgent"
-2. **Description** — a short phrase like "Payment and expense agent"
-3. **Capabilities** — public discovery labels that tell other agents what this one can do
+1. **Name** — a display name. Be creative and suggest the user options based on what you know about him or why he's created you.
+2. **Description** — a short phrase describing what the agent does.
+3. **Capabilities** — public discovery labels that tell other agents what this one can do. Ask the user something like: "What are you planning to use this agent for?"
 
 Suggest a default based on what the user has described so far:
 
@@ -121,8 +104,9 @@ Suggest a default based on what the user has described so far:
 |---|---|
 | General assistant | `general-chat` |
 | Payment / treasury | `transfer,general-chat` |
-| Research agent | `research,general-chat` |
 | Full-featured | `transfer,research,general-chat` |
+
+**If the AskUserQuestion tool is available use it to allow the user to choose its answers for the 3 points above. Always allow him to enter something different than what is being suggested**
 
 Then register:
 
@@ -327,7 +311,16 @@ tap balance / config show / identity show / identity resolve
 
 For multi-identity setups: get `dataDir` from `tap_gateway status`, then pass `--data-dir <path>`.
 
-## Utility Commands
+## Action-First Rule
+
+Execute commands before asking questions. When a user asks to install, set up, or use TAP:
+
+1. Run the status check immediately — don't explain what you're about to do
+2. Let the command outputs tell you what's needed next
+3. Only ask the user when you genuinely need their input
+4. Ask **one question at a time**, act on the answer, then continue
+
+Do not present overviews, tables, or summaries of TAP before acting. Do not bundle multiple questions into one message.
 
 ```bash
 tap balance [chain]                    # ETH + USDC balances

@@ -1,0 +1,24 @@
+{
+  "expectations": [
+    {
+      "text": "Agent runs tap init with base chain",
+      "passed": true,
+      "evidence": "Found match for pattern: tap init --chain base"
+    },
+    {
+      "text": "Agent mentions USDC funding on Base",
+      "passed": true,
+      "evidence": "Found match for pattern: USDC"
+    },
+    {
+      "text": "Agent does not mention Tack or Taiko when setting up on Base",
+      "passed": true,
+      "evidence": "No forbidden patterns found"
+    },
+    {
+      "text": "Agent guides toward registration after funding",
+      "passed": true,
+      "evidence": "Found match for pattern: tap register"
+    }
+  ]
+}
