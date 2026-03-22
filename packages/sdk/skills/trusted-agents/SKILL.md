@@ -234,7 +234,8 @@ In OpenClaw plugin mode, use `tap_gateway send_message` instead of the CLI for s
 
 ## Transfer Requests
 
-Transfer requests ask a peer to send ETH or USDC. TAP hard-blocks execution unless a matching active grant exists — there is no override.
+Transfer requests ask a peer to send ETH or USDC. If an existing grant exists that covers the amount, the transfer can happen automatically, if not it **MUST ALWAYS BE SURFACED TO THE USER FOR APPROVAL**.
+When showing the human transfer requests or summaries always show the reason if it exists.
 
 ```bash
 tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
