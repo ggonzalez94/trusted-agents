@@ -194,6 +194,13 @@ interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 	response: TransferActionResponse;
 }
 
+type SchedulingRequestState = "accepted" | "cancelled" | "rejected";
+
+interface SchedulingTrackingMetadata extends Record<string, unknown> {
+	localEventId?: string;
+	schedulingState?: SchedulingRequestState;
+}
+
 export interface TapConnectionApprovalContext {
 	peerAgentId: number;
 	peerName: string;
@@ -302,6 +309,13 @@ export interface TapRequestMeetingResult {
 	title: string;
 	duration: number;
 	slotCount: number;
+}
+
+export interface TapCancelMeetingResult {
+	requestId: string;
+	peerAgentId: number;
+	schedulingId: string;
+	report: TapSyncReport;
 }
 
 export class TapMessagingService {
@@ -428,6 +442,88 @@ export class TapMessagingService {
 		}));
 	}
 
+	private async findCancellableSchedulingRequest(
+		schedulingId: string,
+	): Promise<RequestJournalEntry | null> {
+		const entries = (await this.context.requestJournal.list())
+			.filter((entry) => entry.kind === "request" && entry.method === ACTION_REQUEST)
+			.reverse();
+
+		const matchesSchedulingId = (entry: RequestJournalEntry): boolean =>
+			parseStoredSchedulingRequest(entry.metadata)?.schedulingId === schedulingId;
+
+		const pendingOutbound = entries.find(
+			(entry) =>
+				entry.direction === "outbound" &&
+				entry.status !== "completed" &&
+				matchesSchedulingId(entry),
+		);
+		if (pendingOutbound) {
+			return pendingOutbound;
+		}
+
+		return (
+			entries.find((entry) => {
+				if (!matchesSchedulingId(entry)) {
+					return false;
+				}
+				return parseSchedulingTrackingMetadata(entry.metadata).schedulingState === "accepted";
+			}) ?? null
+		);
+	}
+
+	private async closePendingOutboundSchedulingRequestForCounter(
+		peerAgentId: number,
+		schedulingId: string,
+	): Promise<void> {
+		const pendingOutbound = await this.context.requestJournal.listPending("outbound");
+		const supersededRequest = pendingOutbound.find(
+			(entry) =>
+				entry.kind === "request" &&
+				entry.method === ACTION_REQUEST &&
+				entry.peerAgentId === peerAgentId &&
+				parseStoredSchedulingRequest(entry.metadata)?.schedulingId === schedulingId,
+		);
+		if (!supersededRequest) {
+			return;
+		}
+		await this.context.requestJournal.updateStatus(supersededRequest.requestId, "completed");
+	}
+
+	private async updateSchedulingTracking(
+		requestId: string,
+		updates: SchedulingTrackingMetadata,
+	): Promise<void> {
+		const entry = await this.context.requestJournal.getByRequestId(requestId);
+		if (!entry) {
+			return;
+		}
+		await this.context.requestJournal.updateMetadata(
+			requestId,
+			mergeMetadata(entry.metadata, updates),
+		);
+	}
+
+	private async cancelLocalSchedulingEvent(
+		requestId: string,
+		localEventId: string | undefined,
+		contextLabel: string,
+	): Promise<boolean> {
+		if (!localEventId || !this.schedulingHandler) {
+			return false;
+		}
+		try {
+			await this.schedulingHandler.handleCancel(localEventId);
+			return true;
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to cancel local calendar event for scheduling request ${requestId} during ${contextLabel}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return false;
+		}
+	}
+
 	async resolvePending(
 		requestId: string,
 		approve: boolean,
@@ -499,18 +595,40 @@ export class TapMessagingService {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
 	}
 
+	async cancelMeeting(schedulingId: string, reason?: string): Promise<TapCancelMeetingResult> {
+		const entry = await this.findCancellableSchedulingRequest(schedulingId);
+		if (!entry) {
+			throw new ValidationError(
+				`No pending or accepted meeting found with schedulingId: ${schedulingId}`,
+			);
+		}
+
+		const report = await this.cancelPendingSchedulingRequest(entry.requestId, reason);
+		return {
+			requestId: entry.requestId,
+			peerAgentId: entry.peerAgentId,
+			schedulingId,
+			report,
+		};
+	}
+
 	async cancelPendingSchedulingRequest(requestId: string, reason?: string): Promise<TapSyncReport> {
 		const entry = await this.context.requestJournal.getByRequestId(requestId);
-		if (!entry || entry.direction !== "outbound" || entry.kind !== "request") {
-			throw new ValidationError(`Pending outbound request not found: ${requestId}`);
+		if (!entry || entry.kind !== "request") {
+			throw new ValidationError(`Scheduling request not found: ${requestId}`);
 		}
 		if (entry.method !== ACTION_REQUEST) {
 			throw new ValidationError(`Request ${requestId} cannot be cancelled manually`);
 		}
 
+		const tracking = parseSchedulingTrackingMetadata(entry.metadata);
+		if (entry.direction !== "outbound" && tracking.schedulingState !== "accepted") {
+			throw new ValidationError(`Scheduling request ${requestId} is not cancellable`);
+		}
+
 		if (!parseStoredSchedulingRequest(entry.metadata)) {
 			throw new ValidationError(
-				`Pending scheduling request ${requestId} is missing the original request payload`,
+				`Scheduling request ${requestId} is missing the original request payload`,
 			);
 		}
 
@@ -519,21 +637,22 @@ export class TapMessagingService {
 				await this.withTransportSession(async () => {
 					await this.drain();
 					const latestEntry = await this.context.requestJournal.getByRequestId(requestId);
-					if (
-						!latestEntry ||
-						latestEntry.direction !== "outbound" ||
-						latestEntry.kind !== "request"
-					) {
-						throw new ValidationError(`Pending outbound request not found: ${requestId}`);
+					if (!latestEntry || latestEntry.kind !== "request") {
+						throw new ValidationError(`Scheduling request not found: ${requestId}`);
 					}
-					if (latestEntry.status === "completed") {
-						return await this.buildSyncReport(0);
+					const latestTracking = parseSchedulingTrackingMetadata(latestEntry.metadata);
+					const acceptedMeeting = latestTracking.schedulingState === "accepted";
+					if (latestEntry.direction !== "outbound" && !acceptedMeeting) {
+						throw new ValidationError(`Scheduling request ${requestId} is not cancellable`);
+					}
+					if (latestEntry.status === "completed" && !acceptedMeeting) {
+						throw new ValidationError(`Scheduling request ${requestId} is not pending or accepted`);
 					}
 
 					const latestProposal = parseStoredSchedulingRequest(latestEntry.metadata);
 					if (!latestProposal) {
 						throw new ValidationError(
-							`Pending scheduling request ${requestId} is missing the original request payload`,
+							`Scheduling request ${requestId} is missing the original request payload`,
 						);
 					}
 
@@ -567,6 +686,16 @@ export class TapMessagingService {
 					});
 					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
 					await this.touchContactSafe(contact.connectionId);
+					const clearedLocalEvent = await this.cancelLocalSchedulingEvent(
+						latestEntry.requestId,
+						latestTracking.localEventId,
+						`local cancellation for ${latestProposal.schedulingId}`,
+					);
+
+					await this.updateSchedulingTracking(latestEntry.requestId, {
+						schedulingState: "cancelled",
+						...(clearedLocalEvent ? { localEventId: undefined } : {}),
+					});
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
@@ -1469,6 +1598,12 @@ export class TapMessagingService {
 					this.context.config.dataDir,
 				),
 			);
+			if (schedulingRequest.type === "scheduling/counter") {
+				await this.closePendingOutboundSchedulingRequestForCounter(
+					contact.peerAgentId,
+					schedulingRequest.schedulingId,
+				);
+			}
 
 			this.enqueue(requestKey, async () => {
 				await this.processSchedulingRequest(
@@ -1987,8 +2122,12 @@ export class TapMessagingService {
 						},
 						contact.peerDisplayName,
 						proposal.title,
-						proposal.originTimezone,
+						getLocalTimezone(),
 					);
+					await this.updateSchedulingTracking(requestId, {
+						schedulingState: "accepted",
+						...(eventResult.eventId ? { localEventId: eventResult.eventId } : {}),
+					});
 
 					const acceptData: Record<string, unknown> = {
 						type: "scheduling/accept",
@@ -2048,6 +2187,9 @@ export class TapMessagingService {
 					break;
 				}
 
+				await this.updateSchedulingTracking(requestId, {
+					schedulingState: "rejected",
+				});
 				const rejectData: Record<string, unknown> = {
 					type: "scheduling/reject",
 					schedulingId: proposal.schedulingId,
@@ -2142,6 +2284,9 @@ export class TapMessagingService {
 				break;
 			}
 			case "reject": {
+				await this.updateSchedulingTracking(requestId, {
+					schedulingState: "rejected",
+				});
 				const rejectData: Record<string, unknown> = {
 					type: "scheduling/reject",
 					schedulingId: proposal.schedulingId,
@@ -2309,23 +2454,43 @@ export class TapMessagingService {
 		const schedulingResponse = parseSchedulingActionResponse(message);
 		if (schedulingResponse) {
 			const requestId = (message.params as { requestId?: string } | undefined)?.requestId;
-			if (schedulingResponse.type === "scheduling/accept" && this.schedulingHandler) {
-				let title = "Meeting";
-				let originTimezone = "UTC";
-				if (requestId) {
-					const originalRequest = await this.context.requestJournal.getByRequestId(requestId);
-					const originalProposal = parseStoredSchedulingRequest(originalRequest?.metadata);
-					if (originalProposal) {
-						title = originalProposal.title;
-						originTimezone = originalProposal.originTimezone;
-					}
+			const originalRequest = requestId
+				? await this.context.requestJournal.getByRequestId(requestId)
+				: null;
+			const originalProposal = parseStoredSchedulingRequest(originalRequest?.metadata);
+			const tracking = parseSchedulingTrackingMetadata(originalRequest?.metadata);
+
+			if (schedulingResponse.type === "scheduling/accept") {
+				let localEventId: string | undefined;
+				if (this.schedulingHandler) {
+					const eventResult = await this.schedulingHandler.handleAccept(
+						schedulingResponse,
+						contact?.peerDisplayName ?? "Unknown",
+						originalProposal?.title ?? "Meeting",
+						originalProposal?.originTimezone ?? "UTC",
+					);
+					localEventId = eventResult.eventId;
 				}
-				await this.schedulingHandler.handleAccept(
-					schedulingResponse,
-					contact?.peerDisplayName ?? "Unknown",
-					title,
-					originTimezone,
+				if (requestId) {
+					await this.updateSchedulingTracking(requestId, {
+						schedulingState: "accepted",
+						...(localEventId ? { localEventId } : {}),
+					});
+				}
+			} else if (schedulingResponse.type === "scheduling/cancel" && requestId) {
+				const clearedLocalEvent = await this.cancelLocalSchedulingEvent(
+					requestId,
+					tracking.localEventId,
+					`remote cancellation for ${schedulingResponse.schedulingId}`,
 				);
+				await this.updateSchedulingTracking(requestId, {
+					schedulingState: "cancelled",
+					...(clearedLocalEvent ? { localEventId: undefined } : {}),
+				});
+			} else if (schedulingResponse.type === "scheduling/reject" && requestId) {
+				await this.updateSchedulingTracking(requestId, {
+					schedulingState: "rejected",
+				});
 			}
 
 			if (requestId) {
@@ -2732,14 +2897,49 @@ function parsePendingRequestDetails(
 	return undefined;
 }
 
+function parseSchedulingTrackingMetadata(
+	metadata: Record<string, unknown> | undefined,
+): SchedulingTrackingMetadata {
+	if (!metadata) {
+		return {};
+	}
+
+	const schedulingState = asSchedulingRequestState(metadata.schedulingState);
+	return {
+		...(typeof metadata.localEventId === "string" && metadata.localEventId.length > 0
+			? { localEventId: metadata.localEventId }
+			: {}),
+		...(schedulingState ? { schedulingState } : {}),
+	};
+}
+
 function asString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
+}
+
+function asSchedulingRequestState(value: unknown): SchedulingRequestState | undefined {
+	return value === "accepted" || value === "cancelled" || value === "rejected" ? value : undefined;
 }
 
 function asStringArray(value: unknown): string[] {
 	return Array.isArray(value)
 		? value.filter((item): item is string => typeof item === "string")
 		: [];
+}
+
+function mergeMetadata(
+	existing: Record<string, unknown> | undefined,
+	updates: Record<string, unknown>,
+): Record<string, unknown> {
+	const next: Record<string, unknown> = { ...(existing ?? {}) };
+	for (const [key, value] of Object.entries(updates)) {
+		if (value === undefined) {
+			delete next[key];
+			continue;
+		}
+		next[key] = value;
+	}
+	return next;
 }
 
 function serializePendingRequestDetails(
@@ -2838,6 +3038,10 @@ function parseStoredSchedulingRequest(
 			},
 		},
 	});
+}
+
+function getLocalTimezone(): string {
+	return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 function buildPendingActionResultDelivery(

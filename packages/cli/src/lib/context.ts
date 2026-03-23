@@ -16,8 +16,7 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { buildChainPublicClient } from "trusted-agents-core";
-import { GoogleCalendarCliProvider } from "./calendar/google-calendar.js";
-import { readCalendarProvider } from "./calendar/setup.js";
+import { resolveConfiguredCalendarProvider } from "./calendar/setup.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
 
 export interface CliContext {
@@ -80,9 +79,5 @@ export function buildContextWithTransport(config: TrustedAgentsConfig): CliConte
 }
 
 function resolveCalendarProvider(dataDir: string): ICalendarProvider | undefined {
-	const provider = readCalendarProvider(dataDir);
-	if (provider === "google") {
-		return new GoogleCalendarCliProvider();
-	}
-	return undefined;
+	return resolveConfiguredCalendarProvider(dataDir);
 }

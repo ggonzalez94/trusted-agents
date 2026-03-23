@@ -121,6 +121,37 @@ describe("SchedulingHandler.evaluateProposal", () => {
 		if (decision.action === "counter") {
 			expect(decision.slots).toHaveLength(2);
 			expect(decision.slots[0].start).toBe("2026-04-03T09:00:00Z");
+			expect(decision.slots[0].end).toBe("2026-04-03T10:00:00.000Z");
+		}
+	});
+
+	it("grant-constrained proposals confirm only against schedulable slots", async () => {
+		const provider = new MockCalendarProvider(overlappingAvailability);
+		const handler = new SchedulingHandler({ calendarProvider: provider, hooks: {} });
+		const contact = makeContact([
+			{
+				grantId: "weekday-only",
+				scope: "scheduling/request",
+				status: "active",
+				updatedAt: new Date().toISOString(),
+				constraints: {
+					allowedDays: ["tue", "wed", "thu", "fri"],
+					timezone: "UTC",
+				},
+			},
+		]);
+		const proposal = makeProposal({
+			slots: [
+				{ start: "2026-04-04T14:00:00Z", end: "2026-04-04T15:00:00Z" }, // Saturday
+				{ start: "2026-04-01T14:00:00Z", end: "2026-04-01T15:00:00Z" }, // Wednesday
+			],
+		});
+
+		const decision = await handler.evaluateProposal("req-1", contact, proposal);
+
+		expect(decision.action).toBe("confirm");
+		if (decision.action === "confirm") {
+			expect(decision.slot).toEqual(proposal.slots[1]);
 		}
 	});
 

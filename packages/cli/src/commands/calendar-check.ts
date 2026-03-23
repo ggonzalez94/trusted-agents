@@ -1,5 +1,4 @@
-import { GoogleCalendarCliProvider } from "../lib/calendar/google-calendar.js";
-import { readCalendarProvider } from "../lib/calendar/setup.js";
+import { readCalendarProvider, resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
@@ -18,14 +17,13 @@ export async function calendarCheckCommand(opts: GlobalOptions): Promise<void> {
 			return;
 		}
 
-		if (provider !== "google") {
-			throw new Error(`Unknown calendar provider: ${provider}`);
-		}
-
 		info(`Calendar provider: ${provider}`, opts);
 		info("Checking availability for the next 24 hours...", opts);
 
-		const calendarProvider = new GoogleCalendarCliProvider();
+		const calendarProvider = resolveConfiguredCalendarProvider(dataDir);
+		if (!calendarProvider) {
+			throw new Error(`Calendar provider ${provider} is not configured`);
+		}
 		const now = new Date();
 		const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 		const windows = await calendarProvider.getAvailability({

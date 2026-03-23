@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createGrantSet } from "../../src/permissions/index.js";
 import type { PermissionGrant } from "../../src/permissions/types.js";
 import {
+	filterSchedulingProposalSlots,
 	findApplicableSchedulingGrants,
+	findSchedulableSchedulingSlots,
 	matchesSchedulingConstraints,
 } from "../../src/scheduling/grants.js";
 import type { SchedulingProposal } from "../../src/scheduling/types.js";
@@ -82,8 +84,8 @@ describe("matchesSchedulingConstraints", () => {
 		expect(matchesSchedulingConstraints(grant, proposal)).toBe(true);
 	});
 
-	it("returns false when any one slot in a multi-slot proposal is on a disallowed day", () => {
-		// Friday is allowed, Saturday is not
+	it("returns true when at least one slot in a multi-slot proposal is on an allowed day", () => {
+		// Friday is allowed, Saturday is not.
 		const grant = makeGrant({
 			constraints: { allowedDays: ["mon", "tue", "wed", "thu", "fri"], timezone: "UTC" },
 		});
@@ -93,7 +95,7 @@ describe("matchesSchedulingConstraints", () => {
 				{ start: "2026-03-28T10:00:00Z", end: "2026-03-28T11:00:00Z" }, // Saturday - not ok
 			],
 		});
-		expect(matchesSchedulingConstraints(grant, proposal)).toBe(false);
+		expect(matchesSchedulingConstraints(grant, proposal)).toBe(true);
 	});
 
 	it("returns true for slot at 3pm ET (within 09:00–18:00 ET range)", () => {
@@ -171,6 +173,24 @@ describe("matchesSchedulingConstraints", () => {
 	});
 });
 
+describe("filterSchedulingProposalSlots", () => {
+	it("filters out slots that do not satisfy allowedDays", () => {
+		const grant = makeGrant({
+			constraints: { allowedDays: ["mon", "tue", "wed", "thu", "fri"], timezone: "UTC" },
+		});
+		const proposal = makeProposal({
+			slots: [
+				{ start: "2026-03-27T10:00:00Z", end: "2026-03-27T11:00:00Z" },
+				{ start: "2026-03-28T10:00:00Z", end: "2026-03-28T11:00:00Z" },
+			],
+		});
+
+		expect(filterSchedulingProposalSlots(grant, proposal)).toEqual([
+			{ start: "2026-03-27T10:00:00Z", end: "2026-03-27T11:00:00Z" },
+		]);
+	});
+});
+
 // ── findApplicableSchedulingGrants ───────────────────────────────────────────
 
 describe("findApplicableSchedulingGrants", () => {
@@ -244,5 +264,38 @@ describe("findApplicableSchedulingGrants", () => {
 		const result = findApplicableSchedulingGrants(grantSet, proposal);
 		expect(result).toHaveLength(1);
 		expect(result[0].grantId).toBe("g2");
+	});
+});
+
+describe("findSchedulableSchedulingSlots", () => {
+	it("returns the union of slots allowed by the active grants", () => {
+		const grants = [
+			makeGrant({
+				grantId: "weekday",
+				constraints: {
+					allowedDays: ["mon", "tue", "wed", "thu", "fri"],
+					timezone: "UTC",
+				},
+			}),
+			makeGrant({
+				grantId: "weekend",
+				constraints: {
+					allowedDays: ["sat"],
+					timezone: "UTC",
+				},
+			}),
+		];
+		const proposal = makeProposal({
+			slots: [
+				{ start: "2026-03-27T10:00:00Z", end: "2026-03-27T11:00:00Z" },
+				{ start: "2026-03-28T10:00:00Z", end: "2026-03-28T11:00:00Z" },
+				{ start: "2026-03-29T10:00:00Z", end: "2026-03-29T11:00:00Z" },
+			],
+		});
+
+		expect(findSchedulableSchedulingSlots(grants, proposal)).toEqual([
+			{ start: "2026-03-27T10:00:00Z", end: "2026-03-27T11:00:00Z" },
+			{ start: "2026-03-28T10:00:00Z", end: "2026-03-28T11:00:00Z" },
+		]);
 	});
 });

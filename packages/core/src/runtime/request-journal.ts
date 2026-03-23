@@ -36,6 +36,7 @@ export interface IRequestJournal {
 		entry: Omit<RequestJournalEntry, "createdAt" | "updatedAt">,
 	): Promise<RequestJournalEntry>;
 	getByRequestId(requestId: string): Promise<RequestJournalEntry | null>;
+	list(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
 	delete(requestId: string): Promise<void>;
 	updateStatus(requestId: string, status: RequestJournalStatus): Promise<void>;
 	updateMetadata(requestId: string, metadata: RequestJournalMetadata | undefined): Promise<void>;
@@ -92,6 +93,11 @@ export class FileRequestJournal implements IRequestJournal {
 	async getByRequestId(requestId: string): Promise<RequestJournalEntry | null> {
 		const file = await this.load();
 		return file.entries.find((entry) => entry.requestId === requestId) ?? null;
+	}
+
+	async list(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]> {
+		const file = await this.load();
+		return file.entries.filter((entry) => direction === undefined || entry.direction === direction);
 	}
 
 	async delete(requestId: string): Promise<void> {

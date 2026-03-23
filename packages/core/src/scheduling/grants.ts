@@ -1,6 +1,6 @@
 import type { PermissionGrant, PermissionGrantSet } from "../permissions/types.js";
 import { findActiveGrantsByScope } from "../runtime/grants.js";
-import type { SchedulingProposal } from "./types.js";
+import type { SchedulingProposal, TimeSlot } from "./types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -50,36 +50,64 @@ export function matchesSchedulingConstraints(
 	grant: PermissionGrant,
 	proposal: SchedulingProposal,
 ): boolean {
-	const constraints = grant.constraints;
-	if (!constraints) return true;
+	return filterSchedulingProposalSlots(grant, proposal).length > 0;
+}
 
-	// 1. maxDurationMinutes — proposal.duration must be <= max
-	if (typeof constraints.maxDurationMinutes === "number") {
-		if (proposal.duration > constraints.maxDurationMinutes) return false;
+export function filterSchedulingProposalSlots(
+	grant: PermissionGrant,
+	proposal: SchedulingProposal,
+): TimeSlot[] {
+	const constraints = grant.constraints;
+	if (!constraints) {
+		return [...proposal.slots];
+	}
+
+	if (
+		typeof constraints.maxDurationMinutes === "number" &&
+		proposal.duration > constraints.maxDurationMinutes
+	) {
+		return [];
 	}
 
 	const timezone = typeof constraints.timezone === "string" ? constraints.timezone : "UTC";
+	const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-	// 2. allowedDays — all slot start days must be in the list
-	if (Array.isArray(constraints.allowedDays)) {
-		const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-		for (const slot of proposal.slots) {
+	return proposal.slots.filter((slot) => {
+		if (Array.isArray(constraints.allowedDays)) {
 			const localDay = getLocalDayOfWeek(new Date(slot.start), timezone);
-			if (!constraints.allowedDays.includes(dayNames[localDay])) return false;
-		}
-	}
-
-	// 3. allowedTimeRange — all slot start times must be within the range
-	if (constraints.allowedTimeRange && typeof constraints.allowedTimeRange === "object") {
-		const range = constraints.allowedTimeRange as { start?: string; end?: string };
-		if (typeof range.start === "string" && typeof range.end === "string") {
-			for (const slot of proposal.slots) {
-				if (!isSlotWithinTimeRange(slot.start, range.start, range.end, timezone)) return false;
+			if (!constraints.allowedDays.includes(dayNames[localDay])) {
+				return false;
 			}
 		}
-	}
 
-	return true;
+		if (constraints.allowedTimeRange && typeof constraints.allowedTimeRange === "object") {
+			const range = constraints.allowedTimeRange as { start?: string; end?: string };
+			if (
+				typeof range.start === "string" &&
+				typeof range.end === "string" &&
+				!isSlotWithinTimeRange(slot.start, range.start, range.end, timezone)
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	});
+}
+
+export function findSchedulableSchedulingSlots(
+	grants: PermissionGrant[],
+	proposal: SchedulingProposal,
+): TimeSlot[] {
+	return proposal.slots.filter((slot) =>
+		grants.some(
+			(grant) =>
+				filterSchedulingProposalSlots(grant, {
+					...proposal,
+					slots: [slot],
+				}).length > 0,
+		),
+	);
 }
 
 export function findApplicableSchedulingGrants(
