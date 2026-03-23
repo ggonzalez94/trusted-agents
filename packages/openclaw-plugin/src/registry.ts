@@ -1,8 +1,8 @@
 import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,
-	SchedulingHandler,
 	type PermissionGrantSet,
+	SchedulingHandler,
 	type SchedulingProposal,
 	TapMessagingService,
 	type TapPendingSchedulingDetails,

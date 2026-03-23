@@ -499,10 +499,7 @@ export class TapMessagingService {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
 	}
 
-	async cancelPendingSchedulingRequest(
-		requestId: string,
-		reason?: string,
-	): Promise<TapSyncReport> {
+	async cancelPendingSchedulingRequest(requestId: string, reason?: string): Promise<TapSyncReport> {
 		const entry = await this.context.requestJournal.getByRequestId(requestId);
 		if (!entry || entry.direction !== "outbound" || entry.kind !== "request") {
 			throw new ValidationError(`Pending outbound request not found: ${requestId}`);
@@ -522,7 +519,11 @@ export class TapMessagingService {
 				await this.withTransportSession(async () => {
 					await this.drain();
 					const latestEntry = await this.context.requestJournal.getByRequestId(requestId);
-					if (!latestEntry || latestEntry.direction !== "outbound" || latestEntry.kind !== "request") {
+					if (
+						!latestEntry ||
+						latestEntry.direction !== "outbound" ||
+						latestEntry.kind !== "request"
+					) {
 						throw new ValidationError(`Pending outbound request not found: ${requestId}`);
 					}
 					if (latestEntry.status === "completed") {
