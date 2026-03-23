@@ -76,11 +76,14 @@ export {
 	type TapConnectionApprovalContext,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,
+	type TapPendingSchedulingDetails,
 	type TapPendingTransferDetails,
 	type TapPublishGrantSetResult,
 	type TapRequestFundsInput,
 	type TapRequestFundsResult,
 	type TapRequestGrantSetResult,
+	type TapRequestMeetingInput,
+	type TapRequestMeetingResult,
 	type TapSendMessageResult,
 	type TapServiceHooks,
 	type TapServiceOptions,
@@ -88,10 +91,11 @@ export {
 	type TapSyncReport,
 	type TapTransferApprovalContext,
 } from "./service.js";
-export { executeOnchainTransfer } from "./transfer-executor.js";
+export { ERC20_TRANSFER_ABI, executeOnchainTransfer } from "./transfer-executor.js";
 export {
 	isProcessAlive,
 	TransportOwnerLock,
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+export * from "../scheduling/index.js";

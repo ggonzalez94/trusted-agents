@@ -40,6 +40,21 @@ import type {
 	PermissionsUpdateParams,
 	TextPart,
 } from "../protocol/types.js";
+import {
+	buildSchedulingAcceptText,
+	buildSchedulingProposalText,
+	buildSchedulingRejectText,
+	parseSchedulingActionRequest,
+	parseSchedulingActionResponse,
+} from "../scheduling/actions.js";
+import { findApplicableSchedulingGrants } from "../scheduling/grants.js";
+import type {
+	ConfirmedMeeting,
+	ProposedMeeting,
+	SchedulingApprovalContext,
+	SchedulingHandler,
+} from "../scheduling/handler.js";
+import type { SchedulingProposal } from "../scheduling/types.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type {
 	TransportHandlers,
@@ -124,7 +139,21 @@ export interface TapPendingTransferDetails {
 	ledgerPath: string;
 }
 
-export type TapPendingRequestDetails = TapPendingTransferDetails;
+export interface TapPendingSchedulingDetails {
+	type: "scheduling";
+	peerName: string;
+	peerChain: string;
+	schedulingId: string;
+	title: string;
+	duration: number;
+	slots: Array<{ start: string; end: string }>;
+	originTimezone: string;
+	note?: string;
+	activeGrantSummary: string[];
+	ledgerPath: string;
+}
+
+export type TapPendingRequestDetails = TapPendingTransferDetails | TapPendingSchedulingDetails;
 
 export interface TapPendingRequest {
 	requestId: string;
@@ -174,6 +203,9 @@ export interface TapConnectionApprovalContext {
 export interface TapServiceHooks {
 	approveConnection?: (context: TapConnectionApprovalContext) => Promise<boolean | null>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null>;
+	approveScheduling?: (context: SchedulingApprovalContext) => Promise<boolean | null>;
+	confirmMeeting?: (meeting: ProposedMeeting) => Promise<boolean>;
+	onMeetingConfirmed?: (meeting: ConfirmedMeeting) => Promise<void>;
 	executeTransfer?: (
 		config: TrustedAgentsConfig,
 		request: TransferActionRequest,
@@ -190,6 +222,7 @@ export interface TapServiceOptions {
 	outboxResultRetentionMs?: number;
 	outboxStaleLeaseMs?: number;
 	hooks?: TapServiceHooks;
+	schedulingHandler?: SchedulingHandler;
 }
 
 export interface TapServiceStatus {
@@ -256,6 +289,21 @@ export interface TapRequestFundsResult {
 	asyncResult?: TransferActionResponse;
 }
 
+export interface TapRequestMeetingInput {
+	peer: string;
+	proposal: SchedulingProposal;
+}
+
+export interface TapRequestMeetingResult {
+	receipt: TransportReceipt;
+	schedulingId: string;
+	peerName: string;
+	peerAgentId: number;
+	title: string;
+	duration: number;
+	slotCount: number;
+}
+
 export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
@@ -270,8 +318,12 @@ export class TapMessagingService {
 	private readonly outboxStaleLeaseMs: number;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
-	private readonly decisionOverrides = { transfers: new Map<string, boolean>() };
+	private readonly decisionOverrides = {
+		transfers: new Map<string, boolean>(),
+		scheduling: new Map<string, { approve: boolean; reason?: string }>(),
+	};
 	private readonly waiters = new Map<string, (value: TransferActionResponse) => void>();
+	private readonly schedulingHandler: SchedulingHandler | undefined;
 	private readonly handlers: TransportHandlers;
 	private running = false;
 	private lastSyncAt: string | undefined;
@@ -291,6 +343,7 @@ export class TapMessagingService {
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
 		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
 		this.outboxStaleLeaseMs = options.outboxStaleLeaseMs ?? OUTBOX_STALE_LEASE_MS;
+		this.schedulingHandler = options.schedulingHandler;
 		this.handlers = {
 			onRequest: async (envelope) => await this.onRequest(envelope),
 			onResult: async (envelope) => await this.onResult(envelope),
@@ -375,7 +428,11 @@ export class TapMessagingService {
 		}));
 	}
 
-	async resolvePending(requestId: string, approve: boolean): Promise<TapSyncReport> {
+	async resolvePending(
+		requestId: string,
+		approve: boolean,
+		reason?: string,
+	): Promise<TapSyncReport> {
 		const entry = await this.context.requestJournal.getByRequestId(requestId);
 		if (!entry || entry.direction !== "inbound" || entry.kind !== "request") {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
@@ -385,8 +442,13 @@ export class TapMessagingService {
 			throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 		}
 
+		const isScheduling = entry.method === ACTION_REQUEST && entry.metadata?.type === "scheduling";
 		if (entry.method === ACTION_REQUEST) {
-			this.decisionOverrides.transfers.set(requestId, approve);
+			if (isScheduling) {
+				this.decisionOverrides.scheduling.set(requestId, { approve, reason });
+			} else {
+				this.decisionOverrides.transfers.set(requestId, approve);
+			}
 		}
 		try {
 			return await this.executionMutex.runExclusive(
@@ -406,7 +468,12 @@ export class TapMessagingService {
 						}
 
 						if (latestEntry.method === ACTION_REQUEST) {
-							await this.resolvePendingTransferRequest(latestEntry);
+							const latestIsScheduling = latestEntry.metadata?.type === "scheduling";
+							if (latestIsScheduling) {
+								await this.resolvePendingSchedulingRequest(latestEntry);
+							} else {
+								await this.resolvePendingTransferRequest(latestEntry);
+							}
 						} else if (latestEntry.method === CONNECTION_REQUEST) {
 							await this.resolvePendingConnectionRequest(latestEntry, approve);
 						} else {
@@ -419,13 +486,102 @@ export class TapMessagingService {
 			);
 		} finally {
 			if (entry.method === ACTION_REQUEST) {
-				this.decisionOverrides.transfers.delete(requestId);
+				if (isScheduling) {
+					this.decisionOverrides.scheduling.delete(requestId);
+				} else {
+					this.decisionOverrides.transfers.delete(requestId);
+				}
 			}
 		}
 	}
 
 	async connect(params: { inviteUrl: string }): Promise<TapConnectResult> {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
+	}
+
+	async cancelPendingSchedulingRequest(
+		requestId: string,
+		reason?: string,
+	): Promise<TapSyncReport> {
+		const entry = await this.context.requestJournal.getByRequestId(requestId);
+		if (!entry || entry.direction !== "outbound" || entry.kind !== "request") {
+			throw new ValidationError(`Pending outbound request not found: ${requestId}`);
+		}
+		if (entry.method !== ACTION_REQUEST) {
+			throw new ValidationError(`Request ${requestId} cannot be cancelled manually`);
+		}
+
+		if (!parseStoredSchedulingRequest(entry.metadata)) {
+			throw new ValidationError(
+				`Pending scheduling request ${requestId} is missing the original request payload`,
+			);
+		}
+
+		return await this.executionMutex.runExclusive(
+			async () =>
+				await this.withTransportSession(async () => {
+					await this.drain();
+					const latestEntry = await this.context.requestJournal.getByRequestId(requestId);
+					if (!latestEntry || latestEntry.direction !== "outbound" || latestEntry.kind !== "request") {
+						throw new ValidationError(`Pending outbound request not found: ${requestId}`);
+					}
+					if (latestEntry.status === "completed") {
+						return await this.buildSyncReport(0);
+					}
+
+					const latestProposal = parseStoredSchedulingRequest(latestEntry.metadata);
+					if (!latestProposal) {
+						throw new ValidationError(
+							`Pending scheduling request ${requestId} is missing the original request payload`,
+						);
+					}
+
+					const contact = findUniqueContactForAgentId(
+						await this.context.trustStore.getContacts(),
+						latestEntry.peerAgentId,
+					);
+					if (!contact) {
+						throw new ValidationError(
+							`No active contact found for pending scheduling request ${requestId}`,
+						);
+					}
+
+					const cancellation = {
+						type: "scheduling/cancel" as const,
+						schedulingId: latestProposal.schedulingId,
+						...(reason ? { reason } : {}),
+					};
+					const outgoing = buildOutgoingActionResult(
+						contact,
+						latestEntry.requestId,
+						buildSchedulingRejectText(cancellation),
+						cancellation,
+						"scheduling/request",
+						"rejected",
+					);
+
+					await this.context.transport.send(contact.peerAgentId, outgoing, {
+						peerAddress: contact.peerAgentAddress,
+						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					});
+					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.touchContactSafe(contact.connectionId);
+
+					await this.context.requestJournal.updateStatus(requestId, "completed");
+					await this.appendLedger({
+						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						direction: "local",
+						event: "scheduling-cancel",
+						scope: "scheduling/request",
+						action_id: latestProposal.schedulingId,
+						decision: "cancelled",
+						rationale: reason ?? "Cancelled by operator",
+					});
+
+					await this.drain();
+					return await this.buildSyncReport(1);
+				}),
+		);
 	}
 
 	private async connectInternal(params: { inviteUrl: string }): Promise<TapConnectResult> {
@@ -781,6 +937,94 @@ export class TapMessagingService {
 		});
 	}
 
+	async requestMeeting(input: TapRequestMeetingInput): Promise<TapRequestMeetingResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.requestMeetingInternal(input),
+		);
+	}
+
+	private async requestMeetingInternal(
+		input: TapRequestMeetingInput,
+	): Promise<TapRequestMeetingResult> {
+		return await this.withTransportSession(async () => {
+			const contact = await this.requireActiveContact(input.peer);
+			const { proposal } = input;
+			const peerSchedulingGrants = findActiveGrantsByScope(
+				contact.permissions.grantedByPeer,
+				"scheduling/request",
+			);
+			if (peerSchedulingGrants.length === 0) {
+				this.log(
+					"warn",
+					`No matching scheduling/request grant found in grantedByPeer for ${contact.peerDisplayName}. The peer may reject this request.`,
+				);
+			}
+
+			const request = buildOutgoingActionRequest(
+				contact,
+				buildSchedulingProposalText(proposal),
+				proposal as unknown as Record<string, unknown>,
+				"scheduling/request",
+			);
+			const requestId = String(request.id);
+			const timestamp = nowISO();
+
+			await this.appendLedger({
+				timestamp,
+				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				direction: "local",
+				event: "scheduling-request-sent",
+				scope: "scheduling/request",
+				action_id: proposal.schedulingId,
+				note: proposal.note ?? `Meeting: ${proposal.title}`,
+			});
+
+			await this.context.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${request.method}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: request.method,
+				peerAgentId: contact.peerAgentId,
+				status: "pending",
+				metadata: serializePendingSchedulingOutboundRequestDetails(
+					contact,
+					proposal,
+					this.context.config.dataDir,
+				),
+			});
+
+			let receipt: TransportReceipt;
+			try {
+				receipt = await this.context.transport.send(contact.peerAgentId, request, {
+					peerAddress: contact.peerAgentAddress,
+				});
+			} catch (error: unknown) {
+				if (!isTransportReceiptTimeout(error)) {
+					await this.context.requestJournal.delete(requestId);
+				}
+				throw error;
+			}
+
+			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
+			if (journalEntry?.status !== "completed") {
+				await this.context.requestJournal.updateStatus(requestId, "acked");
+			}
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+			await this.touchContactSafe(contact.connectionId);
+
+			return {
+				receipt,
+				schedulingId: proposal.schedulingId,
+				peerName: contact.peerDisplayName,
+				peerAgentId: contact.peerAgentId,
+				title: proposal.title,
+				duration: proposal.duration,
+				slotCount: proposal.slots.length,
+			};
+		});
+	}
+
 	private async runMaintenanceCycle(reconcile: boolean): Promise<number> {
 		if (!reconcile) {
 			return await this.processOutboxInternal();
@@ -847,6 +1091,8 @@ export class TapMessagingService {
 				);
 			case "request-funds":
 				return await this.requestFundsInternal(job.payload.input);
+			case "request-meeting":
+				return await this.requestMeetingInternal(job.payload.input);
 			default:
 				return assertNever(job);
 		}
@@ -1212,6 +1458,38 @@ export class TapMessagingService {
 			return { status };
 		}
 
+		const schedulingRequest = parseSchedulingActionRequest(envelope.message);
+		if (schedulingRequest) {
+			await this.context.requestJournal.updateMetadata(
+				String(envelope.message.id),
+				serializePendingSchedulingRequestDetails(
+					contact,
+					schedulingRequest,
+					this.context.config.dataDir,
+				),
+			);
+
+			this.enqueue(requestKey, async () => {
+				await this.processSchedulingRequest(
+					contact,
+					String(envelope.message.id),
+					schedulingRequest,
+				);
+			});
+
+			const status = claimed.duplicate ? "duplicate" : "queued";
+			this.emitEvent({
+				direction: "incoming",
+				from: envelope.from,
+				fromName: contact.peerDisplayName,
+				method: envelope.message.method,
+				id: envelope.message.id,
+				receipt_status: status,
+				scope: "scheduling/request",
+			});
+			return { status };
+		}
+
 		const transferRequest = parseTransferActionRequest(envelope.message);
 		if (!transferRequest) {
 			throw new ValidationError("Unsupported action request payload");
@@ -1485,6 +1763,27 @@ export class TapMessagingService {
 		await this.context.requestJournal.updateStatus(entry.requestId, "completed");
 	}
 
+	private async resolvePendingSchedulingRequest(entry: RequestJournalEntry): Promise<void> {
+		const proposal = parseStoredSchedulingRequest(entry.metadata);
+		if (!proposal) {
+			throw new ValidationError(
+				`Pending scheduling request ${entry.requestId} is missing the original request payload`,
+			);
+		}
+
+		const contact = findUniqueContactForAgentId(
+			await this.context.trustStore.getContacts(),
+			entry.peerAgentId,
+		);
+		if (!contact) {
+			throw new ValidationError(
+				`No active contact found for pending scheduling request ${entry.requestId}`,
+			);
+		}
+
+		await this.processSchedulingRequest(contact, entry.requestId, proposal);
+	}
+
 	private async processTransferRequest(
 		contact: Contact,
 		requestId: string,
@@ -1623,6 +1922,279 @@ export class TapMessagingService {
 		}
 	}
 
+	private async processSchedulingRequest(
+		contact: Contact,
+		requestId: string,
+		proposal: SchedulingProposal,
+	): Promise<void> {
+		if (!this.schedulingHandler) {
+			this.log(
+				"warn",
+				`No scheduling handler configured — scheduling request ${requestId} stays pending`,
+			);
+			return;
+		}
+
+		const override = this.decisionOverrides.scheduling.get(requestId);
+		const evaluatedDecision = await this.schedulingHandler.evaluateProposal(
+			requestId,
+			contact,
+			proposal,
+		);
+		const decision =
+			override?.approve === false
+				? ({
+						action: "reject",
+						reason: override.reason ?? "Scheduling request declined by operator",
+					} as const)
+				: override?.approve === true && evaluatedDecision.action !== "confirm"
+					? ({
+							action: "confirm",
+							slot: proposal.slots[0],
+							proposal,
+						} as const)
+					: evaluatedDecision;
+
+		switch (decision.action) {
+			case "confirm": {
+				const selectedSlot = decision.slot ?? proposal.slots[0];
+				if (!selectedSlot) {
+					throw new ValidationError(
+						`Scheduling request ${proposal.schedulingId} has no proposed slots`,
+					);
+				}
+				const confirmed =
+					override?.approve === true
+						? true
+						: this.hooks.confirmMeeting
+							? await this.hooks.confirmMeeting({
+									schedulingId: proposal.schedulingId,
+									title: proposal.title,
+									slot: selectedSlot,
+									peerName: contact.peerDisplayName,
+									peerAgentId: contact.peerAgentId,
+									originTimezone: proposal.originTimezone,
+								})
+							: false;
+
+				if (confirmed) {
+					const eventResult = await this.schedulingHandler.handleAccept(
+						{
+							type: "scheduling/accept",
+							schedulingId: proposal.schedulingId,
+							acceptedSlot: selectedSlot,
+						},
+						contact.peerDisplayName,
+						proposal.title,
+						proposal.originTimezone,
+					);
+
+					const acceptData: Record<string, unknown> = {
+						type: "scheduling/accept",
+						schedulingId: proposal.schedulingId,
+						acceptedSlot: selectedSlot,
+						...(eventResult.eventId ? { eventId: eventResult.eventId } : {}),
+					};
+					const acceptText = buildSchedulingAcceptText({
+						type: "scheduling/accept",
+						schedulingId: proposal.schedulingId,
+						acceptedSlot: selectedSlot,
+					});
+					const outgoing = buildOutgoingActionResult(
+						contact,
+						requestId,
+						acceptText,
+						acceptData,
+						"scheduling/request",
+						"completed",
+					);
+
+					try {
+						await this.context.transport.send(contact.peerAgentId, outgoing, {
+							peerAddress: contact.peerAgentAddress,
+							timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+						});
+						await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+						await this.touchContactSafe(contact.connectionId);
+					} catch (error: unknown) {
+						this.log(
+							"warn",
+							`Failed to deliver scheduling accept for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					}
+
+					await this.context.requestJournal.updateStatus(requestId, "completed");
+					await this.appendLedger({
+						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						direction: "granted-by-me",
+						event: "scheduling-accepted",
+						scope: "scheduling/request",
+						action_id: proposal.schedulingId,
+						decision: "accepted",
+					});
+
+					if (this.hooks.onMeetingConfirmed) {
+						await this.hooks.onMeetingConfirmed({
+							schedulingId: proposal.schedulingId,
+							title: proposal.title,
+							slot: selectedSlot,
+							peerName: contact.peerDisplayName,
+							peerAgentId: contact.peerAgentId,
+							originTimezone: proposal.originTimezone,
+							eventId: eventResult.eventId,
+						});
+					}
+					break;
+				}
+
+				const rejectData: Record<string, unknown> = {
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: "Scheduling request declined by operator",
+				};
+				const rejectText = buildSchedulingRejectText({
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: "Scheduling request declined by operator",
+				});
+				const outgoing = buildOutgoingActionResult(
+					contact,
+					requestId,
+					rejectText,
+					rejectData,
+					"scheduling/request",
+					"rejected",
+				);
+
+				try {
+					await this.context.transport.send(contact.peerAgentId, outgoing, {
+						peerAddress: contact.peerAgentAddress,
+						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					});
+					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.touchContactSafe(contact.connectionId);
+				} catch (error: unknown) {
+					this.log(
+						"warn",
+						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+				await this.appendLedger({
+					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					direction: "granted-by-me",
+					event: "scheduling-rejected",
+					scope: "scheduling/request",
+					action_id: proposal.schedulingId,
+					decision: "rejected",
+					rationale: "Scheduling request declined by operator",
+				});
+				break;
+			}
+			case "counter": {
+				const counterData: Record<string, unknown> = {
+					type: "scheduling/counter",
+					schedulingId: proposal.schedulingId,
+					title: proposal.title,
+					duration: proposal.duration,
+					slots: decision.slots,
+					originTimezone: proposal.originTimezone,
+				};
+				const counterText = buildSchedulingProposalText({
+					type: "scheduling/counter",
+					schedulingId: proposal.schedulingId,
+					title: proposal.title,
+					duration: proposal.duration,
+					slots: decision.slots,
+					originTimezone: proposal.originTimezone,
+				});
+				const outgoing = buildOutgoingActionRequest(
+					contact,
+					counterText,
+					counterData,
+					"scheduling/request",
+				);
+
+				try {
+					await this.context.transport.send(contact.peerAgentId, outgoing, {
+						peerAddress: contact.peerAgentAddress,
+					});
+					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.touchContactSafe(contact.connectionId);
+				} catch (error: unknown) {
+					this.log(
+						"warn",
+						`Failed to deliver scheduling counter for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+				await this.appendLedger({
+					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					direction: "local",
+					event: "scheduling-counter",
+					scope: "scheduling/request",
+					action_id: proposal.schedulingId,
+					decision: "counter",
+				});
+				break;
+			}
+			case "reject": {
+				const rejectData: Record<string, unknown> = {
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: decision.reason,
+				};
+				const rejectText = buildSchedulingRejectText({
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: decision.reason,
+				});
+				const outgoing = buildOutgoingActionResult(
+					contact,
+					requestId,
+					rejectText,
+					rejectData,
+					"scheduling/request",
+					"rejected",
+				);
+
+				try {
+					await this.context.transport.send(contact.peerAgentId, outgoing, {
+						peerAddress: contact.peerAgentAddress,
+						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					});
+					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.touchContactSafe(contact.connectionId);
+				} catch (error: unknown) {
+					this.log(
+						"warn",
+						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+				await this.appendLedger({
+					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					direction: "granted-by-me",
+					event: "scheduling-rejected",
+					scope: "scheduling/request",
+					action_id: proposal.schedulingId,
+					decision: "rejected",
+					rationale: decision.reason,
+				});
+				break;
+			}
+			case "defer":
+				this.log(
+					"info",
+					`Scheduling request ${proposal.schedulingId} deferred for manual decision`,
+				);
+				break;
+		}
+	}
+
 	private async handleConnectionResult(
 		message: ProtocolMessage,
 	): Promise<"received" | "duplicate"> {
@@ -1701,38 +2273,82 @@ export class TapMessagingService {
 		}
 
 		const response = parseTransferActionResponse(message);
-		if (!response) {
+		if (response) {
+			if (contact) {
+				await this.appendLedger({
+					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					direction: "local",
+					event: `transfer-${response.status}`,
+					scope: "transfer/request",
+					asset: response.asset,
+					amount: response.amount,
+					action_id: response.actionId,
+					tx_hash: response.txHash,
+					decision: response.status,
+					rationale: response.error,
+				});
+			}
+			if (response.requestId) {
+				await this.context.requestJournal.updateMetadata(
+					response.requestId,
+					serializeRecordedTransferResponse(response),
+				);
+				await this.context.requestJournal.updateStatus(response.requestId, "completed");
+				this.waiters.get(response.requestId)?.(response);
+			}
+			if (contact) {
+				this.log(
+					"info",
+					`Received transfer ${response.status} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				);
+			}
 			return contact?.peerDisplayName;
 		}
 
-		if (contact) {
-			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				direction: "local",
-				event: `transfer-${response.status}`,
-				scope: "transfer/request",
-				asset: response.asset,
-				amount: response.amount,
-				action_id: response.actionId,
-				tx_hash: response.txHash,
-				decision: response.status,
-				rationale: response.error,
-			});
+		const schedulingResponse = parseSchedulingActionResponse(message);
+		if (schedulingResponse) {
+			const requestId = (message.params as { requestId?: string } | undefined)?.requestId;
+			if (schedulingResponse.type === "scheduling/accept" && this.schedulingHandler) {
+				let title = "Meeting";
+				let originTimezone = "UTC";
+				if (requestId) {
+					const originalRequest = await this.context.requestJournal.getByRequestId(requestId);
+					const originalProposal = parseStoredSchedulingRequest(originalRequest?.metadata);
+					if (originalProposal) {
+						title = originalProposal.title;
+						originTimezone = originalProposal.originTimezone;
+					}
+				}
+				await this.schedulingHandler.handleAccept(
+					schedulingResponse,
+					contact?.peerDisplayName ?? "Unknown",
+					title,
+					originTimezone,
+				);
+			}
+
+			if (requestId) {
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+			}
+
+			if (contact) {
+				const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
+				await this.appendLedger({
+					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					direction: "local",
+					event: `scheduling-${eventType}`,
+					scope: "scheduling/request",
+					action_id: schedulingResponse.schedulingId,
+					decision: eventType,
+				});
+				this.log(
+					"info",
+					`Received scheduling ${eventType} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				);
+			}
+			return contact?.peerDisplayName;
 		}
-		if (response.requestId) {
-			await this.context.requestJournal.updateMetadata(
-				response.requestId,
-				serializeRecordedTransferResponse(response),
-			);
-			await this.context.requestJournal.updateStatus(response.requestId, "completed");
-			this.waiters.get(response.requestId)?.(response);
-		}
-		if (contact) {
-			this.log(
-				"info",
-				`Received transfer ${response.status} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-			);
-		}
+
 		return contact?.peerDisplayName;
 	}
 
@@ -2071,25 +2687,48 @@ function buildPendingTransferDetails(
 function parsePendingRequestDetails(
 	metadata: Record<string, unknown> | undefined,
 ): TapPendingRequestDetails | undefined {
-	if (!metadata || metadata.type !== "transfer") {
+	if (!metadata) {
 		return undefined;
 	}
-	const toAddress = asString(metadata.toAddress);
-	if (!toAddress || !toAddress.startsWith("0x")) {
-		return undefined;
+
+	if (metadata.type === "transfer") {
+		const toAddress = asString(metadata.toAddress);
+		if (!toAddress || !toAddress.startsWith("0x")) {
+			return undefined;
+		}
+		return {
+			type: "transfer",
+			peerName: asString(metadata.peerName) ?? "Unknown peer",
+			peerChain: asString(metadata.peerChain) ?? "unknown",
+			asset: metadata.asset === "usdc" ? "usdc" : "native",
+			amount: asString(metadata.amount) ?? "0",
+			chain: asString(metadata.chain) ?? "unknown",
+			toAddress: toAddress as `0x${string}`,
+			note: asString(metadata.note),
+			activeGrantSummary: asStringArray(metadata.activeGrantSummary),
+			ledgerPath: asString(metadata.ledgerPath) ?? "",
+		};
 	}
-	return {
-		type: "transfer",
-		peerName: asString(metadata.peerName) ?? "Unknown peer",
-		peerChain: asString(metadata.peerChain) ?? "unknown",
-		asset: metadata.asset === "usdc" ? "usdc" : "native",
-		amount: asString(metadata.amount) ?? "0",
-		chain: asString(metadata.chain) ?? "unknown",
-		toAddress: toAddress as `0x${string}`,
-		note: asString(metadata.note),
-		activeGrantSummary: asStringArray(metadata.activeGrantSummary),
-		ledgerPath: asString(metadata.ledgerPath) ?? "",
-	};
+
+	if (metadata.type === "scheduling") {
+		return {
+			type: "scheduling",
+			peerName: asString(metadata.peerName) ?? "Unknown peer",
+			peerChain: asString(metadata.peerChain) ?? "unknown",
+			schedulingId: asString(metadata.schedulingId) ?? "",
+			title: asString(metadata.title) ?? "",
+			duration: typeof metadata.duration === "number" ? metadata.duration : 0,
+			slots: Array.isArray(metadata.slots)
+				? (metadata.slots as Array<{ start: string; end: string }>)
+				: [],
+			originTimezone: asString(metadata.originTimezone) ?? "UTC",
+			note: asString(metadata.note),
+			activeGrantSummary: asStringArray(metadata.activeGrantSummary),
+			ledgerPath: asString(metadata.ledgerPath) ?? "",
+		};
+	}
+
+	return undefined;
 }
 
 function asString(value: unknown): string | undefined {
@@ -2120,6 +2759,84 @@ function serializePendingTransferRequestDetails(
 			payload: request,
 		},
 	};
+}
+
+function serializePendingSchedulingRequestDetails(
+	contact: Contact,
+	request: SchedulingProposal,
+	dataDir: string,
+): Record<string, unknown> {
+	const grants = findApplicableSchedulingGrants(contact.permissions.grantedByMe, request);
+	const details: TapPendingSchedulingDetails = {
+		type: "scheduling",
+		peerName: contact.peerDisplayName,
+		peerChain: contact.peerChain,
+		schedulingId: request.schedulingId,
+		title: request.title,
+		duration: request.duration,
+		slots: request.slots,
+		originTimezone: request.originTimezone,
+		note: request.note,
+		activeGrantSummary: grants.map((g) => summarizeGrant(g)),
+		ledgerPath: getPermissionLedgerPath(dataDir),
+	};
+	return {
+		...serializePendingRequestDetails(details),
+		request: {
+			type: "scheduling-request",
+			payload: request,
+		},
+	};
+}
+
+function serializePendingSchedulingOutboundRequestDetails(
+	contact: Contact,
+	request: SchedulingProposal,
+	dataDir: string,
+): Record<string, unknown> {
+	const details: TapPendingSchedulingDetails = {
+		type: "scheduling",
+		peerName: contact.peerDisplayName,
+		peerChain: contact.peerChain,
+		schedulingId: request.schedulingId,
+		title: request.title,
+		duration: request.duration,
+		slots: request.slots,
+		originTimezone: request.originTimezone,
+		note: request.note,
+		activeGrantSummary: findActiveGrantsByScope(
+			contact.permissions.grantedByPeer,
+			"scheduling/request",
+		).map((grant) => summarizeGrant(grant)),
+		ledgerPath: getPermissionLedgerPath(dataDir),
+	};
+	return {
+		...serializePendingRequestDetails(details),
+		request: {
+			type: "scheduling-request",
+			payload: request,
+		},
+	};
+}
+
+function parseStoredSchedulingRequest(
+	metadata: Record<string, unknown> | undefined,
+): SchedulingProposal | null {
+	const payload = parseStoredRequestField(metadata, "scheduling-request", "payload");
+	if (payload === null) {
+		return null;
+	}
+
+	return parseSchedulingActionRequest({
+		jsonrpc: "2.0",
+		id: "pending-scheduling-request",
+		method: ACTION_REQUEST,
+		params: {
+			message: {
+				parts: [{ kind: "data", data: payload }],
+			},
+		},
+	});
 }
 
 function buildPendingActionResultDelivery(

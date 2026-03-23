@@ -26,6 +26,7 @@ export type { ApprovalRequest } from "./approval.js";
 export {
 	TapMessagingService,
 	TransportOwnershipError,
+	SchedulingHandler,
 	buildDefaultTapRuntimeContext,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
@@ -37,4 +38,12 @@ export type {
 	TapServiceStatus,
 	TapSyncReport,
 	TapRuntimeContext,
+	ICalendarProvider,
+	AvailabilityWindow,
+	CalendarEvent,
+	SchedulingHooks,
+	SchedulingApprovalContext,
+	ProposedMeeting,
+	ConfirmedMeeting,
+	SchedulingDecision,
 } from "trusted-agents-core";

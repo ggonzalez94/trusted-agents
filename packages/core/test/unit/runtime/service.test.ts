@@ -19,6 +19,7 @@ import {
 	FileTapCommandOutbox,
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
+	parseSchedulingActionResponse,
 	parseTransferActionRequest,
 	parseTransferActionResponse,
 } from "../../../src/runtime/index.js";
@@ -2066,6 +2067,332 @@ describe("TapMessagingService", () => {
 		};
 		expect(resultParams?.status).toBe("rejected");
 		expect(resultParams?.reason).toContain("declined by operator");
+
+		await service.stop();
+	});
+
+	it("resolvePending scheduling approval applies override and bypasses confirm hook", async () => {
+		const contact: Contact = {
+			connectionId: "conn-deferred-scheduling",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const transport = new FakeTransport();
+		const confirmMeeting = vi.fn(async () => false);
+		const schedulingHandler = {
+			evaluateProposal: vi.fn(async () => ({ action: "defer" as const })),
+			handleAccept: vi.fn(async () => ({ eventId: "evt-override-1" })),
+			handleCancel: vi.fn(async () => {}),
+		} as unknown as NonNullable<
+			ConstructorParameters<typeof TapMessagingService>[1]["schedulingHandler"]
+		>;
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { confirmMeeting },
+				serviceOptions: { schedulingHandler },
+			},
+		);
+
+		await service.start();
+
+		const proposal = {
+			type: "scheduling/propose",
+			schedulingId: "sch-override-1",
+			title: "Architecture Review",
+			duration: 60,
+			slots: [{ start: "2026-03-08T16:00:00.000Z", end: "2026-03-08T17:00:00.000Z" }],
+			originTimezone: "UTC",
+		};
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Scheduling proposal",
+			proposal,
+			"scheduling/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-scheduling-override",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "pending",
+			}),
+		);
+
+		const report = await service.resolvePending(String(request.id), true);
+		expect(report.pendingRequests).toEqual([]);
+		expect(confirmMeeting).not.toHaveBeenCalled();
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(1);
+		expect(parseSchedulingActionResponse(actionResults[0]!.message)).toEqual(
+			expect.objectContaining({
+				type: "scheduling/accept",
+				schedulingId: "sch-override-1",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("settles scheduling requests when confirmMeeting returns false", async () => {
+		const contact: Contact = {
+			connectionId: "conn-confirm-false-scheduling",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: {
+				...createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+				grantedByMe: createGrantSet(
+					[
+						{
+							grantId: "sched-grant-1",
+							scope: "scheduling/request",
+						},
+					],
+					"2026-03-08T00:00:00.000Z",
+				),
+			},
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const transport = new FakeTransport();
+		const confirmMeeting = vi.fn(async () => false);
+		const schedulingHandler = {
+			evaluateProposal: vi.fn(async () => ({
+				action: "confirm" as const,
+				slot: { start: "2026-03-08T18:00:00.000Z", end: "2026-03-08T19:00:00.000Z" },
+				proposal: {
+					type: "scheduling/propose",
+					schedulingId: "sch-confirm-false-1",
+					title: "Weekly Sync",
+					duration: 60,
+					slots: [{ start: "2026-03-08T18:00:00.000Z", end: "2026-03-08T19:00:00.000Z" }],
+					originTimezone: "UTC",
+				},
+			})),
+			handleAccept: vi.fn(async () => ({ eventId: "evt-should-not-run" })),
+			handleCancel: vi.fn(async () => {}),
+		} as unknown as NonNullable<
+			ConstructorParameters<typeof TapMessagingService>[1]["schedulingHandler"]
+		>;
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { confirmMeeting },
+				serviceOptions: { schedulingHandler },
+			},
+		);
+
+		await service.start();
+
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Scheduling proposal",
+			{
+				type: "scheduling/propose",
+				schedulingId: "sch-confirm-false-1",
+				title: "Weekly Sync",
+				duration: 60,
+				slots: [{ start: "2026-03-08T18:00:00.000Z", end: "2026-03-08T19:00:00.000Z" }],
+				originTimezone: "UTC",
+			},
+			"scheduling/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-confirm-false",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+		expect(confirmMeeting).toHaveBeenCalledOnce();
+		expect(schedulingHandler.handleAccept).not.toHaveBeenCalled();
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(1);
+		expect(parseSchedulingActionResponse(actionResults[0]!.message)).toEqual(
+			expect.objectContaining({
+				type: "scheduling/reject",
+				schedulingId: "sch-confirm-false-1",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("cancels outbound scheduling requests with a scheduling/cancel response", async () => {
+		const contact: Contact = {
+			connectionId: "conn-cancel-outbound-scheduling",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+			},
+		);
+
+		await service.start();
+		const proposal = {
+			type: "scheduling/propose" as const,
+			schedulingId: "sch-cancel-1",
+			title: "Cancel Candidate",
+			duration: 45,
+			slots: [{ start: "2026-03-08T20:00:00.000Z", end: "2026-03-08T20:45:00.000Z" }],
+			originTimezone: "UTC",
+		};
+		const requestResult = await service.requestMeeting({
+			peer: contact.peerDisplayName,
+			proposal,
+		});
+
+		const report = await service.cancelPendingSchedulingRequest(
+			String(requestResult.receipt.requestId),
+			"Need to reschedule",
+		);
+		expect(report.pendingRequests).toEqual([]);
+		expect(await requestJournal.getByRequestId(String(requestResult.receipt.requestId))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(1);
+		expect(parseSchedulingActionResponse(actionResults[0]!.message)).toEqual({
+			type: "scheduling/cancel",
+			schedulingId: "sch-cancel-1",
+			reason: "Need to reschedule",
+		});
+
+		await service.stop();
+	});
+
+	it("uses outbound scheduling metadata for accepted meeting title and timezone", async () => {
+		const contact: Contact = {
+			connectionId: "conn-scheduling-accept-metadata",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const transport = new FakeTransport();
+		const schedulingHandler = {
+			evaluateProposal: vi.fn(async () => ({ action: "defer" as const })),
+			handleAccept: vi.fn(async () => ({ eventId: "evt-accept-meta-1" })),
+			handleCancel: vi.fn(async () => {}),
+		} as unknown as NonNullable<
+			ConstructorParameters<typeof TapMessagingService>[1]["schedulingHandler"]
+		>;
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				serviceOptions: { schedulingHandler },
+			},
+		);
+
+		await service.start();
+		const proposal = {
+			type: "scheduling/propose" as const,
+			schedulingId: "sch-meta-1",
+			title: "Backend Roadmap",
+			duration: 30,
+			slots: [{ start: "2026-03-08T12:00:00.000Z", end: "2026-03-08T12:30:00.000Z" }],
+			originTimezone: "America/New_York",
+		};
+		const meeting = await service.requestMeeting({ peer: contact.peerDisplayName, proposal });
+
+		const accept = buildOutgoingActionResult(
+			contact,
+			String(meeting.receipt.requestId),
+			"Accepted",
+			{
+				type: "scheduling/accept",
+				schedulingId: proposal.schedulingId,
+				acceptedSlot: proposal.slots[0],
+			},
+			"scheduling/request",
+			"completed",
+		);
+		await expect(
+			transport.handlers.onResult?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-accept-meta",
+				message: accept,
+			}),
+		).resolves.toEqual({ status: "received" });
+
+		expect(schedulingHandler.handleAccept).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "scheduling/accept",
+				schedulingId: "sch-meta-1",
+			}),
+			contact.peerDisplayName,
+			"Backend Roadmap",
+			"America/New_York",
+		);
+		expect(await requestJournal.getByRequestId(String(meeting.receipt.requestId))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
 
 		await service.stop();
 	});

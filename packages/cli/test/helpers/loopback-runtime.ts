@@ -7,6 +7,7 @@ import {
 } from "trusted-agents-core";
 import type {
 	IAgentResolver,
+	ICalendarProvider,
 	ProtocolMessage,
 	ResolvedAgent,
 	TransportAck,
@@ -205,6 +206,7 @@ export function installLoopbackRuntime(params: {
 	network: LoopbackTransportNetwork;
 	resolver: StaticAgentResolver;
 	txHashPrefix: string;
+	calendarProvider?: ICalendarProvider;
 }): void {
 	setCliRuntimeOverride(params.dataDir, {
 		createContext: () => ({
@@ -212,6 +214,7 @@ export function installLoopbackRuntime(params: {
 			resolver: params.resolver,
 			conversationLogger: new FileConversationLogger(params.dataDir),
 			requestJournal: new FileRequestJournal(params.dataDir),
+			...(params.calendarProvider ? { calendarProvider: params.calendarProvider } : {}),
 		}),
 		createTransport: (config) => new LoopbackTransport(params.network, config.agentId),
 		executeTransferAction: async () => ({

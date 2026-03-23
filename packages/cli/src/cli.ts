@@ -174,6 +174,28 @@ Examples:
 			await balanceCommand(opts, chain);
 		});
 
+	program
+		.command("transfer")
+		.description("Transfer native ETH or USDC from this agent wallet to an address")
+		.requiredOption("--to <address>", "Recipient Ethereum address")
+		.requiredOption("--asset <asset>", "Asset to transfer: native or usdc")
+		.requiredOption("--amount <amount>", "Human-readable transfer amount")
+		.option("--chain <chain>", "Chain alias or CAIP-2 ID (defaults to local config chain)")
+		.option("--yes", "Skip the confirmation prompt")
+		.action(
+			async (cmdOpts: {
+				to: string;
+				asset: string;
+				amount: string;
+				chain?: string;
+				yes?: boolean;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { transferCommand } = await import("./commands/transfer.js");
+				await transferCommand(cmdOpts, opts);
+			},
+		);
+
 	// config
 	const config = program.command("config").description("Manage configuration");
 
@@ -394,6 +416,84 @@ Examples:
 			const opts = program.opts<GlobalOptions>();
 			const { messageSyncCommand } = await import("./commands/message-sync.js");
 			await messageSyncCommand(opts);
+		});
+
+	message
+		.command("request-meeting <peer>")
+		.description("Request a meeting with a connected peer")
+		.requiredOption("--title <title>", "Meeting title")
+		.option("--duration <minutes>", "Duration in minutes", "60")
+		.option("--preferred <datetime>", "Preferred time (ISO 8601)")
+		.option("--location <location>", "Meeting location")
+		.option("--note <note>", "Additional note")
+		.action(
+			async (
+				peer: string,
+				cmdOpts: {
+					title: string;
+					duration?: string;
+					preferred?: string;
+					location?: string;
+					note?: string;
+				},
+			) => {
+				const opts = program.opts<GlobalOptions>();
+				const { messageRequestMeetingCommand } = await import(
+					"./commands/message-request-meeting.js"
+				);
+				await messageRequestMeetingCommand(peer, cmdOpts, opts);
+			},
+		);
+
+	message
+		.command("respond-meeting <schedulingId>")
+		.description("Accept or reject a pending scheduling request")
+		.option("--accept", "Accept the scheduling request")
+		.option("--reject", "Reject the scheduling request")
+		.option("--reason <reason>", "Reason for rejection")
+		.action(
+			async (
+				schedulingId: string,
+				cmdOpts: { accept?: boolean; reject?: boolean; reason?: string },
+			) => {
+				const opts = program.opts<GlobalOptions>();
+				const { messageRespondMeetingCommand } = await import(
+					"./commands/message-respond-meeting.js"
+				);
+				await messageRespondMeetingCommand(schedulingId, cmdOpts, opts);
+			},
+		);
+
+	message
+		.command("cancel-meeting <schedulingId>")
+		.description("Cancel a previously requested or accepted meeting")
+		.option("--reason <reason>", "Reason for cancellation")
+		.action(async (schedulingId: string, cmdOpts: { reason?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { messageCancelMeetingCommand } = await import("./commands/message-cancel-meeting.js");
+			await messageCancelMeetingCommand(schedulingId, cmdOpts, opts);
+		});
+
+	// calendar
+	const calendar = program.command("calendar").description("Calendar management");
+
+	calendar
+		.command("setup")
+		.description("Configure a calendar provider for scheduling")
+		.option("--provider <provider>", "Calendar provider", "google")
+		.action(async (cmdOpts: { provider?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { calendarSetupCommand } = await import("./commands/calendar-setup.js");
+			await calendarSetupCommand(cmdOpts, opts);
+		});
+
+	calendar
+		.command("check")
+		.description("Check calendar provider status and availability")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { calendarCheckCommand } = await import("./commands/calendar-check.js");
+			await calendarCheckCommand(opts);
 		});
 
 	// conversations

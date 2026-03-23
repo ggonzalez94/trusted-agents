@@ -1,5 +1,6 @@
 import type {
 	IAgentResolver,
+	ICalendarProvider,
 	IConversationLogger,
 	IRequestJournal,
 	ITrustStore,
@@ -13,6 +14,7 @@ export interface RuntimeContextParts {
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
 	requestJournal: IRequestJournal;
+	calendarProvider?: ICalendarProvider;
 }
 
 export interface CliRuntimeOverride {
