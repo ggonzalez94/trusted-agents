@@ -20,9 +20,14 @@ import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./confi
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
 
+function sanitizeOneLiner(text: string): string {
+	return text.replace(/[\n\r\t]+/g, " ").trim();
+}
+
 function truncateText(text: string, maxLen: number): string {
-	if (text.length <= maxLen) return text;
-	return `${text.slice(0, maxLen)}...`;
+	const sanitized = sanitizeOneLiner(text);
+	if (sanitized.length <= maxLen) return sanitized;
+	return `${sanitized.slice(0, maxLen)}...`;
 }
 
 interface ManagedTapRuntime {
