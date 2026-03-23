@@ -22,29 +22,16 @@ export function createCli(): Command {
 
 	program
 		.command("install")
-		.description("Install TAP integrations for supported agent runtimes")
+		.description("Install TAP skills and integrations for detected agent runtimes")
 		.option(
-			"--runtime <name>",
-			"Install explicitly for one runtime: claude, codex, or openclaw",
-			(value, previous: string[] = []) => [...previous, value],
+			"--runtime <runtimes...>",
+			"Install for specific runtimes only (claude, codex, openclaw)",
 			[],
 		)
-		.option("--source-dir <path>", "Override the TAP source checkout directory")
-		.option(
-			"--skip-skills",
-			"Skip linking the generic TAP skill tree (OpenClaw always uses plugin-bundled skills)",
-		)
-		.action(async (cmdOpts: { runtime?: string[]; sourceDir?: string; skipSkills?: boolean }) => {
+		.action(async (cmdOpts: { runtime?: string[] }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { installCommand } = await import("./commands/install.js");
-			await installCommand(
-				{
-					runtimes: cmdOpts.runtime,
-					sourceDir: cmdOpts.sourceDir,
-					skipSkills: cmdOpts.skipSkills,
-				},
-				opts,
-			);
+			await installCommand({ runtimes: cmdOpts.runtime }, opts);
 		});
 
 	program
