@@ -210,4 +210,26 @@ describe("TapNotificationQueue", () => {
 			expect(items.map((n) => n.messageId)).toContain("summary-b");
 		});
 	});
+
+	describe("auto-reply notification type", () => {
+		it("accepts auto-reply notification type", () => {
+			const queue = new TapNotificationQueue();
+			const notification = makeNotification({ type: "auto-reply", messageId: "ar-1" });
+			const enqueued = queue.push(notification);
+			expect(enqueued).toBe(true);
+			expect(queue.peek()[0]!.type).toBe("auto-reply");
+		});
+
+		it("evicts auto-reply before escalation when queue is full", () => {
+			const queue = new TapNotificationQueue(3);
+			queue.push(makeNotification({ type: "escalation", messageId: "esc-1" }));
+			queue.push(makeNotification({ type: "escalation", messageId: "esc-2" }));
+			queue.push(makeNotification({ type: "auto-reply", messageId: "ar-1" }));
+			// Push a 4th — should evict the auto-reply, not an escalation
+			queue.push(makeNotification({ type: "escalation", messageId: "esc-3" }));
+			const items = queue.peek();
+			expect(items).toHaveLength(3);
+			expect(items.every((n) => n.type === "escalation")).toBe(true);
+		});
+	});
 });

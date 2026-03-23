@@ -1,5 +1,5 @@
 export interface TapNotification {
-	type: "summary" | "escalation" | "info";
+	type: "summary" | "escalation" | "info" | "auto-reply";
 	identity: string;
 	timestamp: string;
 	method: string;
@@ -12,7 +12,7 @@ export interface TapNotification {
 }
 
 const DEFAULT_MAX_SIZE = 1000;
-const EVICTION_PRIORITY: TapNotification["type"][] = ["info", "summary"];
+const EVICTION_PRIORITY: TapNotification["type"][] = ["info", "summary", "auto-reply"];
 
 export class TapNotificationQueue {
 	private readonly items: TapNotification[] = [];
