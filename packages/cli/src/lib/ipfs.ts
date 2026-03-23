@@ -1,4 +1,9 @@
-import type { IpfsUploadProvider } from "trusted-agents-core";
+import type {
+	ExecutionPreview,
+	IpfsUploadProvider,
+	TrustedAgentsConfig,
+} from "trusted-agents-core";
+import { createExecutionEvmSigner } from "trusted-agents-core";
 
 const PINATA_X402_ENDPOINT = "https://402.pinata.cloud/v1/pin/public";
 const PINATA_API_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
@@ -151,26 +156,26 @@ export async function uploadToIpfsX402(
  * Upload JSON to IPFS through Tack's x402 `/upload` endpoint.
  *
  * Pays with USDC on Taiko Alethia (eip155:167000).
- * Requires USDC on the wallet derived from `privateKey` on Taiko mainnet.
+ * Uses the resolved execution account as the x402 payer, so Taiko/Servo can
+ * pay from the smart account even before first deployment.
  */
 export async function uploadToIpfsTack(
 	json: unknown,
-	privateKey: `0x${string}`,
-	options?: { apiUrl?: string },
+	config: TrustedAgentsConfig,
+	options?: {
+		apiUrl?: string;
+		preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
+	},
 ): Promise<{ cid: string; uri: string }> {
 	const { x402Client, wrapFetchWithPayment } = await import("@x402/fetch");
 	const { ExactEvmScheme } = await import("@x402/evm/exact/client");
-	const { toClientEvmSigner } = await import("@x402/evm");
-	const { privateKeyToAccount } = await import("viem/accounts");
-	const { createPublicClient, http } = await import("viem");
-	const { taiko } = await import("viem/chains");
-
-	const account = privateKeyToAccount(privateKey);
-	const publicClient = createPublicClient({
-		chain: taiko,
-		transport: http(taiko.rpcUrls.default.http[0] ?? "https://rpc.mainnet.taiko.xyz"),
+	const chainConfig = config.chains[config.chain];
+	if (!chainConfig) {
+		throw new Error(`No chain config for ${config.chain}`);
+	}
+	const signer = await createExecutionEvmSigner(config, chainConfig, {
+		preview: options?.preview,
 	});
-	const signer = toClientEvmSigner(account, publicClient);
 
 	const client = new x402Client();
 	client.register("eip155:*", new ExactEvmScheme(signer));

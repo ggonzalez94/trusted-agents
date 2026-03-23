@@ -1,4 +1,11 @@
-import { type Address, type Hex, encodeFunctionData, erc20Abi, maxUint256 } from "viem";
+import {
+	type Address,
+	type Hex,
+	encodeFunctionData,
+	erc20Abi,
+	maxUint256,
+	parseErc6492Signature,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
@@ -898,5 +905,118 @@ describe("execution", () => {
 		expect(result.userOperationHash).toBe("0xuserophash");
 		expect(result.gasPaymentMode).toBe("erc20-usdc");
 		expect(formatUserOperationRequest).toHaveBeenCalledOnce();
+	});
+
+	it("creates a Taiko execution signer that wraps undeployed smart-account signatures with ERC-6492", async () => {
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				throw new Error(`unexpected function ${functionName}`);
+			}),
+			getCode: vi.fn().mockResolvedValue("0x"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+
+		const { createExecutionEvmSigner } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		const signer = await createExecutionEvmSigner(config, config.chains[config.chain]!, {
+			preview: {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				paymasterProvider: "servo",
+			},
+		});
+		const signature = await signer.signTypedData({
+			domain: {
+				name: "USD Coin",
+				version: "2",
+				chainId: BigInt(167000),
+				verifyingContract: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+			},
+			types: {
+				Permit: [
+					{ name: "owner", type: "address" },
+					{ name: "spender", type: "address" },
+					{ name: "value", type: "uint256" },
+					{ name: "nonce", type: "uint256" },
+					{ name: "deadline", type: "uint256" },
+				],
+			},
+			primaryType: "Permit",
+			message: {
+				owner: EXECUTION_ADDRESS,
+				spender: "0x9999999999999999999999999999999999999999",
+				value: 1n,
+				nonce: 0n,
+				deadline: 1n,
+			},
+		});
+
+		const parsed = parseErc6492Signature(signature);
+		expect(signer.address).toBe(EXECUTION_ADDRESS);
+		expect(parsed.address).toBe(SERVO_FACTORY_ADDRESS);
+		expect(parsed.data).toMatch(/^0x[0-9a-f]+$/);
+		expect(parsed.signature).toMatch(/^0x[0-9a-f]{130}$/);
+	});
+
+	it("creates a Taiko execution signer that uses plain signatures once the smart account is deployed", async () => {
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				throw new Error(`unexpected function ${functionName}`);
+			}),
+			getCode: vi.fn().mockResolvedValue("0x6001600155"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+
+		const { createExecutionEvmSigner } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		const signer = await createExecutionEvmSigner(config, config.chains[config.chain]!, {
+			preview: {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				paymasterProvider: "servo",
+			},
+		});
+		const signature = await signer.signTypedData({
+			domain: {
+				name: "USD Coin",
+				version: "2",
+				chainId: BigInt(167000),
+				verifyingContract: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+			},
+			types: {
+				Permit: [
+					{ name: "owner", type: "address" },
+					{ name: "spender", type: "address" },
+					{ name: "value", type: "uint256" },
+					{ name: "nonce", type: "uint256" },
+					{ name: "deadline", type: "uint256" },
+				],
+			},
+			primaryType: "Permit",
+			message: {
+				owner: EXECUTION_ADDRESS,
+				spender: "0x9999999999999999999999999999999999999999",
+				value: 1n,
+				nonce: 0n,
+				deadline: 1n,
+			},
+		});
+
+		expect(signer.address).toBe(EXECUTION_ADDRESS);
+		expect(signature).toMatch(/^0x[0-9a-f]{130}$/);
 	});
 });

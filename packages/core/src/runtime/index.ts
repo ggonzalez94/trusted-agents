@@ -3,9 +3,11 @@ export {
 	type Erc20Asset,
 } from "./assets.js";
 export {
+	createExecutionEvmSigner,
 	ensureExecutionReady,
 	executeContractCalls,
 	getExecutionPreview,
+	type ExecutionEvmSigner,
 	type ExecutionCall,
 	type ExecutionPreview,
 	type ExecutionSendResult,

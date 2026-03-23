@@ -21,6 +21,7 @@ import { getUsdcAsset } from "../lib/assets.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import {
+	type ExecutionPreview,
 	ensureExecutionReady,
 	executeContractCalls,
 	getExecutionPreview,
@@ -366,6 +367,7 @@ async function resolveAgentURI(
 		registrationFile?: RegistrationFile;
 		config: TrustedAgentsConfig;
 		privateKey: `0x${string}`;
+		executionPreview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
 		dataDir: string;
 		uri?: string;
 		pinataJwt?: string;
@@ -452,8 +454,9 @@ Alternatives:
 			opts,
 		);
 		try {
-			const ipfs = await uploadToIpfsTack(params.registrationFile, params.privateKey, {
+			const ipfs = await uploadToIpfsTack(params.registrationFile, params.config, {
 				apiUrl: resolveTackApiUrl(params.config.ipfs?.tackApiUrl),
+				preview: params.executionPreview,
 			});
 			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
@@ -543,6 +546,7 @@ export async function registerCommand(
 				registrationFile,
 				config,
 				privateKey: config.privateKey,
+				executionPreview,
 				dataDir: config.dataDir,
 				uri: cmdOpts.uri,
 				pinataJwt: cmdOpts.pinataJwt,
@@ -808,6 +812,7 @@ export async function registerUpdateCommand(
 				registrationFile,
 				config,
 				privateKey: config.privateKey,
+				executionPreview,
 				dataDir: config.dataDir,
 				pinataJwt: cmdOpts.pinataJwt,
 				ipfsProvider: cmdOpts.ipfsProvider,
