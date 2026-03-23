@@ -30,6 +30,7 @@ export async function messageCancelMeetingCommand(
 		const pendingRequests = await service.listPendingRequests();
 		const matching = pendingRequests.find(
 			(r) =>
+				r.direction === "outbound" &&
 				r.details?.type === "scheduling" &&
 				(r.details as TapPendingSchedulingDetails).schedulingId === schedulingId,
 		);
@@ -40,8 +41,7 @@ export async function messageCancelMeetingCommand(
 			);
 		}
 
-		// Resolve as rejected (cancel)
-		const report = await service.resolvePending(matching.requestId, false);
+		const report = await service.cancelPendingSchedulingRequest(matching.requestId, cmdOpts.reason);
 
 		success(
 			{

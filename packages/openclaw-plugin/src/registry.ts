@@ -1,6 +1,7 @@
 import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,
+	SchedulingHandler,
 	type PermissionGrantSet,
 	type SchedulingProposal,
 	TapMessagingService,
@@ -339,6 +340,7 @@ export class OpenClawTapRegistry {
 		);
 		const matching = pending.find(
 			(r) =>
+				r.direction === "inbound" &&
 				r.details?.type === "scheduling" &&
 				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
 		);
@@ -350,7 +352,7 @@ export class OpenClawTapRegistry {
 		}
 
 		const report = await runtime.mutex.runExclusive(
-			async () => await runtime.service.resolvePending(matching.requestId, approve),
+			async () => await runtime.service.resolvePending(matching.requestId, approve, params.reason),
 		);
 
 		return {
@@ -376,6 +378,7 @@ export class OpenClawTapRegistry {
 		);
 		const matching = pending.find(
 			(r) =>
+				r.direction === "outbound" &&
 				r.details?.type === "scheduling" &&
 				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
 		);
@@ -387,7 +390,8 @@ export class OpenClawTapRegistry {
 		}
 
 		const report = await runtime.mutex.runExclusive(
-			async () => await runtime.service.resolvePending(matching.requestId, false),
+			async () =>
+				await runtime.service.cancelPendingSchedulingRequest(matching.requestId, params.reason),
 		);
 
 		return {
@@ -500,11 +504,19 @@ export class OpenClawTapRegistry {
 		const context = buildDefaultTapRuntimeContext(config);
 		const notificationQueue = new TapNotificationQueue();
 		this.notificationQueues.set(name, notificationQueue);
+		const schedulingHandler = new SchedulingHandler({
+			hooks: {
+				approveScheduling: async () => {
+					return null; // Defer for operator approval
+				},
+			},
+		});
 		const runtime: ManagedTapRuntime = {
 			definition,
 			config,
 			service: new TapMessagingService(context, {
 				ownerLabel: `openclaw:${definition.name}`,
+				schedulingHandler,
 				hooks: {
 					executeTransfer: async (serviceConfig, request) =>
 						await executeOnchainTransfer(serviceConfig, request),
@@ -557,9 +569,6 @@ export class OpenClawTapRegistry {
 					},
 					approveConnection: async () => {
 						return null; // Always escalate to user
-					},
-					approveScheduling: async () => {
-						return null; // Defer for operator approval
 					},
 					confirmMeeting: async () => {
 						// Return false to prevent auto-confirmation; operator resolves via tap_gateway

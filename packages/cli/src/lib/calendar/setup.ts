@@ -1,8 +1,9 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import YAML from "yaml";
+import { writeFileAtomic } from "../atomic-write.js";
 import { commandExists } from "../shell.js";
 
 const execFileAsync = promisify(execFile);
@@ -36,7 +37,7 @@ export async function runGwsAuth(): Promise<boolean> {
 	});
 }
 
-export function writeCalendarConfig(dataDir: string, provider: string): void {
+export async function writeCalendarConfig(dataDir: string, provider: string): Promise<void> {
 	const configPath = join(dataDir, "config.yaml");
 	let yaml: Record<string, unknown> = {};
 
@@ -50,7 +51,7 @@ export function writeCalendarConfig(dataDir: string, provider: string): void {
 	}
 	(yaml.calendar as Record<string, unknown>).provider = provider;
 
-	writeFileSync(configPath, YAML.stringify(yaml), "utf-8");
+	await writeFileAtomic(configPath, YAML.stringify(yaml));
 }
 
 export function readCalendarProvider(dataDir: string): string | undefined {

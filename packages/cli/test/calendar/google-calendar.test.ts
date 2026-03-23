@@ -147,17 +147,11 @@ describe("invertToAvailability", () => {
 		// First busy block
 		expect(windows[1]).toEqual({
 			start: "2026-03-22T10:00:00Z",
-			end: "2026-03-22T11:30:00Z",
-			status: "busy",
-		});
-		// Second busy block (starts during first, but cursor advanced past its start)
-		expect(windows[2]).toEqual({
-			start: "2026-03-22T11:00:00Z",
 			end: "2026-03-22T12:00:00Z",
 			status: "busy",
 		});
-		// Free after
-		expect(windows[3]).toEqual({
+		// Free after merged busy window
+		expect(windows[2]).toEqual({
 			start: "2026-03-22T12:00:00Z",
 			end: "2026-03-22T13:00:00Z",
 			status: "free",

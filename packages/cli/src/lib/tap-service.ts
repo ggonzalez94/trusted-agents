@@ -41,15 +41,6 @@ export function createCliTapMessagingService(
 
 				return await promptYesNo("Approve scheduling request? [y/N] ");
 			},
-			confirmMeeting: async (meeting) => {
-				printProposedMeeting(meeting, opts);
-
-				if (!process.stdin.isTTY) {
-					return true;
-				}
-
-				return await promptYesNo("Confirm this meeting? [y/N] ");
-			},
 			log: (_level, message) => {
 				info(message, opts);
 			},
@@ -73,15 +64,6 @@ export function createCliTapMessagingService(
 				}
 
 				return await promptYesNo("Approve action? [y/N] ");
-			},
-			approveScheduling: async (approvalContext) => {
-				printSchedulingRequest(approvalContext, opts);
-
-				if (!process.stdin.isTTY) {
-					return null;
-				}
-
-				return await promptYesNo("Approve scheduling request? [y/N] ");
 			},
 			confirmMeeting: async (meeting) => {
 				printProposedMeeting(meeting, opts);

@@ -115,6 +115,8 @@ export function invertToAvailability(
 	rangeStart: string,
 	rangeEnd: string,
 ): AvailabilityWindow[] {
+	const rangeStartMs = new Date(rangeStart).getTime();
+	const rangeEndMs = new Date(rangeEnd).getTime();
 	const sortedEvents = events
 		.map((e) => ({
 			start: eventDateTime(e.start),
@@ -123,25 +125,55 @@ export function invertToAvailability(
 		.filter((e): e is { start: string; end: string } => e.start !== null && e.end !== null)
 		.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
 
-	const windows: AvailabilityWindow[] = [];
-	let cursor = rangeStart;
+	const clampedBusy = sortedEvents
+		.map((event) => {
+			const eventStartMs = new Date(event.start).getTime();
+			const eventEndMs = new Date(event.end).getTime();
+			const startMs = Math.max(eventStartMs, rangeStartMs);
+			const endMs = Math.min(eventEndMs, rangeEndMs);
+			if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+				return null;
+			}
+			return {
+				startMs,
+				endMs,
+				start: startMs === eventStartMs ? event.start : rangeStart,
+				end: endMs === eventEndMs ? event.end : rangeEnd,
+			};
+		})
+		.filter(
+			(interval): interval is { startMs: number; endMs: number; start: string; end: string } =>
+				interval !== null,
+		);
 
-	for (const event of sortedEvents) {
-		const eventStart = event.start;
-		const eventEnd = event.end;
-
-		if (new Date(eventStart) > new Date(cursor)) {
-			windows.push({ start: cursor, end: eventStart, status: "free" });
+	const mergedBusy: Array<{ startMs: number; endMs: number; start: string; end: string }> = [];
+	for (const interval of clampedBusy) {
+		const last = mergedBusy[mergedBusy.length - 1];
+		if (!last || interval.startMs > last.endMs) {
+			mergedBusy.push({ ...interval });
+			continue;
 		}
-
-		windows.push({ start: eventStart, end: eventEnd, status: "busy" });
-
-		if (new Date(eventEnd) > new Date(cursor)) {
-			cursor = eventEnd;
+		if (interval.endMs > last.endMs) {
+			last.endMs = interval.endMs;
+			last.end = interval.end;
 		}
 	}
 
-	if (new Date(cursor) < new Date(rangeEnd)) {
+	const windows: AvailabilityWindow[] = [];
+	let cursorMs = rangeStartMs;
+	let cursor = rangeStart;
+
+	for (const event of mergedBusy) {
+		if (event.startMs > cursorMs) {
+			windows.push({ start: cursor, end: event.start, status: "free" });
+		}
+
+		windows.push({ start: event.start, end: event.end, status: "busy" });
+		cursorMs = event.endMs;
+		cursor = event.end;
+	}
+
+	if (cursorMs < rangeEndMs) {
 		windows.push({ start: cursor, end: rangeEnd, status: "free" });
 	}
 

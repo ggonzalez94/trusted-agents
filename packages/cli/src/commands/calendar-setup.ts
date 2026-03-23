@@ -56,7 +56,7 @@ export async function calendarSetupCommand(
 		info("gws authenticated with calendar access.", opts);
 
 		// 3. Write config
-		writeCalendarConfig(dataDir, provider);
+		await writeCalendarConfig(dataDir, provider);
 
 		success(
 			{

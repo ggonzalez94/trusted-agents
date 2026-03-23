@@ -41,6 +41,7 @@ export async function messageRespondMeetingCommand(
 		const pendingRequests = await service.listPendingRequests();
 		const matching = pendingRequests.find(
 			(r) =>
+				r.direction === "inbound" &&
 				r.details?.type === "scheduling" &&
 				(r.details as { schedulingId?: string }).schedulingId === schedulingId,
 		);
@@ -51,7 +52,7 @@ export async function messageRespondMeetingCommand(
 			);
 		}
 
-		const report = await service.resolvePending(matching.requestId, approve);
+		const report = await service.resolvePending(matching.requestId, approve, cmdOpts.reason);
 
 		success(
 			{

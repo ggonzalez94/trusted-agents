@@ -318,7 +318,7 @@ export class TapMessagingService {
 	private readonly inFlightKeys = new Set<string>();
 	private readonly decisionOverrides = {
 		transfers: new Map<string, boolean>(),
-		scheduling: new Map<string, boolean>(),
+		scheduling: new Map<string, { approve: boolean; reason?: string }>(),
 	};
 	private readonly waiters = new Map<string, (value: TransferActionResponse) => void>();
 	private readonly schedulingHandler: SchedulingHandler | undefined;
@@ -426,7 +426,11 @@ export class TapMessagingService {
 		}));
 	}
 
-	async resolvePending(requestId: string, approve: boolean): Promise<TapSyncReport> {
+	async resolvePending(
+		requestId: string,
+		approve: boolean,
+		reason?: string,
+	): Promise<TapSyncReport> {
 		const entry = await this.context.requestJournal.getByRequestId(requestId);
 		if (!entry || entry.direction !== "inbound" || entry.kind !== "request") {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
@@ -439,7 +443,7 @@ export class TapMessagingService {
 		const isScheduling = entry.method === ACTION_REQUEST && entry.metadata?.type === "scheduling";
 		if (entry.method === ACTION_REQUEST) {
 			if (isScheduling) {
-				this.decisionOverrides.scheduling.set(requestId, approve);
+				this.decisionOverrides.scheduling.set(requestId, { approve, reason });
 			} else {
 				this.decisionOverrides.transfers.set(requestId, approve);
 			}
@@ -491,6 +495,91 @@ export class TapMessagingService {
 
 	async connect(params: { inviteUrl: string }): Promise<TapConnectResult> {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
+	}
+
+	async cancelPendingSchedulingRequest(
+		requestId: string,
+		reason?: string,
+	): Promise<TapSyncReport> {
+		const entry = await this.context.requestJournal.getByRequestId(requestId);
+		if (!entry || entry.direction !== "outbound" || entry.kind !== "request") {
+			throw new ValidationError(`Pending outbound request not found: ${requestId}`);
+		}
+		if (entry.method !== ACTION_REQUEST) {
+			throw new ValidationError(`Request ${requestId} cannot be cancelled manually`);
+		}
+
+		if (!parseStoredSchedulingRequest(entry.metadata)) {
+			throw new ValidationError(
+				`Pending scheduling request ${requestId} is missing the original request payload`,
+			);
+		}
+
+		return await this.executionMutex.runExclusive(
+			async () =>
+				await this.withTransportSession(async () => {
+					await this.drain();
+					const latestEntry = await this.context.requestJournal.getByRequestId(requestId);
+					if (!latestEntry || latestEntry.direction !== "outbound" || latestEntry.kind !== "request") {
+						throw new ValidationError(`Pending outbound request not found: ${requestId}`);
+					}
+					if (latestEntry.status === "completed") {
+						return await this.buildSyncReport(0);
+					}
+
+					const latestProposal = parseStoredSchedulingRequest(latestEntry.metadata);
+					if (!latestProposal) {
+						throw new ValidationError(
+							`Pending scheduling request ${requestId} is missing the original request payload`,
+						);
+					}
+
+					const contact = findUniqueContactForAgentId(
+						await this.context.trustStore.getContacts(),
+						latestEntry.peerAgentId,
+					);
+					if (!contact) {
+						throw new ValidationError(
+							`No active contact found for pending scheduling request ${requestId}`,
+						);
+					}
+
+					const cancellation = {
+						type: "scheduling/cancel" as const,
+						schedulingId: latestProposal.schedulingId,
+						...(reason ? { reason } : {}),
+					};
+					const outgoing = buildOutgoingActionResult(
+						contact,
+						latestEntry.requestId,
+						buildSchedulingRejectText(cancellation),
+						cancellation,
+						"scheduling/request",
+						"rejected",
+					);
+
+					await this.context.transport.send(contact.peerAgentId, outgoing, {
+						peerAddress: contact.peerAgentAddress,
+						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					});
+					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.touchContactSafe(contact.connectionId);
+
+					await this.context.requestJournal.updateStatus(requestId, "completed");
+					await this.appendLedger({
+						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						direction: "local",
+						event: "scheduling-cancel",
+						scope: "scheduling/request",
+						action_id: latestProposal.schedulingId,
+						decision: "cancelled",
+						rationale: reason ?? "Cancelled by operator",
+					});
+
+					await this.drain();
+					return await this.buildSyncReport(1);
+				}),
+		);
 	}
 
 	private async connectInternal(params: { inviteUrl: string }): Promise<TapConnectResult> {
@@ -894,6 +983,11 @@ export class TapMessagingService {
 				method: request.method,
 				peerAgentId: contact.peerAgentId,
 				status: "pending",
+				metadata: serializePendingSchedulingOutboundRequestDetails(
+					contact,
+					proposal,
+					this.context.config.dataDir,
+				),
 			});
 
 			let receipt: TransportReceipt;
@@ -1817,27 +1911,54 @@ export class TapMessagingService {
 			return;
 		}
 
-		const decision = await this.schedulingHandler.evaluateProposal(requestId, contact, proposal);
+		const override = this.decisionOverrides.scheduling.get(requestId);
+		const evaluatedDecision = await this.schedulingHandler.evaluateProposal(
+			requestId,
+			contact,
+			proposal,
+		);
+		const decision =
+			override?.approve === false
+				? ({
+						action: "reject",
+						reason: override.reason ?? "Scheduling request declined by operator",
+					} as const)
+				: override?.approve === true && evaluatedDecision.action !== "confirm"
+					? ({
+							action: "confirm",
+							slot: proposal.slots[0],
+							proposal,
+						} as const)
+					: evaluatedDecision;
 
 		switch (decision.action) {
 			case "confirm": {
-				const confirmed = this.hooks.confirmMeeting
-					? await this.hooks.confirmMeeting({
-							schedulingId: proposal.schedulingId,
-							title: proposal.title,
-							slot: decision.slot,
-							peerName: contact.peerDisplayName,
-							peerAgentId: contact.peerAgentId,
-							originTimezone: proposal.originTimezone,
-						})
-					: false;
+				const selectedSlot = decision.slot ?? proposal.slots[0];
+				if (!selectedSlot) {
+					throw new ValidationError(
+						`Scheduling request ${proposal.schedulingId} has no proposed slots`,
+					);
+				}
+				const confirmed =
+					override?.approve === true
+						? true
+						: this.hooks.confirmMeeting
+							? await this.hooks.confirmMeeting({
+									schedulingId: proposal.schedulingId,
+									title: proposal.title,
+									slot: selectedSlot,
+									peerName: contact.peerDisplayName,
+									peerAgentId: contact.peerAgentId,
+									originTimezone: proposal.originTimezone,
+								})
+							: false;
 
 				if (confirmed) {
 					const eventResult = await this.schedulingHandler.handleAccept(
 						{
 							type: "scheduling/accept",
 							schedulingId: proposal.schedulingId,
-							acceptedSlot: decision.slot,
+							acceptedSlot: selectedSlot,
 						},
 						contact.peerDisplayName,
 						proposal.title,
@@ -1847,13 +1968,13 @@ export class TapMessagingService {
 					const acceptData: Record<string, unknown> = {
 						type: "scheduling/accept",
 						schedulingId: proposal.schedulingId,
-						acceptedSlot: decision.slot,
+						acceptedSlot: selectedSlot,
 						...(eventResult.eventId ? { eventId: eventResult.eventId } : {}),
 					};
 					const acceptText = buildSchedulingAcceptText({
 						type: "scheduling/accept",
 						schedulingId: proposal.schedulingId,
-						acceptedSlot: decision.slot,
+						acceptedSlot: selectedSlot,
 					});
 					const outgoing = buildOutgoingActionResult(
 						contact,
@@ -1892,16 +2013,59 @@ export class TapMessagingService {
 						await this.hooks.onMeetingConfirmed({
 							schedulingId: proposal.schedulingId,
 							title: proposal.title,
-							slot: decision.slot,
+							slot: selectedSlot,
 							peerName: contact.peerDisplayName,
 							peerAgentId: contact.peerAgentId,
 							originTimezone: proposal.originTimezone,
 							eventId: eventResult.eventId,
 						});
 					}
-				} else {
-					this.log("info", `Meeting confirmation declined for ${proposal.schedulingId}`);
+					break;
 				}
+
+				const rejectData: Record<string, unknown> = {
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: "Scheduling request declined by operator",
+				};
+				const rejectText = buildSchedulingRejectText({
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: "Scheduling request declined by operator",
+				});
+				const outgoing = buildOutgoingActionResult(
+					contact,
+					requestId,
+					rejectText,
+					rejectData,
+					"scheduling/request",
+					"rejected",
+				);
+
+				try {
+					await this.context.transport.send(contact.peerAgentId, outgoing, {
+						peerAddress: contact.peerAgentAddress,
+						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					});
+					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.touchContactSafe(contact.connectionId);
+				} catch (error: unknown) {
+					this.log(
+						"warn",
+						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+				await this.appendLedger({
+					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					direction: "granted-by-me",
+					event: "scheduling-rejected",
+					scope: "scheduling/request",
+					action_id: proposal.schedulingId,
+					decision: "rejected",
+					rationale: "Scheduling request declined by operator",
+				});
 				break;
 			}
 			case "counter": {
@@ -2119,16 +2283,26 @@ export class TapMessagingService {
 
 		const schedulingResponse = parseSchedulingActionResponse(message);
 		if (schedulingResponse) {
+			const requestId = (message.params as { requestId?: string } | undefined)?.requestId;
 			if (schedulingResponse.type === "scheduling/accept" && this.schedulingHandler) {
+				let title = "Meeting";
+				let originTimezone = "UTC";
+				if (requestId) {
+					const originalRequest = await this.context.requestJournal.getByRequestId(requestId);
+					const originalProposal = parseStoredSchedulingRequest(originalRequest?.metadata);
+					if (originalProposal) {
+						title = originalProposal.title;
+						originTimezone = originalProposal.originTimezone;
+					}
+				}
 				await this.schedulingHandler.handleAccept(
 					schedulingResponse,
 					contact?.peerDisplayName ?? "Unknown",
-					"Meeting",
-					"UTC",
+					title,
+					originTimezone,
 				);
 			}
 
-			const requestId = (message.params as { requestId?: string } | undefined)?.requestId;
 			if (requestId) {
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 			}
@@ -2580,6 +2754,36 @@ function serializePendingSchedulingRequestDetails(
 		originTimezone: request.originTimezone,
 		note: request.note,
 		activeGrantSummary: grants.map((g) => summarizeGrant(g)),
+		ledgerPath: getPermissionLedgerPath(dataDir),
+	};
+	return {
+		...serializePendingRequestDetails(details),
+		request: {
+			type: "scheduling-request",
+			payload: request,
+		},
+	};
+}
+
+function serializePendingSchedulingOutboundRequestDetails(
+	contact: Contact,
+	request: SchedulingProposal,
+	dataDir: string,
+): Record<string, unknown> {
+	const details: TapPendingSchedulingDetails = {
+		type: "scheduling",
+		peerName: contact.peerDisplayName,
+		peerChain: contact.peerChain,
+		schedulingId: request.schedulingId,
+		title: request.title,
+		duration: request.duration,
+		slots: request.slots,
+		originTimezone: request.originTimezone,
+		note: request.note,
+		activeGrantSummary: findActiveGrantsByScope(
+			contact.permissions.grantedByPeer,
+			"scheduling/request",
+		).map((grant) => summarizeGrant(grant)),
 		ledgerPath: getPermissionLedgerPath(dataDir),
 	};
 	return {

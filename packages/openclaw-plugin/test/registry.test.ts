@@ -280,4 +280,97 @@ describe("OpenClawTapRegistry", () => {
 		);
 		expect(requestHeartbeatNow).not.toHaveBeenCalled();
 	});
+
+	it("respondMeeting resolves inbound scheduling requests and forwards reason", async () => {
+		const logger = createLogger();
+		const registry = new OpenClawTapRegistry({ identities: [] }, logger);
+		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
+		const runtime = {
+			definition: { name: "alpha" },
+			mutex: { runExclusive: async (work: () => Promise<unknown>) => await work() },
+			service: {
+				listPendingRequests: async () => [
+					{
+						requestId: "outbound-ignore",
+						peerAgentId: 10,
+						direction: "outbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-respond-1" },
+					},
+					{
+						requestId: "inbound-target",
+						peerAgentId: 10,
+						direction: "inbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-respond-1" },
+					},
+				],
+				resolvePending,
+			},
+		};
+		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(runtime as never);
+
+		const result = await registry.respondMeeting({
+			schedulingId: "sch-respond-1",
+			action: "reject",
+			reason: "No availability",
+		});
+
+		expect(resolvePending).toHaveBeenCalledWith("inbound-target", false, "No availability");
+		expect(result).toMatchObject({
+			identity: "alpha",
+			resolved: true,
+			requestId: "inbound-target",
+		});
+	});
+
+	it("cancelMeeting cancels outbound scheduling requests and forwards reason", async () => {
+		const logger = createLogger();
+		const registry = new OpenClawTapRegistry({ identities: [] }, logger);
+		const cancelPendingSchedulingRequest = vi.fn(async () => ({ pendingRequests: [] }));
+		const runtime = {
+			definition: { name: "alpha" },
+			mutex: { runExclusive: async (work: () => Promise<unknown>) => await work() },
+			service: {
+				listPendingRequests: async () => [
+					{
+						requestId: "inbound-ignore",
+						peerAgentId: 10,
+						direction: "inbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-cancel-1" },
+					},
+					{
+						requestId: "outbound-target",
+						peerAgentId: 10,
+						direction: "outbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-cancel-1" },
+					},
+				],
+				cancelPendingSchedulingRequest,
+			},
+		};
+		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(runtime as never);
+
+		const result = await registry.cancelMeeting({
+			schedulingId: "sch-cancel-1",
+			reason: "Conflict",
+		});
+
+		expect(cancelPendingSchedulingRequest).toHaveBeenCalledWith("outbound-target", "Conflict");
+		expect(result).toMatchObject({
+			identity: "alpha",
+			cancelled: true,
+			requestId: "outbound-target",
+		});
+	});
 });
