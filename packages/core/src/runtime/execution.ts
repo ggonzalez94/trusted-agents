@@ -894,7 +894,7 @@ async function resolveEip1559Fees(
 	const gasPrice = await publicClient.getGasPrice();
 	const maxPriorityFeePerGas = gasPrice / 10n > 0n ? gasPrice / 10n : 1n;
 	return {
-		maxFeePerGas: gasPrice,
+		maxFeePerGas: gasPrice >= maxPriorityFeePerGas ? gasPrice : maxPriorityFeePerGas,
 		maxPriorityFeePerGas,
 	};
 }
