@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, normalize, resolve } from "node:path";
+import { normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const skillDir = fileURLToPath(new URL("../skills/trusted-agents-openclaw", import.meta.url));
-const skillPath = join(skillDir, "SKILL.md");
-const sharedReferencePaths = ["references/permissions-v1.md"] as const;
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const skillDir = resolve(repoRoot, "skills/trusted-agents");
+const skillPath = resolve(skillDir, "SKILL.md");
 
-describe("OpenClaw TAP skill bundle", () => {
-	it("keeps every referenced file inside the plugin skill tree", () => {
+describe("TAP skill bundle", () => {
+	it("keeps every referenced file inside the skill tree", () => {
 		const markdown = readFileSync(skillPath, "utf-8");
 		const references = [...markdown.matchAll(/references\/[a-zA-Z0-9_-]+\.md/g)].map(
 			(match) => match[0],
@@ -20,18 +20,6 @@ describe("OpenClaw TAP skill bundle", () => {
 			const resolvedPath = resolve(skillDir, reference);
 			expect(normalize(resolvedPath).startsWith(normalize(`${skillDir}/`))).toBe(true);
 			expect(existsSync(resolvedPath)).toBe(true);
-			// Symlinks are allowed — shared reference docs are symlinked to the SDK canonical copies
-		}
-	});
-
-	it("keeps shared TAP reference docs in sync with the generic TAP skill tree", () => {
-		for (const relativePath of sharedReferencePaths) {
-			const pluginReference = readFileSync(join(skillDir, relativePath), "utf-8");
-			const sdkReference = readFileSync(
-				fileURLToPath(new URL(`../../sdk/skills/trusted-agents/${relativePath}`, import.meta.url)),
-				"utf-8",
-			);
-			expect(pluginReference).toBe(sdkReference);
 		}
 	});
 });
