@@ -76,11 +76,14 @@ export {
 	type TapConnectionApprovalContext,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,
+	type TapPendingSchedulingDetails,
 	type TapPendingTransferDetails,
 	type TapPublishGrantSetResult,
 	type TapRequestFundsInput,
 	type TapRequestFundsResult,
 	type TapRequestGrantSetResult,
+	type TapRequestMeetingInput,
+	type TapRequestMeetingResult,
 	type TapSendMessageResult,
 	type TapServiceHooks,
 	type TapServiceOptions,
@@ -95,3 +98,4 @@ export {
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+export * from "../scheduling/index.js";

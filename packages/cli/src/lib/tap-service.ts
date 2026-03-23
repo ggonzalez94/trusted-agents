@@ -1,9 +1,11 @@
 import {
+	SchedulingHandler,
 	TapMessagingService,
 	type TapTransferApprovalContext,
 	executeOnchainTransfer,
 	summarizeGrant,
 } from "trusted-agents-core";
+import type { ProposedMeeting, SchedulingApprovalContext } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import type { CliContextWithTransport } from "./context.js";
 import { info } from "./output.js";
@@ -27,8 +29,27 @@ export function createCliTapMessagingService(
 ): TapMessagingService {
 	const hooks = options.hooks ?? {};
 
+	const schedulingHandler = new SchedulingHandler({
+		calendarProvider: context.calendarProvider,
+		hooks: {
+			approveScheduling: async (approvalContext) => {
+				printSchedulingRequest(approvalContext, opts);
+
+				if (!process.stdin.isTTY) {
+					return null;
+				}
+
+				return await promptYesNo("Approve scheduling request? [y/N] ");
+			},
+			log: (_level, message) => {
+				info(message, opts);
+			},
+		},
+	});
+
 	return new TapMessagingService(context, {
 		ownerLabel: options.ownerLabel,
+		schedulingHandler,
 		hooks: {
 			approveTransfer: async (approvalContext) => {
 				printTransferRequest(approvalContext, opts);
@@ -43,6 +64,15 @@ export function createCliTapMessagingService(
 				}
 
 				return await promptYesNo("Approve action? [y/N] ");
+			},
+			confirmMeeting: async (meeting) => {
+				printProposedMeeting(meeting, opts);
+
+				if (!process.stdin.isTTY) {
+					return true;
+				}
+
+				return await promptYesNo("Confirm this meeting? [y/N] ");
 			},
 			executeTransfer: async (serviceConfig, request) =>
 				(await getCliRuntimeOverride(serviceConfig.dataDir)?.executeTransferAction?.(
@@ -83,4 +113,41 @@ function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalO
 	}
 	info(`Ledger path: ${ledgerPath}`, opts);
 	info("The agent should use the grants and ledger as context for this decision.", opts);
+}
+
+function printSchedulingRequest(context: SchedulingApprovalContext, opts: GlobalOptions): void {
+	const { contact, proposal, activeSchedulingGrants } = context;
+
+	info(
+		`Scheduling request from ${contact.peerDisplayName} (#${contact.peerAgentId}): "${proposal.title}" (${proposal.duration} min)`,
+		opts,
+	);
+	info(`  Slots offered: ${proposal.slots.length}`, opts);
+	for (const slot of proposal.slots) {
+		info(`    ${slot.start} - ${slot.end}`, opts);
+	}
+	if (proposal.location) {
+		info(`  Location: ${proposal.location}`, opts);
+	}
+	if (proposal.note) {
+		info(`  Note: ${proposal.note}`, opts);
+	}
+
+	info("Matching active scheduling grants:", opts);
+	if (activeSchedulingGrants.length === 0) {
+		info("  - (none)", opts);
+	} else {
+		for (const grant of activeSchedulingGrants) {
+			info(`  - ${summarizeGrant(grant)}`, opts);
+		}
+	}
+}
+
+function printProposedMeeting(meeting: ProposedMeeting, opts: GlobalOptions): void {
+	info(
+		`Proposed meeting: "${meeting.title}" with ${meeting.peerName} (#${meeting.peerAgentId})`,
+		opts,
+	);
+	info(`  Time: ${meeting.slot.start} - ${meeting.slot.end}`, opts);
+	info(`  Timezone: ${meeting.originTimezone}`, opts);
 }

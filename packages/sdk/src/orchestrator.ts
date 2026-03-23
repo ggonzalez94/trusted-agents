@@ -1,5 +1,18 @@
-import { FileTrustStore, XmtpTransport } from "trusted-agents-core";
-import type { IAgentResolver, TransportProvider, XmtpTransportConfig } from "trusted-agents-core";
+import {
+	FileTrustStore,
+	type ICalendarProvider,
+	SchedulingHandler,
+	TapMessagingService,
+	XmtpTransport,
+	buildDefaultTapRuntimeContext,
+	loadTrustedAgentConfigFromDataDir,
+} from "trusted-agents-core";
+import type {
+	IAgentResolver,
+	TapServiceOptions,
+	TransportProvider,
+	XmtpTransportConfig,
+} from "trusted-agents-core";
 import { executeConnect } from "./commands/connect.js";
 import type { ConnectResult } from "./commands/connect.js";
 import { executeContacts } from "./commands/contacts.js";
@@ -19,6 +32,7 @@ export interface OrchestratorConfig {
 	notification?: NotificationAdapter;
 	transport?: TransportProvider;
 	xmtp?: Omit<XmtpTransportConfig, "privateKey" | "chain" | "agentResolver">;
+	calendarProvider?: ICalendarProvider;
 }
 
 export class TrustedAgentsOrchestrator {
@@ -92,6 +106,28 @@ export class TrustedAgentsOrchestrator {
 			dataDir: this.config.dataDir,
 			withName: filter?.withName,
 			conversationId: filter?.conversationId,
+		});
+	}
+
+	async buildMessagingService(
+		options: Omit<TapServiceOptions, "schedulingHandler"> = {},
+	): Promise<TapMessagingService> {
+		const config = await loadTrustedAgentConfigFromDataDir(this.config.dataDir, {
+			requireAgentId: true,
+		});
+		const context = buildDefaultTapRuntimeContext(config, {
+			resolver: this.config.resolver,
+			...(this.transport ? { transport: this.transport } : {}),
+		});
+
+		const schedulingHandler = new SchedulingHandler({
+			calendarProvider: this.config.calendarProvider,
+			hooks: {},
+		});
+
+		return new TapMessagingService(context, {
+			...options,
+			schedulingHandler,
 		});
 	}
 

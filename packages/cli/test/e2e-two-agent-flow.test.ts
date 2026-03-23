@@ -7,7 +7,13 @@ import {
 	FileTrustStore,
 	generateInvite,
 } from "trusted-agents-core";
-import type { TransportProvider, TransportReceipt } from "trusted-agents-core";
+import type {
+	AvailabilityWindow,
+	CalendarEvent,
+	ICalendarProvider,
+	TransportProvider,
+	TransportReceipt,
+} from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type MessageListenerSession,
@@ -22,6 +28,29 @@ import {
 	installLoopbackRuntime,
 } from "./helpers/loopback-runtime.js";
 import { runCli } from "./helpers/run-cli.js";
+
+class MockCalendarProvider implements ICalendarProvider {
+	public createdEvents: CalendarEvent[] = [];
+	public cancelledEventIds: string[] = [];
+	private readonly availability: AvailabilityWindow[];
+
+	constructor(availability: AvailabilityWindow[]) {
+		this.availability = availability;
+	}
+
+	async getAvailability(): Promise<AvailabilityWindow[]> {
+		return this.availability;
+	}
+
+	async createEvent(event: CalendarEvent): Promise<{ eventId: string }> {
+		this.createdEvents.push(event);
+		return { eventId: `mock-event-${this.createdEvents.length}` };
+	}
+
+	async cancelEvent(eventId: string): Promise<void> {
+		this.cancelledEventIds.push(eventId);
+	}
+}
 
 const CHAIN = "eip155:84532";
 const TREASURY_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
@@ -42,6 +71,7 @@ describe("two-agent CLI E2E flow", () => {
 	let workerDir: string;
 	let treasuryListener: MessageListenerSession | undefined;
 	let workerListener: MessageListenerSession | undefined;
+	let treasuryCalendar: MockCalendarProvider;
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-cli-e2e-"));
@@ -49,6 +79,11 @@ describe("two-agent CLI E2E flow", () => {
 		workerDir = join(tempRoot, "worker");
 		await mkdir(treasuryDir, { recursive: true });
 		await mkdir(workerDir, { recursive: true });
+
+		// Treasury calendar returns a wide free window covering the test proposal time
+		treasuryCalendar = new MockCalendarProvider([
+			{ start: "2026-03-28T20:00:00Z", end: "2026-03-29T04:00:00Z", status: "free" },
+		]);
 
 		const resolver = new StaticAgentResolver([
 			createResolvedAgentFixture({
@@ -75,6 +110,7 @@ describe("two-agent CLI E2E flow", () => {
 			network,
 			resolver,
 			txHashPrefix: "a1",
+			calendarProvider: treasuryCalendar,
 		});
 		installLoopbackRuntime({
 			dataDir: workerDir,
@@ -105,6 +141,13 @@ describe("two-agent CLI E2E flow", () => {
 						chain: CHAIN,
 						maxAmount: "0.001",
 						window: "week",
+					},
+				},
+				{
+					grantId: "worker-scheduling",
+					scope: "scheduling/request",
+					constraints: {
+						maxDurationMinutes: 180,
 					},
 				},
 			],
@@ -269,7 +312,9 @@ describe("two-agent CLI E2E flow", () => {
 			(data) =>
 				data.granted_by_peer.grants.some(
 					(grant) => grant.grantId === "worker-chat-from-treasury",
-				) && data.granted_by_peer.grants.some((grant) => grant.grantId === "worker-native-budget"),
+				) &&
+				data.granted_by_peer.grants.some((grant) => grant.grantId === "worker-native-budget") &&
+				data.granted_by_peer.grants.some((grant) => grant.grantId === "worker-scheduling"),
 		);
 		expect(
 			workerPermissions.granted_by_peer.grants.map((grant) => ({
@@ -279,6 +324,7 @@ describe("two-agent CLI E2E flow", () => {
 		).toEqual([
 			{ id: "worker-chat-from-treasury", status: "active" },
 			{ id: "worker-native-budget", status: "active" },
+			{ id: "worker-scheduling", status: "active" },
 		]);
 
 		const sendWorkerToTreasury = await runCli([
@@ -382,6 +428,57 @@ describe("two-agent CLI E2E flow", () => {
 			expect(rejectedFundsRequest.stderr).toContain("Action rejected by agent");
 		}
 
+		// === Scheduling: worker requests meeting with treasury ===
+
+		const meetingRequest = await runCli([
+			"--plain",
+			"--data-dir",
+			workerDir,
+			"message",
+			"request-meeting",
+			"TreasuryAgent",
+			"--title",
+			"Dinner",
+			"--duration",
+			"90",
+			"--preferred",
+			"2026-03-28T23:00:00Z",
+			"--note",
+			"deterministic scheduling test",
+		]);
+		expect(meetingRequest.exitCode).toBe(0);
+		expect(meetingRequest.stdout).toMatch(/Requested:\s+true/);
+		expect(meetingRequest.stdout).toContain("Dinner");
+		expect(meetingRequest.stdout).toMatch(/Queued:\s+true/);
+
+		// Treasury listener should have auto-processed the scheduling request:
+		//  1. Grant matched (worker-scheduling covers 90min < 180min)
+		//  2. Calendar returned free availability overlapping the proposed slot
+		//  3. confirmMeeting hook returns true in non-TTY
+		//  4. MockCalendarProvider.createEvent was called
+		// Give the async processing a moment to settle.
+		await waitForCondition(
+			async () => treasuryCalendar.createdEvents.length > 0,
+			"treasury calendar to have a created event",
+		);
+
+		expect(treasuryCalendar.createdEvents).toHaveLength(1);
+		expect(treasuryCalendar.createdEvents[0]!.title).toBe("Dinner");
+		expect(treasuryCalendar.createdEvents[0]!.start).toBe("2026-03-28T23:00:00.000Z");
+
+		// Worker should receive the scheduling/accept result via its listener
+		// The result updates the request journal to "completed" and appends ledger entries
+		const workerLedgerAfterScheduling = await waitForCondition(async () => {
+			try {
+				const content = await readFile(join(workerDir, "notes", "permissions-ledger.md"), "utf-8");
+				return content.includes("scheduling-accept") ? content : null;
+			} catch {
+				return null;
+			}
+		}, "worker ledger to contain scheduling-accept");
+		expect(workerLedgerAfterScheduling).toContain("scheduling-request-sent");
+		expect(workerLedgerAfterScheduling).toContain("scheduling-accept");
+
 		const treasuryConversations = JSON.parse(
 			(
 				await runCli([
@@ -424,6 +521,7 @@ describe("two-agent CLI E2E flow", () => {
 		expect(workerTranscript.exitCode).toBe(0);
 		expect(workerTranscript.stdout).toContain("hello from worker");
 		expect(workerTranscript.stdout).toContain("approved deterministic request");
+		expect(workerTranscript.stdout).toContain("Dinner");
 
 		const treasuryLedger = await readFile(
 			join(treasuryDir, "notes", "permissions-ledger.md"),
@@ -432,11 +530,14 @@ describe("two-agent CLI E2E flow", () => {
 		expect(treasuryLedger).toContain("grant-request-received");
 		expect(treasuryLedger).toContain("transfer-completed");
 		expect(treasuryLedger).toContain("transfer-rejected");
+		expect(treasuryLedger).toContain("scheduling-accepted");
 
 		const workerLedger = await readFile(join(workerDir, "notes", "permissions-ledger.md"), "utf-8");
 		expect(workerLedger).toContain("grant-request-sent");
 		expect(workerLedger).toContain("transfer-completed");
 		expect(workerLedger).toContain("transfer-rejected");
+		expect(workerLedger).toContain("scheduling-request-sent");
+		expect(workerLedger).toContain("scheduling-accept");
 	}, 20_000);
 
 	it("persists pending outbound connects without creating a contact", async () => {
@@ -710,4 +811,22 @@ async function waitForContacts(
 	throw new Error(
 		`Timed out waiting for contacts in ${dataDir}: ${JSON.stringify(lastContacts ?? [])}`,
 	);
+}
+
+async function waitForCondition<T>(
+	check: () => Promise<T | null | false | undefined>,
+	description: string,
+	timeoutMs = 3_000,
+): Promise<T> {
+	const deadline = Date.now() + timeoutMs;
+
+	while (Date.now() < deadline) {
+		const result = await check();
+		if (result) {
+			return result;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+
+	throw new Error(`Timed out waiting for ${description}`);
 }
