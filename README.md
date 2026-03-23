@@ -165,14 +165,20 @@ Run `tap <command> --help` for details on any command.
 
 ## Development
 
+### Architecture: thin plugin, fat CLI
+
+All protocol and business logic lives in `core`. Both the CLI and the OpenClaw plugin are **host adapters** — they compose core abstractions, they don't reimplement them.
+
+The plugin only exposes actions that **require a long-lived XMTP transport connection** (sending messages, resolving pending approvals, plugin lifecycle). Everything else — setup, inspection, configuration, conversation history, on-chain queries — lives in the CLI only. This avoids maintaining feature parity across two surfaces. When adding a new feature, ask: "Does this need a live transport?" If no, it goes in the CLI.
+
 ### Repository structure
 
 ```
 packages/
   core/       Protocol logic, identity resolution, XMTP transport, trust store
-  cli/        The `tap` command — host adapter over core
+  cli/        The `tap` command — host adapter over core (fat: owns all non-transport features)
   sdk/        Programmatic embedding surface + TAP skill files
-  openclaw-plugin/  OpenClaw Gateway plugin
+  openclaw-plugin/  OpenClaw Gateway plugin (thin: only transport-dependent actions + notification pipeline)
 ```
 
 ### Commands
