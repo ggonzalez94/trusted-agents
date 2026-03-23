@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import {
-	buildOutgoingMessageRequest,
 	DEFAULT_MESSAGE_SCOPE,
+	buildOutgoingMessageRequest,
 } from "../../../src/runtime/message-conversations.js";
 import type { Contact } from "../../../src/trust/types.js";
-import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 
 const CONTACT: Contact = {
 	connectionId: "conn-test-001",
