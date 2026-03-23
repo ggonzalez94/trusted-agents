@@ -60,8 +60,9 @@ packages/
 2. **Validate version** — extract version from tag (`v0.2.0` -> `0.2.0`), confirm it matches all `package.json` files.
 3. **Build** — `bun run build` (compiles all packages).
 4. **Copy skills** — `cp -r skills/trusted-agents packages/openclaw-plugin/skills/trusted-agents`.
-5. **Publish to npm** — publish in dependency order: core, then cli, then tap. Uses `NPM_TOKEN` repo secret.
-6. **GitHub Release** — `gh release create $TAG --generate-notes` with auto-generated changelog.
+5. **Verify tarballs** — run `bun pm pack --dry-run` for each package to confirm contents before first publish.
+6. **Publish to npm** — `bun publish` (not `npm publish`) in dependency order: core, then cli, then tap. `bun publish` resolves `workspace:*` to the actual version at publish time; `npm publish` would ship the literal string. Uses `NPM_TOKEN` repo secret. Add `--provenance` flag for supply chain security (supported by GitHub Actions OIDC). If a package version already exists on npm, skip it (handles re-runs after partial failures).
+7. **GitHub Release** — `gh release create $TAG --generate-notes` with auto-generated changelog.
 
 ### Version Bumping
 
@@ -92,8 +93,8 @@ The install script becomes a thin npm-based installer:
 
 | Runtime detected | Action |
 |-----------------|--------|
-| Claude Code (`~/.claude` exists) | `npx skills add ggonzalez94/trusted-agents` |
-| Codex (`~/.codex` exists) | `npx skills add ggonzalez94/trusted-agents` |
+| Claude Code (`~/.claude` exists) | `npx skills add ggonzalez94/trusted-agents` (see [vercel-labs/skills](https://github.com/vercel-labs/skills) — the `skills` CLI discovers `SKILL.md` files in the repo and copies them into agent skill directories) |
+| Codex (`~/.codex` exists) | `npx skills add ggonzalez94/trusted-agents` (same CLI, supports multiple agents) |
 | OpenClaw (`openclaw` on PATH) | `openclaw plugins install trusted-agents-tap` |
 
 No repo clone, no build step, no symlinks for end users.
@@ -130,20 +131,25 @@ Users run `tap install` after upgrading the CLI to refresh skills. For OpenClaw,
 
 ## Package Changes Required
 
+### All publishable packages
+
+Add `"engines": { "node": ">=18" }` to all three packages for clear install-time errors on older Node.
+
 ### `packages/core/package.json`
 
 Add `"files": ["dist"]` to control what goes in the npm tarball.
 
 ### `packages/cli/package.json`
 
-Add `"files": ["dist"]` to control what goes in the npm tarball.
+- Add `"files": ["dist"]` to control what goes in the npm tarball.
+- `"trusted-agents-core": "workspace:*"` — resolved by `bun publish` at publish time (same as plugin).
 
 ### `packages/openclaw-plugin/package.json`
 
 - Remove `"private": true`.
 - Add `"files": ["dist", "skills", "openclaw.plugin.json"]`.
 - Change `"trusted-agents-core": "workspace:*"` — bun resolves this at publish time.
-- Add `"peerDependencies": { "openclaw": ">=2026.1.29" }` and move `openclaw` from dependencies to peerDependencies.
+- Remove `openclaw` from `dependencies` and add `"peerDependencies": { "openclaw": ">=2026.1.29" }` with `"peerDependenciesMeta": { "openclaw": { "optional": true } }` (allows dev/testing without the host runtime).
 
 ### `packages/openclaw-plugin/openclaw.plugin.json`
 
@@ -156,7 +162,8 @@ Add `packages/openclaw-plugin/skills/` to prevent committed copies.
 ### Delete `packages/sdk/`
 
 Remove the entire directory. Update:
-- Root `package.json` workspaces (auto if using `packages/*` glob — verify `sdk` removal doesn't break it).
+- Root `package.json` workspaces (uses `packages/*` glob — works automatically).
+- Root `package.json` `typecheck` script (currently hardcodes `packages/sdk` — remove that entry).
 - Root `tsconfig.json` project references (remove sdk reference).
 - Any imports from `trusted-agents-sdk` (none exist).
 
@@ -165,6 +172,8 @@ Remove the entire directory. Update:
 `packages/sdk/skills/trusted-agents/` -> `skills/trusted-agents/` at repo root.
 
 Remove `packages/sdk/skills/trusted-agents/evals/` — eval data is not needed for distribution and should not ship in the skill. Move evals to a separate location if they need to be preserved.
+
+The existing `packages/openclaw-plugin/skills/trusted-agents-openclaw/` directory (with its symlinks) is deleted — the unified `trusted-agents/` skill replaces it.
 
 ### Update `packages/openclaw-plugin` build script
 
@@ -188,11 +197,12 @@ Or integrate into the existing `build` script.
 |------|--------|
 | `packages/core/package.json` | Add `"files"` |
 | `packages/cli/package.json` | Add `"files"` |
-| `packages/cli/src/commands/install.ts` | Use `npx skills add` and `openclaw plugins install` from npm |
+| `packages/cli/src/commands/install.ts` | Near-complete rewrite: remove `sourceDir` resolution and `validateSourceDir` (no local source checkout for npm users), replace symlink-based skill install with `npx skills add`, replace `openclaw plugins install --link` with `openclaw plugins install trusted-agents-tap` |
 | `packages/openclaw-plugin/package.json` | Un-private, add `"files"`, peer dep |
-| `scripts/install.sh` | Rewrite to npm-based install |
+| `scripts/install.sh` | Rewrite to npm-based install (loses `--uninstall`, `--branch`, `--source-dir` flags — uninstall becomes `npm uninstall -g trusted-agents-cli`) |
 | `.gitignore` | Add `packages/openclaw-plugin/skills/` |
 | `tsconfig.json` | Remove sdk reference |
+| Root `package.json` | Remove sdk from `typecheck` script |
 | `CLAUDE.md` | Remove sdk references, update skill paths |
 
 ## Files To Delete
