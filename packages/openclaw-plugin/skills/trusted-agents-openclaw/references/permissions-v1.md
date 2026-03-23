@@ -1,1 +1,0 @@
-../../../../sdk/skills/trusted-agents/references/permissions-v1.md
