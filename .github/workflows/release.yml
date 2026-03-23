@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run lint
+
+      - run: bun run typecheck
+
+      - run: bun run build
+
+      - run: bun run test
+
+      # Validate tag version matches package.json versions
+      - name: Validate version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          for pkg in packages/core/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
+            PKG_VERSION=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('$pkg','utf8')).version)")
+            if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
+              echo "::error::Version mismatch: $pkg has $PKG_VERSION but tag is v$TAG_VERSION"
+              exit 1
+            fi
+          done
+          echo "All packages at version $TAG_VERSION"
+
+      # Copy skills into OpenClaw plugin for npm tarball
+      - name: Bundle skills into OpenClaw plugin
+        run: |
+          rm -rf packages/openclaw-plugin/skills
+          mkdir -p packages/openclaw-plugin/skills
+          cp -r skills/trusted-agents packages/openclaw-plugin/skills/trusted-agents
+
+      # Verify tarballs before publishing
+      - name: Verify tarballs
+        run: |
+          cd packages/core && bun pm pack --dry-run && cd ../..
+          cd packages/cli && bun pm pack --dry-run && cd ../..
+          cd packages/openclaw-plugin && bun pm pack --dry-run && cd ../..
+
+      # Configure npm auth
+      - name: Configure npm
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+
+      # Publish in dependency order: core first, then cli and tap
+      # --provenance requires id-token: write permission (set above)
+      # Each step checks if version exists before publishing to handle re-runs
+      - name: Publish trusted-agents-core
+        working-directory: packages/core
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-core@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-core@$TAG_VERSION already published, skipping"
+          else
+            bun publish --access public --no-git-checks --provenance
+          fi
+
+      - name: Publish trusted-agents-cli
+        working-directory: packages/cli
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-cli@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-cli@$TAG_VERSION already published, skipping"
+          else
+            bun publish --access public --no-git-checks --provenance
+          fi
+
+      - name: Publish trusted-agents-tap
+        working-directory: packages/openclaw-plugin
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-tap@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-tap@$TAG_VERSION already published, skipping"
+          else
+            bun publish --access public --no-git-checks --provenance
+          fi
+
+      # Create GitHub Release with auto-generated notes
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
