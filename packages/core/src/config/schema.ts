@@ -51,9 +51,9 @@ export function validateConfig(
 
 	if (
 		partial.execution?.paymasterProvider !== undefined &&
-		!["circle", "candide"].includes(partial.execution.paymasterProvider)
+		!["circle", "candide", "servo"].includes(partial.execution.paymasterProvider)
 	) {
-		throw new ConfigError("execution.paymasterProvider must be circle or candide");
+		throw new ConfigError("execution.paymasterProvider must be circle, candide, or servo");
 	}
 
 	if (

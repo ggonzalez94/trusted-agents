@@ -107,7 +107,7 @@ describe("config-loader", () => {
 			expect(config.execution?.paymasterProvider).toBe("circle");
 		});
 
-		it("defaults Taiko networks to eoa with no paymaster provider", async () => {
+		it("defaults Taiko mainnet to eip4337 with Servo", async () => {
 			process.env.TAP_PRIVATE_KEY =
 				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
 			await mkdir(tmpDir, { recursive: true });
@@ -119,8 +119,8 @@ describe("config-loader", () => {
 
 			const config = await loadConfig({ dataDir: tmpDir });
 
-			expect(config.execution?.mode).toBe("eoa");
-			expect(config.execution?.paymasterProvider).toBeUndefined();
+			expect(config.execution?.mode).toBe("eip4337");
+			expect(config.execution?.paymasterProvider).toBe("servo");
 		});
 
 		it("loads optional IPFS provider settings from config", async () => {

@@ -73,7 +73,7 @@ tap init --chain base
 
 This generates a fresh wallet and local config.
 
-**Chain rules:** Default to `base` (Base mainnet) without asking. Only offer `taiko` (Taiko mainnet) if the user explicitly asks for an alternative. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
+**Chain rules:** Always ask the user what chain they want to use. The two options currently are `taiko` and `bases`. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
 
 ### Step 2: Fund the wallet
 
@@ -84,9 +84,13 @@ Your chain determines everything — registration chain, gas payment, and IPFS u
 | Chain | Fund with | Gas | IPFS upload |
 |---|---|---|---|
 | Base | ~0.50 USDC on Base | EIP-7702 + Circle Paymaster (no ETH needed) | Pinata x402 (Base USDC) |
-| Taiko | Native gas + USDC on Taiko | EOA (direct transactions) | Tack x402 (Taiko USDC) — endpoint: `https://tack-api-production.up.railway.app` |
+| Taiko | ~0.50 USDC on Taiko (to the Servo execution account) | EIP-4337 + Servo Paymaster (USDC only, no ETH needed) | Tack x402 (Taiko USDC) — endpoint: `https://tack-api-production.up.railway.app` |
 
 IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
+
+**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
+
+If the user chooses Taiko read the full [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md). It will help you use the smart account and the paymaster effectively.
 
 Confirm with `tap balance` before continuing.
 
@@ -465,7 +469,7 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode o
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
-| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or native gas + USDC on Taiko (Taiko agents) |
+| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or USDC to the Servo execution account on Taiko (Taiko agents, run `tap balance --json` for the address) |
 | `Invalid or expired invite` | Create a fresh invite |
 | `Contact not active yet` | Peer hasn't synced — run `tap message sync` |
 | `Peer not found in contacts` | Connect first or check the name/agent ID |
