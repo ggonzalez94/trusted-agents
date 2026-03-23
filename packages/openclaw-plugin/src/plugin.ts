@@ -42,7 +42,13 @@ const plugin = {
 
 			const lines = notifications.map((n) => {
 				const prefix =
-					n.type === "escalation" ? "ESCALATION" : n.type === "summary" ? "SUMMARY" : "INFO";
+					n.type === "escalation"
+						? "ESCALATION"
+						: n.type === "auto-reply"
+							? "AUTO-REPLY"
+							: n.type === "summary"
+								? "SUMMARY"
+								: "INFO";
 				return `- ${prefix}: ${n.oneLiner}`;
 			});
 
