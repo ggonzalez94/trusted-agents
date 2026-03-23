@@ -5,8 +5,14 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "skills", "openclaw.plugin.json"],
-  "engines": { "node": ">=18" },
+  "files": [
+    "dist",
+    "skills",
+    "openclaw.plugin.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "prebuild": "rm -rf skills && mkdir -p skills && cp -r ../../skills/trusted-agents skills/trusted-agents",
     "build": "tsc -p tsconfig.json",
@@ -22,7 +28,9 @@
     "openclaw": ">=2026.1.29"
   },
   "peerDependenciesMeta": {
-    "openclaw": { "optional": true }
+    "openclaw": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^25.3.3",
@@ -31,6 +39,8 @@
     "vitest": "^3.0.0"
   },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   }
 }
