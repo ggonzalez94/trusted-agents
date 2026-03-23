@@ -1299,33 +1299,24 @@ async function executeEip4337Calls(
 		preVerificationGas: stubQuote.preVerificationGas,
 	};
 
-	const permitNonce = (await context.publicClient.readContract({
-		address: stubQuote.tokenAddress,
-		abi: ERC20_NONCES_ABI,
-		functionName: "nonces",
-		args: [context.owner.address],
-	})) as bigint;
-
-	let tokenName = "USD Coin";
-	let tokenVersion = "2";
-	try {
-		const [name, version] = await Promise.all([
-			context.publicClient.readContract({
-				address: stubQuote.tokenAddress,
-				abi: ERC20_NAME_ABI,
-				functionName: "name",
-			}),
-			context.publicClient.readContract({
+	const [permitNonce, tokenName, tokenVersion] = await Promise.all([
+		context.publicClient.readContract({
+			address: stubQuote.tokenAddress,
+			abi: ERC20_NONCES_ABI,
+			functionName: "nonces",
+			args: [context.executionAddress],
+		}) as Promise<bigint>,
+		context.publicClient
+			.readContract({ address: stubQuote.tokenAddress, abi: ERC20_NAME_ABI, functionName: "name" })
+			.catch(() => "USD Coin" as string),
+		context.publicClient
+			.readContract({
 				address: stubQuote.tokenAddress,
 				abi: ERC20_VERSION_ABI,
 				functionName: "version",
-			}),
-		]);
-		tokenName = name;
-		tokenVersion = version;
-	} catch {
-		// USDC defaults are fine if metadata methods fail.
-	}
+			})
+			.catch(() => "2" as string),
+	]);
 
 	const permitValue = BigInt(stubQuote.maxTokenCostMicros);
 	const permitDeadline = BigInt(stubQuote.validUntil);
@@ -1339,7 +1330,7 @@ async function executeEip4337Calls(
 		types: USDC_PERMIT_TYPES,
 		primaryType: "Permit",
 		message: {
-			owner: context.owner.address,
+			owner: context.executionAddress,
 			spender: stubQuote.paymaster,
 			value: permitValue,
 			nonce: permitNonce,
@@ -1392,7 +1383,7 @@ async function executeEip4337Calls(
 		"eth_sendUserOperation",
 		[
 			{
-				...draftUserOperation,
+				...quotedUserOperation,
 				callGasLimit: finalQuote.callGasLimit,
 				verificationGasLimit: finalQuote.verificationGasLimit,
 				preVerificationGas: finalQuote.preVerificationGas,

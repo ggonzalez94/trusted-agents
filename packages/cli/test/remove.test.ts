@@ -2,9 +2,17 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { removeCommand } from "../src/commands/remove.js";
+import { privateKeyToAccount } from "viem/accounts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as removeCommandModule from "../src/commands/remove.js";
+import * as walletLib from "../src/lib/wallet.js";
 import { runCli } from "./helpers/run-cli.js";
+
+const KEYFILE_PRIVATE_KEY =
+	"0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
+const KEYFILE_ADDRESS = privateKeyToAccount(KEYFILE_PRIVATE_KEY).address;
+const ENV_OVERRIDE_PRIVATE_KEY =
+	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
 
 describe("tap remove", () => {
 	let tmpDir: string;
@@ -15,6 +23,9 @@ describe("tap remove", () => {
 	let stdinIsTTY: boolean | undefined;
 	let origStdinOnce: typeof process.stdin.once;
 	let origStdinSetEncoding: typeof process.stdin.setEncoding;
+	let origTapPrivateKey: string | undefined;
+	let origTapChain: string | undefined;
+	let origTapRpcUrl: string | undefined;
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-remove-test-"));
@@ -25,6 +36,9 @@ describe("tap remove", () => {
 		stdinIsTTY = process.stdin.isTTY;
 		origStdinOnce = process.stdin.once.bind(process.stdin);
 		origStdinSetEncoding = process.stdin.setEncoding.bind(process.stdin);
+		origTapPrivateKey = process.env.TAP_PRIVATE_KEY;
+		origTapChain = process.env.TAP_CHAIN;
+		origTapRpcUrl = process.env.TAP_RPC_URL;
 		process.stdout.write = ((chunk: string) => {
 			stdoutWrites.push(chunk);
 			return true;
@@ -35,6 +49,17 @@ describe("tap remove", () => {
 			configurable: true,
 		});
 		process.exitCode = undefined;
+		vi.spyOn(removeCommandModule.removeRuntime, "probeRemoveNativeBalance").mockResolvedValue({
+			context: null,
+			probe: {
+				checked: false,
+				chain: null,
+				chain_name: null,
+				address: null,
+				native_balance_wei: null,
+				native_balance_eth: null,
+			},
+		});
 		await seedAgentData(dataDir);
 	});
 
@@ -48,6 +73,10 @@ describe("tap remove", () => {
 		process.stdin.once = origStdinOnce;
 		process.stdin.setEncoding = origStdinSetEncoding;
 		process.exitCode = undefined;
+		process.env.TAP_PRIVATE_KEY = origTapPrivateKey;
+		process.env.TAP_CHAIN = origTapChain;
+		process.env.TAP_RPC_URL = origTapRpcUrl;
+		vi.restoreAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
@@ -74,7 +103,7 @@ describe("tap remove", () => {
 	});
 
 	it("requires the explicit wipe flag before removing data", async () => {
-		await removeCommand({}, { json: true, dataDir });
+		await removeCommandModule.removeCommand({}, { json: true, dataDir });
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -84,7 +113,7 @@ describe("tap remove", () => {
 	});
 
 	it("requires --yes in non-interactive mode", async () => {
-		await removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -104,7 +133,10 @@ describe("tap remove", () => {
 			return process.stdin;
 		}) as typeof process.stdin.once;
 
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -128,7 +160,10 @@ describe("tap remove", () => {
 			"utf-8",
 		);
 
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		expect(process.exitCode).toBe(1);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -140,7 +175,10 @@ describe("tap remove", () => {
 	it("refuses to wipe a data dir that contains non-TAP top-level entries", async () => {
 		await writeFile(join(dataDir, "README.md"), "not tap-managed\n", "utf-8");
 
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
@@ -151,7 +189,10 @@ describe("tap remove", () => {
 
 	it("removes the entire data dir in non-interactive mode when explicitly confirmed", async () => {
 		const resolvedDataDir = await realpath(dataDir);
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -166,7 +207,10 @@ describe("tap remove", () => {
 		await mkdir(emptyDataDir, { recursive: true });
 		stdoutWrites = [];
 
-		await removeCommand({ dryRun: true }, { json: true, dataDir: emptyDataDir });
+		await removeCommandModule.removeCommand(
+			{ dryRun: true },
+			{ json: true, dataDir: emptyDataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -177,7 +221,7 @@ describe("tap remove", () => {
 	});
 
 	it("refuses external config paths for remove", async () => {
-		await removeCommand(
+		await removeCommandModule.removeCommand(
 			{ dryRun: true },
 			{ json: true, dataDir, config: join(tmpDir, "outside-config.yaml") },
 		);
@@ -191,7 +235,7 @@ describe("tap remove", () => {
 	it("refuses data dirs with unexpected top-level entries", async () => {
 		await writeFile(join(dataDir, "keep.txt"), "keep\n", "utf-8");
 
-		await removeCommand({ dryRun: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand({ dryRun: true }, { json: true, dataDir });
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
@@ -200,7 +244,10 @@ describe("tap remove", () => {
 		expect(output.data.paths_to_remove).not.toContain(join(dataDir, "keep.txt"));
 
 		stdoutWrites = [];
-		await removeCommand({ unsafeWipeDataDir: true, yes: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
 
 		const blocked = JSON.parse(stdoutWrites[0]!);
 		expect(blocked.ok).toBe(false);
@@ -217,7 +264,7 @@ describe("tap remove", () => {
 		const resolvedActualDataDir = await realpath(actualDataDir);
 		stdoutWrites = [];
 
-		await removeCommand(
+		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
 			{ json: true, dataDir: linkedDataDir },
 		);
@@ -228,6 +275,104 @@ describe("tap remove", () => {
 		expect(output.data.removed_paths).toContain(join(resolvedActualDataDir, "config.yaml"));
 		expect(existsSync(actualDataDir)).toBe(false);
 	});
+
+	it("offers optional balance transfer before interactive wipe", async () => {
+		Object.defineProperty(process.stdin, "isTTY", {
+			value: true,
+			configurable: true,
+		});
+		process.stdin.setEncoding = (() => process.stdin) as typeof process.stdin.setEncoding;
+		const answers = ["no\n", "no\n"];
+		process.stdin.once = ((_: string, handler: (data: string) => void) => {
+			handler(answers.shift() ?? "no\n");
+			return process.stdin;
+		}) as typeof process.stdin.once;
+
+		vi.spyOn(removeCommandModule.removeRuntime, "probeRemoveNativeBalance").mockResolvedValue({
+			context: {
+				config: {} as never,
+				chain: "eip155:8453",
+				chainConfig: { name: "Base" } as never,
+				address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+				nativeBalanceWei: 1000000000000000000n,
+				nativeBalanceEth: "1",
+			},
+			probe: {
+				checked: true,
+				chain: "eip155:8453",
+				chain_name: "Base",
+				address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+				native_balance_wei: "1000000000000000000",
+				native_balance_eth: "1",
+			},
+		});
+
+		await removeCommandModule.removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.ok).toBe(true);
+		expect(output.data.removed).toBe(false);
+		expect(output.data.aborted).toBe(true);
+		expect(output.data.funds_transfer.attempted).toBe(false);
+		expect(output.data.funds_transfer.skipped_reason).toContain("declined");
+		expect(existsSync(dataDir)).toBe(true);
+	});
+
+	it("probes balance from the target data dir instead of env overrides", async () => {
+		process.env.TAP_PRIVATE_KEY = ENV_OVERRIDE_PRIVATE_KEY;
+		process.env.TAP_CHAIN = "taiko";
+		const getBalance = vi.fn().mockResolvedValue(1n);
+		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+			getBalance,
+		} as never);
+
+		const result = await removeCommandModule.probeRemoveNativeBalance(
+			dataDir,
+			join(dataDir, "config.yaml"),
+		);
+
+		expect(result.probe.checked).toBe(true);
+		expect(result.probe.chain).toBe("eip155:8453");
+		expect(result.probe.address).toBe(KEYFILE_ADDRESS);
+		expect(getBalance).toHaveBeenCalledWith({ address: KEYFILE_ADDRESS });
+	});
+
+	it("refreshes the native balance right before transferring funds", async () => {
+		const freshBalanceWei = 2_000_000_000_000_000_000n;
+		const gasEstimate = 21_000n;
+		const gasPrice = 100n;
+		const sendTransaction = vi.fn().mockResolvedValue("0x1234");
+		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+			getBalance: vi.fn().mockResolvedValue(freshBalanceWei),
+			estimateGas: vi.fn().mockResolvedValue(gasEstimate),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ gasPrice }),
+			waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success" }),
+		} as never);
+		vi.spyOn(walletLib, "buildWalletClient").mockReturnValue({
+			chain: { id: 8453 },
+			sendTransaction,
+		} as never);
+
+		const result = await removeCommandModule.transferRemainingNativeBalance(
+			{
+				config: { privateKey: KEYFILE_PRIVATE_KEY } as never,
+				chain: "eip155:8453",
+				chainConfig: { name: "Base" } as never,
+				address: KEYFILE_ADDRESS,
+				nativeBalanceWei: 1_000_000_000_000_000_000n,
+				nativeBalanceEth: "1",
+			},
+			"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+		);
+
+		const expectedAmountWei = freshBalanceWei - gasEstimate * gasPrice;
+		expect(sendTransaction).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: expectedAmountWei,
+			}),
+		);
+		expect(result.amountWei).toBe(expectedAmountWei);
+	});
 });
 
 async function seedAgentData(dataDir: string): Promise<void> {
@@ -235,11 +380,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "conversations"), { recursive: true });
 	await mkdir(join(dataDir, "xmtp"), { recursive: true });
 	await writeFile(join(dataDir, "config.yaml"), "agent_id: 42\nchain: eip155:8453\n", "utf-8");
-	await writeFile(
-		join(dataDir, "identity", "agent.key"),
-		"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-		"utf-8",
-	);
+	await writeFile(join(dataDir, "identity", "agent.key"), KEYFILE_PRIVATE_KEY.slice(2), "utf-8");
 	await writeFile(join(dataDir, "contacts.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "conversations", "peer-1.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");

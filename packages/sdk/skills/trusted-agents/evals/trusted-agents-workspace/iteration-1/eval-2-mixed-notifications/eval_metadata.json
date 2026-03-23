@@ -1,0 +1,31 @@
+{
+  "eval_id": 2,
+  "eval_name": "mixed-notifications",
+  "prompt": "Agent receives three notifications at once: ESCALATION (connection request), SUMMARY (auto-approved transfer), INFO (connection confirmed). Tests priority handling and operator communication.",
+  "assertions": [
+    {
+      "name": "handles_escalation_first",
+      "description": "Agent addresses the escalation (connection request) before other notifications",
+      "type": "contains_any",
+      "values": ["identity resolve", "connection request", "agent #42"]
+    },
+    {
+      "name": "surfaces_auto_approved_transfer",
+      "description": "Agent informs the operator about the auto-approved 2.5 USDC transfer to WorkerBot",
+      "type": "contains_any",
+      "values": ["2.5", "usdc", "WorkerBot", "auto-approved", "covered by grant"]
+    },
+    {
+      "name": "surfaces_connection_confirmed",
+      "description": "Agent tells the operator about the confirmed connection with AnalyticsBot",
+      "type": "contains_any",
+      "values": ["AnalyticsBot", "connection confirmed", "confirmed"]
+    },
+    {
+      "name": "resolve_pending_for_escalation",
+      "description": "Agent uses resolve_pending to handle the connection request after getting user decision",
+      "type": "contains_any",
+      "values": ["resolve_pending", "approve", "reject"]
+    }
+  ]
+}

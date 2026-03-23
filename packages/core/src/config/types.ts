@@ -9,10 +9,16 @@ export interface ChainConfig {
 
 export type ExecutionMode = "eoa" | "eip4337" | "eip7702";
 export type ExecutionPaymasterProvider = "circle" | "candide" | "servo";
+export type IpfsUploadProvider = "auto" | "x402" | "pinata" | "tack";
 
 export interface ExecutionConfig {
 	mode?: ExecutionMode;
 	paymasterProvider?: ExecutionPaymasterProvider;
+}
+
+export interface IpfsConfig {
+	provider?: IpfsUploadProvider;
+	tackApiUrl?: string;
 }
 
 export interface TrustedAgentsConfig {
@@ -28,4 +34,5 @@ export interface TrustedAgentsConfig {
 	xmtpDbPath?: string;
 	xmtpDbEncryptionKey?: `0x${string}`;
 	execution?: ExecutionConfig;
+	ipfs?: IpfsConfig;
 }

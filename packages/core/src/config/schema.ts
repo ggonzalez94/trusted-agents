@@ -56,6 +56,24 @@ export function validateConfig(
 		throw new ConfigError("execution.paymasterProvider must be circle, candide, or servo");
 	}
 
+	if (
+		partial.ipfs?.provider !== undefined &&
+		!["auto", "x402", "pinata", "tack"].includes(partial.ipfs.provider)
+	) {
+		throw new ConfigError("ipfs.provider must be auto, x402, pinata, or tack");
+	}
+
+	if (partial.ipfs?.tackApiUrl !== undefined) {
+		try {
+			const parsed = new URL(partial.ipfs.tackApiUrl);
+			if (!["http:", "https:"].includes(parsed.protocol)) {
+				throw new Error("invalid protocol");
+			}
+		} catch {
+			throw new ConfigError("ipfs.tackApiUrl must be a valid http(s) URL");
+		}
+	}
+
 	return {
 		...DEFAULT_CONFIG,
 		...partial,

@@ -136,10 +136,14 @@ describe("register update", () => {
 				logs: [],
 			},
 		} as never);
-		vi.spyOn(ipfsLib, "resolvePinataJwt").mockReturnValue(undefined);
+		vi.spyOn(ipfsLib, "resolvePinataJwt").mockImplementation((flagValue?: string) => flagValue);
 		vi.spyOn(ipfsLib, "uploadToIpfsPinata").mockResolvedValue({
 			cid: "pinata-cid",
 			uri: "ipfs://pinata-cid",
+		});
+		vi.spyOn(ipfsLib, "uploadToIpfsTack").mockResolvedValue({
+			cid: "tack-cid",
+			uri: "ipfs://tack-cid",
 		});
 		vi.spyOn(ipfsLib, "uploadToIpfsX402").mockResolvedValue({
 			cid: "uploaded-cid",
@@ -272,6 +276,64 @@ describe("register update", () => {
 
 		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.trustedAgentProtocol.capabilities).toEqual([]);
+	});
+
+	it("uses Tack provider from config when requested", async () => {
+		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+		vi.spyOn(configLoader, "loadConfig").mockResolvedValue({
+			...buildConfig(),
+			ipfs: {
+				provider: "tack",
+			},
+		});
+
+		await registerUpdateCommand({ capabilities: "search" }, { json: true });
+
+		expect(ipfsLib.uploadToIpfsTack).toHaveBeenCalledOnce();
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
+	});
+
+	it("honors explicit pinata provider when JWT is supplied", async () => {
+		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+
+		await registerUpdateCommand(
+			{
+				capabilities: "search",
+				ipfsProvider: "pinata",
+				pinataJwt: "flag-jwt",
+			},
+			{ json: true },
+		);
+
+		expect(ipfsLib.uploadToIpfsPinata).toHaveBeenCalledOnce();
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(ipfsLib.uploadToIpfsTack).not.toHaveBeenCalled();
+	});
+
+	it("fails when pinata provider is selected without JWT", async () => {
+		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
+
+		await registerUpdateCommand(
+			{
+				capabilities: "search",
+				ipfsProvider: "pinata",
+			},
+			{ json: true },
+		);
+
+		expect(ipfsLib.uploadToIpfsPinata).not.toHaveBeenCalled();
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(ipfsLib.uploadToIpfsTack).not.toHaveBeenCalled();
+		expect(process.exitCode).toBe(1);
+
+		const output = lastJsonOutput() as {
+			ok: boolean;
+			error?: { code?: string; message?: string };
+		};
+		expect(output.ok).toBe(false);
+		expect(output.error?.code).toBe("VALIDATION_ERROR");
+		expect(output.error?.message).toContain("Pinata provider selected");
 	});
 
 	it("rejects mixing --uri with manifest overrides before any chain calls", async () => {

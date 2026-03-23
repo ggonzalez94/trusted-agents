@@ -1,5 +1,6 @@
 import { ValidationError, isEthereumAddress } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
+import { normalizeAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
@@ -107,14 +108,6 @@ export async function messageRequestFundsCommand(
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
 	}
-}
-
-function normalizeAsset(asset: string): "native" | "usdc" {
-	const normalized = asset.trim().toLowerCase();
-	if (normalized === "native" || normalized === "usdc") {
-		return normalized;
-	}
-	throw new ValidationError(`Unsupported asset: ${asset}. Use "native" or "usdc".`);
 }
 
 function resolveRecipientAddress(

@@ -116,20 +116,20 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 							`Agent address: ${address}`,
 							"Base Sepolia defaults to EIP-7702 with Circle Paymaster.",
 							"Fund this address with Base Sepolia USDC for registration transactions.",
-							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
+							"IPFS uploads auto-select based on chain (Tack on Taiko, Pinata x402 on Base). Override with --ipfs-provider or --pinata-jwt.",
 						]
 				: executionMode === "eip4337"
 					? [
 							`Agent owner address: ${address}`,
 							`${chainLabel} defaults to EIP-4337 with Servo Paymaster.`,
 							"Fund the Servo execution account with USDC (run `tap balance --json` to see `execution_address`).",
-							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same owner address or use --pinata-jwt / --uri.",
+							"IPFS uploads auto-select based on chain (Tack on Taiko, Pinata x402 on Base). Override with --ipfs-provider or --pinata-jwt.",
 						]
 					: [
 							`Agent address: ${address}`,
 							`${chainLabel} currently uses direct EOA transactions in this CLI.`,
 							`Fund this address with native gas on ${chainLabel}.`,
-							"IPFS uploads still use Base mainnet x402, so send a small amount of Base mainnet USDC to the same address or use --pinata-jwt / --uri.",
+							"IPFS uploads auto-select based on chain (Tack on Taiko, Pinata x402 on Base). Override with --ipfs-provider or --pinata-jwt.",
 						];
 
 		const result = {

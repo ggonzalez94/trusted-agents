@@ -1,5 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import YAML from "yaml";
+import { writeFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import {
 	resolveConfigPath,
@@ -17,6 +19,7 @@ const CONFIG_KEY_SEGMENT_ALIASES: Record<string, string> = {
 	paymasterProvider: "paymaster_provider",
 	registryAddress: "registry_address",
 	rpcUrl: "rpc_url",
+	tackApiUrl: "tack_api_url",
 };
 
 const NUMERIC_CONFIG_PATHS = new Set([
@@ -58,7 +61,7 @@ export async function configSetCommand(
 			throw new Error(`Config file not found at ${configPath}. Run 'tap init' first.`);
 		}
 
-		const content = readFileSync(configPath, "utf-8");
+		const content = await readFile(configPath, "utf-8");
 		const yaml = (YAML.parse(content) as Record<string, unknown>) ?? {};
 
 		// Handle nested keys like xmtp.env
@@ -78,7 +81,7 @@ export async function configSetCommand(
 		const resolvedValue = leafKey === "chain" ? resolveChainAlias(value) : value;
 		target[leafKey] = parseConfigValue(parts, resolvedValue);
 
-		writeFileSync(configPath, YAML.stringify(yaml), "utf-8");
+		await writeFileAtomic(configPath, YAML.stringify(yaml));
 
 		success({ key, value: target[leafKey], path: configPath }, opts, startTime);
 	} catch (err) {

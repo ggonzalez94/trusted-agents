@@ -41,7 +41,7 @@ Add one or more TAP identities to the plugin config. Each identity points at an 
 openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/agent-data","reconcileIntervalMinutes":10}]' --json
 ```
 
-Restart the Gateway after plugin config changes. If the Gateway warns that no TAP identities are configured immediately after install, that is expected until this step is done.
+OpenClaw automatically reloads the Gateway after plugin config changes. If the Gateway warns that no TAP identities are configured immediately after install, that is expected until this step is done.
 
 ## Runtime Model
 

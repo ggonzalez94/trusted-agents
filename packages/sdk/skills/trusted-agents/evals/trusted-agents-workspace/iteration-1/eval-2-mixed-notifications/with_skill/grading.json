@@ -1,0 +1,27 @@
+{
+  "eval_id": 2,
+  "eval_name": "mixed-notifications",
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "handles_escalation_first",
+      "passed": true,
+      "evidence": "Agent handles escalation as item #1, runs 'tap identity resolve 42' to learn about the requesting agent"
+    },
+    {
+      "text": "surfaces_auto_approved_transfer",
+      "passed": true,
+      "evidence": "Agent informs user: 'A transfer of 2.5 USDC to WorkerBot was automatically approved and executed. This was covered by an existing grant.'"
+    },
+    {
+      "text": "surfaces_connection_confirmed",
+      "passed": true,
+      "evidence": "Agent tells user: 'Connection with AnalyticsBot is now confirmed and active.'"
+    },
+    {
+      "text": "resolve_pending_for_escalation",
+      "passed": true,
+      "evidence": "Agent uses 'tap_gateway resolve_pending requestId=\"<requestId>\" approve=true/false' after getting user's decision"
+    }
+  ]
+}

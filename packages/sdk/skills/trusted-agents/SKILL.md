@@ -1,22 +1,11 @@
 ---
 name: trusted-agents
-description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, and request funds. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill inside OpenClaw Gateway when the `tap_gateway` tool is available or when handling TAP notifications.
+description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, request funds, and schedule meetings. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, schedule meetings or dinners, check calendar availability, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill when the user mentions scheduling, meetings, dinners, calendar setup, or coordinating times with another agent. Also use inside OpenClaw Gateway when the `tap_gateway` tool is available or when handling TAP notifications.
 ---
 
 # Trusted Agents Protocol
 
 TAP gives your AI agent a verifiable on-chain identity so it can connect, message, and transact with other agents. It combines ERC-8004 on-chain registration with XMTP encrypted messaging and a directional permission system. Think of it as a secure contact list where each contact comes with explicit permissions for what you can ask each other to do.
-
-## Action-First Rule
-
-Execute commands before asking questions. When a user asks to install, set up, or use TAP:
-
-1. Run the status check immediately — don't explain what you're about to do
-2. Let the command outputs tell you what's needed next
-3. Only ask the user when you genuinely need their input
-4. Ask **one question at a time**, act on the answer, then continue
-
-Do not present overviews, tables, or summaries of TAP before acting. Do not bundle multiple questions into one message.
 
 ## Status Check
 
@@ -51,16 +40,10 @@ tap not installed ──→ Install
         │
    waiting on async ──→ tap message sync (or tap_gateway sync)
         │
-   ready ──→ message, transfer, manage permissions
+   ready ──→ message, transfer, schedule meetings, manage permissions
 ```
 
 ## Install
-
-From within this repo:
-
-```bash
-bash scripts/install.sh
-```
 
 Remote install (no clone needed):
 
@@ -68,7 +51,7 @@ Remote install (no clone needed):
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-The installer builds, links `tap` to PATH, and sets up skills for your host.
+The installer builds, links `tap` to PATH, and sets up skills for your host. If running inside openclaw, make sure the plugin is installed.
 
 **OpenClaw plugin install:**
 
@@ -76,7 +59,7 @@ The installer builds, links `tap` to PATH, and sets up skills for your host.
 tap install --runtime openclaw
 ```
 
-The plugin does not force a Gateway stop/start cycle. If the Gateway is already running, it waits for the automatic reload.
+**Do not offer the user to restart the gateway, the registered service will do it automatically. Doing it puts the gateway in an infinite restart loop**
 
 ## Onboard
 
@@ -94,11 +77,20 @@ This generates a fresh wallet and local config.
 
 ### Step 2: Fund the wallet
 
-Show the user their wallet address from the `tap init` output. Ask them to fund it with **~0.50 USDC on Base**.
+Show the user their wallet address from the `tap init` output. Ask them to fund it.
 
-- On Base, only USDC is needed — gas is covered by EIP-7702 with Circle Paymaster. No ETH required.
-- On Taiko, native gas tokens are used instead.
-- IPFS upload (for the registration file) also pays with Base mainnet USDC via x402.
+Your chain determines everything — registration chain, gas payment, and IPFS upload provider:
+
+| Chain | Fund with | Gas | IPFS upload |
+|---|---|---|---|
+| Base | ~0.50 USDC on Base | EIP-7702 + Circle Paymaster (no ETH needed) | Pinata x402 (Base USDC) |
+| Taiko | ~0.50 USDC on Taiko (to the Servo execution account) | EIP-4337 + Servo Paymaster (USDC only, no ETH needed) | Tack x402 (Taiko USDC) — endpoint: `https://tack-api-production.up.railway.app` |
+
+IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
+
+**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Fund the **execution address** with USDC.
+
+For the full Servo paymaster specification (RPC methods, permit flow, smart account factory, pitfalls), read the [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md).
 
 Confirm with `tap balance` before continuing.
 
@@ -106,9 +98,9 @@ Confirm with `tap balance` before continuing.
 
 Ask the user for these inputs **one at a time** — don't bundle them:
 
-1. **Name** — a display name like "TreasuryAgent"
-2. **Description** — a short phrase like "Payment and expense agent"
-3. **Capabilities** — public discovery labels that tell other agents what this one can do
+1. **Name** — a display name. Be creative and suggest the user options based on what you know about him or why he's created you.
+2. **Description** — a short phrase describing what the agent does.
+3. **Capabilities** — public discovery labels that tell other agents what this one can do. Ask the user something like: "What are you planning to use this agent for?"
 
 Suggest a default based on what the user has described so far:
 
@@ -117,7 +109,10 @@ Suggest a default based on what the user has described so far:
 | General assistant | `general-chat` |
 | Payment / treasury | `transfer,general-chat` |
 | Research agent | `research,general-chat` |
-| Full-featured | `transfer,research,general-chat` |
+| Full-featured | `transfer,research,scheduling,general-chat` |
+| Scheduling-capable | `scheduling,general-chat` |
+
+**If the AskUserQuestion tool is available use it to allow the user to choose its answers for the 3 points above. Always allow him to enter something different than what is being suggested**
 
 Then register:
 
@@ -170,6 +165,8 @@ tap contacts remove <connectionId>
 
 In OpenClaw plugin mode, use `tap_gateway create_invite` and `tap_gateway connect` instead of the CLI commands.
 
+After establishing connections with a new agent, ask the user if they want to grant permissions and guide him on how to decide.
+
 ## Permissions
 
 Connections create trust. **Grants** define what each side is allowed to ask the other to do.
@@ -212,13 +209,32 @@ In OpenClaw plugin mode, use `tap_gateway publish_grants` and `tap_gateway reque
 ]
 ```
 
+**Scheduling (weekdays only):**
+```json
+[{
+  "grantId": "peer-scheduling",
+  "scope": "scheduling/request",
+  "constraints": {
+    "maxDurationMinutes": 120,
+    "allowedDays": ["mon", "tue", "wed", "thu", "fri"],
+    "allowedTimeRange": { "start": "09:00", "end": "18:00" },
+    "timezone": "America/New_York"
+  }
+}]
+```
+
+**Scheduling (open):**
+```json
+[{ "grantId": "peer-scheduling-open", "scope": "scheduling/request" }]
+```
+
 See `references/permissions-v1.md` for the full JSON spec with all fields and additional templates.
 
 | Scope | Purpose |
 |---|---|
 | `general-chat` | Conversational exchange |
 | `research` | Questions, information gathering |
-| `scheduling` | Calendar actions |
+| `scheduling/request` | Meeting scheduling — propose, counter, accept, reject, cancel |
 | `transfer/request` | Value movement |
 | `permissions/request-grants` | Ask for permissions |
 
@@ -243,7 +259,8 @@ In OpenClaw plugin mode, use `tap_gateway send_message` instead of the CLI for s
 
 ## Transfer Requests
 
-Transfer requests ask a peer to send ETH or USDC. TAP hard-blocks execution unless a matching active grant exists — there is no override.
+Transfer requests ask a peer to send ETH or USDC. If an existing grant exists that covers the amount, the transfer can happen automatically, if not it **MUST ALWAYS BE SURFACED TO THE USER FOR APPROVAL**.
+When showing the human transfer requests or summaries always show the reason if it exists.
 
 ```bash
 tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
@@ -254,6 +271,89 @@ In OpenClaw plugin mode, use `tap_gateway request_funds` instead.
 Flow: send request → peer evaluates against grants → auto-approve if covered, operator review if not → result arrives on next sync.
 
 Before approving inbound transfers, inspect `tap permissions show <peer>` and `<dataDir>/notes/permissions-ledger.md`.
+
+## Direct Transfers
+
+Direct transfers send funds from the local agent wallet to any EVM address (no peer request, no XMTP).
+
+```bash
+tap transfer --to <address> --asset <native|usdc> --amount <amount> [--chain <chain>] [--yes]
+```
+
+Example:
+
+```bash
+tap transfer --to 0x1111111111111111111111111111111111111111 --asset usdc --amount 5 --chain base
+```
+
+Validation errors:
+- invalid `--to` address
+- invalid/non-positive `--amount`
+- unsupported `--asset` (must be `native` or `usdc`)
+- unknown chain or `usdc` on a chain without a configured USDC token
+
+In OpenClaw plugin mode, use `tap_gateway transfer` with `asset`, `amount`, `toAddress`, and optionally `chain` (defaults to configured chain, must be CAIP-2).
+
+## Meeting Scheduling
+
+Schedule meetings with connected peers. Agents negotiate times autonomously (checking calendars, finding overlapping availability, counter-proposing), but always ask the human for final confirmation before accepting.
+
+### Setup calendar (optional but recommended)
+
+```bash
+tap calendar setup --provider google    # Walk through Google Calendar auth
+tap calendar check                      # Verify connection works
+```
+
+Without a calendar provider, scheduling still works — you just respond to proposals manually instead of the agent auto-checking availability.
+
+### Request a meeting
+
+```bash
+tap message request-meeting BobAgent --title "Dinner" --duration 90 --preferred "2026-03-28T19:00:00Z" --note "That Italian place?"
+```
+
+- `--preferred` is optional. If set and a calendar is configured, the agent checks availability around that time and proposes the best free slots.
+- If no preferred time or no calendar, the preferred time becomes the single proposed slot.
+- Returns a `schedulingId` you use to track this negotiation.
+
+### Respond to a proposal
+
+```bash
+tap message respond-meeting sch_abc123 --accept
+tap message respond-meeting sch_abc123 --reject --reason "Busy that week"
+```
+
+When your agent has a calendar configured and a scheduling grant covers the request, it auto-negotiates (checks your calendar, counters if no overlap) and surfaces the best matching slot for your approval. You just confirm with `--accept`.
+
+### Cancel a confirmed meeting
+
+```bash
+tap message cancel-meeting sch_abc123 --reason "Something came up"
+```
+
+Sends cancellation to the peer and removes the event from your calendar.
+
+### How negotiation works
+
+1. Alice's agent checks her calendar, sends a proposal with ranked time slots
+2. Bob's agent checks Bob's calendar against the proposal:
+   - **Overlap found** → surfaces the best slot for Bob's approval
+   - **No overlap** → auto-counters with Bob's available slots
+   - **No calendar** → defers to Bob for manual decision
+3. When agents converge on a slot, both humans confirm
+4. Calendar events are created on both sides
+
+Grants authorize auto-negotiation (the agent handles the back-and-forth), not auto-acceptance — the human always confirms the final booking. Without a grant, every inbound proposal is surfaced for manual decision.
+
+### Scheduling grant constraints
+
+| Constraint | Type | Purpose |
+|---|---|---|
+| `maxDurationMinutes` | number | Reject proposals longer than this |
+| `allowedDays` | string[] | Allowed days: `["mon","tue","wed","thu","fri"]` |
+| `allowedTimeRange` | `{ start, end }` | Business hours in local time, e.g., `"09:00"` to `"18:00"` |
+| `timezone` | string | IANA timezone for interpreting day/time constraints |
 
 ## OpenClaw Plugin Mode
 
@@ -285,6 +385,9 @@ In fallback mode, use `tap message sync` on heartbeat. Do not run `tap message l
 | `publish_grants` | `peer`, `grantSet`, `note` (opt) | Publish grants (sets `grantedByMe`). |
 | `request_grants` | `peer`, `grantSet`, `note` (opt) | Ask peer to publish grants to you. |
 | `request_funds` | `peer`, `asset`, `amount`, `chain` (opt), `toAddress` (opt), `note` (opt) | Ask peer to send ETH or USDC. Hard-blocked without matching grant. |
+| `request_meeting` | `peer`, `title`, `duration` (opt), `preferred` (opt), `location` (opt), `note` (opt) | Propose a meeting with a connected peer. |
+| `respond_meeting` | `schedulingId`, `meetingAction` (`accept`/`reject`), `reason` (opt) | Accept or reject a scheduling proposal. |
+| `cancel_meeting` | `schedulingId`, `reason` (opt) | Cancel a confirmed meeting. |
 | `list_pending` | — | List queued inbound requests awaiting approval. |
 | `resolve_pending` | `requestId`, `approve` (bool) | Approve or reject a pending request. |
 
@@ -295,12 +398,13 @@ All non-rejected inbound events wake the agent immediately. When `[TAP Notificat
 **Critical:** Your heartbeat reply does NOT reach the user through their messaging app. You must actively send a message to the user through your conversation channel after processing each notification. Never process a notification silently.
 
 **ESCALATION** — needs the user's decision:
-1. Read the escalation details (peer, request type, amount if transfer)
+1. Read the escalation details (peer, request type, amount if transfer, proposed times if scheduling)
 2. For connection requests: `tap identity resolve <agentId>` to learn who's asking
 3. For transfer requests: `tap permissions show <peer>` and check the permissions ledger
-4. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
-5. Wait for the user's decision
-6. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`
+4. For scheduling proposals: show the proposed times in the user's timezone, the meeting title, and who's asking
+5. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
+6. Wait for the user's decision
+7. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`, or use `tap_gateway respond_meeting` for scheduling
 
 **SUMMARY** — act and inform the user:
 - **Messages**: Run `tap conversations list --with <peer>` then `tap conversations show <id>` to get the actual content. Read the message, understand the context, and **respond automatically** using `tap_gateway send_message`. If the message is ambiguous, requires human judgment, or you genuinely don't know how to respond, **tell the user** what the peer said and ask for guidance instead. Always **message the user** with what the peer said and how you responded (or that you need their input).
@@ -322,7 +426,16 @@ tap balance / config show / identity show / identity resolve
 
 For multi-identity setups: get `dataDir` from `tap_gateway status`, then pass `--data-dir <path>`.
 
-## Utility Commands
+## Action-First Rule
+
+Execute commands before asking questions. When a user asks to install, set up, or use TAP:
+
+1. Run the status check immediately — don't explain what you're about to do
+2. Let the command outputs tell you what's needed next
+3. Only ask the user when you genuinely need their input
+4. Ask **one question at a time**, act on the answer, then continue
+
+Do not present overviews, tables, or summaries of TAP before acting. Do not bundle multiple questions into one message.
 
 ```bash
 tap balance [chain]                    # ETH + USDC balances
@@ -335,10 +448,10 @@ tap install                            # Auto-detect host
 tap install --runtime claude           # Claude Code skill install
 tap install --runtime openclaw         # OpenClaw plugin install
 tap remove --dry-run                   # Preview what would be deleted
-tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
+tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode offers balance sweep first)
 ```
 
-`tap remove` is local only — does not unregister on-chain or notify peers.
+`tap remove` is local only — does not unregister on-chain or notify peers. In interactive sessions it also shows the current native on-chain balance and can optionally transfer remaining funds before final wipe confirmation.
 
 ## Common Errors
 
@@ -350,9 +463,12 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
-| `Insufficient funds` | Fund the wallet with USDC (Base) or native gas (other chains) |
+| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or USDC to the Servo execution account on Taiko (Taiko agents, run `tap balance --json` for the address) |
 | `Invalid or expired invite` | Create a fresh invite |
 | `Contact not active yet` | Peer hasn't synced — run `tap message sync` |
 | `Peer not found in contacts` | Connect first or check the name/agent ID |
 | `Grant not found` | The revoke target doesn't exist — check `tap permissions show` |
 | `tap remove` blocked | Stop the live transport owner first |
+| `No calendar provider configured` | Run `tap calendar setup --provider google` |
+| `Google Workspace CLI (gws) is not installed` | Install with `npm install -g @googleworkspace/cli` |
+| `No matching scheduling grant` | Peer needs to publish a `scheduling/request` grant to you |

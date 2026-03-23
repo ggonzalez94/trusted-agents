@@ -5,7 +5,7 @@ import type { TransferActionRequest } from "./actions.js";
 import { getUsdcAsset } from "./assets.js";
 import { executeContractCalls } from "./execution.js";
 
-const ERC20_TRANSFER_ABI = [
+export const ERC20_TRANSFER_ABI = [
 	{
 		type: "function",
 		name: "transfer",

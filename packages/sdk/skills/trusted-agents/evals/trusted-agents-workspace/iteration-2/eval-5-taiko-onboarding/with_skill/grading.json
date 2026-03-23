@@ -1,0 +1,24 @@
+{
+  "expectations": [
+    {
+      "text": "Agent runs tap init with taiko chain",
+      "passed": true,
+      "evidence": "Found match for pattern: tap init --chain taiko"
+    },
+    {
+      "text": "Agent mentions Tack as the IPFS provider for Taiko",
+      "passed": true,
+      "evidence": "Found match for pattern: Tack"
+    },
+    {
+      "text": "Agent mentions USDC on Taiko (not Base) for Taiko agents",
+      "passed": true,
+      "evidence": "Found match for pattern: USDC on Taiko"
+    },
+    {
+      "text": "Agent does not tell the user to fund Base USDC for a Taiko agent",
+      "passed": true,
+      "evidence": "No forbidden patterns found"
+    }
+  ]
+}

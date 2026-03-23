@@ -1,13 +1,17 @@
 import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,
+	SchedulingHandler,
 	type PermissionGrantSet,
+	type SchedulingProposal,
 	TapMessagingService,
+	type TapPendingSchedulingDetails,
 	type TapRequestFundsInput,
 	type TapServiceStatus,
 	type TrustedAgentsConfig,
 	buildDefaultTapRuntimeContext,
 	executeOnchainTransfer,
+	generateSchedulingId,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import { generateInvite } from "trusted-agents-core";
@@ -280,6 +284,165 @@ export class OpenClawTapRegistry {
 		return await runtime.mutex.runExclusive(async () => await runtime.service.requestFunds(input));
 	}
 
+	async transfer(params: {
+		identity?: string;
+		asset: "native" | "usdc";
+		amount: string;
+		chain?: string;
+		toAddress: `0x${string}`;
+	}): Promise<{
+		identity: string;
+		status: "submitted";
+		asset: string;
+		amount: string;
+		chain: string;
+		to_address: string;
+		tx_hash: string;
+	}> {
+		const runtime = await this.ensureRuntimeForAction(params.identity);
+		const chain = params.chain ?? runtime.config.chain;
+		const result = await runtime.mutex.runExclusive(
+			async () =>
+				await executeOnchainTransfer(runtime.config, {
+					type: "transfer/request",
+					actionId: `gateway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+					asset: params.asset,
+					amount: params.amount,
+					chain,
+					toAddress: params.toAddress,
+				}),
+		);
+		return {
+			identity: runtime.definition.name,
+			status: "submitted",
+			asset: params.asset,
+			amount: params.amount,
+			chain,
+			to_address: params.toAddress,
+			tx_hash: result.txHash,
+		};
+	}
+
+	async requestMeeting(params: {
+		identity?: string;
+		peer: string;
+		title: string;
+		duration: number;
+		preferred?: string;
+		location?: string;
+		note?: string;
+	}) {
+		const runtime = await this.ensureRuntimeForAction(params.identity);
+
+		const schedulingId = generateSchedulingId();
+		const durationMs = params.duration * 60 * 1000;
+
+		let slotStart: Date;
+		if (params.preferred) {
+			slotStart = new Date(params.preferred);
+			if (Number.isNaN(slotStart.getTime())) {
+				throw new Error(`Invalid preferred time: ${params.preferred}. Use ISO 8601 format.`);
+			}
+		} else {
+			slotStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
+		}
+		const slotEnd = new Date(slotStart.getTime() + durationMs);
+		const originTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+		const proposal: SchedulingProposal = {
+			type: "scheduling/propose",
+			schedulingId,
+			title: params.title,
+			duration: params.duration,
+			slots: [{ start: slotStart.toISOString(), end: slotEnd.toISOString() }],
+			originTimezone,
+			...(params.location ? { location: params.location } : {}),
+			...(params.note ? { note: params.note } : {}),
+		};
+
+		return await runtime.mutex.runExclusive(
+			async () => await runtime.service.requestMeeting({ peer: params.peer, proposal }),
+		);
+	}
+
+	async respondMeeting(params: {
+		identity?: string;
+		schedulingId: string;
+		action: string;
+		reason?: string;
+	}) {
+		const runtime = await this.ensureRuntimeForAction(params.identity);
+		const approve = params.action === "accept";
+
+		const pending = await runtime.mutex.runExclusive(
+			async () => await runtime.service.listPendingRequests(),
+		);
+		const matching = pending.find(
+			(r) =>
+				r.direction === "inbound" &&
+				r.details?.type === "scheduling" &&
+				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
+		);
+
+		if (!matching) {
+			throw new Error(
+				`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
+			);
+		}
+
+		const report = await runtime.mutex.runExclusive(
+			async () => await runtime.service.resolvePending(matching.requestId, approve, params.reason),
+		);
+
+		return {
+			identity: runtime.definition.name,
+			resolved: true,
+			schedulingId: params.schedulingId,
+			action: params.action,
+			requestId: matching.requestId,
+			...(params.reason ? { reason: params.reason } : {}),
+			pendingRequests: report.pendingRequests.length,
+		};
+	}
+
+	async cancelMeeting(params: {
+		identity?: string;
+		schedulingId: string;
+		reason?: string;
+	}) {
+		const runtime = await this.ensureRuntimeForAction(params.identity);
+
+		const pending = await runtime.mutex.runExclusive(
+			async () => await runtime.service.listPendingRequests(),
+		);
+		const matching = pending.find(
+			(r) =>
+				r.direction === "outbound" &&
+				r.details?.type === "scheduling" &&
+				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
+		);
+
+		if (!matching) {
+			throw new Error(
+				`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
+			);
+		}
+
+		const report = await runtime.mutex.runExclusive(
+			async () =>
+				await runtime.service.cancelPendingSchedulingRequest(matching.requestId, params.reason),
+		);
+
+		return {
+			identity: runtime.definition.name,
+			cancelled: true,
+			schedulingId: params.schedulingId,
+			requestId: matching.requestId,
+			...(params.reason ? { reason: params.reason } : {}),
+			pendingRequests: report.pendingRequests.length,
+		};
+	}
+
 	async listPending(identity?: string) {
 		const names = this.resolveIdentitySelection(identity);
 		const results = await Promise.all(
@@ -380,11 +543,19 @@ export class OpenClawTapRegistry {
 		const context = buildDefaultTapRuntimeContext(config);
 		const notificationQueue = new TapNotificationQueue();
 		this.notificationQueues.set(name, notificationQueue);
+		const schedulingHandler = new SchedulingHandler({
+			hooks: {
+				approveScheduling: async () => {
+					return null; // Defer for operator approval
+				},
+			},
+		});
 		const runtime: ManagedTapRuntime = {
 			definition,
 			config,
 			service: new TapMessagingService(context, {
 				ownerLabel: `openclaw:${definition.name}`,
+				schedulingHandler,
 				hooks: {
 					executeTransfer: async (serviceConfig, request) =>
 						await executeOnchainTransfer(serviceConfig, request),
@@ -437,6 +608,33 @@ export class OpenClawTapRegistry {
 					},
 					approveConnection: async () => {
 						return null; // Always escalate to user
+					},
+					confirmMeeting: async () => {
+						// Return false to prevent auto-confirmation; operator resolves via tap_gateway
+						return false;
+					},
+					onMeetingConfirmed: async (meeting) => {
+						const enqueued = notificationQueue.push({
+							type: "summary",
+							identity: name,
+							timestamp: new Date().toISOString(),
+							method: "scheduling/accept",
+							from: meeting.peerAgentId,
+							fromName: meeting.peerName,
+							messageId: meeting.schedulingId,
+							detail: {
+								schedulingId: meeting.schedulingId,
+								title: meeting.title,
+								slot: meeting.slot,
+								eventId: meeting.eventId,
+							},
+							oneLiner: `Meeting confirmed with ${meeting.peerName}: "${meeting.title}"`,
+						});
+						if (enqueued) {
+							void this.triggerEscalation(
+								`Meeting confirmed with ${meeting.peerName}: "${meeting.title}"`,
+							);
+						}
 					},
 				},
 			}),
@@ -563,6 +761,16 @@ export class OpenClawTapRegistry {
 				return `Connection confirmed with ${peer}`;
 			case "action/request":
 				return `Action request from ${peer}`;
+			case "scheduling/propose":
+				return `Meeting proposal from ${peer}`;
+			case "scheduling/counter":
+				return `Counter-proposal from ${peer}`;
+			case "scheduling/accept":
+				return `Meeting accepted by ${peer}`;
+			case "scheduling/reject":
+				return `Meeting rejected by ${peer}`;
+			case "scheduling/cancel":
+				return `Meeting cancelled by ${peer}`;
 			default:
 				return `TAP event: ${event.method} from ${peer}`;
 		}

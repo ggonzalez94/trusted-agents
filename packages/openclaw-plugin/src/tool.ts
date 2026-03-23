@@ -14,6 +14,10 @@ const ACTIONS = [
 	"publish_grants",
 	"request_grants",
 	"request_funds",
+	"transfer",
+	"request_meeting",
+	"respond_meeting",
+	"cancel_meeting",
 	"list_pending",
 	"resolve_pending",
 ] as const;
@@ -58,6 +62,23 @@ export const TapGatewayToolSchema = Type.Object(
 		expiresInSeconds: Type.Optional(
 			Type.Number({ description: "Invite expiry in seconds", minimum: 1 }),
 		),
+		title: Type.Optional(Type.String({ description: "Meeting title" })),
+		duration: Type.Optional(
+			Type.Number({ description: "Meeting duration in minutes", minimum: 1 }),
+		),
+		preferred: Type.Optional(
+			Type.String({ description: "Preferred meeting time in ISO 8601 format" }),
+		),
+		location: Type.Optional(Type.String({ description: "Optional meeting location" })),
+		schedulingId: Type.Optional(Type.String({ description: "Scheduling request ID" })),
+		meetingAction: Type.Optional(
+			Type.Union([Type.Literal("accept"), Type.Literal("reject")], {
+				description: "Response action for a meeting request (accept or reject)",
+			}),
+		),
+		reason: Type.Optional(
+			Type.String({ description: "Optional reason for rejection or cancellation" }),
+		),
 	},
 	{ additionalProperties: false },
 );
@@ -78,6 +99,13 @@ interface TapGatewayToolParams {
 	chain?: string;
 	toAddress?: string;
 	expiresInSeconds?: number;
+	title?: string;
+	duration?: number;
+	preferred?: string;
+	location?: string;
+	schedulingId?: string;
+	meetingAction?: "accept" | "reject";
+	reason?: string;
 }
 
 export function createTapGatewayTool(registry: OpenClawTapRegistry): AnyAgentTool {
@@ -85,7 +113,7 @@ export function createTapGatewayTool(registry: OpenClawTapRegistry): AnyAgentToo
 		name: "tap_gateway",
 		label: "TAP Gateway",
 		description:
-			"Operate the Trusted Agents Protocol inside OpenClaw Gateway. Use this when the TAP OpenClaw plugin is installed for status, sync, connect, messaging, grant updates, fund requests, and pending approval resolution.",
+			"Operate the Trusted Agents Protocol inside OpenClaw Gateway. Use this when the TAP OpenClaw plugin is installed for status, sync, connect, messaging, grant updates, fund requests, direct transfers, and pending approval resolution.",
 		parameters: TapGatewayToolSchema,
 		async execute(_toolCallId, params) {
 			return json(await executeTapGatewayAction(registry, params as TapGatewayToolParams));
@@ -142,6 +170,37 @@ async function executeTapGatewayAction(
 				toAddress: normalizeAddress(params.toAddress),
 				note: optionalString(params.note),
 			});
+		case "transfer":
+			return await registry.transfer({
+				identity: params.identity,
+				asset: params.asset ?? "native",
+				amount: requireString(params.amount, "amount"),
+				chain: optionalString(params.chain),
+				toAddress: requireAddress(params.toAddress, "toAddress"),
+			});
+		case "request_meeting":
+			return await registry.requestMeeting({
+				identity: params.identity,
+				peer: requireString(params.peer, "peer"),
+				title: requireString(params.title, "title"),
+				duration: typeof params.duration === "number" ? params.duration : 60,
+				preferred: optionalString(params.preferred),
+				location: optionalString(params.location),
+				note: optionalString(params.note),
+			});
+		case "respond_meeting":
+			return await registry.respondMeeting({
+				identity: params.identity,
+				schedulingId: requireString(params.schedulingId, "schedulingId"),
+				action: requireString(params.meetingAction, "meetingAction"),
+				reason: optionalString(params.reason),
+			});
+		case "cancel_meeting":
+			return await registry.cancelMeeting({
+				identity: params.identity,
+				schedulingId: requireString(params.schedulingId, "schedulingId"),
+				reason: optionalString(params.reason),
+			});
 		case "list_pending":
 			return await registry.listPending(params.identity);
 		case "resolve_pending":
@@ -180,6 +239,16 @@ function optionalString(value: string | undefined): string | undefined {
 function requireBoolean(value: boolean | undefined, name: string): boolean {
 	if (typeof value !== "boolean") {
 		throw new Error(`${name} is required`);
+	}
+	return value;
+}
+
+function requireAddress(value: string | undefined, name: string): `0x${string}` {
+	if (value === undefined || value.trim().length === 0) {
+		throw new Error(`${name} is required`);
+	}
+	if (!isEthereumAddress(value)) {
+		throw new Error(`Invalid Ethereum address: ${value}`);
 	}
 	return value;
 }

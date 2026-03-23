@@ -518,8 +518,8 @@ describe("execution", () => {
 				if (functionName === "getAddress") return EXECUTION_ADDRESS;
 				if (functionName === "getNonce") return 0n;
 				if (functionName === "nonces") {
-					if (args?.[0] !== OWNER_ADDRESS) {
-						throw new Error("permit nonce must be loaded for EOA owner");
+					if (args?.[0] !== EXECUTION_ADDRESS) {
+						throw new Error("permit nonce must be loaded for smart account");
 					}
 					return 7n;
 				}
@@ -635,7 +635,7 @@ describe("execution", () => {
 		expect(readContract).toHaveBeenCalledWith(
 			expect.objectContaining({
 				functionName: "nonces",
-				args: [OWNER_ADDRESS],
+				args: [EXECUTION_ADDRESS],
 			}),
 		);
 		const stubRequest = requests.find((request) => request.method === "pm_getPaymasterStubData");

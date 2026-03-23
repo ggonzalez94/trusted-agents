@@ -9,6 +9,8 @@ import type {
 	TapRequestFundsInput,
 	TapRequestFundsResult,
 	TapRequestGrantSetResult,
+	TapRequestMeetingInput,
+	TapRequestMeetingResult,
 	TapSendMessageResult,
 } from "./service.js";
 
@@ -17,7 +19,8 @@ export type TapCommandJobType =
 	| "send-message"
 	| "publish-grant-set"
 	| "request-grant-set"
-	| "request-funds";
+	| "request-funds"
+	| "request-meeting";
 
 interface TapCommandJobBase<TType extends TapCommandJobType, TPayload> {
 	jobId: string;
@@ -73,12 +76,21 @@ export interface TapRequestFundsJob
 		}
 	> {}
 
+export interface TapRequestMeetingJob
+	extends TapCommandJobBase<
+		"request-meeting",
+		{
+			input: TapRequestMeetingInput;
+		}
+	> {}
+
 export type TapCommandJob =
 	| TapConnectJob
 	| TapSendMessageJob
 	| TapPublishGrantSetJob
 	| TapRequestGrantSetJob
-	| TapRequestFundsJob;
+	| TapRequestFundsJob
+	| TapRequestMeetingJob;
 
 export type ProcessingTapCommandJob<TJob extends TapCommandJob = TapCommandJob> = TJob & {
 	claimedAt: string;
@@ -91,7 +103,8 @@ export type TapCommandJobResultPayload =
 	| TapSendMessageResult
 	| TapPublishGrantSetResult
 	| TapRequestGrantSetResult
-	| TapRequestFundsResult;
+	| TapRequestFundsResult
+	| TapRequestMeetingResult;
 
 export interface TapCommandJobResult {
 	jobId: string;
