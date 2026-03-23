@@ -73,7 +73,7 @@ tap init --chain base
 
 This generates a fresh wallet and local config.
 
-**Chain rules:** Default to `base` (Base mainnet) without asking. Only offer `taiko` (Taiko mainnet) if the user explicitly asks for an alternative. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
+**Chain rules:** Always ask the user what chain they want to use. The two options currently are `taiko` and `bases`. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
 
 ### Step 2: Fund the wallet
 
@@ -88,9 +88,9 @@ Your chain determines everything — registration chain, gas payment, and IPFS u
 
 IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
 
-**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Fund the **execution address** with USDC.
+**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
 
-For the full Servo paymaster specification (RPC methods, permit flow, smart account factory, pitfalls), read the [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md).
+If the user chooses Taiko read the full [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md). It will help you use the smart account and the paymaster effectively.
 
 Confirm with `tap balance` before continuing.
 
