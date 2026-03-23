@@ -1046,8 +1046,9 @@ jobs:
       - name: Publish trusted-agents-core
         working-directory: packages/core
         run: |
-          if npm view trusted-agents-core@${{ github.ref_name }} version 2>/dev/null; then
-            echo "trusted-agents-core@${{ github.ref_name }} already published, skipping"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-core@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-core@$TAG_VERSION already published, skipping"
           else
             bun publish --access public --no-git-checks --provenance
           fi
@@ -1055,8 +1056,9 @@ jobs:
       - name: Publish trusted-agents-cli
         working-directory: packages/cli
         run: |
-          if npm view trusted-agents-cli@${{ github.ref_name }} version 2>/dev/null; then
-            echo "trusted-agents-cli@${{ github.ref_name }} already published, skipping"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-cli@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-cli@$TAG_VERSION already published, skipping"
           else
             bun publish --access public --no-git-checks --provenance
           fi
@@ -1064,8 +1066,9 @@ jobs:
       - name: Publish trusted-agents-tap
         working-directory: packages/openclaw-plugin
         run: |
-          if npm view trusted-agents-tap@${{ github.ref_name }} version 2>/dev/null; then
-            echo "trusted-agents-tap@${{ github.ref_name }} already published, skipping"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-tap@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-tap@$TAG_VERSION already published, skipping"
           else
             bun publish --access public --no-git-checks --provenance
           fi
