@@ -1,7 +1,7 @@
 import type { PermissionGrant } from "../permissions/types.js";
 import type { Contact } from "../trust/types.js";
 import type { AvailabilityWindow, ICalendarProvider } from "./calendar-provider.js";
-import { findApplicableSchedulingGrants } from "./grants.js";
+import { findApplicableSchedulingGrants, findSchedulableSchedulingSlots } from "./grants.js";
 import type { SchedulingAccept, SchedulingProposal, TimeSlot } from "./types.js";
 
 // ── Public interfaces ─────────────────────────────────────────────────────────
@@ -65,6 +65,27 @@ function findOverlappingFreeSlots(
 	);
 }
 
+function buildCounterSlots(
+	availability: AvailabilityWindow[],
+	durationMinutes: number,
+): TimeSlot[] {
+	const durationMs = durationMinutes * 60 * 1000;
+	return availability
+		.filter((window) => window.status === "free")
+		.map((window) => {
+			const startMs = new Date(window.start).getTime();
+			const endMs = new Date(window.end).getTime();
+			if (endMs - startMs < durationMs) {
+				return null;
+			}
+			return {
+				start: window.start,
+				end: new Date(startMs + durationMs).toISOString(),
+			};
+		})
+		.filter((slot): slot is TimeSlot => slot !== null);
+}
+
 // ── SchedulingHandler ─────────────────────────────────────────────────────────
 
 export class SchedulingHandler {
@@ -87,6 +108,9 @@ export class SchedulingHandler {
 		);
 
 		const hasGrants = activeSchedulingGrants.length > 0;
+		const schedulableProposalSlots = hasGrants
+			? findSchedulableSchedulingSlots(activeSchedulingGrants, proposal)
+			: proposal.slots;
 
 		if (!hasGrants) {
 			if (this.hooks.approveScheduling) {
@@ -113,19 +137,23 @@ export class SchedulingHandler {
 			return { action: "defer" };
 		}
 
-		const timeRange = getProposalTimeRange(proposal.slots);
+		const timeRange = getProposalTimeRange(schedulableProposalSlots);
 		const availability = await this.calendarProvider.getAvailability(timeRange);
 
-		const overlapping = findOverlappingFreeSlots(proposal.slots, availability);
+		const overlapping = findOverlappingFreeSlots(schedulableProposalSlots, availability);
 		const bestSlot = overlapping[0];
 		if (bestSlot !== undefined) {
 			return { action: "confirm", slot: bestSlot, proposal };
 		}
 
-		// No overlap — offer own free slots as counter
-		const freeSlots = availability
-			.filter((w) => w.status === "free")
-			.map((w): TimeSlot => ({ start: w.start, end: w.end }));
+		// No overlap — offer own free slots as counter.
+		let freeSlots = buildCounterSlots(availability, proposal.duration);
+		if (hasGrants) {
+			freeSlots = findSchedulableSchedulingSlots(activeSchedulingGrants, {
+				...proposal,
+				slots: freeSlots,
+			});
+		}
 
 		if (freeSlots.length > 0) {
 			return { action: "counter", slots: freeSlots, proposal };

@@ -82,6 +82,20 @@ describe("GoogleCalendarCliProvider", () => {
 		});
 	});
 
+	describe("getAvailability with malformed JSON", () => {
+		it("throws a contextual parse error", async () => {
+			const provider = new MockGoogleCalendarProvider();
+			provider.setMockResponse("calendar events list", "warning: not json");
+
+			await expect(
+				provider.getAvailability({
+					start: "2026-03-22T09:00:00Z",
+					end: "2026-03-22T17:00:00Z",
+				}),
+			).rejects.toThrow("Failed to parse gws response for calendar events list");
+		});
+	});
+
 	describe("createEvent", () => {
 		it("extracts eventId from gws response", async () => {
 			const provider = new MockGoogleCalendarProvider();
@@ -94,6 +108,19 @@ describe("GoogleCalendarCliProvider", () => {
 			});
 
 			expect(result.eventId).toBe("evt_abc123");
+		});
+
+		it("throws a contextual parse error for malformed JSON", async () => {
+			const provider = new MockGoogleCalendarProvider();
+			provider.setMockResponse("calendar +insert", "warning: not json");
+
+			await expect(
+				provider.createEvent({
+					title: "Test Meeting",
+					start: "2026-03-22T14:00:00Z",
+					end: "2026-03-22T15:00:00Z",
+				}),
+			).rejects.toThrow("Failed to parse gws response for calendar +insert");
 		});
 	});
 

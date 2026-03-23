@@ -80,36 +80,21 @@ describe("meeting CLI commands", () => {
 		expect(errorMock).not.toHaveBeenCalled();
 	});
 
-	it("cancel-meeting cancels outbound scheduling requests and forwards reason", async () => {
-		const cancelPendingSchedulingRequest = vi.fn(async () => ({ pendingRequests: [] }));
+	it("cancel-meeting cancels meetings by scheduling id and forwards reason", async () => {
+		const cancelMeeting = vi.fn(async () => ({
+			requestId: "matched-request",
+			peerAgentId: 10,
+			schedulingId: "sch-2",
+			report: { pendingRequests: [] },
+		}));
 		createCliTapMessagingServiceMock.mockReturnValue({
-			listPendingRequests: vi.fn(async () => [
-				{
-					requestId: "inbound-should-ignore",
-					peerAgentId: 10,
-					direction: "inbound",
-					kind: "request",
-					method: "action/request",
-					status: "pending",
-					details: { type: "scheduling", schedulingId: "sch-2" },
-				},
-				{
-					requestId: "outbound-target",
-					peerAgentId: 10,
-					direction: "outbound",
-					kind: "request",
-					method: "action/request",
-					status: "pending",
-					details: { type: "scheduling", schedulingId: "sch-2" },
-				},
-			]),
-			cancelPendingSchedulingRequest,
+			cancelMeeting,
 		});
 
 		await messageCancelMeetingCommand("sch-2", { reason: "Conflict" }, { plain: true });
 
-		expect(cancelPendingSchedulingRequest).toHaveBeenCalledTimes(1);
-		expect(cancelPendingSchedulingRequest).toHaveBeenCalledWith("outbound-target", "Conflict");
+		expect(cancelMeeting).toHaveBeenCalledTimes(1);
+		expect(cancelMeeting).toHaveBeenCalledWith("sch-2", "Conflict");
 		expect(errorMock).not.toHaveBeenCalled();
 	});
 });

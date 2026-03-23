@@ -2,9 +2,12 @@ import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { ICalendarProvider } from "trusted-agents-core";
+import { ValidationError } from "trusted-agents-core";
 import YAML from "yaml";
 import { writeFileAtomic } from "../atomic-write.js";
 import { commandExists } from "../shell.js";
+import { GoogleCalendarCliProvider } from "./google-calendar.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,4 +69,16 @@ export function readCalendarProvider(dataDir: string): string | undefined {
 	}
 	const provider = (yaml.calendar as Record<string, unknown>).provider;
 	return typeof provider === "string" ? provider : undefined;
+}
+
+export function createCalendarProvider(provider: string): ICalendarProvider {
+	if (provider === "google") {
+		return new GoogleCalendarCliProvider();
+	}
+	throw new ValidationError(`Unknown calendar provider: ${provider}`);
+}
+
+export function resolveConfiguredCalendarProvider(dataDir: string): ICalendarProvider | undefined {
+	const provider = readCalendarProvider(dataDir);
+	return provider ? createCalendarProvider(provider) : undefined;
 }
