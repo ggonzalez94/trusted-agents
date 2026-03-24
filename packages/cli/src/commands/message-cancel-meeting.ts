@@ -1,4 +1,3 @@
-import { type TapPendingSchedulingDetails, ValidationError } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -24,33 +23,17 @@ export async function messageCancelMeetingCommand(
 			ownerLabel: "tap:cancel-meeting",
 		});
 
-		verbose(`Cancelling scheduling request ${schedulingId}...`, opts);
-
-		// Look for a pending scheduling request in the pending requests
-		const pendingRequests = await service.listPendingRequests();
-		const matching = pendingRequests.find(
-			(r) =>
-				r.direction === "outbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === schedulingId,
-		);
-
-		if (!matching) {
-			throw new ValidationError(
-				`No scheduling request found with schedulingId: ${schedulingId}. It may have already been completed or cancelled.`,
-			);
-		}
-
-		const report = await service.cancelPendingSchedulingRequest(matching.requestId, cmdOpts.reason);
+		verbose(`Cancelling meeting ${schedulingId}...`, opts);
+		const result = await service.cancelMeeting(schedulingId, cmdOpts.reason);
 
 		success(
 			{
 				cancelled: true,
 				scheduling_id: schedulingId,
-				request_id: matching.requestId,
-				peer_agent_id: matching.peerAgentId,
+				request_id: result.requestId,
+				peer_agent_id: result.peerAgentId,
 				...(cmdOpts.reason ? { reason: cmdOpts.reason } : {}),
-				pending_requests: report.pendingRequests.length,
+				pending_requests: result.report.pendingRequests.length,
 			},
 			opts,
 			startTime,

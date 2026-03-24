@@ -5,8 +5,7 @@ import {
 	generateSchedulingId,
 	validateSchedulingProposal,
 } from "trusted-agents-core";
-import { GoogleCalendarCliProvider } from "../lib/calendar/google-calendar.js";
-import { readCalendarProvider } from "../lib/calendar/setup.js";
+import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -141,7 +140,7 @@ async function buildSlots(
 		throw new ValidationError(`Invalid preferred time: ${preferred}. Use ISO 8601 format.`);
 	}
 
-	const calendarProvider = readCalendarProvider(dataDir);
+	const calendarProvider = resolveConfiguredCalendarProvider(dataDir);
 	if (!calendarProvider) {
 		// No calendar: single slot at preferred time
 		const end = new Date(preferredDate.getTime() + durationMinutes * 60 * 1000);
@@ -149,11 +148,10 @@ async function buildSlots(
 	}
 
 	// With calendar: check availability around preferred time and build ranked slots
-	const provider = new GoogleCalendarCliProvider();
 	const windowStart = new Date(preferredDate.getTime() - 2 * 60 * 60 * 1000); // 2h before
 	const windowEnd = new Date(preferredDate.getTime() + 4 * 60 * 60 * 1000); // 4h after
 
-	const availability = await provider.getAvailability({
+	const availability = await calendarProvider.getAvailability({
 		start: windowStart.toISOString(),
 		end: windowEnd.toISOString(),
 	});

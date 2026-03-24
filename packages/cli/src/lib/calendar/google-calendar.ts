@@ -18,6 +18,17 @@ interface GwsInsertResponse {
 	id?: string;
 }
 
+function parseGwsJson<T>(stdout: string, operation: string): T {
+	try {
+		return JSON.parse(stdout) as T;
+	} catch {
+		const body = stdout.trim();
+		throw new Error(
+			`Failed to parse gws response for ${operation}${body ? `: ${body}` : ": <empty response>"}`,
+		);
+	}
+}
+
 export class GoogleCalendarCliProvider implements ICalendarProvider {
 	protected readonly gwsCommand: string;
 
@@ -68,7 +79,7 @@ export class GoogleCalendarCliProvider implements ICalendarProvider {
 			JSON.stringify(params),
 		]);
 
-		const response = JSON.parse(stdout) as GwsEventsResponse;
+		const response = parseGwsJson<GwsEventsResponse>(stdout, "calendar events list");
 		const events = response.items ?? [];
 
 		return invertToAvailability(events, timeRange.start, timeRange.end);
@@ -90,7 +101,7 @@ export class GoogleCalendarCliProvider implements ICalendarProvider {
 		}
 
 		const { stdout } = await this.runGws(args);
-		const response = JSON.parse(stdout) as GwsInsertResponse;
+		const response = parseGwsJson<GwsInsertResponse>(stdout, "calendar +insert");
 		const eventId = response.id;
 		if (!eventId) {
 			throw new Error("Failed to extract event ID from gws response");

@@ -21,13 +21,13 @@ import { getUsdcAsset } from "../lib/assets.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import {
+	type ExecutionPreview,
 	ensureExecutionReady,
 	executeContractCalls,
 	getExecutionPreview,
 } from "../lib/execution.js";
 import {
-	resolveAutoProvider,
-	resolveIpfsUploadProvider,
+	resolveEffectiveIpfsProvider,
 	resolvePinataJwt,
 	resolveTackApiUrl,
 	uploadToIpfsPinata,
@@ -351,6 +351,29 @@ async function ensureX402UploadFunding(
 	);
 }
 
+function shouldDeployExecutionAccountBeforeUpload(params: {
+	config: TrustedAgentsConfig;
+	uri?: string;
+	pinataJwt?: string;
+	ipfsProvider?: string;
+}): boolean {
+	if (params.uri) {
+		return false;
+	}
+
+	try {
+		return (
+			resolveEffectiveIpfsProvider({
+				chain: params.config.chain,
+				configuredProvider: params.ipfsProvider ?? params.config.ipfs?.provider,
+				pinataJwt: resolvePinataJwt(params.pinataJwt),
+			}) === "tack"
+		);
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Resolve URI for registration metadata.
  *
@@ -366,6 +389,7 @@ async function resolveAgentURI(
 		registrationFile?: RegistrationFile;
 		config: TrustedAgentsConfig;
 		privateKey: `0x${string}`;
+		executionPreview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
 		dataDir: string;
 		uri?: string;
 		pinataJwt?: string;
@@ -398,19 +422,18 @@ async function resolveAgentURI(
 		verbose("Cached CID not reachable via gateway, re-uploading...", opts);
 	}
 
-	let configuredProvider: IpfsUploadProvider;
+	let effectiveProvider: Exclude<IpfsUploadProvider, "auto">;
 	try {
-		configuredProvider =
-			resolveIpfsUploadProvider(params.ipfsProvider ?? params.config.ipfs?.provider) ?? "auto";
+		effectiveProvider = resolveEffectiveIpfsProvider({
+			chain: params.config.chain,
+			configuredProvider: params.ipfsProvider ?? params.config.ipfs?.provider,
+			pinataJwt: resolvePinataJwt(params.pinataJwt),
+		});
 	} catch (err) {
 		error("VALIDATION_ERROR", err instanceof Error ? err.message : String(err), opts);
 		return null;
 	}
 	const jwt = resolvePinataJwt(params.pinataJwt);
-	const effectiveProvider: Exclude<IpfsUploadProvider, "auto"> =
-		configuredProvider === "auto"
-			? resolveAutoProvider(params.config.chain, jwt)
-			: configuredProvider;
 
 	// 3. x402 via Pinata endpoint (Base mainnet USDC)
 	if (effectiveProvider === "x402") {
@@ -452,8 +475,9 @@ Alternatives:
 			opts,
 		);
 		try {
-			const ipfs = await uploadToIpfsTack(params.registrationFile, params.privateKey, {
+			const ipfs = await uploadToIpfsTack(params.registrationFile, params.config, {
 				apiUrl: resolveTackApiUrl(params.config.ipfs?.tackApiUrl),
+				preview: params.executionPreview,
 			});
 			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
@@ -522,7 +546,17 @@ export async function registerCommand(
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
-		await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
+		await ensureExecutionReady(config, chainConfig, {
+			preview: executionPreview,
+			deployEip4337Account:
+				executionPreview.mode === "eip4337" &&
+				shouldDeployExecutionAccountBeforeUpload({
+					config,
+					uri: cmdOpts.uri,
+					pinataJwt: cmdOpts.pinataJwt,
+					ipfsProvider: cmdOpts.ipfsProvider,
+				}),
+		});
 
 		// Build registration file
 		const registrationFile = buildRegistrationFile(
@@ -543,6 +577,7 @@ export async function registerCommand(
 				registrationFile,
 				config,
 				privateKey: config.privateKey,
+				executionPreview,
 				dataDir: config.dataDir,
 				uri: cmdOpts.uri,
 				pinataJwt: cmdOpts.pinataJwt,
@@ -778,7 +813,16 @@ export async function registerUpdateCommand(
 			requireProvider: true,
 		});
 		emitExecutionWarnings(executionPreview, opts);
-		await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
+		await ensureExecutionReady(config, chainConfig, {
+			preview: executionPreview,
+			deployEip4337Account:
+				executionPreview.mode === "eip4337" &&
+				shouldDeployExecutionAccountBeforeUpload({
+					config,
+					pinataJwt: cmdOpts.pinataJwt,
+					ipfsProvider: cmdOpts.ipfsProvider,
+				}),
+		});
 
 		const registrationFile = fullReplacement
 			? buildRegistrationFile(
@@ -808,6 +852,7 @@ export async function registerUpdateCommand(
 				registrationFile,
 				config,
 				privateKey: config.privateKey,
+				executionPreview,
 				dataDir: config.dataDir,
 				pinataJwt: cmdOpts.pinataJwt,
 				ipfsProvider: cmdOpts.ipfsProvider,

@@ -9,6 +9,7 @@ import {
 	getAddress,
 	maxUint256,
 	parseErc6492Signature,
+	serializeErc6492Signature,
 	toHex,
 } from "viem";
 import {
@@ -153,6 +154,22 @@ export interface ExecutionSendResult extends ExecutionPreview {
 	transactionReceipt: TransactionReceipt;
 	transactionHash: Hex;
 	userOperationHash?: Hex;
+}
+
+export interface ExecutionEvmSigner {
+	address: Address;
+	signTypedData(parameters: {
+		domain: Record<string, unknown>;
+		types: Record<string, unknown>;
+		primaryType: string;
+		message: Record<string, unknown>;
+	}): Promise<Hex>;
+	readContract(args: {
+		address: Address;
+		abi: readonly unknown[];
+		functionName: string;
+		args?: readonly unknown[];
+	}): Promise<unknown>;
 }
 
 const ENTRY_POINT_08 = {
@@ -862,6 +879,28 @@ function buildServoCallData(calls: ExecutionCall[]): Hex {
 	});
 }
 
+async function deployServoExecutionAccountIfNeeded(
+	context: Eip4337ExecutionContext,
+	chainConfig: ChainConfig,
+): Promise<void> {
+	const code = await context.publicClient.getCode({
+		address: context.executionAddress,
+	});
+	if (code && code !== "0x") {
+		return;
+	}
+
+	// Send a no-op call to the owner EOA so the first Servo user operation deploys the account
+	// before other flows (for example Tack x402) try to validate it.
+	await executeEip4337Calls(context, chainConfig, [
+		{
+			to: context.owner.address,
+			value: 0n,
+			data: "0x",
+		},
+	]);
+}
+
 async function resolveServoExecutionAddress(
 	publicClient: ReturnType<typeof buildPublicClient>,
 	factoryAddress: Address,
@@ -1024,12 +1063,21 @@ export async function ensureExecutionReady(
 	chainConfig: ChainConfig,
 	{
 		preview,
-	}: { preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode"> } = {},
+		deployEip4337Account = false,
+	}: {
+		preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
+		deployEip4337Account?: boolean;
+	} = {},
 ): Promise<void> {
 	const context = await resolveExecutionContext(config, chainConfig, {
 		pinnedPreview: preview,
 		requireProvider: true,
 	});
+
+	if (deployEip4337Account && context.mode === "eip4337") {
+		await deployServoExecutionAccountIfNeeded(context, chainConfig);
+		return;
+	}
 
 	if (context.mode !== "eip7702" || context.providerConfig?.provider !== "circle") {
 		return;
@@ -1041,6 +1089,78 @@ export async function ensureExecutionReady(
 		context.executionAddress,
 	);
 	cacheCirclePermitMetadata(chainConfig.caip2, context.executionAddress, permitMetadata);
+}
+
+export async function createExecutionEvmSigner(
+	config: TrustedAgentsConfig,
+	chainConfig: ChainConfig,
+	{
+		preview,
+	}: { preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode"> } = {},
+): Promise<ExecutionEvmSigner> {
+	let context = await resolveExecutionContext(config, chainConfig, {
+		pinnedPreview: preview,
+		requireProvider: false,
+	});
+
+	if (context.mode === "eip4337" && !context.providerConfig?.accountFactoryAddress) {
+		context = await resolveExecutionContext(config, chainConfig, {
+			pinnedPreview: preview,
+			requireProvider: true,
+		});
+	}
+
+	const readContract: ExecutionEvmSigner["readContract"] = async (args) =>
+		(await context.publicClient.readContract(args as never)) as unknown;
+
+	if (context.mode === "eoa") {
+		return {
+			address: context.executionAddress,
+			signTypedData: async (parameters) => await context.owner.signTypedData(parameters as never),
+			readContract,
+		};
+	}
+
+	if (context.mode === "eip7702") {
+		return {
+			address: context.executionAddress,
+			signTypedData: async (parameters) => await context.account.signTypedData(parameters as never),
+			readContract,
+		};
+	}
+
+	let isDeployedPromise: Promise<boolean> | undefined;
+	const isDeployed = async () => {
+		if (!isDeployedPromise) {
+			isDeployedPromise = context.publicClient
+				.getCode({ address: context.executionAddress })
+				.then((code) => Boolean(code && code !== "0x"));
+		}
+
+		return await isDeployedPromise;
+	};
+
+	return {
+		address: context.executionAddress,
+		signTypedData: async (parameters) => {
+			const signature = await context.owner.signTypedData(parameters as never);
+			if (await isDeployed()) {
+				return signature;
+			}
+
+			const factoryAddress = context.providerConfig?.accountFactoryAddress;
+			if (!factoryAddress) {
+				throw new Error(`No Servo account factory is configured for ${chainConfig.name}`);
+			}
+
+			return serializeErc6492Signature({
+				address: factoryAddress,
+				data: buildServoFactoryData(context.owner.address),
+				signature,
+			});
+		},
+		readContract,
+	};
 }
 
 async function executeEoaCalls(

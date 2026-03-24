@@ -123,6 +123,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 							`Agent owner address: ${address}`,
 							`${chainLabel} defaults to EIP-4337 with Servo Paymaster.`,
 							"Fund the Servo execution account with USDC (run `tap balance --json` to see `execution_address`).",
+							"`tap register` deploys the Servo execution account before the Tack upload on Taiko.",
 							"IPFS uploads auto-select based on chain (Tack on Taiko, Pinata x402 on Base). Override with --ipfs-provider or --pinata-jwt.",
 						]
 					: [

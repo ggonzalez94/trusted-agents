@@ -45,14 +45,54 @@ When this file conflicts with code, code wins.
 	- local operator workflows
 
 ### `packages/openclaw-plugin`
-- OpenClaw-specific host adapter.
+- OpenClaw-specific host adapter. **Thin plugin, fat CLI** — see rule below.
 - Owns:
 	- Gateway plugin manifest/config
 	- one long-lived TAP runtime per configured identity inside Gateway
 	- periodic reconcile scheduling inside the plugin host
 	- the `tap_gateway` tool surface
-	- OpenClaw-specific TAP skill docs
+	- notification pipeline (event classification, queueing, escalation)
+	- approval deferral hooks (connection, transfer, scheduling)
 - This is the preferred OpenClaw streaming host. OpenClaw shell background jobs are not.
+
+### CLI vs Plugin Boundary (Thin Plugin, Fat CLI)
+
+**Rule: the plugin should only expose actions that require a long-lived transport connection.**
+
+The plugin exists to hold an always-on XMTP transport inside the Gateway process. Its unique capabilities are:
+1. Receiving inbound messages in real-time (notification pipeline, event classification, escalation)
+2. Deferring and resolving pending approvals (connections, transfers, scheduling)
+3. Sending messages/actions through an already-authenticated transport (no cold-start)
+
+Everything else — setup, inspection, on-chain queries, configuration, conversation history — belongs in the CLI because:
+- **Single implementation** — no feature parity maintenance across two surfaces
+- **Testable in isolation** — CLI commands are pure functions over core; plugin actions require a running Gateway
+- **Composable** — CLI works in scripts, CI, other agent runtimes, not just OpenClaw
+- **Lower surface area** — fewer plugin actions = fewer bugs in the always-on process
+
+| Belongs in CLI only | Why |
+|---|---|
+| `init`, `register`, `install`, `remove` | One-time setup, no transport needed |
+| `config show/set`, `identity show/resolve` | Read-only inspection, no transport needed |
+| `contacts list/show/remove` | Local file reads/writes |
+| `conversations list/show` | Local file reads |
+| `permissions show/revoke` | Local reads; revoke is rare enough to not warrant plugin duplication |
+| `balance` | Pure RPC call, no TAP transport |
+| `calendar setup` | One-time OAuth flow |
+| `invite create` | Local crypto operation, no transport needed |
+
+| Belongs in plugin | Why |
+|---|---|
+| `send_message`, `connect` | Uses live transport |
+| `request_funds`, `transfer` | Transport + approval pipeline |
+| `publish_grants`, `request_grants` | Transport |
+| `request_meeting`, `respond_meeting`, `cancel_meeting` | Transport |
+| `list_pending`, `resolve_pending` | Acts on live notification pipeline |
+| `status`, `sync`, `restart` | Plugin lifecycle |
+
+**Key invariant: the plugin never implements protocol logic that doesn't exist in core.** It is a thin adapter that calls `TapMessagingService` methods. If you keep that discipline, the two surfaces stay in sync by construction rather than by manual feature parity.
+
+When adding a new feature, ask: "Does this need a live XMTP transport?" If no, it goes in the CLI only.
 
 ## Skills Layout
 
