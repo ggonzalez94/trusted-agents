@@ -15,7 +15,7 @@ const ENTRY_POINT_08 = "0x0000000000000000000000000000000000000008" as Address;
 const EXECUTION_ADDRESS = "0x1000000000000000000000000000000000000001" as Address;
 const CIRCLE_PAYMASTER_ADDRESS = "0x0578cFB241215b77442a541325d6A4E6dFE700Ec" as Address;
 const CANDIDE_PAYMASTER_ADDRESS = "0x2000000000000000000000000000000000000002" as Address;
-const SERVO_FACTORY_ADDRESS = "0xCa245Ae9B786EF420Dc359430e5833b840880619" as Address;
+const SERVO_FACTORY_ADDRESS = "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716" as Address;
 const OWNER_ADDRESS = privateKeyToAccount(
 	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
 ).address;
@@ -975,6 +975,119 @@ describe("execution", () => {
 		expect(sentUserOperation).not.toHaveProperty("paymasterData");
 		expect(sentUserOperation).not.toHaveProperty("paymasterVerificationGasLimit");
 		expect(sentUserOperation).not.toHaveProperty("paymasterPostOpGasLimit");
+	});
+
+	it("rejects Servo USDC transfers that would consume the paymaster fee reserve", async () => {
+		const tokenAddress = "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b" as Address;
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		const readContract = vi.fn(
+			async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return 0n;
+				if (functionName === "balanceOf") {
+					if (args?.[0] !== EXECUTION_ADDRESS) {
+						throw new Error("balanceOf must be loaded for smart account");
+					}
+					return 471_573n;
+				}
+				if (functionName === "nonces") return 7n;
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				throw new Error(`unexpected function ${functionName}`);
+			},
+		);
+		buildChainPublicClient.mockReturnValue({
+			readContract,
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+							gasPriceGuidance: {
+								suggestedMaxFeePerGas: "0x11a5536",
+								suggestedMaxPriorityFeePerGas: "0xf4240",
+							},
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "pm_getPaymasterStubData") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							paymaster: "0x9999999999999999999999999999999999999999",
+							paymasterData: "0x12",
+							paymasterAndData: "0x999999999999999999999999999999999999999912",
+							callGasLimit: "0x88d8",
+							verificationGasLimit: "0x1d4c8",
+							preVerificationGas: "0x5274",
+							paymasterVerificationGasLimit: "0xea60",
+							paymasterPostOpGasLimit: "0xafc8",
+							tokenAddress,
+							maxTokenCostMicros: "50000",
+							validUntil: 1900000000,
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+		createBundlerClient.mockReturnValue({
+			waitForUserOperationReceipt: vi.fn(),
+		});
+
+		const { executeContractCalls } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+
+		await expect(
+			executeContractCalls(config, config.chains[config.chain]!, [
+				{
+					to: tokenAddress,
+					data: encodeFunctionData({
+						abi: erc20Abi,
+						functionName: "transfer",
+						args: ["0x3000000000000000000000000000000000000003", 471_573n],
+					}),
+				},
+			]),
+		).rejects.toThrow("Reduce the transfer to 0.421573 USDC or less.");
+
+		expect(requests.some((request) => request.method === "pm_getPaymasterStubData")).toBe(true);
+		expect(requests.some((request) => request.method === "pm_getPaymasterData")).toBe(false);
+		expect(requests.some((request) => request.method === "eth_sendUserOperation")).toBe(false);
 	});
 
 	it("omits Servo factory deployment fields when account is already deployed", async () => {

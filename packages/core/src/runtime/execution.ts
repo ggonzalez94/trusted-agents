@@ -3,9 +3,11 @@ import {
 	type Address,
 	type Hex,
 	type TransactionReceipt,
+	decodeFunctionData,
 	encodeFunctionData,
 	encodePacked,
 	erc20Abi,
+	formatUnits,
 	getAddress,
 	maxUint256,
 	parseErc6492Signature,
@@ -24,6 +26,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { signAuthorization } from "viem/actions";
 import {
+	ValidationError,
 	buildChainPublicClient as buildPublicClient,
 	buildChainWalletClient as buildWalletClient,
 } from "../common/index.js";
@@ -208,7 +211,7 @@ const SERVO_ENDPOINTS: Partial<Record<string, string>> = {
 };
 
 const SERVO_ACCOUNT_FACTORIES: Partial<Record<string, Address>> = {
-	"eip155:167000": "0xCa245Ae9B786EF420Dc359430e5833b840880619",
+	"eip155:167000": "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716",
 };
 
 const CIRCLE_PAYMASTER_VERIFICATION_GAS_LIMIT = 200_000n;
@@ -218,6 +221,7 @@ const CANDIDE_ALLOWANCE_BUFFER = 1_000_000n;
 const SERVO_ACCOUNT_SALT = 0n;
 const SERVO_DUMMY_SIGNATURE = `0x${"00".repeat(65)}` as Hex;
 const CIRCLE_PERMIT_METADATA_CACHE = new Map<string, CirclePermitMetadata>();
+const ERC20_TRANSFER_SELECTOR = "0xa9059cbb";
 
 const ERC20_NAME_ABI = [
 	{
@@ -934,6 +938,79 @@ function buildServoCallData(calls: ExecutionCall[]): Hex {
 	});
 }
 
+function sumOutgoingErc20TransferAmount(calls: ExecutionCall[], tokenAddress: Address): bigint {
+	let total = 0n;
+	for (const call of calls) {
+		if (call.to.toLowerCase() !== tokenAddress.toLowerCase()) {
+			continue;
+		}
+
+		const data = call.data ?? "0x";
+		if (!data.startsWith(ERC20_TRANSFER_SELECTOR)) {
+			continue;
+		}
+
+		try {
+			const decoded = decodeFunctionData({
+				abi: erc20Abi,
+				data,
+			});
+			if (decoded.functionName !== "transfer") {
+				continue;
+			}
+
+			const amount = decoded.args[1];
+			if (typeof amount === "bigint") {
+				total += amount;
+			}
+		} catch {}
+	}
+
+	return total;
+}
+
+async function assertServoTokenSpendFitsBalance(
+	context: Eip4337ExecutionContext,
+	chainConfig: ChainConfig,
+	calls: ExecutionCall[],
+	stubQuote: ServoQuoteResponse,
+): Promise<void> {
+	const usdc = getUsdcAsset(chainConfig.caip2);
+	if (!usdc || usdc.address.toLowerCase() !== stubQuote.tokenAddress.toLowerCase()) {
+		return;
+	}
+
+	const outgoingAmount = sumOutgoingErc20TransferAmount(calls, stubQuote.tokenAddress);
+	if (outgoingAmount === 0n) {
+		return;
+	}
+
+	const balance = (await context.publicClient.readContract({
+		address: stubQuote.tokenAddress,
+		abi: erc20Abi,
+		functionName: "balanceOf",
+		args: [context.executionAddress],
+	})) as bigint;
+	const reservedFee = BigInt(stubQuote.maxTokenCostMicros);
+	if (balance >= outgoingAmount + reservedFee) {
+		return;
+	}
+
+	const maxTransferable = balance > reservedFee ? balance - reservedFee : 0n;
+	throw new ValidationError(
+		`Insufficient USDC balance for transfer on ${chainConfig.name}: requested ${formatUnits(
+			outgoingAmount,
+			usdc.decimals,
+		)} USDC, estimated max paymaster fee ${formatUnits(
+			reservedFee,
+			usdc.decimals,
+		)} USDC, current balance ${formatUnits(balance, usdc.decimals)} USDC. Reduce the transfer to ${formatUnits(
+			maxTransferable,
+			usdc.decimals,
+		)} USDC or less.`,
+	);
+}
+
 async function deployServoExecutionAccountIfNeeded(
 	context: Eip4337ExecutionContext,
 	chainConfig: ChainConfig,
@@ -1522,6 +1599,7 @@ async function executeEip4337Calls(
 			{},
 		]),
 	);
+	await assertServoTokenSpendFitsBalance(context, chainConfig, calls, stubQuote);
 	const quotedUserOperation = {
 		...draftUserOperation,
 		callGasLimit: stubQuote.callGasLimit,
