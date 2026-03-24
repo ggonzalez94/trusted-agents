@@ -15,7 +15,6 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { getUsdcAsset } from "../lib/assets.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
@@ -282,7 +281,7 @@ async function ensureX402UploadFunding(
 	}
 
 	const publicClient = buildPublicClient(baseChainConfig);
-	const messagingAddress = privateKeyToAccount(config.privateKey).address;
+	const messagingAddress = config.account.address;
 	const messagingBalance = (await publicClient.readContract({
 		address: usdc.address,
 		abi: erc20Abi,
@@ -388,7 +387,6 @@ async function resolveAgentURI(
 	params: {
 		registrationFile?: RegistrationFile;
 		config: TrustedAgentsConfig;
-		privateKey: `0x${string}`;
 		executionPreview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
 		dataDir: string;
 		uri?: string;
@@ -443,7 +441,7 @@ async function resolveAgentURI(
 		);
 		try {
 			await ensureX402UploadFunding(params.config, opts);
-			const ipfs = await uploadToIpfsX402(params.registrationFile, params.privateKey);
+			const ipfs = await uploadToIpfsX402(params.registrationFile, params.config.account);
 			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
 			await saveIpfsCache(params.dataDir, cache);
@@ -536,8 +534,7 @@ export async function registerCommand(
 			return;
 		}
 
-		const account = privateKeyToAccount(config.privateKey);
-		const agentAddress = account.address;
+		const agentAddress = config.account.address;
 		const executionPreview = await getExecutionPreview(config, chainConfig, {
 			requireProvider: true,
 		});
@@ -576,7 +573,6 @@ export async function registerCommand(
 			{
 				registrationFile,
 				config,
-				privateKey: config.privateKey,
 				executionPreview,
 				dataDir: config.dataDir,
 				uri: cmdOpts.uri,
@@ -679,8 +675,7 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const account = privateKeyToAccount(config.privateKey);
-		const agentAddress = account.address;
+		const agentAddress = config.account.address;
 
 		const hasManifestOverrides =
 			cmdOpts.name !== undefined ||
@@ -851,7 +846,6 @@ export async function registerUpdateCommand(
 			{
 				registrationFile,
 				config,
-				privateKey: config.privateKey,
 				executionPreview,
 				dataDir: config.dataDir,
 				pinataJwt: cmdOpts.pinataJwt,

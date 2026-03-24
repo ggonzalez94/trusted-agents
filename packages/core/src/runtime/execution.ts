@@ -5,7 +5,6 @@ import {
 	formatUserOperationRequest,
 	toSimple7702SmartAccount,
 } from "viem/account-abstraction";
-import { privateKeyToAccount } from "viem/accounts";
 import { signAuthorization } from "viem/actions";
 import {
 	buildChainPublicClient as buildPublicClient,
@@ -62,9 +61,9 @@ async function resolveExecutionContext(
 	const warnings: string[] = [];
 	const requestedMode = pinnedPreview?.requestedMode ?? requestedExecutionMode(config, chainConfig);
 	const mode = pinnedPreview?.mode ?? resolveExecutionMode(chainConfig, requestedMode, warnings);
-	const owner = privateKeyToAccount(config.privateKey);
+	const owner = config.account;
 	const publicClient = buildPublicClient(chainConfig);
-	const walletClient = buildWalletClient(config.privateKey, chainConfig);
+	const walletClient = buildWalletClient(config.account, chainConfig);
 	const baseContext = {
 		requestedMode,
 		mode,

@@ -193,12 +193,11 @@ bun run test
 
 ### Agent data directory
 
-All per-agent state lives under one root (default `~/.trustedagents`):
+TAP keeps per-agent runtime state under one root (default `~/.trustedagents`), but the signing key now lives in Open Wallet. `config.yaml` stores the selected Open Wallet reference.
 
 ```
 <dataDir>/
 ├── config.yaml
-├── identity/agent.key
 ├── contacts.json
 ├── request-journal.json
 ├── pending-connects.json
@@ -206,7 +205,7 @@ All per-agent state lives under one root (default `~/.trustedagents`):
 └── xmtp/<inboxId>.db3
 ```
 
-Isolate agents by setting `TAP_DATA_DIR` to different paths.
+Open Wallet uses its own vault outside the TAP data dir (default `~/.ows`). Set `TAP_DATA_DIR` to isolate TAP runtime state, and `TAP_OWS_VAULT_PATH` if you also want an isolated Open Wallet vault.
 
 ## License
 

@@ -1,4 +1,3 @@
-import { privateKeyToAccount } from "viem/accounts";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { getExecutionPreview } from "../lib/execution.js";
@@ -10,7 +9,6 @@ export async function identityShowCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const config = await loadConfig(opts, { requireAgentId: false });
-		const account = privateKeyToAccount(config.privateKey);
 		const chainConfig = config.chains[config.chain];
 		const execution =
 			chainConfig !== undefined ? await getExecutionPreview(config, chainConfig) : undefined;
@@ -19,11 +17,13 @@ export async function identityShowCommand(opts: GlobalOptions): Promise<void> {
 			{
 				agent_id: config.agentId,
 				chain: config.chain,
-				address: account.address,
-				messaging_address: account.address,
+				address: config.account.address,
+				messaging_address: config.account.address,
 				execution_mode: execution?.mode,
 				execution_address: execution?.executionAddress,
-				funding_address: execution?.fundingAddress ?? account.address,
+				funding_address: execution?.fundingAddress ?? config.account.address,
+				wallet_provider: config.wallet.provider,
+				wallet_name: config.wallet.provider === "open-wallet" ? config.wallet.name : undefined,
 				paymaster_provider: execution?.paymasterProvider,
 				warnings: execution?.warnings.length ? execution.warnings : undefined,
 				data_dir: config.dataDir,

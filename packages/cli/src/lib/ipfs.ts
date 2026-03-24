@@ -4,6 +4,7 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { createExecutionEvmSigner } from "trusted-agents-core";
+import type { LocalAccount } from "viem/accounts";
 
 const PINATA_X402_ENDPOINT = "https://402.pinata.cloud/v1/pin/public";
 const PINATA_API_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
@@ -92,17 +93,15 @@ export function resolveTackApiUrl(configValue?: string): string {
  */
 export async function uploadToIpfsX402(
 	json: unknown,
-	privateKey: `0x${string}`,
+	account: LocalAccount,
 ): Promise<{ cid: string; uri: string }> {
 	const { x402Client, wrapFetchWithPayment } = await import("@x402/fetch");
 	const { ExactEvmScheme } = await import("@x402/evm/exact/client");
 	const { toClientEvmSigner } = await import("@x402/evm");
-	const { privateKeyToAccount } = await import("viem/accounts");
 	const { createPublicClient, http } = await import("viem");
 	const { base } = await import("viem/chains");
 
 	// Create signer for Base mainnet (x402 payment always uses Base mainnet USDC)
-	const account = privateKeyToAccount(privateKey);
 	const publicClient = createPublicClient({ chain: base, transport: http() });
 	const signer = toClientEvmSigner(account, publicClient);
 

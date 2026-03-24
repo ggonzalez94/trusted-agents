@@ -15,7 +15,6 @@ import {
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import { generateInvite } from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
@@ -213,7 +212,7 @@ export class OpenClawTapRegistry {
 			const result = await generateInvite({
 				agentId: runtime.config.agentId,
 				chain: runtime.config.chain,
-				privateKey: runtime.config.privateKey,
+				account: runtime.config.account,
 				expirySeconds: expiresIn,
 			});
 			return {
@@ -295,7 +294,7 @@ export class OpenClawTapRegistry {
 			asset: params.asset,
 			amount: params.amount,
 			chain: params.chain ?? runtime.config.chain,
-			toAddress: params.toAddress ?? privateKeyToAccount(runtime.config.privateKey).address,
+			toAddress: params.toAddress ?? runtime.config.account.address,
 			note: params.note,
 		};
 		return await runtime.mutex.runExclusive(async () => await runtime.service.requestFunds(input));

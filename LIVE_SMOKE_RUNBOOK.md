@@ -43,6 +43,7 @@ Notes:
 - `TAP_PINATA_JWT` is not needed for the x402 path.
 - If you use `TAP_PINATA_JWT`, you are not testing x402 upload.
 - Do not commit the treasury key, the agent keys, or any funding mnemonic to the repository.
+- `tap init --private-key ...` imports those keys into Open Wallet; TAP no longer stores raw keyfiles in the agent data dir.
 
 ## Basic Prerequisites
 
@@ -242,6 +243,7 @@ If the agents are not already registered, either:
 ```bash
 AGENT_A_DIR="$(mktemp -d /tmp/tap-live-a.XXXXXX)"
 AGENT_B_DIR="$(mktemp -d /tmp/tap-live-b.XXXXXX)"
+export TAP_OWS_VAULT_PATH="$(mktemp -d /tmp/tap-live-ows.XXXXXX)"
 ```
 
 ### 2. Initialize from the private keys
@@ -312,7 +314,7 @@ Continue with the shared live flow below.
 ### 1. Point at already-registered agent homes
 
 Use any two existing TAP data dirs that already contain:
-- the imported private key
+- a `config.yaml` that points at the intended Open Wallet wallet
 - the correct `agent_id`
 - a registration that resolves on-chain
 

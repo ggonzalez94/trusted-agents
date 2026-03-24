@@ -66,7 +66,8 @@ Examples:
 	program
 		.command("init")
 		.description("First-time setup wizard")
-		.option("--private-key <hex>", "Import an existing private key instead of generating one")
+		.option("--private-key <hex>", "Import an existing private key into Open Wallet")
+		.option("--wallet <name>", "Reuse or create a specific Open Wallet wallet name")
 		.option("--chain <name>", "Chain to register on (alias or CAIP-2)")
 		.addHelpText(
 			"after",
@@ -75,11 +76,12 @@ Supported chains:
 ${chainAliasHelpText()}
 `,
 		)
-		.action(async (cmdOpts: { privateKey?: string; chain?: string }) => {
+		.action(async (cmdOpts: { privateKey?: string; wallet?: string; chain?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { initCommand } = await import("./commands/init.js");
 			await initCommand(opts, {
 				privateKey: cmdOpts.privateKey,
+				wallet: cmdOpts.wallet,
 				chain: opts.chain ?? cmdOpts.chain,
 			});
 		});

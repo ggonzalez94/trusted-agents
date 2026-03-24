@@ -229,7 +229,7 @@ function createMockTrustStore(contacts: Contact[] = []): ITrustStore {
 }
 
 const TEST_CONFIG: XmtpTransportConfig = {
-	privateKey: ALICE.privateKey,
+	account: ALICE.account,
 	chain: "eip155:1",
 	env: "dev",
 	defaultResponseTimeoutMs: 5_000,

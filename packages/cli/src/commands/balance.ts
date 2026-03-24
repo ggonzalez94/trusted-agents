@@ -1,5 +1,4 @@
 import { formatUnits } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import { getUsdcAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
@@ -36,7 +35,7 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 			return;
 		}
 
-		const messagingAddress = privateKeyToAccount(config.privateKey).address;
+		const messagingAddress = config.account.address;
 		const execution = await getExecutionPreview(config, chainConfig);
 		const executionAddress = execution.executionAddress;
 		const publicClient = buildPublicClient(chainConfig);

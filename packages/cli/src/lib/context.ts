@@ -64,7 +64,7 @@ export function buildContextWithTransport(config: TrustedAgentsConfig): CliConte
 
 	const transport = new XmtpTransport(
 		{
-			privateKey: config.privateKey,
+			account: config.account,
 			chain: config.chain,
 			env: config.xmtpEnv,
 			dbPath: `${config.dataDir}/xmtp`,

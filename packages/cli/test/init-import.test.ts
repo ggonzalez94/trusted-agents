@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
 
 describe("tap init --private-key", () => {
@@ -15,6 +16,7 @@ describe("tap init --private-key", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-init-import-"));
 		configPath = join(tmpDir, "config.yaml");
+		process.env.TAP_OWS_VAULT_PATH = join(tmpDir, "ows-vault");
 		stdoutWrites = [];
 		origStdoutWrite = process.stdout.write;
 		origStderrWrite = process.stderr.write;
@@ -28,55 +30,55 @@ describe("tap init --private-key", () => {
 	afterEach(async () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
+		Reflect.deleteProperty(process.env, "TAP_OWS_VAULT_PATH");
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("should import an existing private key", async () => {
+	it("should import an existing private key into Open Wallet", async () => {
 		const dataDir = join(tmpDir, "data");
 		const knownKey = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 		await initCommand({ json: true, config: configPath, dataDir }, { privateKey: knownKey });
 
 		const keyfile = join(dataDir, "identity", "agent.key");
-		expect(existsSync(keyfile)).toBe(true);
-		const stored = await readFile(keyfile, "utf-8");
-		expect(stored).toBe(knownKey);
+		expect(existsSync(keyfile)).toBe(false);
 
-		// Should output the correct address for this known key
+		const yaml = YAML.parse(await readFile(configPath, "utf-8"));
+		expect(yaml.wallet.provider).toBe("open-wallet");
+		expect(yaml.wallet.name).toMatch(/^tap-/);
+
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
 		expect(output.data.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
+		expect(output.data.wallet_status).toBe("imported");
 	});
 
-	it("should accept key with 0x prefix", async () => {
+	it("should accept a key with 0x prefix", async () => {
 		const dataDir = join(tmpDir, "data");
 		const knownKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 		await initCommand({ json: true, config: configPath, dataDir }, { privateKey: knownKey });
 
-		const keyfile = join(dataDir, "identity", "agent.key");
-		const stored = await readFile(keyfile, "utf-8");
-		// Stored without 0x prefix
-		expect(stored).toBe(knownKey.slice(2));
+		const yaml = YAML.parse(await readFile(configPath, "utf-8"));
+		expect(yaml.wallet.provider).toBe("open-wallet");
+		expect(yaml.xmtp.db_encryption_key).toMatch(/^0x[0-9a-fA-F]{64}$/);
 	});
 
-	it("should overwrite existing keyfile when --private-key provided", async () => {
+	it("should replace the selected wallet when a new private key is provided", async () => {
 		const dataDir = join(tmpDir, "data");
 
-		// First init generates a random key
 		await initCommand({ json: true, config: configPath, dataDir });
-		const firstKey = await readFile(join(dataDir, "identity", "agent.key"), "utf-8");
+		const firstWallet = (
+			YAML.parse(await readFile(configPath, "utf-8")) as { wallet: { id?: string } }
+		).wallet.id;
 
-		// Second init with explicit key should overwrite
 		stdoutWrites = [];
 		const importKey = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
-		await initCommand(
-			{ json: true, config: join(tmpDir, "config2.yaml"), dataDir },
-			{ privateKey: importKey },
-		);
+		await initCommand({ json: true, config: configPath, dataDir }, { privateKey: importKey });
 
-		const secondKey = await readFile(join(dataDir, "identity", "agent.key"), "utf-8");
-		expect(secondKey).toBe(importKey);
-		expect(secondKey).not.toBe(firstKey);
+		const secondWallet = (
+			YAML.parse(await readFile(configPath, "utf-8")) as { wallet: { id?: string } }
+		).wallet.id;
+		expect(secondWallet).not.toBe(firstWallet);
 	});
 });

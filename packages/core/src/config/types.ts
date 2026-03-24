@@ -1,3 +1,5 @@
+import type { PrivateKeyAccount } from "viem/accounts";
+
 export interface ChainConfig {
 	chainId: number;
 	caip2: string;
@@ -21,10 +23,34 @@ export interface IpfsConfig {
 	tackApiUrl?: string;
 }
 
+export interface OpenWalletConfig {
+	provider: "open-wallet";
+	name: string;
+	id?: string;
+	vaultPath?: string;
+}
+
+export interface EnvPrivateKeyWalletConfig {
+	provider: "env-private-key";
+}
+
+export interface LegacyKeyfileWalletConfig {
+	provider: "legacy-keyfile";
+	path: string;
+}
+
+export type TrustedAgentsWalletConfig =
+	| OpenWalletConfig
+	| EnvPrivateKeyWalletConfig
+	| LegacyKeyfileWalletConfig;
+
+export type TrustedAgentsAccount = PrivateKeyAccount;
+
 export interface TrustedAgentsConfig {
 	agentId: number;
 	chain: string;
-	privateKey: `0x${string}`;
+	account: TrustedAgentsAccount;
+	wallet: TrustedAgentsWalletConfig;
 	dataDir: string;
 	chains: Record<string, ChainConfig>;
 	inviteExpirySeconds: number;

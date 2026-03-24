@@ -1,13 +1,11 @@
 import type { Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import type { TrustedAgentsAccount } from "../config/types.js";
 
 /** IdentifierKind.Ethereum from @xmtp/node-bindings (const enum, value inlined to avoid verbatimModuleSyntax issues) */
 const IDENTIFIER_KIND_ETHEREUM = 0 as const;
 
-export function createXmtpSigner(privateKey: `0x${string}`): Signer {
-	const account = privateKeyToAccount(privateKey);
-
+export function createXmtpSigner(account: TrustedAgentsAccount): Signer {
 	return {
 		type: "EOA",
 		getIdentifier: () => ({

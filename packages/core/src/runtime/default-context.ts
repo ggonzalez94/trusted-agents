@@ -47,7 +47,7 @@ export function buildDefaultTapRuntimeContext(
 		options.transport ??
 		new XmtpTransport(
 			{
-				privateKey: config.privateKey,
+				account: config.account,
 				chain: config.chain,
 				env: config.xmtpEnv,
 				dbPath: join(config.dataDir, "xmtp"),

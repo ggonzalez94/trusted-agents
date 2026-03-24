@@ -1,7 +1,8 @@
+import type { TrustedAgentsAccount } from "../config/types.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 
 export interface XmtpTransportConfig {
-	privateKey: `0x${string}`;
+	account: TrustedAgentsAccount;
 	chain: string;
 	env?: "dev" | "production" | "local";
 	dbPath?: string;

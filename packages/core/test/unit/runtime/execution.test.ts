@@ -101,7 +101,10 @@ function buildConfig(
 	return {
 		agentId: 1,
 		chain,
-		privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+		account: privateKeyToAccount(
+			"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+		),
+		wallet: { provider: "env-private-key" },
 		dataDir: "/tmp/tap",
 		chains: chainMap,
 		inviteExpirySeconds: 3600,

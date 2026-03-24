@@ -8,7 +8,7 @@ describe("parseInviteUrl", () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 		});
 
 		const parsed = parseInviteUrl(url);
@@ -51,7 +51,7 @@ describe("verifyInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 			expirySeconds: 3600,
 		});
 
@@ -65,7 +65,7 @@ describe("verifyInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 			expirySeconds: -10, // already expired
 		});
 
@@ -79,7 +79,7 @@ describe("verifyInvite", () => {
 		const { url } = await generateInvite({
 			agentId: 5,
 			chain: "eip155:137",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 		});
 
 		const parsed = parseInviteUrl(url);

@@ -78,7 +78,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const aliceTransport = new XmtpTransport(
 			{
-				privateKey: ALICE_PRIVATE_KEY,
+				account: privateKeyToAccount(ALICE_PRIVATE_KEY),
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-alice"),
@@ -89,7 +89,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const bobTransport = new XmtpTransport(
 			{
-				privateKey: BOB_PRIVATE_KEY,
+				account: privateKeyToAccount(BOB_PRIVATE_KEY),
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-bob"),
@@ -156,7 +156,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const bobTransport = new XmtpTransport(
 			{
-				privateKey: BOB_PRIVATE_KEY,
+				account: privateKeyToAccount(BOB_PRIVATE_KEY),
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-bob"),
@@ -168,7 +168,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const carolTransport = new XmtpTransport(
 			{
-				privateKey: CAROL_PRIVATE_KEY,
+				account: privateKeyToAccount(CAROL_PRIVATE_KEY),
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-carol"),

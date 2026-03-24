@@ -1,5 +1,6 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
@@ -8,6 +9,7 @@ import * as promptLib from "../src/lib/prompt.js";
 import * as walletLib from "../src/lib/wallet.js";
 
 describe("tap transfer", () => {
+	const privateKey = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
 	let origStdoutWrite: typeof process.stdout.write;
@@ -17,7 +19,8 @@ describe("tap transfer", () => {
 		return {
 			agentId: 42,
 			chain: "eip155:84532",
-			privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+			account: privateKeyToAccount(privateKey),
+			wallet: { provider: "env-private-key" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:1": {

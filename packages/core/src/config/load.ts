@@ -1,14 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { resolveDataDir } from "../common/index.js";
+import {
+	deriveOpenWalletXmtpDbEncryptionKey,
+	derivePrivateKeyXmtpDbEncryptionKey,
+	ensureOpenWallet,
+	resolveAccountFromOpenWallet,
+} from "../wallet/index.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import type {
 	ChainConfig,
 	ExecutionMode,
 	ExecutionPaymasterProvider,
 	IpfsUploadProvider,
+	OpenWalletConfig,
 	TrustedAgentsConfig,
 } from "./types.js";
 
@@ -29,6 +37,12 @@ interface StoredYamlConfig {
 		provider?: IpfsUploadProvider;
 		tack_api_url?: string;
 	};
+	wallet?: {
+		provider?: string;
+		id?: string;
+		name?: string;
+		vault_path?: string;
+	};
 	chains?: Record<
 		string,
 		{
@@ -48,6 +62,7 @@ export interface LoadTrustedAgentConfigOptions {
 	extraChains?: Record<string, ChainConfig>;
 	executionMode?: ExecutionMode;
 	paymasterProvider?: ExecutionPaymasterProvider;
+	migrateLegacyKeyfile?: boolean;
 }
 
 export function resolveTrustedAgentConfigPath(dataDir: string): string {
@@ -86,7 +101,7 @@ export async function loadTrustedAgentConfigFromDataDir(
 ): Promise<TrustedAgentsConfig> {
 	const resolvedDataDir = resolveDataDir(dataDir);
 	const configPath = options.configPath ?? resolveTrustedAgentConfigPath(resolvedDataDir);
-	const yaml = loadYamlConfig(configPath);
+	let yaml = loadYamlConfig(configPath);
 
 	const agentId = options.agentId ?? yaml?.agent_id;
 	if (options.requireAgentId ?? true) {
@@ -97,7 +112,44 @@ export async function loadTrustedAgentConfigFromDataDir(
 		}
 	}
 
-	const privateKey = options.privateKey ?? (await loadKeyfile(resolvedDataDir));
+	const storedWallet = resolveStoredWalletConfig(yaml?.wallet);
+	const legacyKeyfile = await loadLegacyKeyfile(resolvedDataDir);
+
+	let wallet: TrustedAgentsConfig["wallet"];
+	let account: TrustedAgentsConfig["account"];
+	let xmtpDbEncryptionKey = yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined;
+
+	if (options.privateKey) {
+		account = privateKeyToAccount(options.privateKey);
+		wallet = { provider: "env-private-key" };
+		xmtpDbEncryptionKey ??= derivePrivateKeyXmtpDbEncryptionKey(options.privateKey);
+	} else if (storedWallet) {
+		account = resolveAccountFromOpenWallet(storedWallet);
+		wallet = storedWallet;
+		xmtpDbEncryptionKey ??= deriveOpenWalletXmtpDbEncryptionKey(storedWallet);
+	} else if (legacyKeyfile) {
+		if ((options.migrateLegacyKeyfile ?? true) && existsSync(configPath)) {
+			const migration = await migrateLegacyKeyfile({
+				dataDir: resolvedDataDir,
+				configPath,
+				yaml,
+				privateKey: legacyKeyfile.privateKey,
+			});
+			yaml = migration.yaml;
+			account = resolveAccountFromOpenWallet(migration.wallet);
+			wallet = migration.wallet;
+			xmtpDbEncryptionKey ??= migration.xmtpDbEncryptionKey;
+		} else {
+			account = privateKeyToAccount(legacyKeyfile.privateKey);
+			wallet = { provider: "legacy-keyfile", path: legacyKeyfile.path };
+			xmtpDbEncryptionKey ??= derivePrivateKeyXmtpDbEncryptionKey(legacyKeyfile.privateKey);
+		}
+	} else {
+		throw new Error(
+			`No wallet is configured for TAP in ${resolvedDataDir}. Run 'tap init' to create or select an Open Wallet wallet.`,
+		);
+	}
+
 	const chain = options.chain ?? yaml?.chain ?? "eip155:84532";
 	const executionMode =
 		options.executionMode ?? yaml?.execution?.mode ?? getDefaultExecutionModeForChain(chain);
@@ -130,14 +182,15 @@ export async function loadTrustedAgentConfigFromDataDir(
 	return {
 		agentId: agentId ?? 0,
 		chain,
-		privateKey,
+		account,
+		wallet,
 		dataDir: resolvedDataDir,
 		chains,
 		inviteExpirySeconds: yaml?.invite_expiry_seconds ?? DEFAULT_CONFIG.inviteExpirySeconds,
 		resolveCacheTtlMs: DEFAULT_CONFIG.resolveCacheTtlMs,
 		resolveCacheMaxEntries: DEFAULT_CONFIG.resolveCacheMaxEntries,
 		xmtpEnv: yaml?.xmtp?.env ?? DEFAULT_CONFIG.xmtpEnv,
-		xmtpDbEncryptionKey: yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined,
+		xmtpDbEncryptionKey,
 		ipfs: {
 			provider: yaml?.ipfs?.provider ?? DEFAULT_CONFIG.ipfs?.provider,
 			tackApiUrl: yaml?.ipfs?.tack_api_url,
@@ -156,13 +209,99 @@ function loadYamlConfig(configPath: string): StoredYamlConfig | undefined {
 	return YAML.parse(readFileSync(configPath, "utf-8")) as StoredYamlConfig;
 }
 
-async function loadKeyfile(dataDir: string): Promise<`0x${string}`> {
-	const keyPath = join(dataDir, "identity", KEYFILE_NAME);
-	const hex = (await readFile(keyPath, "utf-8")).trim();
+function resolveStoredWalletConfig(
+	storedWallet: StoredYamlConfig["wallet"] | undefined,
+): OpenWalletConfig | undefined {
+	if (!storedWallet) {
+		return undefined;
+	}
 
+	if (storedWallet.provider !== "open-wallet") {
+		throw new Error(
+			`Unsupported wallet provider in config.yaml: ${storedWallet.provider}. Expected "open-wallet".`,
+		);
+	}
+
+	if (!storedWallet.name?.trim()) {
+		throw new Error("config.yaml wallet.name is required when wallet.provider is open-wallet");
+	}
+
+	return {
+		provider: "open-wallet",
+		name: storedWallet.name.trim(),
+		...(storedWallet.id?.trim() ? { id: storedWallet.id.trim() } : {}),
+		...(storedWallet.vault_path?.trim() ? { vaultPath: storedWallet.vault_path.trim() } : {}),
+	};
+}
+
+async function loadLegacyKeyfile(
+	dataDir: string,
+): Promise<{ path: string; privateKey: `0x${string}` } | null> {
+	const keyPath = join(dataDir, "identity", KEYFILE_NAME);
+	if (!existsSync(keyPath)) {
+		return null;
+	}
+
+	const hex = (await readFile(keyPath, "utf-8")).trim();
 	if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
 		throw new Error(`Invalid keyfile at ${keyPath}: expected 64-char hex`);
 	}
 
-	return `0x${hex}`;
+	return {
+		path: keyPath,
+		privateKey: `0x${hex}`,
+	};
+}
+
+async function migrateLegacyKeyfile(params: {
+	dataDir: string;
+	configPath: string;
+	yaml: StoredYamlConfig | undefined;
+	privateKey: `0x${string}`;
+}): Promise<{
+	wallet: OpenWalletConfig;
+	xmtpDbEncryptionKey: `0x${string}`;
+	yaml: StoredYamlConfig;
+}> {
+	const ensuredWallet = ensureOpenWallet({
+		dataDir: params.dataDir,
+		privateKey: params.privateKey,
+		vaultPath: resolveStoredWalletConfig(params.yaml?.wallet)?.vaultPath,
+	});
+	const xmtpDbEncryptionKey =
+		(params.yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined) ??
+		derivePrivateKeyXmtpDbEncryptionKey(params.privateKey);
+
+	const nextYaml: StoredYamlConfig = {
+		...(params.yaml ?? {}),
+		wallet: {
+			provider: "open-wallet",
+			name: ensuredWallet.wallet.name,
+			...(ensuredWallet.wallet.id ? { id: ensuredWallet.wallet.id } : {}),
+			...(ensuredWallet.wallet.vaultPath ? { vault_path: ensuredWallet.wallet.vaultPath } : {}),
+		},
+		xmtp: {
+			...(params.yaml?.xmtp ?? {}),
+			db_encryption_key: xmtpDbEncryptionKey,
+		},
+	};
+
+	await writeYamlConfigAtomic(params.configPath, YAML.stringify(nextYaml));
+
+	const keyPath = join(params.dataDir, "identity", KEYFILE_NAME);
+	await rm(keyPath, { force: true });
+	await rm(join(params.dataDir, "identity"), { recursive: false, force: true }).catch(() => {});
+
+	return {
+		wallet: ensuredWallet.wallet,
+		xmtpDbEncryptionKey,
+		yaml: nextYaml,
+	};
+}
+
+async function writeYamlConfigAtomic(configPath: string, content: string): Promise<void> {
+	await mkdir(dirname(configPath), { recursive: true });
+	const tempPath = `${configPath}.tmp-${process.pid}-${Date.now()}`;
+	await writeFile(tempPath, content, "utf-8");
+	await rename(tempPath, configPath);
 }

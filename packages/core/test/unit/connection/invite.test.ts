@@ -7,7 +7,7 @@ describe("generateInvite", () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 		});
 
 		expect(url).toContain("https://trustedagents.link/connect");
@@ -21,7 +21,7 @@ describe("generateInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 42,
 			chain: "eip155:137",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 			expirySeconds: 7200,
 		});
 
@@ -36,7 +36,7 @@ describe("generateInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 		});
 
 		// Should expire approximately 3600 seconds from now (allow 5s tolerance)
@@ -48,14 +48,14 @@ describe("generateInvite", () => {
 		const { invite: invite1 } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 			expirySeconds: 3600,
 		});
 
 		const { invite: invite2 } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			account: ALICE.account,
 			expirySeconds: 7200,
 		});
 

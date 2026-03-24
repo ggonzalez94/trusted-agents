@@ -18,6 +18,7 @@ describe("tap init", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-init-test-"));
 		configPath = join(tmpDir, "config.yaml");
+		process.env.TAP_OWS_VAULT_PATH = join(tmpDir, "ows-vault");
 		stdoutWrites = [];
 		stderrWrites = [];
 		origStdoutWrite = process.stdout.write;
@@ -35,10 +36,11 @@ describe("tap init", () => {
 	afterEach(async () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
+		Reflect.deleteProperty(process.env, "TAP_OWS_VAULT_PATH");
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("should create config file, keyfile, and directory structure", async () => {
+	it("should create config file, Open Wallet config, and directory structure", async () => {
 		const dataDir = join(tmpDir, "data");
 
 		await initCommand({
@@ -47,44 +49,46 @@ describe("tap init", () => {
 			dataDir,
 		});
 
-		// Config file created
 		expect(existsSync(configPath)).toBe(true);
 		const configContent = await readFile(configPath, "utf-8");
 		const yaml = YAML.parse(configContent);
 		expect(yaml.agent_id).toBe(-1);
 		expect(yaml.chain).toBe("eip155:8453");
 		expect(yaml.xmtp.env).toBe("production");
+		expect(yaml.wallet.provider).toBe("open-wallet");
+		expect(yaml.wallet.name).toMatch(/^tap-/);
+		expect(yaml.xmtp.db_encryption_key).toMatch(/^0x[0-9a-fA-F]{64}$/);
 
-		// Keyfile created
 		const keyfile = join(dataDir, "identity", "agent.key");
-		expect(existsSync(keyfile)).toBe(true);
-		const keyContent = await readFile(keyfile, "utf-8");
-		expect(keyContent).toMatch(/^[0-9a-fA-F]{64}$/);
+		expect(existsSync(keyfile)).toBe(false);
 
-		// Directories created
 		expect(existsSync(join(dataDir, "conversations"))).toBe(true);
 		expect(existsSync(join(dataDir, "xmtp"))).toBe(true);
 
-		// JSON output
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
 		expect(output.data.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
+		expect(output.data.wallet_provider).toBe("open-wallet");
+		expect(output.data.wallet_name).toBe(yaml.wallet.name);
 	});
 
-	it("should not overwrite existing keyfile", async () => {
+	it("should not rotate the configured Open Wallet wallet on rerun", async () => {
 		const dataDir = join(tmpDir, "data");
 
-		// Run init twice
 		await initCommand({ json: true, config: configPath, dataDir });
-		const firstKey = await readFile(join(dataDir, "identity", "agent.key"), "utf-8");
+		const firstConfig = YAML.parse(await readFile(configPath, "utf-8")) as {
+			wallet: { name: string; id?: string };
+		};
 
 		stdoutWrites = [];
 		await initCommand({ json: true, config: join(tmpDir, "config2.yaml"), dataDir });
-		const secondKey = await readFile(join(dataDir, "identity", "agent.key"), "utf-8");
+		const secondConfig = YAML.parse(await readFile(configPath, "utf-8")) as {
+			wallet: { name: string; id?: string };
+		};
 
-		// Key should not be regenerated
-		expect(firstKey).toBe(secondKey);
+		expect(secondConfig.wallet.name).toBe(firstConfig.wallet.name);
+		expect(secondConfig.wallet.id).toBe(firstConfig.wallet.id);
 	});
 
 	it("should create config inside an explicit data dir without reusing legacy config", async () => {
@@ -98,6 +102,7 @@ describe("tap init", () => {
 		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.data.config).toBe(join(dataDir, "config.yaml"));
+		expect(output.data.wallet_provider).toBe("open-wallet");
 	});
 
 	it("reuses the saved chain in output when init is rerun", async () => {
@@ -124,11 +129,18 @@ describe("tap init", () => {
 
 	it("respects the init --chain flag through the CLI entrypoint", async () => {
 		const dataDir = join(tmpDir, "cli-entrypoint");
-		const result = await runCli(["--json", "--data-dir", dataDir, "init", "--chain", "base"]);
+		const env = {
+			...process.env,
+			TAP_OWS_VAULT_PATH: join(tmpDir, "ows-vault-cli"),
+		};
+		const result = await runCli(["--json", "--data-dir", dataDir, "init", "--chain", "base"], {
+			env,
+		});
 
 		expect(result.exitCode).toBe(0);
 		const output = JSON.parse(result.stdout);
 		expect(output.data.chain).toBe("eip155:8453");
 		expect(output.data.chain_name).toBe("Base");
+		expect(output.data.wallet_provider).toBe("open-wallet");
 	});
 });

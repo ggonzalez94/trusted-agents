@@ -71,7 +71,12 @@ Already registered? `tap config show` shows `agent_id >= 0` → skip to Connect 
 tap init --chain base
 ```
 
-This generates a fresh wallet and local config.
+This selects an Open Wallet wallet for the agent:
+- if the machine already has exactly one suitable Open Wallet wallet, TAP reuses it
+- otherwise TAP creates a new Open Wallet wallet
+- `tap init --private-key <hex>` imports that key into Open Wallet instead of creating a TAP-managed keyfile
+
+The selected wallet is written into local `config.yaml`; TAP no longer stores raw private keys in the agent data dir.
 
 **Chain rules:** Always ask the user what chain they want to use. The two options currently are `taiko` and `bases`. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
 

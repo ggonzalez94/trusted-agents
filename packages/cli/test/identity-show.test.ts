@@ -1,4 +1,5 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityShowCommand } from "../src/commands/identity-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
@@ -10,10 +11,13 @@ describe("tap identity show", () => {
 	let origStdoutWrite: typeof process.stdout.write;
 	let origStderrWrite: typeof process.stderr.write;
 
+	const PRIVATE_KEY = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
+
 	const config: TrustedAgentsConfig = {
 		agentId: -1,
 		chain: "eip155:84532",
-		privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+		account: privateKeyToAccount(PRIVATE_KEY),
+		wallet: { provider: "env-private-key" },
 		dataDir: "/tmp/tap",
 		chains: {
 			"eip155:84532": {
@@ -83,5 +87,6 @@ describe("tap identity show", () => {
 		expect(output.data?.execution_mode).toBe("eip7702");
 		expect(output.data?.execution_address).toBe("0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B");
 		expect(output.data?.funding_address).toBe("0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B");
+		expect(output.data?.wallet_provider).toBe("env-private-key");
 	});
 });

@@ -9,3 +9,4 @@ export * from "./transport/index.js";
 export * from "./conversation/index.js";
 export * from "./runtime/index.js";
 export * from "./scheduling/index.js";
+export * from "./wallet/index.js";

@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TapEmitEventPayload } from "../src/event-classifier.js";
 import { TapNotificationQueue } from "../src/notification-queue.js";
@@ -99,7 +100,10 @@ describe("OpenClawTapRegistry", () => {
 			config: {
 				agentId: 7,
 				chain: "eip155:84532",
-				privateKey: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+				account: privateKeyToAccount(
+					"0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+				),
+				wallet: { provider: "env-private-key" },
 				inviteExpirySeconds: 600,
 				dataDir,
 			},

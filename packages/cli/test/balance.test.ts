@@ -18,7 +18,8 @@ describe("tap balance", () => {
 		return {
 			agentId: -1,
 			chain: "eip155:84532",
-			privateKey,
+			account: privateKeyToAccount(privateKey),
+			wallet: { provider: "env-private-key" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:8453": {

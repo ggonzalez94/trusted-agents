@@ -1,5 +1,4 @@
 import { parseEther, parseUnits } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import {
 	AsyncMutex,
 	PermissionError,
@@ -352,7 +351,7 @@ export class TapMessagingService {
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
 		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
-		this.localAgentAddress = privateKeyToAccount(context.config.privateKey).address;
+		this.localAgentAddress = context.config.account.address;
 		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
 		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;

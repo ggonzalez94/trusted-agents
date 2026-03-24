@@ -12,7 +12,6 @@ import {
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
@@ -292,7 +291,7 @@ export async function probeRemoveNativeBalance(
 			};
 		}
 
-		const address = privateKeyToAccount(config.privateKey).address;
+		const address = config.account.address;
 		const publicClient = buildPublicClient(chainConfig);
 		const nativeBalanceWei = await publicClient.getBalance({ address });
 		const context: RemoveBalanceContext = {
@@ -335,12 +334,9 @@ export async function transferRemainingNativeBalance(
 	balanceContext: RemoveBalanceContext,
 	toAddress: `0x${string}`,
 ): Promise<RemoveTransferResult> {
-	const account = privateKeyToAccount(balanceContext.config.privateKey);
+	const account = balanceContext.config.account;
 	const publicClient = buildPublicClient(balanceContext.chainConfig);
-	const walletClient = buildWalletClient(
-		balanceContext.config.privateKey,
-		balanceContext.chainConfig,
-	);
+	const walletClient = buildWalletClient(account, balanceContext.chainConfig);
 	const currentBalanceWei = await publicClient.getBalance({ address: account.address });
 	const currentBalanceEth = formatUnits(currentBalanceWei, 18);
 	const gasEstimate = await publicClient.estimateGas({
@@ -457,6 +453,7 @@ async function loadRemoveTargetConfig(
 		requireAgentId: false,
 		configPath,
 		extraChains: ALL_CHAINS,
+		migrateLegacyKeyfile: false,
 	});
 	const normalizedChain = resolveChainAlias(config.chain);
 	return normalizedChain === config.chain ? config : { ...config, chain: normalizedChain };
@@ -467,6 +464,7 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 	const configPath = resolveRemoveConfigPath(opts, dataDir);
 	const warnings = [
 		"This only removes local TAP agent data. It does not unregister the ERC-8004 agent or notify peers.",
+		"Open Wallet wallets live outside the TAP data dir and are not deleted by `tap remove`.",
 		"Host runtime config that still points at this data dir is not updated automatically, including OpenClaw plugin identity settings.",
 	];
 	const blockingReasons: string[] = [];
@@ -564,13 +562,30 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 }
 
 async function readAgentAddress(dataDir: string): Promise<[string | null, string | null]> {
+	try {
+		const config = await loadTrustedAgentConfigFromDataDir(dataDir, {
+			requireAgentId: false,
+			configPath: join(dataDir, "config.yaml"),
+			extraChains: ALL_CHAINS,
+			migrateLegacyKeyfile: false,
+		});
+		return [config.account.address, null];
+	} catch {}
+
 	const keyPath = join(dataDir, "identity", "agent.key");
 	try {
 		const raw = (await readFile(keyPath, "utf-8")).trim();
 		if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
 			return [null, `identity/agent.key is present but invalid at ${keyPath}.`];
 		}
-		return [privateKeyToAccount(`0x${raw}`).address, null];
+		const config = await loadTrustedAgentConfigFromDataDir(dataDir, {
+			requireAgentId: false,
+			privateKey: `0x${raw}`,
+			configPath: join(dataDir, "config.yaml"),
+			extraChains: ALL_CHAINS,
+			migrateLegacyKeyfile: false,
+		});
+		return [config.account.address, null];
 	} catch (error: unknown) {
 		const code =
 			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;

@@ -16,7 +16,7 @@ export async function inviteCreateCommand(
 		const result = await generateInvite({
 			agentId: config.agentId,
 			chain: config.chain,
-			privateKey: config.privateKey,
+			account: config.account,
 			expirySeconds,
 		});
 

@@ -12,7 +12,12 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 		const redacted = {
 			agent_id: config.agentId,
 			chain: config.chain,
-			private_key: "***redacted***",
+			wallet: {
+				provider: config.wallet.provider,
+				name: config.wallet.provider === "open-wallet" ? config.wallet.name : undefined,
+				id: config.wallet.provider === "open-wallet" ? config.wallet.id : undefined,
+				vault_path: config.wallet.provider === "open-wallet" ? config.wallet.vaultPath : undefined,
+			},
 			data_dir: config.dataDir,
 			invite_expiry_seconds: config.inviteExpirySeconds,
 			execution: {

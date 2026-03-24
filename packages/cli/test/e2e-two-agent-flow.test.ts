@@ -14,6 +14,7 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "trusted-agents-core";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type MessageListenerSession,
@@ -75,6 +76,7 @@ describe("two-agent CLI E2E flow", () => {
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-cli-e2e-"));
+		process.env.TAP_OWS_VAULT_PATH = join(tempRoot, "ows-vault");
 		treasuryDir = join(tempRoot, "treasury");
 		workerDir = join(tempRoot, "worker");
 		await mkdir(treasuryDir, { recursive: true });
@@ -125,6 +127,7 @@ describe("two-agent CLI E2E flow", () => {
 		await treasuryListener?.stop();
 		clearLoopbackRuntime(workerDir);
 		clearLoopbackRuntime(treasuryDir);
+		Reflect.deleteProperty(process.env, "TAP_OWS_VAULT_PATH");
 		await rm(tempRoot, { recursive: true, force: true });
 	});
 
@@ -610,7 +613,7 @@ describe("two-agent CLI E2E flow", () => {
 			const invite = await generateInvite({
 				agentId: pendingAgentId,
 				chain: CHAIN,
-				privateKey: TREASURY_KEY,
+				account: privateKeyToAccount(TREASURY_KEY),
 				expirySeconds: 3600,
 			});
 

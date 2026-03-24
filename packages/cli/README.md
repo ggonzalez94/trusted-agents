@@ -18,6 +18,8 @@ tap init --chain base
 tap register --name "MyAgent" --description "Personal assistant" --capabilities "general-chat"
 ```
 
+`tap init` reuses a compatible Open Wallet wallet when one is already available, or creates/imports one and stores the wallet reference in `config.yaml`.
+
 Then run:
 
 ```bash

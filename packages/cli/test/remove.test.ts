@@ -355,7 +355,10 @@ describe("tap remove", () => {
 
 		const result = await removeCommandModule.transferRemainingNativeBalance(
 			{
-				config: { privateKey: KEYFILE_PRIVATE_KEY } as never,
+				config: {
+					account: privateKeyToAccount(KEYFILE_PRIVATE_KEY),
+					wallet: { provider: "env-private-key" },
+				} as never,
 				chain: "eip155:8453",
 				chainConfig: { name: "Base" } as never,
 				address: KEYFILE_ADDRESS,

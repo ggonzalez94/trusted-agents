@@ -83,10 +83,10 @@ export class XmtpTransport implements TransportProvider {
 			return;
 		}
 
-		const signer = createXmtpSigner(this.config.privateKey);
+		const signer = createXmtpSigner(this.config.account);
 		const dbEncryptionKey = this.config.dbEncryptionKey
 			? hexToBytes(this.config.dbEncryptionKey)
-			: hexToBytes(keccak256(toHex(`xmtp-db-encryption:${this.config.privateKey}`)));
+			: hexToBytes(keccak256(toHex(`xmtp-db-encryption:${this.config.account.address}`)));
 		if (this.config.dbPath) {
 			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
 		}

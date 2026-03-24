@@ -6,7 +6,7 @@ import type { TrustedAgentsConfig } from "./types.js";
 
 export function validateConfig(
 	partial: Partial<TrustedAgentsConfig> &
-		Pick<TrustedAgentsConfig, "agentId" | "chain" | "privateKey">,
+		Pick<TrustedAgentsConfig, "agentId" | "chain" | "account" | "wallet">,
 ): TrustedAgentsConfig {
 	if (typeof partial.agentId !== "number" || partial.agentId < 0) {
 		throw new ConfigError("agentId must be a non-negative number");
@@ -18,8 +18,12 @@ export function validateConfig(
 		);
 	}
 
-	if (!/^0x[0-9a-fA-F]{64}$/.test(partial.privateKey)) {
-		throw new ConfigError("privateKey must be a 32-byte hex string prefixed with 0x");
+	if (!partial.account?.address) {
+		throw new ConfigError("account must include an address");
+	}
+
+	if (!partial.wallet?.provider) {
+		throw new ConfigError("wallet provider is required");
 	}
 
 	const mergedChains = {

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { initCommand } from "../src/commands/init.js";
 import { loadConfig, resolveConfigPath, resolveDataDir } from "../src/lib/config-loader.js";
 
 describe("config-loader", () => {
@@ -11,12 +12,12 @@ describe("config-loader", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-config-test-"));
 		originalHome = process.env.HOME;
+		process.env.TAP_OWS_VAULT_PATH = join(tmpDir, "ows-vault");
 	});
 
 	afterEach(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
 		process.env.HOME = originalHome;
-		// Clean up env vars
 		unsetEnv("TAP_DATA_DIR");
 		unsetEnv("TAP_AGENT_ID");
 		unsetEnv("TAP_CHAIN");
@@ -24,6 +25,7 @@ describe("config-loader", () => {
 		unsetEnv("TAP_RPC_URL");
 		unsetEnv("TAP_EXECUTION_MODE");
 		unsetEnv("TAP_PAYMASTER_PROVIDER");
+		unsetEnv("TAP_OWS_VAULT_PATH");
 	});
 
 	describe("resolveConfigPath", () => {
@@ -36,15 +38,21 @@ describe("config-loader", () => {
 			process.env.HOME = tmpDir;
 			const defaultDataDir = join(tmpDir, ".trustedagents");
 			const configPath = join(tmpDir, "custom-config.yaml");
-			await mkdir(join(defaultDataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(defaultDataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+
+			await initCommand({ json: true, dataDir: defaultDataDir });
 			await writeFile(
 				configPath,
-				["agent_id: 1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
+				[
+					"agent_id: 1",
+					"chain: eip155:84532",
+					"wallet:",
+					"  provider: open-wallet",
+					"  name: tap-agent",
+					`  vault_path: ${join(tmpDir, "ows-vault")}`,
+					"xmtp:",
+					"  env: dev",
+					"",
+				].join("\n"),
 				"utf-8",
 			);
 
@@ -146,19 +154,16 @@ describe("config-loader", () => {
 		});
 
 		it("defaults to Base mainnet when no config file exists", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 			const dataDir = join(tmpDir, "mainnet-default");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+			await mkdir(dataDir, { recursive: true });
 
 			const config = await loadConfig({ dataDir }, { requireAgentId: false });
 			expect(config.chain).toBe("eip155:8453");
 		});
 
-		it("preserves the saved chain when config.yaml already exists", async () => {
+		it("migrates a legacy keyfile to Open Wallet when config.yaml already exists", async () => {
 			const dataDir = join(tmpDir, "existing-config");
 			await mkdir(join(dataDir, "identity"), { recursive: true });
 			await writeFile(
@@ -174,19 +179,25 @@ describe("config-loader", () => {
 
 			const config = await loadConfig({ dataDir }, { requireAgentId: false });
 			expect(config.chain).toBe("eip155:84532");
+			expect(config.wallet.provider).toBe("open-wallet");
 		});
 
 		it("overrides the selected chain RPC URL from CLI or env", async () => {
 			const dataDir = join(tmpDir, "rpc-override");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+			await initCommand({ json: true, dataDir });
 			await writeFile(
 				join(dataDir, "config.yaml"),
-				["agent_id: 1", "chain: eip155:8453", "xmtp:", "  env: production", ""].join("\n"),
+				[
+					"agent_id: 1",
+					"chain: eip155:8453",
+					"wallet:",
+					"  provider: open-wallet",
+					"  name: tap-rpc-override",
+					`  vault_path: ${join(tmpDir, "ows-vault")}`,
+					"xmtp:",
+					"  env: production",
+					"",
+				].join("\n"),
 				"utf-8",
 			);
 
@@ -199,13 +210,8 @@ describe("config-loader", () => {
 		it("rejects mismatched --config and --data-dir combinations", async () => {
 			const dataDir = join(tmpDir, "agent-a");
 			const otherDir = join(tmpDir, "agent-b");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
+			await initCommand({ json: true, dataDir });
 			await mkdir(otherDir, { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
 			await writeFile(
 				join(otherDir, "config.yaml"),
 				["agent_id: 1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),

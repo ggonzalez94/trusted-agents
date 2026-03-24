@@ -26,18 +26,19 @@ export const DEFAULT_CHAINS: Record<string, ChainConfig> = {
 	"eip155:84532": BASE_SEPOLIA,
 };
 
-export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "privateKey"> = {
-	dataDir: `${homedir()}/.trustedagents`,
-	chains: DEFAULT_CHAINS,
-	inviteExpirySeconds: 86400, // 24 hours
-	resolveCacheTtlMs: 86400000, // 24 hours
-	resolveCacheMaxEntries: 1000,
-	xmtpEnv: "production",
-	ipfs: {
-		provider: "auto",
-	},
-	execution: {
-		mode: "eip7702",
-		paymasterProvider: "circle",
-	},
-};
+export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "account" | "wallet"> =
+	{
+		dataDir: `${homedir()}/.trustedagents`,
+		chains: DEFAULT_CHAINS,
+		inviteExpirySeconds: 86400, // 24 hours
+		resolveCacheTtlMs: 86400000, // 24 hours
+		resolveCacheMaxEntries: 1000,
+		xmtpEnv: "production",
+		ipfs: {
+			provider: "auto",
+		},
+		execution: {
+			mode: "eip7702",
+			paymasterProvider: "circle",
+		},
+	};

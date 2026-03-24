@@ -1,4 +1,5 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	ensureExecutionReady,
@@ -24,10 +25,13 @@ vi.mock("trusted-agents-core", async () => {
 	};
 });
 
+const PRIVATE_KEY = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
+
 const config = {
 	agentId: 1,
 	chain: "eip155:84532",
-	privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+	account: privateKeyToAccount(PRIVATE_KEY),
+	wallet: { provider: "env-private-key" },
 	dataDir: "/tmp/tap",
 	chains: {
 		"eip155:84532": {
