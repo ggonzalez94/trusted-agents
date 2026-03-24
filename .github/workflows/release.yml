@@ -77,6 +77,8 @@ jobs:
           else
             bun publish --access public --no-git-checks --provenance
           fi
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish trusted-agents-cli
         working-directory: packages/cli
@@ -87,6 +89,8 @@ jobs:
           else
             bun publish --access public --no-git-checks --provenance
           fi
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish trusted-agents-tap
         working-directory: packages/openclaw-plugin
@@ -97,6 +101,8 @@ jobs:
           else
             bun publish --access public --no-git-checks --provenance
           fi
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Create GitHub Release with auto-generated notes (skip if already exists for reruns)
       - name: Create GitHub Release
