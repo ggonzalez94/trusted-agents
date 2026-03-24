@@ -27,8 +27,7 @@ import {
 	getExecutionPreview,
 } from "../lib/execution.js";
 import {
-	resolveAutoProvider,
-	resolveIpfsUploadProvider,
+	resolveEffectiveIpfsProvider,
 	resolvePinataJwt,
 	resolveTackApiUrl,
 	uploadToIpfsPinata,
@@ -352,6 +351,29 @@ async function ensureX402UploadFunding(
 	);
 }
 
+function shouldDeployExecutionAccountBeforeUpload(params: {
+	config: TrustedAgentsConfig;
+	uri?: string;
+	pinataJwt?: string;
+	ipfsProvider?: string;
+}): boolean {
+	if (params.uri) {
+		return false;
+	}
+
+	try {
+		return (
+			resolveEffectiveIpfsProvider({
+				chain: params.config.chain,
+				configuredProvider: params.ipfsProvider ?? params.config.ipfs?.provider,
+				pinataJwt: resolvePinataJwt(params.pinataJwt),
+			}) === "tack"
+		);
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Resolve URI for registration metadata.
  *
@@ -400,19 +422,18 @@ async function resolveAgentURI(
 		verbose("Cached CID not reachable via gateway, re-uploading...", opts);
 	}
 
-	let configuredProvider: IpfsUploadProvider;
+	let effectiveProvider: Exclude<IpfsUploadProvider, "auto">;
 	try {
-		configuredProvider =
-			resolveIpfsUploadProvider(params.ipfsProvider ?? params.config.ipfs?.provider) ?? "auto";
+		effectiveProvider = resolveEffectiveIpfsProvider({
+			chain: params.config.chain,
+			configuredProvider: params.ipfsProvider ?? params.config.ipfs?.provider,
+			pinataJwt: resolvePinataJwt(params.pinataJwt),
+		});
 	} catch (err) {
 		error("VALIDATION_ERROR", err instanceof Error ? err.message : String(err), opts);
 		return null;
 	}
 	const jwt = resolvePinataJwt(params.pinataJwt);
-	const effectiveProvider: Exclude<IpfsUploadProvider, "auto"> =
-		configuredProvider === "auto"
-			? resolveAutoProvider(params.config.chain, jwt)
-			: configuredProvider;
 
 	// 3. x402 via Pinata endpoint (Base mainnet USDC)
 	if (effectiveProvider === "x402") {
@@ -525,7 +546,17 @@ export async function registerCommand(
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
-		await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
+		await ensureExecutionReady(config, chainConfig, {
+			preview: executionPreview,
+			deployEip4337Account:
+				executionPreview.mode === "eip4337" &&
+				shouldDeployExecutionAccountBeforeUpload({
+					config,
+					uri: cmdOpts.uri,
+					pinataJwt: cmdOpts.pinataJwt,
+					ipfsProvider: cmdOpts.ipfsProvider,
+				}),
+		});
 
 		// Build registration file
 		const registrationFile = buildRegistrationFile(
@@ -782,7 +813,16 @@ export async function registerUpdateCommand(
 			requireProvider: true,
 		});
 		emitExecutionWarnings(executionPreview, opts);
-		await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
+		await ensureExecutionReady(config, chainConfig, {
+			preview: executionPreview,
+			deployEip4337Account:
+				executionPreview.mode === "eip4337" &&
+				shouldDeployExecutionAccountBeforeUpload({
+					config,
+					pinataJwt: cmdOpts.pinataJwt,
+					ipfsProvider: cmdOpts.ipfsProvider,
+				}),
+		});
 
 		const registrationFile = fullReplacement
 			? buildRegistrationFile(

@@ -53,6 +53,15 @@ export function resolveAutoProvider(
 	return "x402";
 }
 
+export function resolveEffectiveIpfsProvider(params: {
+	chain: string;
+	configuredProvider?: string;
+	pinataJwt?: string;
+}): Exclude<IpfsUploadProvider, "auto"> {
+	const provider = resolveIpfsUploadProvider(params.configuredProvider) ?? "auto";
+	return provider === "auto" ? resolveAutoProvider(params.chain, params.pinataJwt) : provider;
+}
+
 export function resolveTackApiUrl(configValue?: string): string {
 	const envValue = process.env.TAP_TACK_API_URL;
 	const url = trimTrailingSlash(envValue?.trim() || configValue || DEFAULT_TACK_API_ENDPOINT);

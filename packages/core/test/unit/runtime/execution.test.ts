@@ -264,6 +264,298 @@ describe("execution", () => {
 		expect(toSimple7702SmartAccount).not.toHaveBeenCalled();
 	});
 
+	it("does not deploy an undeployed Servo account during readiness checks unless requested", async () => {
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return 0n;
+				if (functionName === "nonces") return 0n;
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				throw new Error(`unexpected function ${functionName}`);
+			}),
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							paymaster: "0x9999999999999999999999999999999999999999",
+							paymasterData: "0x12",
+							paymasterAndData: "0x999999999999999999999999999999999999999912",
+							callGasLimit: "0x88d8",
+							verificationGasLimit: "0x1d4c8",
+							preVerificationGas: "0x5274",
+							paymasterVerificationGasLimit: "0xea60",
+							paymasterPostOpGasLimit: "0xafc8",
+							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+							maxTokenCostMicros: "1000000",
+							validUntil: 1900000000,
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "eth_sendUserOperation") {
+				return new Response(JSON.stringify({ result: "0xservohash" }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+		createBundlerClient.mockReturnValue({
+			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
+				receipt: {
+					transactionHash: "0xservotx",
+					logs: [],
+				},
+			}),
+		});
+
+		const { ensureExecutionReady } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		await ensureExecutionReady(config, config.chains[config.chain]!, {
+			preview: {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				paymasterProvider: "servo",
+			},
+		});
+
+		expect(createBundlerClient).not.toHaveBeenCalled();
+		expect(requests.find((request) => request.method === "eth_sendUserOperation")).toBeUndefined();
+	});
+
+	it("deploys an undeployed Servo account during readiness checks when requested", async () => {
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(
+				async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+					if (functionName === "getAddress") return EXECUTION_ADDRESS;
+					if (functionName === "getNonce") return 0n;
+					if (functionName === "nonces") {
+						if (args?.[0] !== EXECUTION_ADDRESS) {
+							throw new Error("permit nonce must be loaded for smart account");
+						}
+						return 0n;
+					}
+					if (functionName === "name") return "USD Coin";
+					if (functionName === "version") return "2";
+					throw new Error(`unexpected function ${functionName}`);
+				},
+			),
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							paymaster: "0x9999999999999999999999999999999999999999",
+							paymasterData: "0x12",
+							paymasterAndData: "0x999999999999999999999999999999999999999912",
+							callGasLimit: "0x88d8",
+							verificationGasLimit: "0x1d4c8",
+							preVerificationGas: "0x5274",
+							paymasterVerificationGasLimit: "0xea60",
+							paymasterPostOpGasLimit: "0xafc8",
+							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+							maxTokenCostMicros: "1000000",
+							validUntil: 1900000000,
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "eth_sendUserOperation") {
+				return new Response(JSON.stringify({ result: "0xservohash" }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+		createBundlerClient.mockReturnValue({
+			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
+				receipt: {
+					transactionHash: "0xservotx",
+					logs: [],
+				},
+			}),
+		});
+
+		const { ensureExecutionReady } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		await ensureExecutionReady(config, config.chains[config.chain]!, {
+			preview: {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				paymasterProvider: "servo",
+			},
+			deployEip4337Account: true,
+		});
+
+		expect(createBundlerClient).toHaveBeenCalledOnce();
+		const sendRequest = requests.find((request) => request.method === "eth_sendUserOperation");
+		expect(sendRequest).toBeDefined();
+		const sentUserOperation = sendRequest?.params[0] as Record<string, unknown>;
+		expect(sentUserOperation.factory).toBe(SERVO_FACTORY_ADDRESS);
+		expect(sentUserOperation).toHaveProperty("factoryData");
+		expect(sentUserOperation).not.toHaveProperty("initCode");
+	});
+
+	it("skips Servo deployment during readiness checks when the account already exists", async () => {
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return 0n;
+				if (functionName === "nonces") return 0n;
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				throw new Error(`unexpected function ${functionName}`);
+			}),
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x6001600155"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
+			if (method === "eth_supportedEntryPoints") {
+				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (method === "pm_getCapabilities") {
+				return new Response(
+					JSON.stringify({
+						result: {
+							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+							supportedChains: [{ chainId: 167000 }],
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			if (method === "eth_sendUserOperation") {
+				return new Response(JSON.stringify({ result: "0xservohash" }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+
+		const { ensureExecutionReady } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		await ensureExecutionReady(config, config.chains[config.chain]!, {
+			preview: {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				paymasterProvider: "servo",
+			},
+			deployEip4337Account: true,
+		});
+
+		expect(createBundlerClient).not.toHaveBeenCalled();
+		expect(requests.find((request) => request.method === "eth_sendUserOperation")).toBeUndefined();
+	});
+
 	it("fails fast when Servo explicitly reports the chain as unsupported", async () => {
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {

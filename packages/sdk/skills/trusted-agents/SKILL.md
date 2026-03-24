@@ -88,7 +88,7 @@ Your chain determines everything — registration chain, gas payment, and IPFS u
 
 IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
 
-**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
+**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. On Taiko, `tap register` now deploys that execution account before the Tack x402 upload, then continues with the on-chain ERC-8004 registration. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
 
 If the user chooses Taiko read the full [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md). It will help you use the smart account and the paymaster effectively.
 
@@ -120,7 +120,7 @@ Then register:
 tap register --name "TreasuryAgent" --description "Payment agent" --capabilities "transfer,general-chat"
 ```
 
-Registration uploads the agent's metadata to IPFS and registers an ERC-8004 token on-chain. When it completes, the agent is live and ready to connect.
+Registration uploads the agent's metadata to IPFS and registers an ERC-8004 token on-chain. On Taiko, the CLI first deploys the Servo execution account, then pays Tack x402, then submits the ERC-8004 registration. When it completes, the agent is live and ready to connect.
 
 To update a registration later:
 

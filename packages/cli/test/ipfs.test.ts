@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_TACK_API_ENDPOINT,
 	resolveAutoProvider,
+	resolveEffectiveIpfsProvider,
 	resolveIpfsUploadProvider,
 	resolvePinataJwt,
 	resolveTackApiUrl,
@@ -63,6 +64,29 @@ describe("ipfs", () => {
 	it("auto prefers pinata when JWT is present on non-Taiko chains", () => {
 		expect(resolveAutoProvider("eip155:8453", "jwt")).toBe("pinata");
 		expect(resolveAutoProvider("eip155:84532", "jwt")).toBe("pinata");
+	});
+
+	it("resolves the effective provider from config and credentials", () => {
+		expect(
+			resolveEffectiveIpfsProvider({
+				chain: "eip155:167000",
+				configuredProvider: undefined,
+				pinataJwt: "jwt",
+			}),
+		).toBe("tack");
+		expect(
+			resolveEffectiveIpfsProvider({
+				chain: "eip155:8453",
+				configuredProvider: undefined,
+				pinataJwt: "jwt",
+			}),
+		).toBe("pinata");
+		expect(
+			resolveEffectiveIpfsProvider({
+				chain: "eip155:8453",
+				configuredProvider: "x402",
+			}),
+		).toBe("x402");
 	});
 
 	it("resolves tack API URL with defaults and env override", () => {

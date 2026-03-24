@@ -24,6 +24,7 @@ export async function ensureExecutionReady(
 	chainConfig: ChainConfig,
 	options?: {
 		preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
+		deployEip4337Account?: boolean;
 	},
 ): Promise<void> {
 	return await ensureCoreExecutionReady(config, chainConfig, options);
