@@ -21,7 +21,7 @@ import {
 	SERVO_ACCOUNT_ABI,
 	SERVO_ACCOUNT_FACTORY_ABI,
 } from "./abis.js";
-import { SERVO_ACCOUNT_SALT, SERVO_DUMMY_SIGNATURE } from "./catalog.js";
+import { SERVO_ACCOUNT_SALT, SERVO_DUMMY_SIGNATURE, USDC_PERMIT_TYPES } from "./catalog.js";
 import { rpcRequest } from "./rpc.js";
 import type {
 	Eip4337ExecutionContext,
@@ -467,21 +467,7 @@ export async function executeServoEip4337Calls(
 			chainId: BigInt(chainConfig.chainId),
 			verifyingContract: stubQuote.tokenAddress,
 		},
-		types: {
-			EIP712Domain: [
-				{ name: "name", type: "string" },
-				{ name: "version", type: "string" },
-				{ name: "chainId", type: "uint256" },
-				{ name: "verifyingContract", type: "address" },
-			],
-			Permit: [
-				{ name: "owner", type: "address" },
-				{ name: "spender", type: "address" },
-				{ name: "value", type: "uint256" },
-				{ name: "nonce", type: "uint256" },
-				{ name: "deadline", type: "uint256" },
-			],
-		},
+		types: USDC_PERMIT_TYPES,
 		primaryType: "Permit",
 		message: {
 			owner: context.executionAddress,

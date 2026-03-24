@@ -7,26 +7,11 @@ import {
 	CIRCLE_PAYMASTER_POST_OP_GAS_LIMIT,
 	CIRCLE_PAYMASTER_VERIFICATION_GAS_LIMIT,
 	CIRCLE_PERMIT_AMOUNT,
+	USDC_PERMIT_TYPES,
 } from "./catalog.js";
 import type { CirclePermitMetadata, Eip7702ExecutionContext } from "./types.js";
 
 const CIRCLE_PERMIT_METADATA_CACHE = new Map<string, CirclePermitMetadata>();
-
-const USDC_PERMIT_TYPES = {
-	EIP712Domain: [
-		{ name: "name", type: "string" },
-		{ name: "version", type: "string" },
-		{ name: "chainId", type: "uint256" },
-		{ name: "verifyingContract", type: "address" },
-	],
-	Permit: [
-		{ name: "owner", type: "address" },
-		{ name: "spender", type: "address" },
-		{ name: "value", type: "uint256" },
-		{ name: "nonce", type: "uint256" },
-		{ name: "deadline", type: "uint256" },
-	],
-} as const;
 
 function circlePermitCacheKey(chain: string, sender: Address): string {
 	return `${chain}:${sender.toLowerCase()}`;

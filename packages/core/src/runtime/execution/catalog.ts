@@ -69,3 +69,19 @@ export const CIRCLE_PERMIT_AMOUNT = 10_000_000n;
 export const CANDIDE_ALLOWANCE_BUFFER = 1_000_000n;
 export const SERVO_ACCOUNT_SALT = 0n;
 export const SERVO_DUMMY_SIGNATURE = `0x${"00".repeat(65)}` as Hex;
+
+export const USDC_PERMIT_TYPES = {
+	EIP712Domain: [
+		{ name: "name", type: "string" },
+		{ name: "version", type: "string" },
+		{ name: "chainId", type: "uint256" },
+		{ name: "verifyingContract", type: "address" },
+	],
+	Permit: [
+		{ name: "owner", type: "address" },
+		{ name: "spender", type: "address" },
+		{ name: "value", type: "uint256" },
+		{ name: "nonce", type: "uint256" },
+		{ name: "deadline", type: "uint256" },
+	],
+} as const;
