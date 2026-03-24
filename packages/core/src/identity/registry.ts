@@ -74,14 +74,17 @@ export class ERC8004Registry implements IIdentityRegistry {
 
 			const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
 
-			const transferLog = receipt.logs.find(
+			const transferLog = (receipt.logs ?? []).find(
 				(log) =>
 					log.address.toLowerCase() === this.registryAddress.toLowerCase() &&
 					log.topics[0] === "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
 			);
 
 			if (!transferLog || !transferLog.topics[3]) {
-				throw new IdentityError("Transfer event not found in transaction receipt");
+				throw new IdentityError(
+					"Transfer event not found in transaction receipt. " +
+						"The transaction may have succeeded on-chain — check the registry with `tap identity resolve-self`.",
+				);
 			}
 
 			return Number(BigInt(transferLog.topics[3]));

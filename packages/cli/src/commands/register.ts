@@ -161,14 +161,17 @@ function extractRegisteredAgentId(
 	receipt: Awaited<ReturnType<typeof executeContractCalls>>["transactionReceipt"],
 	registryAddress: `0x${string}`,
 ): number {
-	const transferLog = receipt.logs.find(
+	const transferLog = (receipt.logs ?? []).find(
 		(log) =>
 			log.address.toLowerCase() === registryAddress.toLowerCase() &&
 			log.topics[0] === "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
 	);
 
 	if (!transferLog?.topics[3]) {
-		throw new Error("Transfer event not found in registration transaction receipt");
+		throw new Error(
+			"Transfer event not found in registration transaction receipt. " +
+				"The transaction may have succeeded on-chain — check the registry with `tap identity resolve-self`.",
+		);
 	}
 
 	return Number(BigInt(transferLog.topics[3]));
