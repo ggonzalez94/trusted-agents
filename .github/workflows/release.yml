@@ -95,8 +95,13 @@ jobs:
             bun publish --access public --no-git-checks --provenance
           fi
 
-      # Create GitHub Release with auto-generated notes
+      # Create GitHub Release with auto-generated notes (skip if already exists for reruns)
       - name: Create GitHub Release
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists, skipping"
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -138,7 +138,7 @@ function parseRuntime(value: string): SupportedRuntime {
 
 async function installSkills(notes: string[]): Promise<void> {
 	try {
-		await execFileAsync("npx", ["-y", "skills", "add", SKILLS_REPO], {
+		await execFileAsync("npx", ["-y", "skills", "add", "-g", SKILLS_REPO], {
 			env: process.env,
 			encoding: "utf8",
 			timeout: 120_000,
