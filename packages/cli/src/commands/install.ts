@@ -1,10 +1,8 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { access, lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
@@ -13,6 +11,8 @@ import type { GlobalOptions } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
+const SKILLS_REPO = "ggonzalez94/trusted-agents";
+const OPENCLAW_PLUGIN_NAME = "trusted-agents-tap";
 const SUPPORTED_RUNTIMES = ["claude", "codex", "openclaw"] as const;
 const DEFAULT_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS = 60_000;
 const DEFAULT_OPENCLAW_GATEWAY_WAIT_POLL_MS = 500;
@@ -20,18 +20,14 @@ const DEFAULT_OPENCLAW_GATEWAY_WAIT_POLL_MS = 500;
 type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 
 export interface InstallOptions {
-	sourceDir?: string;
 	runtimes?: string[];
-	skipSkills?: boolean;
 }
 
 interface RuntimeInstallResult {
 	runtime: SupportedRuntime;
 	detected: boolean;
-	skills_linked: boolean;
-	skills_path?: string;
+	skills_installed: boolean;
 	plugin_installed?: boolean;
-	plugin_target?: string;
 	notes: string[];
 }
 
@@ -46,15 +42,11 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 	const startTime = Date.now();
 
 	try {
-		const sourceDir = resolveSourceDir(cmdOpts.sourceDir);
-		validateSourceDir(sourceDir);
 		const homeDir = resolveHomeDir();
-
 		const runtimes = resolveRequestedRuntimes(cmdOpts.runtimes);
 		const autoDetect = runtimes.length === 0;
-		const skillSource = join(sourceDir, "packages", "sdk", "skills", "trusted-agents");
-		const pluginSource = join(sourceDir, "packages", "openclaw-plugin");
 		const results: RuntimeInstallResult[] = [];
+		let skillsInstalled = false;
 
 		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {
 			const runtimeDir = join(homeDir, `.${runtime}`);
@@ -68,30 +60,22 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			const result: RuntimeInstallResult = {
 				runtime,
 				detected,
-				skills_linked: false,
+				skills_installed: false,
 				notes,
 			};
 
-			if (shouldLinkGenericSkills(runtime, cmdOpts.skipSkills)) {
-				const linkPath = await ensureSkillLink(runtimeDir, skillSource);
-				result.skills_linked = true;
-				result.skills_path = linkPath;
-			} else if (cmdOpts.skipSkills) {
-				notes.push("Skipped generic TAP skill linking.");
-			} else if (runtime === "openclaw") {
-				notes.push("OpenClaw uses plugin-bundled TAP skills; skipped generic TAP skill linking.");
+			if ((runtime === "claude" || runtime === "codex") && !skillsInstalled) {
+				await installSkills(notes);
+				result.skills_installed = true;
+				skillsInstalled = true;
+			} else if ((runtime === "claude" || runtime === "codex") && skillsInstalled) {
+				result.skills_installed = true;
+				notes.push("Skills already installed for another runtime.");
 			}
 
 			if (runtime === "openclaw") {
-				const pluginResult = await installOpenClawPlugin(
-					pluginSource,
-					skillSource,
-					runtimeDir,
-					autoDetect,
-					notes,
-				);
+				const pluginResult = await installOpenClawPlugin(autoDetect, notes);
 				result.plugin_installed = pluginResult.installed;
-				result.plugin_target = pluginSource;
 			}
 
 			results.push(result);
@@ -100,7 +84,6 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 		if (results.length === 0) {
 			success(
 				{
-					source_dir: sourceDir,
 					installed: false,
 					reason:
 						"No supported runtimes detected. Looked for ~/.claude, ~/.codex, ~/.openclaw, and the openclaw CLI.",
@@ -116,13 +99,11 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 
 		success(
 			{
-				source_dir: sourceDir,
 				installed: true,
 				runtimes: results,
 				next_steps: [
 					"Run `tap init` to create or import the TAP identity.",
 					"Fund the wallet, then run `tap register`.",
-					"In OpenClaw, configure the plugin identity with the TAP data dir after onboarding.",
 				],
 			},
 			opts,
@@ -134,48 +115,15 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 	}
 }
 
-function resolveSourceDir(input?: string): string {
-	if (input) {
-		return resolve(input);
-	}
-
-	const envDir = process.env.TAP_SOURCE_DIR;
-	if (envDir) {
-		return resolve(envDir);
-	}
-
-	const currentFile = fileURLToPath(import.meta.url);
-	return resolve(dirname(currentFile), "../../../../");
-}
-
 function resolveHomeDir(): string {
 	const envHome = process.env.HOME?.trim();
 	return envHome && envHome.length > 0 ? envHome : homedir();
-}
-
-function validateSourceDir(sourceDir: string): void {
-	const cliBin = join(sourceDir, "packages", "cli", "dist", "bin.js");
-	const skillSource = join(sourceDir, "packages", "sdk", "skills", "trusted-agents");
-	const pluginSource = join(sourceDir, "packages", "openclaw-plugin", "openclaw.plugin.json");
-
-	if (!existsSync(cliBin)) {
-		throw new Error(
-			`TAP source dir is missing the built CLI at ${cliBin}. Run the repo build first.`,
-		);
-	}
-	if (!existsSync(skillSource)) {
-		throw new Error(`TAP source dir is missing the generic skill tree at ${skillSource}.`);
-	}
-	if (!existsSync(pluginSource)) {
-		throw new Error(`TAP source dir is missing the OpenClaw plugin at ${pluginSource}.`);
-	}
 }
 
 function resolveRequestedRuntimes(input: string[] | undefined): SupportedRuntime[] {
 	if (!input || input.length === 0) {
 		return [];
 	}
-
 	return input.map((entry) => parseRuntime(entry));
 }
 
@@ -188,38 +136,22 @@ function parseRuntime(value: string): SupportedRuntime {
 	return match;
 }
 
-function shouldLinkGenericSkills(
-	runtime: SupportedRuntime,
-	skipSkills: boolean | undefined,
-): boolean {
-	return !skipSkills && runtime !== "openclaw";
-}
-
-async function ensureSkillLink(runtimeDir: string, skillSource: string): Promise<string> {
-	const skillsDir = join(runtimeDir, "skills");
-	const linkPath = join(skillsDir, "trusted-agents");
-	await mkdir(skillsDir, { recursive: true });
-
-	const existing = await readSymlinkTarget(linkPath);
-	if (existing !== null) {
-		if (existing === skillSource) {
-			return linkPath;
-		}
-		throw new Error(`${linkPath} exists and is not a TAP-managed symlink.`);
+async function installSkills(notes: string[]): Promise<void> {
+	try {
+		await execFileAsync("npx", ["-y", "skills", "add", "-g", SKILLS_REPO], {
+			env: process.env,
+			encoding: "utf8",
+			timeout: 120_000,
+		});
+		notes.push(`Installed TAP skills via npx skills add ${SKILLS_REPO}.`);
+	} catch (err) {
+		throw new Error(
+			`Failed to install skills via npx skills add ${SKILLS_REPO}: ${err instanceof Error ? err.message : String(err)}`,
+		);
 	}
-
-	if (await pathExists(linkPath)) {
-		throw new Error(`${linkPath} exists and is not a symlink.`);
-	}
-
-	await symlink(skillSource, linkPath);
-	return linkPath;
 }
 
 async function installOpenClawPlugin(
-	pluginSource: string,
-	skillSource: string,
-	openClawDir: string,
 	autoDetect: boolean,
 	notes: string[],
 ): Promise<{ installed: boolean }> {
@@ -235,16 +167,15 @@ async function installOpenClawPlugin(
 	const gatewayStatusBeforeInstall = await getOpenClawGatewayStatus();
 	const waitForGatewayReload = isHealthyOpenClawGatewayStatus(gatewayStatusBeforeInstall);
 
-	await cleanupLegacyOpenClawSkillLink(openClawDir, skillSource, notes);
-	await execOpenClawCommand(["plugins", "install", "--link", pluginSource]);
-	notes.push("Installed or refreshed the TAP OpenClaw plugin link.");
+	await execOpenClawCommand(["plugins", "install", OPENCLAW_PLUGIN_NAME]);
+	notes.push(`Installed the TAP OpenClaw plugin (${OPENCLAW_PLUGIN_NAME}) from npm.`);
 	await validateOpenClawConfig(notes);
 
 	if (waitForGatewayReload) {
 		await waitForOpenClawGatewayReload(gatewayStatusBeforeInstall, notes);
 	} else if (gatewayStatusBeforeInstall?.serviceLoaded) {
 		notes.push(
-			"The OpenClaw Gateway service was not healthy before install, so TAP updated the plugin link without waiting for runtime readiness.",
+			"The OpenClaw Gateway service was not healthy before install, so TAP installed the plugin without waiting for runtime readiness.",
 		);
 	} else {
 		notes.push(
@@ -253,35 +184,6 @@ async function installOpenClawPlugin(
 	}
 
 	return { installed: true };
-}
-
-async function cleanupLegacyOpenClawSkillLink(
-	openClawDir: string,
-	skillSource: string,
-	notes: string[],
-): Promise<void> {
-	const legacyLinkPath = join(openClawDir, "skills", "trusted-agents");
-	const existingTarget = await readSymlinkTarget(legacyLinkPath);
-	if (existingTarget !== null) {
-		if (existingTarget === skillSource || looksLikeLegacyTapSkillTarget(existingTarget)) {
-			await rm(legacyLinkPath, { force: true });
-			notes.push(
-				"Removed the legacy ~/.openclaw/skills/trusted-agents TAP symlink. OpenClaw plugin mode uses the plugin-bundled skill tree only.",
-			);
-			return;
-		}
-
-		notes.push(
-			"Found an existing ~/.openclaw/skills/trusted-agents symlink. OpenClaw plugin mode does not use generic TAP skills; remove that symlink if Gateway logs TAP skill-path warnings.",
-		);
-		return;
-	}
-
-	if (await pathExists(legacyLinkPath)) {
-		notes.push(
-			"Found an existing ~/.openclaw/skills/trusted-agents entry that is not a symlink. OpenClaw plugin mode does not use generic TAP skills; remove or rename it if Gateway logs TAP skill-path warnings.",
-		);
-	}
 }
 
 async function validateOpenClawConfig(notes: string[]): Promise<void> {
@@ -377,7 +279,7 @@ async function waitForOpenClawGatewayReload(
 	}
 
 	notes.push(
-		`Warning: OpenClaw installed the TAP plugin link, but the running Gateway did not reload within ${timeoutMs}ms. ${describeOpenClawGatewayStatus(lastStatus)} Run \`openclaw gateway restart\` if needed.`,
+		`Warning: OpenClaw installed the TAP plugin, but the running Gateway did not reload within ${timeoutMs}ms. ${describeOpenClawGatewayStatus(lastStatus)} Run \`openclaw gateway restart\` if needed.`,
 	);
 }
 
@@ -385,7 +287,6 @@ function describeOpenClawGatewayStatus(status: OpenClawGatewayStatus | null): st
 	if (status === null) {
 		return "Gateway status could not be read during the reload wait.";
 	}
-
 	const parts = [
 		`serviceLoaded=${String(status.serviceLoaded)}`,
 		`runtimeStatus=${status.runtimeStatus ?? "unknown"}`,
@@ -400,7 +301,6 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
 	if (!rawValue) {
 		return fallback;
 	}
-
 	const value = Number(rawValue);
 	if (!Number.isInteger(value) || value <= 0) {
 		return fallback;
@@ -441,30 +341,4 @@ async function execOpenClawJsonCommand(args: string[]): Promise<Record<string, u
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function looksLikeLegacyTapSkillTarget(path: string): boolean {
-	const suffix = join("packages", "sdk", "skills", "trusted-agents");
-	return path.endsWith(suffix);
-}
-
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await access(path);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function readSymlinkTarget(path: string): Promise<string | null> {
-	try {
-		const stat = await lstat(path);
-		if (!stat.isSymbolicLink()) {
-			return null;
-		}
-		return resolve(dirname(path), await readlink(path));
-	} catch {
-		return null;
-	}
 }

@@ -1,14 +1,4 @@
-import {
-	access,
-	chmod,
-	mkdir,
-	mkdtemp,
-	readFile,
-	readlink,
-	rm,
-	symlink,
-	writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,7 +7,6 @@ import { installCommand } from "../src/commands/install.js";
 describe("tap install", () => {
 	let tempRoot: string;
 	let homeDir: string;
-	let sourceDir: string;
 	let binDir: string;
 	let originalHome: string | undefined;
 	let originalPath: string | undefined;
@@ -25,11 +14,9 @@ describe("tap install", () => {
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-install-"));
 		homeDir = join(tempRoot, "home");
-		sourceDir = join(tempRoot, "src");
 		binDir = join(tempRoot, "bin");
 		await mkdir(homeDir, { recursive: true });
 		await mkdir(binDir, { recursive: true });
-		await seedSourceTree(sourceDir);
 
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
@@ -65,71 +52,61 @@ describe("tap install", () => {
 		await rm(tempRoot, { recursive: true, force: true });
 	});
 
-	it("auto-installs generic skills for generic runtimes and the OpenClaw plugin for OpenClaw", async () => {
-		await mkdir(join(homeDir, ".codex"), { recursive: true });
+	it("auto-detects Claude and OpenClaw runtimes, calls npx skills add and openclaw plugins install", async () => {
+		await mkdir(join(homeDir, ".claude"), { recursive: true });
+		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
 
-		await installCommand({ sourceDir }, { json: true });
+		await installCommand({}, { json: true });
 
-		expect(await readSymlink(join(homeDir, ".codex", "skills", "trusted-agents"))).toBe(
-			join(sourceDir, "packages", "sdk", "skills", "trusted-agents"),
-		);
-		await expect(pathMissing(join(homeDir, ".openclaw", "skills", "trusted-agents"))).resolves.toBe(
-			true,
-		);
+		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
+		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents"]);
 
-		const pluginLog = await readFile(join(tempRoot, "openclaw.log"), "utf-8");
-		expect(pluginLog).toContain("gateway status --json");
-		expect(pluginLog).toContain("plugins install --link");
-		expect(pluginLog).toContain("config validate --json");
-		expect(pluginLog).toContain(join(sourceDir, "packages", "openclaw-plugin"));
-	});
-
-	it("installs the OpenClaw plugin without linking generic skills into ~/.openclaw", async () => {
-		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
-
-		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
-
-		await expect(pathMissing(join(homeDir, ".openclaw", "skills", "trusted-agents"))).resolves.toBe(
-			true,
-		);
-
-		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
 			"gateway status --json",
-			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
+			"plugins install trusted-agents-tap",
 			"config validate --json",
 		]);
 	});
 
-	it("removes a legacy TAP-managed ~/.openclaw skill symlink before plugin install", async () => {
+	it("installs OpenClaw plugin from npm when explicitly requested", async () => {
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
-		await mkdir(join(homeDir, ".openclaw", "skills"), { recursive: true });
-		await symlink(
-			join(sourceDir, "packages", "sdk", "skills", "trusted-agents"),
-			join(homeDir, ".openclaw", "skills", "trusted-agents"),
-		);
 
-		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
+		await installCommand({ runtimes: ["openclaw"] }, { json: true });
 
-		await expect(pathMissing(join(homeDir, ".openclaw", "skills", "trusted-agents"))).resolves.toBe(
-			true,
-		);
-		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
 			"gateway status --json",
-			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
+			"plugins install trusted-agents-tap",
 			"config validate --json",
 		]);
 	});
 
-	it("installs an explicitly requested generic runtime even when it was not auto-detected", async () => {
-		await installCommand({ sourceDir, runtimes: ["claude"] }, { json: true });
+	it("installs Claude skills via npx skills add when explicitly requested", async () => {
+		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 
-		expect(await readSymlink(join(homeDir, ".claude", "skills", "trusted-agents"))).toBe(
-			join(sourceDir, "packages", "sdk", "skills", "trusted-agents"),
-		);
+		await installCommand({ runtimes: ["claude"] }, { json: true });
+
+		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
+		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents"]);
 	});
 
-	it("waits for a running OpenClaw Gateway to reload before reporting plugin install success", async () => {
+	it("reports no runtimes when none detected (no error)", async () => {
+		await installCommand({}, { json: true });
+
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("reports error when npx skills add fails", async () => {
+		await writeFakeNpxFailing(binDir);
+
+		await installCommand({ runtimes: ["claude"] }, { json: true });
+
+		expect(process.exitCode).toBeGreaterThan(0);
+	});
+
+	it("waits for OpenClaw Gateway reload after plugin install", async () => {
 		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON_1 = gatewayStatusJson({
 			serviceLoaded: true,
 			runtimeStatus: "running",
@@ -150,11 +127,11 @@ describe("tap install", () => {
 		});
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
 
-		await installCommand({ sourceDir, runtimes: ["openclaw"] }, { json: true });
+		await installCommand({ runtimes: ["openclaw"] }, { json: true });
 
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
 			"gateway status --json",
-			`plugins install --link ${join(sourceDir, "packages", "openclaw-plugin")}`,
+			"plugins install trusted-agents-tap",
 			"config validate --json",
 			"gateway status --json",
 			"gateway status --json",
@@ -162,21 +139,28 @@ describe("tap install", () => {
 	});
 });
 
-async function seedSourceTree(sourceDir: string): Promise<void> {
-	await mkdir(join(sourceDir, "packages", "cli", "dist"), { recursive: true });
-	await mkdir(join(sourceDir, "packages", "sdk", "skills", "trusted-agents"), {
-		recursive: true,
-	});
-	await mkdir(join(sourceDir, "packages", "openclaw-plugin"), { recursive: true });
-	await writeFile(join(sourceDir, "packages", "cli", "dist", "bin.js"), "#!/usr/bin/env node\n");
+async function writeFakeNpx(binDir: string, logPath: string): Promise<void> {
+	const scriptPath = join(binDir, "npx");
 	await writeFile(
-		join(sourceDir, "packages", "sdk", "skills", "trusted-agents", "SKILL.md"),
-		"---\nname: trusted-agents\ndescription: test\n---\n",
+		scriptPath,
+		`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${logPath}"
+exit 0
+`,
 	);
+	await chmod(scriptPath, 0o755);
+}
+
+async function writeFakeNpxFailing(binDir: string): Promise<void> {
+	const scriptPath = join(binDir, "npx");
 	await writeFile(
-		join(sourceDir, "packages", "openclaw-plugin", "openclaw.plugin.json"),
-		'{"id":"trusted-agents-tap"}\n',
+		scriptPath,
+		`#!/usr/bin/env bash
+echo "fake npx failure" >&2
+exit 1
+`,
 	);
+	await chmod(scriptPath, 0o755);
 }
 
 async function writeFakeOpenClaw(binDir: string, logPath: string): Promise<void> {
@@ -230,19 +214,6 @@ function gatewayStatusJson(params: {
 		},
 		rpc: { ok: params.rpcOk },
 	});
-}
-
-async function readSymlink(path: string): Promise<string> {
-	return await readlink(path);
-}
-
-async function pathMissing(path: string): Promise<boolean> {
-	try {
-		await access(path);
-		return false;
-	} catch {
-		return true;
-	}
 }
 
 async function readCommandLog(path: string): Promise<string[]> {
