@@ -862,6 +862,28 @@ function buildServoCallData(calls: ExecutionCall[]): Hex {
 	});
 }
 
+async function deployServoExecutionAccountIfNeeded(
+	context: Eip4337ExecutionContext,
+	chainConfig: ChainConfig,
+): Promise<void> {
+	const code = await context.publicClient.getCode({
+		address: context.executionAddress,
+	});
+	if (code && code !== "0x") {
+		return;
+	}
+
+	// Send a no-op call to the owner EOA so the first Servo user operation deploys the account
+	// before other flows (for example Tack x402) try to validate it.
+	await executeEip4337Calls(context, chainConfig, [
+		{
+			to: context.owner.address,
+			value: 0n,
+			data: "0x",
+		},
+	]);
+}
+
 async function resolveServoExecutionAddress(
 	publicClient: ReturnType<typeof buildPublicClient>,
 	factoryAddress: Address,
@@ -1024,12 +1046,21 @@ export async function ensureExecutionReady(
 	chainConfig: ChainConfig,
 	{
 		preview,
-	}: { preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode"> } = {},
+		deployEip4337Account = false,
+	}: {
+		preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
+		deployEip4337Account?: boolean;
+	} = {},
 ): Promise<void> {
 	const context = await resolveExecutionContext(config, chainConfig, {
 		pinnedPreview: preview,
 		requireProvider: true,
 	});
+
+	if (deployEip4337Account && context.mode === "eip4337") {
+		await deployServoExecutionAccountIfNeeded(context, chainConfig);
+		return;
+	}
 
 	if (context.mode !== "eip7702" || context.providerConfig?.provider !== "circle") {
 		return;
