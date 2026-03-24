@@ -46,6 +46,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 		const runtimes = resolveRequestedRuntimes(cmdOpts.runtimes);
 		const autoDetect = runtimes.length === 0;
 		const results: RuntimeInstallResult[] = [];
+		let skillsInstalled = false;
 
 		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {
 			const runtimeDir = join(homeDir, `.${runtime}`);
@@ -63,9 +64,13 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 				notes,
 			};
 
-			if (runtime === "claude" || runtime === "codex") {
+			if ((runtime === "claude" || runtime === "codex") && !skillsInstalled) {
 				await installSkills(notes);
 				result.skills_installed = true;
+				skillsInstalled = true;
+			} else if ((runtime === "claude" || runtime === "codex") && skillsInstalled) {
+				result.skills_installed = true;
+				notes.push("Skills already installed for another runtime.");
 			}
 
 			if (runtime === "openclaw") {
@@ -133,7 +138,7 @@ function parseRuntime(value: string): SupportedRuntime {
 
 async function installSkills(notes: string[]): Promise<void> {
 	try {
-		await execFileAsync("npx", ["skills", "add", SKILLS_REPO], {
+		await execFileAsync("npx", ["-y", "skills", "add", SKILLS_REPO], {
 			env: process.env,
 			encoding: "utf8",
 			timeout: 120_000,

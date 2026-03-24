@@ -29,7 +29,7 @@ main() {
   npm i -g trusted-agents-cli || die "Failed to install trusted-agents-cli from npm."
 
   info "Setting up runtimes..."
-  tap install || die "tap install failed."
+  npx trusted-agents-cli install || die "tap install failed."
 
   echo ""
   info "Installation complete!"
