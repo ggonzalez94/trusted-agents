@@ -17,6 +17,7 @@ for (const pkg of packages) {
 	const packageJsonPath = join(packageDir, "package.json");
 	const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 
+	assertPath(packageDir, `${pkg.name} README`, "README.md");
 	assertPath(packageDir, `${pkg.name} main`, manifest.main);
 	assertPath(packageDir, `${pkg.name} types`, manifest.types);
 

@@ -1,55 +1,39 @@
-# Trusted Agents OpenClaw Plugin
+# trusted-agents-tap
 
-Run TAP inside OpenClaw Gateway as a supervised background service.
+OpenClaw Gateway plugin for running the Trusted Agents Protocol (TAP) as a long-lived background service.
 
-## Install From This Repo
+## Install
 
 Recommended:
 
 ```bash
-bash scripts/install.sh
-```
-
-Manual equivalent:
-
-```bash
-bun install
-bun run build
-cd packages/cli && npm link
+npm install -g trusted-agents-cli
 tap install --runtime openclaw
 ```
 
-`tap install --runtime openclaw` is the recommended managed install path. It installs the plugin-backed OpenClaw surface only; it does not link the generic TAP skill tree into `~/.openclaw/skills`.
-
-The installer does not force a stop/start cycle. If the Gateway is already running and healthy, `tap install --runtime openclaw` waits for OpenClaw's built-in config reload to restart the Gateway onto the refreshed plugin before returning. If the Gateway is not running, the installer updates the plugin link and config only.
-
-- If a TAP-managed legacy `~/.openclaw/skills/trusted-agents` symlink exists, the installer removes it so Gateway only sees the plugin-bundled TAP skill tree.
-
-Low-level manual link:
+Direct plugin install:
 
 ```bash
-openclaw plugins install --link ./packages/openclaw-plugin
+openclaw plugins install trusted-agents-tap
 ```
-
-That raw OpenClaw command only links the plugin. It does not clean up legacy `~/.openclaw/skills/trusted-agents` entries or wait for a running Gateway to reload onto the refreshed plugin.
 
 ## Configure
 
-Add one or more TAP identities to the plugin config. Each identity points at an existing TAP `dataDir`.
+Point the plugin at one or more existing TAP data directories:
 
 ```bash
 openclaw config set plugins.entries.trusted-agents-tap.config.identities '[{"name":"default","dataDir":"/absolute/path/to/agent-data","reconcileIntervalMinutes":10}]' --json
 ```
 
-OpenClaw automatically reloads the Gateway after plugin config changes. If the Gateway warns that no TAP identities are configured immediately after install, that is expected until this step is done.
+Create that TAP data directory first with `tap init` and `tap register`.
 
-## Runtime Model
+## Use
 
-- Gateway owns the long-lived TAP transport.
-- `tap_gateway` is the preferred surface for TAP connect/send/request operations in plugin mode.
-- Use `tap_gateway` action `status` to confirm at least one identity is configured before treating plugin mode as active.
-- If `status.warnings` is non-empty, resolve those warnings before relying on plugin mode.
-- If more than one identity is configured, pass `identity` in each `tap_gateway` tool call.
-- Periodic reconcile still runs even when streaming is healthy.
-- Read-only `tap` CLI commands remain safe for contacts, permissions inspection, and conversation history.
-- `tap message sync` remains the fallback when the plugin is not installed.
+- use `tap_gateway` for transport-active TAP operations inside Gateway
+- use the `tap` CLI for setup and read-only inspection
+- run `tap_gateway status` and confirm the identity is healthy before relying on plugin mode
+
+## More
+
+- CLI companion: `trusted-agents-cli`
+- Repository and docs: https://github.com/ggonzalez94/trusted-agents
