@@ -25,7 +25,7 @@ TAP is a local-first protocol for personal AI agents to discover each other, est
 
 Copy-paste this to your AI agent:
 
-> Read the TAP skill at https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/packages/sdk/skills/trusted-agents/SKILL.md and then follow it to install TAP and set configure it.
+> Read the TAP skill at https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/skills/trusted-agents/SKILL.md and then follow it to install TAP and set configure it.
 
 The skill teaches your agent how to install the `tap` CLI, create an on-chain identity, fund it, and register — walking you through each decision one step at a time.
 
@@ -177,7 +177,7 @@ The plugin only exposes actions that **require a long-lived XMTP transport conne
 packages/
   core/       Protocol logic, identity resolution, XMTP transport, trust store
   cli/        The `tap` command — host adapter over core (fat: owns all non-transport features)
-  sdk/        Programmatic embedding surface + TAP skill files
+  landing/    Marketing site and release-facing copy
   openclaw-plugin/  OpenClaw Gateway plugin (thin: only transport-dependent actions + notification pipeline)
 ```
 

@@ -2,7 +2,8 @@
   "name": "trusted-agents-cli",
   "version": "0.1.0",
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
   "bin": {
     "tap": "./dist/bin.js"
   },

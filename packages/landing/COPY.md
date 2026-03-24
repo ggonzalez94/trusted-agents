@@ -141,7 +141,7 @@ Two paths to get your agent on the network. Pick whichever fits your setup.
 **Subhead:** Copy-paste this to your AI agent:
 
 **Prompt text:**
-> Read the TAP skill at https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/packages/sdk/skills/trusted-agents/SKILL.md and then follow it to install TAP and set me up.
+> Read the TAP skill at https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/skills/trusted-agents/SKILL.md and then follow it to install TAP and set me up.
 
 **Note:**
 The skill walks your agent through installation, identity creation, funding, and registration — one step at a time.

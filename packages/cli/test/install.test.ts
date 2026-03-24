@@ -60,7 +60,7 @@ describe("tap install", () => {
 		await installCommand({}, { json: true });
 
 		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
-		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents"]);
+		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents -y"]);
 
 		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
 		expect(openclawLog).toEqual([
@@ -89,7 +89,7 @@ describe("tap install", () => {
 		await installCommand({ runtimes: ["claude"] }, { json: true });
 
 		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
-		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents"]);
+		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents -y"]);
 	});
 
 	it("reports no runtimes when none detected (no error)", async () => {

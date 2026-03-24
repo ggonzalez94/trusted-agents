@@ -51,6 +51,9 @@ jobs:
           mkdir -p packages/openclaw-plugin/skills
           cp -r skills/trusted-agents packages/openclaw-plugin/skills/trusted-agents
 
+      - name: Verify release package metadata
+        run: bun run verify:release
+
       # Verify tarballs before publishing
       - name: Verify tarballs
         run: |
