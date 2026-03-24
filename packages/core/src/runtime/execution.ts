@@ -68,9 +68,16 @@ interface CirclePermitMetadata {
 	nonce: bigint;
 }
 
+interface ServoGasPriceGuidance {
+	baseFeePerGas?: Hex;
+	suggestedMaxFeePerGas?: Hex;
+	suggestedMaxPriorityFeePerGas?: Hex;
+}
+
 interface ServoCapabilities {
-	accountFactoryAddress?: string | null;
+	accountFactoryAddress?: Address;
 	supportedChains?: Array<{ chainId?: number }>;
+	gasPriceGuidance?: ServoGasPriceGuidance;
 }
 
 interface ServoQuoteResponse {
@@ -607,7 +614,7 @@ async function preflightProvider(
 		let accountFactoryAddress = SERVO_ACCOUNT_FACTORIES[chainConfig.caip2];
 		let capabilities: ServoCapabilities | undefined;
 		try {
-			capabilities = await rpcRequest<ServoCapabilities>(endpoint, "pm_getCapabilities", []);
+			capabilities = await getServoCapabilities(endpoint);
 		} catch (error) {
 			if (!accountFactoryAddress) {
 				throw error;
@@ -620,7 +627,7 @@ async function preflightProvider(
 			throw new Error(`Servo endpoint does not advertise ${chainConfig.name}`);
 		}
 		if (capabilities?.accountFactoryAddress) {
-			accountFactoryAddress = getAddress(capabilities.accountFactoryAddress);
+			accountFactoryAddress = capabilities.accountFactoryAddress;
 		}
 
 		if (!accountFactoryAddress) {
@@ -809,6 +816,13 @@ function asHex(value: unknown, label: string): Hex {
 	return value as Hex;
 }
 
+function asOptionalHex(value: unknown, label: string): Hex | undefined {
+	if (value === undefined || value === null) {
+		return undefined;
+	}
+	return asHex(value, label);
+}
+
 function asAddress(value: unknown, label: string): Address {
 	if (typeof value !== "string") {
 		throw new Error(`${label} must be an address`);
@@ -847,6 +861,47 @@ function parseServoQuote(value: unknown): ServoQuoteResponse {
 		tokenAddress: asAddress(payload.tokenAddress, "tokenAddress"),
 		maxTokenCostMicros: asDecimalString(payload.maxTokenCostMicros, "maxTokenCostMicros"),
 		validUntil: asNumber(payload.validUntil, "validUntil"),
+	};
+}
+
+function parseServoCapabilities(value: unknown): ServoCapabilities {
+	const payload = asRecord(value, "Servo capabilities");
+	const supportedChains = Array.isArray(payload.supportedChains)
+		? payload.supportedChains.map((item, index) => {
+				const chain = asRecord(item, `supportedChains[${index}]`);
+				return {
+					chainId:
+						chain.chainId === undefined || chain.chainId === null
+							? undefined
+							: asNumber(chain.chainId, `supportedChains[${index}].chainId`),
+				};
+			})
+		: undefined;
+	const gasPriceGuidance =
+		payload.gasPriceGuidance === undefined || payload.gasPriceGuidance === null
+			? undefined
+			: (() => {
+					const guidance = asRecord(payload.gasPriceGuidance, "gasPriceGuidance");
+					return {
+						baseFeePerGas: asOptionalHex(guidance.baseFeePerGas, "gasPriceGuidance.baseFeePerGas"),
+						suggestedMaxFeePerGas: asOptionalHex(
+							guidance.suggestedMaxFeePerGas,
+							"gasPriceGuidance.suggestedMaxFeePerGas",
+						),
+						suggestedMaxPriorityFeePerGas: asOptionalHex(
+							guidance.suggestedMaxPriorityFeePerGas,
+							"gasPriceGuidance.suggestedMaxPriorityFeePerGas",
+						),
+					} satisfies ServoGasPriceGuidance;
+				})();
+
+	return {
+		accountFactoryAddress:
+			payload.accountFactoryAddress === undefined || payload.accountFactoryAddress === null
+				? undefined
+				: asAddress(payload.accountFactoryAddress, "accountFactoryAddress"),
+		supportedChains,
+		gasPriceGuidance,
 	};
 }
 
@@ -901,6 +956,36 @@ async function deployServoExecutionAccountIfNeeded(
 	]);
 }
 
+function buildServoSendUserOperation(parameters: {
+	sender: Address;
+	nonce: bigint;
+	factory?: Address;
+	factoryData?: Hex;
+	callData: Hex;
+	callGasLimit: Hex;
+	verificationGasLimit: Hex;
+	preVerificationGas: Hex;
+	maxFeePerGas: bigint;
+	maxPriorityFeePerGas: bigint;
+	paymasterAndData: Hex;
+	signature: Hex;
+}): Record<string, Hex | Address> {
+	return {
+		sender: parameters.sender,
+		nonce: toHex(parameters.nonce),
+		...(parameters.factory ? { factory: parameters.factory } : {}),
+		...(parameters.factoryData ? { factoryData: parameters.factoryData } : {}),
+		callData: parameters.callData,
+		callGasLimit: parameters.callGasLimit,
+		verificationGasLimit: parameters.verificationGasLimit,
+		preVerificationGas: parameters.preVerificationGas,
+		maxFeePerGas: toHex(parameters.maxFeePerGas),
+		maxPriorityFeePerGas: toHex(parameters.maxPriorityFeePerGas),
+		paymasterAndData: parameters.paymasterAndData,
+		signature: parameters.signature,
+	};
+}
+
 async function resolveServoExecutionAddress(
 	publicClient: ReturnType<typeof buildPublicClient>,
 	factoryAddress: Address,
@@ -936,6 +1021,29 @@ async function resolveEip1559Fees(
 		maxFeePerGas: gasPrice >= maxPriorityFeePerGas ? gasPrice : maxPriorityFeePerGas,
 		maxPriorityFeePerGas,
 	};
+}
+
+async function getServoCapabilities(endpoint: string): Promise<ServoCapabilities> {
+	return parseServoCapabilities(await rpcRequest<unknown>(endpoint, "pm_getCapabilities", []));
+}
+
+async function resolveServoEip1559Fees(
+	publicClient: ReturnType<typeof buildPublicClient>,
+	endpoint: string,
+): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+	try {
+		const guidance = (await getServoCapabilities(endpoint)).gasPriceGuidance;
+		if (guidance?.suggestedMaxFeePerGas && guidance.suggestedMaxPriorityFeePerGas) {
+			return {
+				maxFeePerGas: BigInt(guidance.suggestedMaxFeePerGas),
+				maxPriorityFeePerGas: BigInt(guidance.suggestedMaxPriorityFeePerGas),
+			};
+		}
+	} catch {
+		// Fall back to the chain RPC fee estimate below.
+	}
+
+	return resolveEip1559Fees(publicClient);
 }
 
 async function resolveExecutionContext(
@@ -1380,7 +1488,10 @@ async function executeEip4337Calls(
 		args: [context.executionAddress, 0n],
 	})) as bigint;
 
-	const { maxFeePerGas, maxPriorityFeePerGas } = await resolveEip1559Fees(context.publicClient);
+	const { maxFeePerGas, maxPriorityFeePerGas } = await resolveServoEip1559Fees(
+		context.publicClient,
+		paymasterEndpoint,
+	);
 	const accountCode = await context.publicClient.getCode({
 		address: context.executionAddress,
 	});
@@ -1502,17 +1613,19 @@ async function executeEip4337Calls(
 		providerConfig.bundlerUrl,
 		"eth_sendUserOperation",
 		[
-			{
-				...quotedUserOperation,
+			buildServoSendUserOperation({
+				sender: context.executionAddress,
+				nonce,
+				...deploymentFields,
+				callData,
 				callGasLimit: finalQuote.callGasLimit,
 				verificationGasLimit: finalQuote.verificationGasLimit,
 				preVerificationGas: finalQuote.preVerificationGas,
-				paymaster: finalQuote.paymaster,
-				paymasterData: finalQuote.paymasterData,
-				paymasterVerificationGasLimit: finalQuote.paymasterVerificationGasLimit,
-				paymasterPostOpGasLimit: finalQuote.paymasterPostOpGasLimit,
+				maxFeePerGas,
+				maxPriorityFeePerGas,
+				paymasterAndData: finalQuote.paymasterAndData,
 				signature: userOperationSignature,
-			},
+			}),
 			context.entryPoint.address,
 		],
 	);
