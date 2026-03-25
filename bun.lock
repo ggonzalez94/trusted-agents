@@ -34,6 +34,7 @@
       "name": "trusted-agents-core",
       "version": "0.1.0",
       "dependencies": {
+        "@open-wallet-standard/core": "^1.1.0",
         "@xmtp/node-sdk": "^5.4.0",
         "uuid": "^11.0.0",
         "viem": "2.46.3",
@@ -535,6 +536,16 @@
     "@octokit/webhooks": ["@octokit/webhooks@14.2.0", "", { "dependencies": { "@octokit/openapi-webhooks-types": "12.1.0", "@octokit/request-error": "^7.0.0", "@octokit/webhooks-methods": "^6.0.0" } }, "sha512-da6KbdNCV5sr1/txD896V+6W0iamFWrvVl8cHkBSPT+YlvmT3DwXa4jxZnQc+gnuTEqSWbBeoSZYTayXH9wXcw=="],
 
     "@octokit/webhooks-methods": ["@octokit/webhooks-methods@6.0.0", "", {}, "sha512-MFlzzoDJVw/GcbfzVC1RLR36QqkTLUf79vLVO3D+xn7r0QgxnFoLZgtrzxiQErAjFUOdH6fas2KeQJ1yr/qaXQ=="],
+
+    "@open-wallet-standard/core": ["@open-wallet-standard/core@1.1.0", "", { "optionalDependencies": { "@open-wallet-standard/core-darwin-arm64": "1.1.0", "@open-wallet-standard/core-darwin-x64": "1.1.0", "@open-wallet-standard/core-linux-arm64-gnu": "1.1.0", "@open-wallet-standard/core-linux-x64-gnu": "1.1.0" }, "bin": { "ows": "bin/ows" } }, "sha512-tQOLBo9y5qHJTTMVFU8s85GRj2vzEH6UILHODxOYifsJlgNWwoU/h4pAVK0vugtR2uGfRsJjxE0VkGICT7b+7Q=="],
+
+    "@open-wallet-standard/core-darwin-arm64": ["@open-wallet-standard/core-darwin-arm64@1.1.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-2w3lttvTcfhYVzXi1HaRPqJOWTQ5we5H9tSGeVNzgj5Q7P5r18BtRMVSEqaf3Uw5MrOLrN6Lb9iVdnGUqcCGJA=="],
+
+    "@open-wallet-standard/core-darwin-x64": ["@open-wallet-standard/core-darwin-x64@1.1.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-HjRnZ9PwG/+NjdKDHAz6VByrb3RYKUx8kYSKclWzw5rgYkaNVDD9PvvCs0odNBOawS/iHbgVUe4dko2py23HDQ=="],
+
+    "@open-wallet-standard/core-linux-arm64-gnu": ["@open-wallet-standard/core-linux-arm64-gnu@1.1.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-q1RC4cbNZLfKbFacVwnudlMDxb0gFWnX+jztQYAFgvCplAO33QWADa+Ua6y2M+yFSJBgoJDkpGgGqmi9tIjbYg=="],
+
+    "@open-wallet-standard/core-linux-x64-gnu": ["@open-wallet-standard/core-linux-x64-gnu@1.1.0", "", { "os": "linux", "cpu": "x64" }, "sha512-FerlsHMBjkFS/oP0bp6SVeJo29lpcbp5qkaRlN2OTx6AlF+mfKRb+pB32M+EiudylaWC9yG88XzxCe9YPoaOig=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
