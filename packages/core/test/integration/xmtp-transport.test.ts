@@ -10,6 +10,7 @@ import { CONNECTION_REQUEST } from "../../src/protocol/index.js";
 import { XmtpTransport } from "../../src/transport/xmtp.js";
 import { FileTrustStore } from "../../src/trust/file-trust-store.js";
 import type { Contact } from "../../src/trust/types.js";
+import { derivePrivateKeyXmtpDbEncryptionKey } from "../../src/wallet/index.js";
 
 const XMTP_ENABLED = process.env.XMTP_INTEGRATION === "true";
 let ALICE_PRIVATE_KEY: `0x${string}`;
@@ -82,6 +83,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-alice"),
+				dbEncryptionKey: derivePrivateKeyXmtpDbEncryptionKey(ALICE_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 			},
 			aliceStore,
@@ -93,6 +95,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-bob"),
+				dbEncryptionKey: derivePrivateKeyXmtpDbEncryptionKey(BOB_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 			},
 			bobStore,
@@ -160,6 +163,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-bob"),
+				dbEncryptionKey: derivePrivateKeyXmtpDbEncryptionKey(BOB_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 				agentResolver: resolver,
 			},
@@ -172,6 +176,7 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 				chain: "eip155:1",
 				env: "dev",
 				dbPath: join(testDir, "db-carol"),
+				dbEncryptionKey: derivePrivateKeyXmtpDbEncryptionKey(CAROL_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 			},
 			carolStore,

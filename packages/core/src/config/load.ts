@@ -112,7 +112,6 @@ export async function loadTrustedAgentConfigFromDataDir(
 		}
 	}
 
-	const storedWallet = resolveStoredWalletConfig(yaml?.wallet);
 	const legacyKeyfile = await loadLegacyKeyfile(resolvedDataDir);
 
 	let wallet: TrustedAgentsConfig["wallet"];
@@ -123,31 +122,34 @@ export async function loadTrustedAgentConfigFromDataDir(
 		account = privateKeyToAccount(options.privateKey);
 		wallet = { provider: "env-private-key" };
 		xmtpDbEncryptionKey ??= derivePrivateKeyXmtpDbEncryptionKey(options.privateKey);
-	} else if (storedWallet) {
-		account = resolveAccountFromOpenWallet(storedWallet);
-		wallet = storedWallet;
-		xmtpDbEncryptionKey ??= deriveOpenWalletXmtpDbEncryptionKey(storedWallet);
-	} else if (legacyKeyfile) {
-		if ((options.migrateLegacyKeyfile ?? true) && existsSync(configPath)) {
-			const migration = await migrateLegacyKeyfile({
-				dataDir: resolvedDataDir,
-				configPath,
-				yaml,
-				privateKey: legacyKeyfile.privateKey,
-			});
-			yaml = migration.yaml;
-			account = resolveAccountFromOpenWallet(migration.wallet);
-			wallet = migration.wallet;
-			xmtpDbEncryptionKey ??= migration.xmtpDbEncryptionKey;
-		} else {
-			account = privateKeyToAccount(legacyKeyfile.privateKey);
-			wallet = { provider: "legacy-keyfile", path: legacyKeyfile.path };
-			xmtpDbEncryptionKey ??= derivePrivateKeyXmtpDbEncryptionKey(legacyKeyfile.privateKey);
-		}
 	} else {
-		throw new Error(
-			`No wallet is configured for TAP in ${resolvedDataDir}. Run 'tap init' to create or select an Open Wallet wallet.`,
-		);
+		const storedWallet = resolveStoredWalletConfig(yaml?.wallet);
+		if (storedWallet) {
+			account = resolveAccountFromOpenWallet(storedWallet);
+			wallet = storedWallet;
+			xmtpDbEncryptionKey ??= deriveOpenWalletXmtpDbEncryptionKey(storedWallet);
+		} else if (legacyKeyfile) {
+			if ((options.migrateLegacyKeyfile ?? true) && existsSync(configPath)) {
+				const migration = await migrateLegacyKeyfile({
+					dataDir: resolvedDataDir,
+					configPath,
+					yaml,
+					privateKey: legacyKeyfile.privateKey,
+				});
+				yaml = migration.yaml;
+				account = resolveAccountFromOpenWallet(migration.wallet);
+				wallet = migration.wallet;
+				xmtpDbEncryptionKey ??= migration.xmtpDbEncryptionKey;
+			} else {
+				account = privateKeyToAccount(legacyKeyfile.privateKey);
+				wallet = { provider: "legacy-keyfile", path: legacyKeyfile.path };
+				xmtpDbEncryptionKey ??= derivePrivateKeyXmtpDbEncryptionKey(legacyKeyfile.privateKey);
+			}
+		} else {
+			throw new Error(
+				`No wallet is configured for TAP in ${resolvedDataDir}. Run 'tap init' to create or select an Open Wallet wallet.`,
+			);
+		}
 	}
 
 	const chain = options.chain ?? yaml?.chain ?? "eip155:84532";

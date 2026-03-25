@@ -131,6 +131,27 @@ describe("config-loader", () => {
 			expect(config.execution?.paymasterProvider).toBe("servo");
 		});
 
+		it("lets TAP_PRIVATE_KEY override an invalid stored wallet section", async () => {
+			process.env.TAP_PRIVATE_KEY =
+				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
+			await mkdir(tmpDir, { recursive: true });
+			await writeFile(
+				join(tmpDir, "config.yaml"),
+				[
+					"agent_id: 1",
+					"chain: base",
+					"wallet:",
+					"  provider: unsupported-wallet",
+					"  name: broken-wallet",
+					"",
+				].join("\n"),
+				"utf-8",
+			);
+
+			const config = await loadConfig({ dataDir: tmpDir });
+			expect(config.wallet.provider).toBe("env-private-key");
+		});
+
 		it("loads optional IPFS provider settings from config", async () => {
 			process.env.TAP_PRIVATE_KEY =
 				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";

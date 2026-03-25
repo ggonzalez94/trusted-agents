@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
 	type OpenWalletConfig,
@@ -63,31 +63,55 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			? ((YAML.parse(await readFile(configPath, "utf-8")) as StoredYamlConfig | null) ?? undefined)
 			: undefined;
 
+		const explicitPrivateKey = normalizePrivateKeyOption(cmdOpts?.privateKey);
 		const existingWallet = resolveStoredWallet(existingConfig?.wallet);
+		const legacyKeyfile = explicitPrivateKey
+			? undefined
+			: await loadLegacyKeyfile(dataDir, existingWallet);
+		const selectedPrivateKey = explicitPrivateKey ?? legacyKeyfile?.privateKey;
 		const walletResult = ensureOpenWallet({
 			dataDir,
-			privateKey: normalizePrivateKeyOption(cmdOpts?.privateKey),
+			privateKey: selectedPrivateKey,
 			walletName: cmdOpts?.wallet,
-			existingWallet: cmdOpts?.privateKey || cmdOpts?.wallet ? undefined : existingWallet,
+			existingWallet: selectedPrivateKey || cmdOpts?.wallet ? undefined : existingWallet,
 		});
 
 		emitWalletSelectionInfo(walletResult.status, walletResult.wallet, opts);
 
-		const chain = resolveChainAlias(existingConfig?.chain ?? cmdOpts?.chain ?? DEFAULT_CHAIN_ALIAS);
+		const chain = resolveChainAlias(cmdOpts?.chain ?? existingConfig?.chain ?? DEFAULT_CHAIN_ALIAS);
 		const chainConfig = ALL_CHAINS[chain];
 		const chainLabel = chainConfig?.name ?? chain;
 		const isTestnet = chain !== "eip155:8453" && chain !== "eip155:167000";
-		const xmtpEnv = isTestnet ? "dev" : "production";
-		const executionMode = getDefaultExecutionModeForChain(chain);
-		const paymasterProvider = getDefaultPaymasterProviderForMode(executionMode);
-		const selectedXmtpDbEncryptionKey = cmdOpts?.privateKey
-			? derivePrivateKeyXmtpDbEncryptionKey(normalizePrivateKeyOption(cmdOpts.privateKey)!)
+		const defaultXmtpEnv = isTestnet ? "dev" : "production";
+		const defaultExecutionMode = getDefaultExecutionModeForChain(chain);
+		const existingResolvedChain = existingConfig?.chain
+			? resolveChainAlias(existingConfig.chain)
+			: undefined;
+		const preserveExistingRuntimeSettings = existingResolvedChain === chain;
+		const executionMode =
+			preserveExistingRuntimeSettings && existingConfig?.execution?.mode
+				? (resolveStoredExecutionMode(existingConfig.execution.mode) ?? defaultExecutionMode)
+				: defaultExecutionMode;
+		const paymasterProvider =
+			executionMode === "eoa"
+				? undefined
+				: preserveExistingRuntimeSettings && existingConfig?.execution?.paymaster_provider
+					? (resolveStoredPaymasterProvider(existingConfig.execution.paymaster_provider) ??
+						getDefaultPaymasterProviderForMode(executionMode))
+					: getDefaultPaymasterProviderForMode(executionMode);
+		const xmtpEnv =
+			preserveExistingRuntimeSettings && existingConfig?.xmtp?.env
+				? (resolveStoredXmtpEnv(existingConfig.xmtp.env) ?? defaultXmtpEnv)
+				: defaultXmtpEnv;
+		const selectedXmtpDbEncryptionKey = selectedPrivateKey
+			? derivePrivateKeyXmtpDbEncryptionKey(selectedPrivateKey)
 			: deriveOpenWalletXmtpDbEncryptionKey(walletResult.wallet);
 
 		const existingWalletLookup = existingWallet?.id ?? existingWallet?.name;
 		const selectedWalletLookup = walletResult.wallet.id ?? walletResult.wallet.name;
 		const shouldRefreshXmtpKey =
-			existingWalletLookup === undefined || existingWalletLookup !== selectedWalletLookup;
+			!existingConfig?.xmtp?.db_encryption_key ||
+			(existingWalletLookup !== undefined && existingWalletLookup !== selectedWalletLookup);
 
 		const chainsYaml: Record<string, Record<string, string>> = {
 			...(existingConfig?.chains ?? {}),
@@ -128,6 +152,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 		await mkdir(dirname(configPath), { recursive: true });
 		await writeFile(configPath, YAML.stringify(yamlConfig), "utf-8");
 		info(`Saved config at ${configPath}`, opts);
+		await cleanupLegacyKeyfile(legacyKeyfile?.path, dataDir, opts);
 
 		const fundingSteps =
 			executionMode === "eip7702"
@@ -210,6 +235,58 @@ function resolveStoredWallet(
 		...(wallet.id ? { id: wallet.id } : {}),
 		...(wallet.vault_path ? { vaultPath: wallet.vault_path } : {}),
 	};
+}
+
+async function loadLegacyKeyfile(
+	dataDir: string,
+	existingWallet: OpenWalletConfig | undefined,
+): Promise<{ path: string; privateKey: `0x${string}` } | undefined> {
+	if (existingWallet) {
+		return undefined;
+	}
+
+	const keyPath = `${dataDir}/identity/agent.key`;
+	if (!existsSync(keyPath)) {
+		return undefined;
+	}
+
+	const raw = (await readFile(keyPath, "utf-8")).trim();
+	if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
+		throw new Error(`Invalid keyfile at ${keyPath}: expected 64-char hex`);
+	}
+
+	return {
+		path: keyPath,
+		privateKey: `0x${raw}`,
+	};
+}
+
+async function cleanupLegacyKeyfile(
+	keyPath: string | undefined,
+	dataDir: string,
+	opts: GlobalOptions,
+): Promise<void> {
+	if (!keyPath) {
+		return;
+	}
+
+	await rm(keyPath, { force: true });
+	await rm(`${dataDir}/identity`, { recursive: false, force: true }).catch(() => {});
+	info("Migrated legacy TAP keyfile into Open Wallet and removed identity/agent.key", opts);
+}
+
+function resolveStoredExecutionMode(value: string): "eoa" | "eip4337" | "eip7702" | undefined {
+	return value === "eoa" || value === "eip4337" || value === "eip7702" ? value : undefined;
+}
+
+function resolveStoredPaymasterProvider(value: string): "circle" | "candide" | "servo" | undefined {
+	return value === "circle" || value === "candide" || value === "servo" ? value : undefined;
+}
+
+function resolveStoredXmtpEnv(
+	value: string,
+): NonNullable<StoredYamlConfig["xmtp"]>["env"] | undefined {
+	return value === "dev" || value === "production" || value === "local" ? value : undefined;
 }
 
 function emitWalletSelectionInfo(

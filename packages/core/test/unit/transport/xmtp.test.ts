@@ -14,6 +14,7 @@ import type { XmtpTransportConfig } from "../../../src/transport/xmtp-types.js";
 import { XmtpTransport } from "../../../src/transport/xmtp.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
+import { derivePrivateKeyXmtpDbEncryptionKey } from "../../../src/wallet/index.js";
 import { ALICE, BOB } from "../../fixtures/test-keys.js";
 
 // --- Test internals access ---
@@ -232,6 +233,7 @@ const TEST_CONFIG: XmtpTransportConfig = {
 	account: ALICE.account,
 	chain: "eip155:1",
 	env: "dev",
+	dbEncryptionKey: derivePrivateKeyXmtpDbEncryptionKey(ALICE.privateKey),
 	defaultResponseTimeoutMs: 5_000,
 };
 

@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
-import { hexToBytes, keccak256, toHex } from "viem";
+import { hexToBytes } from "viem";
 import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import { CONNECTION_REQUEST, CONNECTION_RESULT, isResultMethod } from "../protocol/index.js";
@@ -84,9 +84,12 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const signer = createXmtpSigner(this.config.account);
-		const dbEncryptionKey = this.config.dbEncryptionKey
-			? hexToBytes(this.config.dbEncryptionKey)
-			: hexToBytes(keccak256(toHex(`xmtp-db-encryption:${this.config.account.address}`)));
+		if (!this.config.dbEncryptionKey) {
+			throw new TransportError(
+				"XMTP dbEncryptionKey is required. Load TAP config through the standard config loader or set xmtp.db_encryption_key explicitly.",
+			);
+		}
+		const dbEncryptionKey = hexToBytes(this.config.dbEncryptionKey);
 		if (this.config.dbPath) {
 			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
 		}

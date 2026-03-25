@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
@@ -89,6 +90,74 @@ describe("tap init", () => {
 
 		expect(secondConfig.wallet.name).toBe(firstConfig.wallet.name);
 		expect(secondConfig.wallet.id).toBe(firstConfig.wallet.id);
+	});
+
+	it("migrates a legacy keyfile into Open Wallet without rotating the agent address", async () => {
+		const dataDir = join(tmpDir, "legacy-migration");
+		const legacyPrivateKey = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+		const expectedAddress = privateKeyToAccount(`0x${legacyPrivateKey}`).address;
+		const keyPath = join(dataDir, "identity", "agent.key");
+
+		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await writeFile(keyPath, legacyPrivateKey, "utf-8");
+		await writeFile(
+			configPath,
+			[
+				"agent_id: 7",
+				"chain: eip155:84532",
+				"execution:",
+				"  mode: eoa",
+				"xmtp:",
+				"  env: dev",
+				"",
+			].join("\n"),
+			"utf-8",
+		);
+
+		await initCommand({ json: true, config: configPath, dataDir });
+
+		const yaml = YAML.parse(await readFile(configPath, "utf-8"));
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.data.address).toBe(expectedAddress);
+		expect(yaml.wallet.provider).toBe("open-wallet");
+		expect(yaml.execution.mode).toBe("eoa");
+		expect(yaml.xmtp.env).toBe("dev");
+		expect(existsSync(keyPath)).toBe(false);
+	});
+
+	it("preserves existing runtime settings on same-chain reruns", async () => {
+		const dataDir = join(tmpDir, "preserve-runtime");
+
+		await initCommand(
+			{
+				json: true,
+				config: configPath,
+				dataDir,
+			},
+			{ chain: "taiko" },
+		);
+
+		const existing = YAML.parse(await readFile(configPath, "utf-8")) as {
+			execution?: { mode?: string; paymaster_provider?: string };
+			xmtp?: { env?: string; db_encryption_key?: string };
+		};
+		existing.execution = {
+			mode: "eip4337",
+			paymaster_provider: "candide",
+		};
+		existing.xmtp = {
+			...existing.xmtp,
+			env: "local",
+		};
+		await writeFile(configPath, YAML.stringify(existing), "utf-8");
+
+		stdoutWrites = [];
+		await initCommand({ json: true, config: configPath, dataDir });
+
+		const yaml = YAML.parse(await readFile(configPath, "utf-8"));
+		expect(yaml.execution.mode).toBe("eip4337");
+		expect(yaml.execution.paymaster_provider).toBe("candide");
+		expect(yaml.xmtp.env).toBe("local");
 	});
 
 	it("should create config inside an explicit data dir without reusing legacy config", async () => {

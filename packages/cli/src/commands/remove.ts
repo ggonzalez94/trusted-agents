@@ -12,6 +12,7 @@ import {
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
@@ -578,14 +579,7 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 		if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
 			return [null, `identity/agent.key is present but invalid at ${keyPath}.`];
 		}
-		const config = await loadTrustedAgentConfigFromDataDir(dataDir, {
-			requireAgentId: false,
-			privateKey: `0x${raw}`,
-			configPath: join(dataDir, "config.yaml"),
-			extraChains: ALL_CHAINS,
-			migrateLegacyKeyfile: false,
-		});
-		return [config.account.address, null];
+		return [privateKeyToAccount(`0x${raw}`).address, null];
 	} catch (error: unknown) {
 		const code =
 			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
