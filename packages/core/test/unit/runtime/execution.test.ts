@@ -82,13 +82,6 @@ function buildConfig(
 			rpcUrl: "https://example.test/base",
 			registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 		},
-		"eip155:84532": {
-			name: "Base Sepolia",
-			caip2: "eip155:84532",
-			chainId: 84532,
-			rpcUrl: "https://example.test/base-sepolia",
-			registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-		},
 		"eip155:167000": {
 			name: "Taiko",
 			caip2: "eip155:167000",
@@ -107,7 +100,6 @@ function buildConfig(
 		inviteExpirySeconds: 3600,
 		resolveCacheTtlMs: 60000,
 		resolveCacheMaxEntries: 100,
-		xmtpEnv: "dev",
 		xmtpDbEncryptionKey: undefined,
 		execution: executionOverrides,
 	};
@@ -156,12 +148,12 @@ describe("execution", () => {
 			getGasPrice: vi.fn().mockResolvedValue(2n),
 		});
 		buildChainWalletClient.mockReturnValue({
-			chain: { id: 84532 },
+			chain: { id: 8453 },
 			sendTransaction: vi.fn(),
 		});
 		signAuthorization.mockResolvedValue({
 			address: EXECUTION_ADDRESS,
-			chainId: 84532,
+			chainId: 8453,
 			nonce: 1,
 			r: "0x1",
 			s: "0x2",
@@ -174,9 +166,9 @@ describe("execution", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("defaults to eip7702 with Circle on Base Sepolia", async () => {
+	it("defaults to eip7702 with Circle on Base", async () => {
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
-		const config = buildConfig("eip155:84532", undefined);
+		const config = buildConfig("eip155:8453", undefined);
 		const preview = await getExecutionPreview(config, config.chains[config.chain]!);
 
 		expect(preview.requestedMode).toBe("eip7702");

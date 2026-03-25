@@ -69,8 +69,6 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 		const chain = resolveChainAlias(existingConfig?.chain ?? cmdOpts?.chain ?? DEFAULT_CHAIN_ALIAS);
 		const chainConfig = ALL_CHAINS[chain];
 		const chainLabel = chainConfig?.name ?? chain;
-		const isTestnet = chain !== "eip155:8453" && chain !== "eip155:167000";
-		const xmtpEnv = isTestnet ? "dev" : "production";
 		const executionMode = getDefaultExecutionModeForChain(chain);
 		const paymasterProvider = getDefaultPaymasterProviderForMode(executionMode);
 
@@ -78,7 +76,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 		if (!existsSync(configPath)) {
 			// Merge default chains with any extra chains the CLI knows about
 			const chainsYaml: Record<string, Record<string, string>> = {};
-			if (chainConfig && !["eip155:8453", "eip155:84532"].includes(chain)) {
+			if (chainConfig && chain !== "eip155:8453") {
 				chainsYaml[chain] = {
 					rpc_url: chainConfig.rpcUrl,
 					registry_address: chainConfig.registryAddress,
@@ -92,7 +90,6 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 					mode: executionMode,
 					...(paymasterProvider ? { paymaster_provider: paymasterProvider } : {}),
 				},
-				xmtp: { env: xmtpEnv },
 			};
 			if (Object.keys(chainsYaml).length > 0) {
 				yamlConfig.chains = chainsYaml;
@@ -105,19 +102,12 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 
 		const fundingSteps =
 			executionMode === "eip7702"
-				? chain === "eip155:8453"
-					? [
-							`Agent address: ${address}`,
-							"Base defaults to EIP-7702 with Circle Paymaster.",
-							"Fund this same address with Base mainnet USDC.",
-							"That single Base mainnet USDC balance covers registration gas and x402 IPFS uploads.",
-						]
-					: [
-							`Agent address: ${address}`,
-							"Base Sepolia defaults to EIP-7702 with Circle Paymaster.",
-							"Fund this address with Base Sepolia USDC for registration transactions.",
-							"IPFS uploads auto-select based on chain (Tack on Taiko, Pinata x402 on Base). Override with --ipfs-provider or --pinata-jwt.",
-						]
+				? [
+						`Agent address: ${address}`,
+						"Base defaults to EIP-7702 with Circle Paymaster.",
+						"Fund this same address with Base mainnet USDC.",
+						"That single Base mainnet USDC balance covers registration gas and x402 IPFS uploads.",
+					]
 				: executionMode === "eip4337"
 					? [
 							`Agent owner address: ${address}`,

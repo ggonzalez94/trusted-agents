@@ -92,7 +92,7 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const clientPromise = Client.create(signer, {
-			env: this.config.env ?? "production",
+			env: "production",
 			dbEncryptionKey,
 			...(this.config.dbPath
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }

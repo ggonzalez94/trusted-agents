@@ -30,7 +30,6 @@ export interface TrustedAgentsConfig {
 	inviteExpirySeconds: number;
 	resolveCacheTtlMs: number;
 	resolveCacheMaxEntries: number;
-	xmtpEnv?: "dev" | "production" | "local";
 	xmtpDbPath?: string;
 	xmtpDbEncryptionKey?: `0x${string}`;
 	execution?: ExecutionConfig;

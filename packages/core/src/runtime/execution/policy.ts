@@ -12,7 +12,7 @@ import type {
 import type { ResolvedExecutionMode } from "./types.js";
 
 export function isBaseChain(chainConfig: ChainConfig): boolean {
-	return chainConfig.chainId === 8453 || chainConfig.chainId === 84532;
+	return chainConfig.chainId === 8453;
 }
 
 export function isTaikoMainnetChain(chainConfig: ChainConfig): boolean {

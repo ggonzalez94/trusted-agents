@@ -42,16 +42,12 @@ describe("config-loader", () => {
 				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
 				"utf-8",
 			);
-			await writeFile(
-				configPath,
-				["agent_id: 1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
-				"utf-8",
-			);
+			await writeFile(configPath, ["agent_id: 1", "chain: eip155:8453", ""].join("\n"), "utf-8");
 
 			const config = await loadConfig({ config: configPath }, { requireAgentId: false });
 
 			expect(config.agentId).toBe(1);
-			expect(config.chain).toBe("eip155:84532");
+			expect(config.chain).toBe("eip155:8453");
 			expect(config.dataDir).toBe(defaultDataDir);
 		});
 
@@ -95,11 +91,7 @@ describe("config-loader", () => {
 			process.env.TAP_PRIVATE_KEY =
 				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
 			await mkdir(tmpDir, { recursive: true });
-			await writeFile(
-				join(tmpDir, "config.yaml"),
-				"agent_id: 1\nchain: base-sepolia\nxmtp:\n  env: dev\n",
-				"utf-8",
-			);
+			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: base\n", "utf-8");
 
 			const config = await loadConfig({ dataDir: tmpDir });
 
@@ -111,11 +103,7 @@ describe("config-loader", () => {
 			process.env.TAP_PRIVATE_KEY =
 				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
 			await mkdir(tmpDir, { recursive: true });
-			await writeFile(
-				join(tmpDir, "config.yaml"),
-				"agent_id: 1\nchain: taiko\nxmtp:\n  env: production\n",
-				"utf-8",
-			);
+			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: taiko\n", "utf-8");
 
 			const config = await loadConfig({ dataDir: tmpDir });
 
@@ -168,12 +156,12 @@ describe("config-loader", () => {
 			);
 			await writeFile(
 				join(dataDir, "config.yaml"),
-				["agent_id: -1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
+				["agent_id: -1", "chain: eip155:167000", ""].join("\n"),
 				"utf-8",
 			);
 
 			const config = await loadConfig({ dataDir }, { requireAgentId: false });
-			expect(config.chain).toBe("eip155:84532");
+			expect(config.chain).toBe("eip155:167000");
 		});
 
 		it("overrides the selected chain RPC URL from CLI or env", async () => {
@@ -186,7 +174,7 @@ describe("config-loader", () => {
 			);
 			await writeFile(
 				join(dataDir, "config.yaml"),
-				["agent_id: 1", "chain: eip155:8453", "xmtp:", "  env: production", ""].join("\n"),
+				["agent_id: 1", "chain: eip155:8453", ""].join("\n"),
 				"utf-8",
 			);
 
@@ -208,7 +196,7 @@ describe("config-loader", () => {
 			);
 			await writeFile(
 				join(otherDir, "config.yaml"),
-				["agent_id: 1", "chain: eip155:84532", "xmtp:", "  env: dev", ""].join("\n"),
+				["agent_id: 1", "chain: eip155:8453", ""].join("\n"),
 				"utf-8",
 			);
 

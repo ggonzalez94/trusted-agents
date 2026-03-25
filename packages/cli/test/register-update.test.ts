@@ -24,7 +24,7 @@ describe("register update", () => {
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: 7,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey,
 			dataDir: tmpDir,
 			chains: {
@@ -36,19 +36,10 @@ describe("register update", () => {
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 					blockExplorerUrl: "https://example.test/base-explorer",
 				},
-				"eip155:84532": {
-					name: "Base Sepolia",
-					caip2: "eip155:84532",
-					chainId: 84532,
-					rpcUrl: "https://example.test/rpc",
-					registryAddress: "0x1234567890123456789012345678901234567890",
-					blockExplorerUrl: "https://example.test/explorer",
-				},
 			},
 			inviteExpirySeconds: 3600,
 			resolveCacheTtlMs: 60000,
 			resolveCacheMaxEntries: 100,
-			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
 			execution: {
 				mode: "eip7702",
@@ -406,6 +397,6 @@ describe("register update", () => {
 		expect((topUpCall?.[2] as Array<{ to: string }>)[0]?.to).toBe(
 			getUsdcAsset("eip155:8453")?.address,
 		);
-		expect(updateCall?.[1]).toMatchObject({ caip2: "eip155:84532" });
+		expect(updateCall?.[1]).toMatchObject({ caip2: "eip155:8453" });
 	});
 });

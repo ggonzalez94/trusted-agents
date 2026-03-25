@@ -16,7 +16,7 @@ describe("tap transfer", () => {
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: 42,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
 			dataDir: "/tmp/tap",
 			chains: {
@@ -34,18 +34,10 @@ describe("tap transfer", () => {
 					rpcUrl: "https://example.test/base",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:84532": {
-					name: "Base Sepolia",
-					caip2: "eip155:84532",
-					chainId: 84532,
-					rpcUrl: "https://example.test/base-sepolia",
-					registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-				},
 			},
 			inviteExpirySeconds: 3600,
 			resolveCacheTtlMs: 60000,
 			resolveCacheMaxEntries: 100,
-			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
 			execution: {
 				mode: "eip7702",
@@ -252,7 +244,7 @@ describe("tap transfer", () => {
 				to: "0x1111111111111111111111111111111111111111",
 				asset: "usdc",
 				amount: "10",
-				chain: "base-sepolia",
+				chain: "base",
 				yes: true,
 			},
 			{ json: true },
@@ -260,7 +252,7 @@ describe("tap transfer", () => {
 
 		expect(estimateGas).toHaveBeenCalledWith(
 			expect.objectContaining({
-				to: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+				to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 			}),
 		);
 	});

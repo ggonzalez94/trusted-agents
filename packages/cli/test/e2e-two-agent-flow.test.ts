@@ -52,7 +52,7 @@ class MockCalendarProvider implements ICalendarProvider {
 	}
 }
 
-const CHAIN = "eip155:84532";
+const CHAIN = "eip155:8453";
 const TREASURY_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const WORKER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
 
@@ -164,7 +164,7 @@ describe("two-agent CLI E2E flow", () => {
 				treasuryDir,
 				"init",
 				"--chain",
-				"base-sepolia",
+				"base",
 				"--private-key",
 				TREASURY_KEY.slice(2),
 			]),
@@ -176,7 +176,7 @@ describe("two-agent CLI E2E flow", () => {
 				workerDir,
 				"init",
 				"--chain",
-				"base-sepolia",
+				"base",
 				"--private-key",
 				WORKER_KEY.slice(2),
 			]),
@@ -369,7 +369,7 @@ describe("two-agent CLI E2E flow", () => {
 			"--amount",
 			"0.0002",
 			"--chain",
-			"base-sepolia",
+			"base",
 			"--note",
 			"approved deterministic request",
 		]);
@@ -419,7 +419,7 @@ describe("two-agent CLI E2E flow", () => {
 			"--amount",
 			"0.0001",
 			"--chain",
-			"base-sepolia",
+			"base",
 			"--note",
 			"rejected deterministic request",
 		]);
@@ -590,7 +590,7 @@ describe("two-agent CLI E2E flow", () => {
 					pendingConnectorDir,
 					"init",
 					"--chain",
-					"base-sepolia",
+					"base",
 					"--private-key",
 					WORKER_KEY.slice(2),
 				]),
@@ -653,7 +653,7 @@ describe("two-agent CLI E2E flow", () => {
 				treasuryDir,
 				"init",
 				"--chain",
-				"base-sepolia",
+				"base",
 				"--private-key",
 				TREASURY_KEY.slice(2),
 			]),
@@ -665,7 +665,7 @@ describe("two-agent CLI E2E flow", () => {
 				workerDir,
 				"init",
 				"--chain",
-				"base-sepolia",
+				"base",
 				"--private-key",
 				WORKER_KEY.slice(2),
 			]),

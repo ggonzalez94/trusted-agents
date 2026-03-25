@@ -25,11 +25,6 @@ const ZERO_CONFIG_PROVIDER_CATALOG: Record<
 			paymasterAddress: "0x0578cFB241215b77442a541325d6A4E6dFE700Ec",
 			entryPoint: ENTRY_POINT_08,
 		},
-		"eip155:84532": {
-			bundlerUrl: "https://public.pimlico.io/v2/84532/rpc",
-			paymasterAddress: "0x3BA9A96eE3eFf3A69E2B18886AcF52027EFF8966",
-			entryPoint: ENTRY_POINT_08,
-		},
 	},
 	candide: {
 		"eip155:8453": {

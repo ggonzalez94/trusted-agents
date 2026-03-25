@@ -15,7 +15,7 @@ function trimTrailingSlash(url: string): string {
 	return url.replace(/\/+$/, "");
 }
 
-const TAIKO_CHAINS = new Set(["eip155:167000", "eip155:167013"]);
+const TAIKO_CHAINS = new Set(["eip155:167000"]);
 
 export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | undefined {
 	if (!value) {
@@ -83,7 +83,7 @@ export function resolveTackApiUrl(configValue?: string): string {
  *
  * Pays with USDC on Base mainnet — no Pinata account or API key needed.
  * The agent's wallet must have USDC on Base mainnet even if it's registered
- * on a different chain (e.g. Base Sepolia).
+ * on a different chain (e.g. Taiko).
  *
  * Uses @x402/fetch + @x402/evm to handle x402 v2 payment automatically:
  *   1. POST fileSize to 402.pinata.cloud → 402

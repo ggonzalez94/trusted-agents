@@ -37,8 +37,6 @@ describe("config set", () => {
 				"execution:",
 				"  mode: eip7702",
 				"  paymaster_provider: circle",
-				"xmtp:",
-				"  env: production",
 				"",
 			].join("\n"),
 			"utf-8",
@@ -64,13 +62,13 @@ describe("config set", () => {
 	});
 
 	it("resolves chain aliases when updating the chain", async () => {
-		await configSetCommand("chain", "base-sepolia", {
+		await configSetCommand("chain", "taiko", {
 			json: true,
 			dataDir: tmpDir,
 		});
 
 		const config = await readFile(join(tmpDir, "config.yaml"), "utf-8");
-		expect(config).toContain("chain: eip155:84532");
+		expect(config).toContain("chain: eip155:167000");
 	});
 
 	it("only coerces known numeric config keys", async () => {
@@ -78,17 +76,17 @@ describe("config set", () => {
 			json: true,
 			dataDir: tmpDir,
 		});
-		await configSetCommand("xmtp.env", "1234", {
+		await configSetCommand("ipfs.provider", "1234", {
 			json: true,
 			dataDir: tmpDir,
 		});
 
 		const config = YAML.parse(await readFile(join(tmpDir, "config.yaml"), "utf-8")) as {
 			resolve_cache_ttl_ms: unknown;
-			xmtp?: { env?: unknown };
+			ipfs?: { provider?: unknown };
 		};
 		expect(config.resolve_cache_ttl_ms).toBe(60000);
-		expect(config.xmtp?.env).toBe("1234");
+		expect(config.ipfs?.provider).toBe("1234");
 	});
 
 	it("normalizes camelCase IPFS keys to the yaml schema", async () => {
@@ -105,7 +103,7 @@ describe("config set", () => {
 	it("rejects split-brain config and data-dir overrides", async () => {
 		const otherDir = join(tmpDir, "other-agent");
 		await mkdir(otherDir, { recursive: true });
-		await writeFile(join(otherDir, "config.yaml"), "agent_id: 9\nchain: eip155:84532\n", "utf-8");
+		await writeFile(join(otherDir, "config.yaml"), "agent_id: 9\nchain: eip155:8453\n", "utf-8");
 
 		await configSetCommand("chain", "base", {
 			json: true,

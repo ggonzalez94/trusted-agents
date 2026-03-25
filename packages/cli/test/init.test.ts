@@ -53,7 +53,6 @@ describe("tap init", () => {
 		const yaml = YAML.parse(configContent);
 		expect(yaml.agent_id).toBe(-1);
 		expect(yaml.chain).toBe("eip155:8453");
-		expect(yaml.xmtp.env).toBe("production");
 
 		// Keyfile created
 		const keyfile = join(dataDir, "identity", "agent.key");
@@ -108,7 +107,7 @@ describe("tap init", () => {
 				json: true,
 				dataDir,
 			},
-			{ chain: "base-sepolia" },
+			{ chain: "taiko" },
 		);
 
 		stdoutWrites = [];
@@ -118,8 +117,8 @@ describe("tap init", () => {
 		});
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.data.chain).toBe("eip155:84532");
-		expect(output.data.chain_name).toBe("Base Sepolia");
+		expect(output.data.chain).toBe("eip155:167000");
+		expect(output.data.chain_name).toBe("Taiko");
 	});
 
 	it("respects the init --chain flag through the CLI entrypoint", async () => {

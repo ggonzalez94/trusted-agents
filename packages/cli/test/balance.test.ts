@@ -17,7 +17,7 @@ describe("tap balance", () => {
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: -1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey,
 			dataDir: "/tmp/tap",
 			chains: {
@@ -28,13 +28,6 @@ describe("tap balance", () => {
 					rpcUrl: "https://example.test/base",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:84532": {
-					name: "Base Sepolia",
-					caip2: "eip155:84532",
-					chainId: 84532,
-					rpcUrl: "https://example.test/base-sepolia",
-					registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-				},
 				"eip155:167000": {
 					name: "Taiko",
 					caip2: "eip155:167000",
@@ -42,18 +35,10 @@ describe("tap balance", () => {
 					rpcUrl: "https://example.test/taiko",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:167013": {
-					name: "Taiko Hoodi",
-					caip2: "eip155:167013",
-					chainId: 167013,
-					rpcUrl: "https://example.test/taiko-hoodi",
-					registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-				},
 			},
 			inviteExpirySeconds: 3600,
 			resolveCacheTtlMs: 60000,
 			resolveCacheMaxEntries: 100,
-			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
 			execution: {
 				mode: "eip7702",
@@ -108,7 +93,7 @@ describe("tap balance", () => {
 		expect(getBalance).toHaveBeenCalledOnce();
 		expect(readContract).toHaveBeenCalledWith(
 			expect.objectContaining({
-				address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+				address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 				functionName: "balanceOf",
 			}),
 		);
@@ -121,7 +106,7 @@ describe("tap balance", () => {
 		expect(output.data?.address).toBe(address);
 		expect(output.data?.messaging_address).toBe(address);
 		expect(output.data?.execution_address).toBe(address);
-		expect(output.data?.chain).toBe("eip155:84532");
+		expect(output.data?.chain).toBe("eip155:8453");
 		expect(output.data?.execution_native_balance).toBe("1.234");
 		expect(output.data?.execution_usdc_balance).toBe("9.876543");
 	});
@@ -149,15 +134,15 @@ describe("tap balance", () => {
 			readContract: vi.fn().mockResolvedValue(2n),
 		} as never);
 
-		await balanceCommand({ json: true }, "eip155:84532");
+		await balanceCommand({ json: true }, "eip155:8453");
 
 		expect(walletLib.buildPublicClient).toHaveBeenCalledWith(
-			expect.objectContaining({ caip2: "eip155:84532" }),
+			expect.objectContaining({ caip2: "eip155:8453" }),
 		);
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			data?: Record<string, unknown>;
 		};
-		expect(output.data?.chain).toBe("eip155:84532");
+		expect(output.data?.chain).toBe("eip155:8453");
 	});
 
 	it("returns native plus USDC balances on Taiko", async () => {
@@ -181,29 +166,6 @@ describe("tap balance", () => {
 		expect(output.data?.chain).toBe("eip155:167000");
 		expect(output.data?.usdc_supported).toBe(true);
 		expect(output.data?.execution_usdc_balance).toBe("7.654321");
-	});
-
-	it("returns native plus USDC balances on Taiko Hoodi", async () => {
-		const readContract = vi.fn().mockResolvedValue(333n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
-			getBalance: vi.fn().mockResolvedValue(7n),
-			readContract,
-		} as never);
-
-		await balanceCommand({ json: true }, "taiko-hoodi");
-
-		expect(readContract).toHaveBeenCalledWith(
-			expect.objectContaining({
-				address: "0xf501925c8FE6c5B2FC8faD86b8C9acb2596f3295",
-				functionName: "balanceOf",
-			}),
-		);
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			data?: Record<string, unknown>;
-		};
-		expect(output.data?.chain).toBe("eip155:167013");
-		expect(output.data?.usdc_supported).toBe(true);
-		expect(output.data?.execution_usdc_balance).toBe("0.000333");
 	});
 
 	it("returns a validation error for an unknown chain", async () => {

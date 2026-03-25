@@ -46,7 +46,7 @@ export async function transferCommand(
 		if (!chainConfig) {
 			error(
 				"VALIDATION_ERROR",
-				`Unknown chain: ${cmdOpts.chain ?? chain}. Use a supported alias like base/base-sepolia or a CAIP-2 ID like eip155:8453.`,
+				`Unknown chain: ${cmdOpts.chain ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
 				opts,
 			);
 			process.exitCode = 2;

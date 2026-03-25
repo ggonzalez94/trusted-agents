@@ -22,7 +22,6 @@ interface StoredYamlConfig {
 		paymaster_provider?: ExecutionPaymasterProvider;
 	};
 	xmtp?: {
-		env?: "dev" | "production" | "local";
 		db_encryption_key?: string;
 	};
 	ipfs?: {
@@ -55,7 +54,7 @@ export function resolveTrustedAgentConfigPath(dataDir: string): string {
 }
 
 export function getDefaultExecutionModeForChain(chain: string): ExecutionMode {
-	if (["base", "base-sepolia", "eip155:8453", "eip155:84532"].includes(chain)) {
+	if (["base", "eip155:8453"].includes(chain)) {
 		return "eip7702";
 	}
 
@@ -98,7 +97,7 @@ export async function loadTrustedAgentConfigFromDataDir(
 	}
 
 	const privateKey = options.privateKey ?? (await loadKeyfile(resolvedDataDir));
-	const chain = options.chain ?? yaml?.chain ?? "eip155:84532";
+	const chain = options.chain ?? yaml?.chain ?? "eip155:8453";
 	const executionMode =
 		options.executionMode ?? yaml?.execution?.mode ?? getDefaultExecutionModeForChain(chain);
 	const paymasterProvider =
@@ -136,7 +135,6 @@ export async function loadTrustedAgentConfigFromDataDir(
 		inviteExpirySeconds: yaml?.invite_expiry_seconds ?? DEFAULT_CONFIG.inviteExpirySeconds,
 		resolveCacheTtlMs: DEFAULT_CONFIG.resolveCacheTtlMs,
 		resolveCacheMaxEntries: DEFAULT_CONFIG.resolveCacheMaxEntries,
-		xmtpEnv: yaml?.xmtp?.env ?? DEFAULT_CONFIG.xmtpEnv,
 		xmtpDbEncryptionKey: yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined,
 		ipfs: {
 			provider: yaml?.ipfs?.provider ?? DEFAULT_CONFIG.ipfs?.provider,

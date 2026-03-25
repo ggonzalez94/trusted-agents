@@ -1,14 +1,12 @@
 import { http, createPublicClient, createWalletClient, defineChain, fallback } from "viem";
 import type { Chain, PublicClient, WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base, baseSepolia, taiko, taikoHoodi } from "viem/chains";
+import { base, taiko } from "viem/chains";
 import type { ChainConfig } from "../config/types.js";
 
 const VIEM_CHAINS: Record<number, Chain> = {
 	8453: base,
-	84532: baseSepolia,
 	167000: taiko,
-	167013: taikoHoodi,
 };
 
 const RPC_TIMEOUT_MS = 15_000;
@@ -21,7 +19,6 @@ const RPC_FALLBACK_URLS: Partial<Record<number, string[]>> = {
 		"https://base.llamarpc.com",
 		"https://mainnet-preconf.base.org",
 	],
-	84532: ["https://base-sepolia-rpc.publicnode.com", "https://sepolia-preconf.base.org"],
 };
 
 export function getViemChain(chainConfig: ChainConfig): Chain {

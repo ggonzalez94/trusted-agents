@@ -10,7 +10,7 @@ import type { Contact } from "../../../src/trust/types.js";
 const CONTACT: Contact = {
 	connectionId: "conn-test-001",
 	peerAgentId: 42,
-	peerChain: "eip155:84532",
+	peerChain: "eip155:8453",
 	peerOwnerAddress: "0x1111111111111111111111111111111111111111",
 	peerDisplayName: "TestPeer",
 	peerAgentAddress: "0x2222222222222222222222222222222222222222",

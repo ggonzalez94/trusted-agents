@@ -49,7 +49,6 @@ export function buildDefaultTapRuntimeContext(
 			{
 				privateKey: config.privateKey,
 				chain: config.chain,
-				env: config.xmtpEnv,
 				dbPath: join(config.dataDir, "xmtp"),
 				dbEncryptionKey: config.xmtpDbEncryptionKey,
 				agentResolver: resolver,

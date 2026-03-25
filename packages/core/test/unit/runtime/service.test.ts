@@ -100,7 +100,7 @@ class FakeTransport implements TransportProvider {
 
 const PEER_AGENT: ResolvedAgent = {
 	agentId: 10,
-	chain: "eip155:84532",
+	chain: "eip155:8453",
 	ownerAddress: BOB.address,
 	agentAddress: BOB.address,
 	capabilities: ["chat", "payments"],
@@ -212,14 +212,13 @@ async function createService(
 
 	const config: TrustedAgentsConfig = {
 		agentId: 1,
-		chain: "eip155:84532",
+		chain: "eip155:8453",
 		privateKey: ALICE.privateKey,
 		dataDir,
 		chains: {},
 		inviteExpirySeconds: 3600,
 		resolveCacheTtlMs: 60_000,
 		resolveCacheMaxEntries: 128,
-		xmtpEnv: "dev",
 	};
 	const requestJournal = new FileRequestJournalImpl(dataDir);
 	const transport = dependencies.transport ?? new FakeTransport(options);
@@ -327,7 +326,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -405,7 +404,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -479,7 +478,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -560,7 +559,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -615,7 +614,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 2,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -652,7 +651,7 @@ describe("TapMessagingService", () => {
 		const selfAgent: ResolvedAgent = {
 			...PEER_AGENT,
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			registrationFile: {
 				...PEER_AGENT.registrationFile,
 				name: "Alice",
@@ -660,7 +659,7 @@ describe("TapMessagingService", () => {
 		};
 		const { url: selfInviteUrl } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -1053,7 +1052,7 @@ describe("TapMessagingService", () => {
 			peer: activeContact.peerDisplayName,
 			asset: "native",
 			amount: "0.1",
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			toAddress: ALICE.address,
 		});
 
@@ -1122,7 +1121,7 @@ describe("TapMessagingService", () => {
 				actionId: "transfer-retry-1",
 				asset: "native",
 				amount: "0.2",
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				toAddress: ALICE.address,
 			},
 			"transfer/request",
@@ -1175,7 +1174,7 @@ describe("TapMessagingService", () => {
 							scope: "transfer/request",
 							constraints: {
 								asset: "native",
-								chain: "eip155:84532",
+								chain: "eip155:8453",
 								toAddress: ALICE.address,
 								maxAmount: "1",
 							},
@@ -1211,7 +1210,7 @@ describe("TapMessagingService", () => {
 				actionId: "manual-transfer-1",
 				asset: "native",
 				amount: "0.1",
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				toAddress: ALICE.address,
 			},
 			"transfer/request",
@@ -1284,7 +1283,7 @@ describe("TapMessagingService", () => {
 				actionId: "transfer-journal-fail-1",
 				asset: "native",
 				amount: "0.5",
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				toAddress: ALICE.address,
 			},
 			"transfer/request",
@@ -1353,7 +1352,7 @@ describe("TapMessagingService", () => {
 				actionId: "transfer-action-no-hook",
 				asset: "native",
 				amount: "0.1",
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				toAddress: ALICE.address,
 			},
 			"transfer/request",
@@ -1412,7 +1411,7 @@ describe("TapMessagingService", () => {
 				actionId: "transfer-hook-null-1",
 				asset: "native",
 				amount: "0.1",
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				toAddress: ALICE.address,
 			},
 			"transfer/request",
@@ -1481,7 +1480,7 @@ describe("TapMessagingService", () => {
 				actionId: "transfer-action-2",
 				asset: "usdc",
 				amount: "1",
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				toAddress: ALICE.address,
 			},
 			"transfer/request",
@@ -1571,7 +1570,7 @@ describe("TapMessagingService", () => {
 			peer: contact.peerDisplayName,
 			asset: "native",
 			amount: "0.1",
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			toAddress: ALICE.address,
 		});
 
@@ -1707,7 +1706,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -1769,7 +1768,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -1830,7 +1829,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -1890,7 +1889,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -1943,7 +1942,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -2015,7 +2014,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});
@@ -2825,7 +2824,7 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const { invite } = await generateInvite({
 			agentId: 1,
-			chain: "eip155:84532",
+			chain: "eip155:8453",
 			privateKey: ALICE.privateKey,
 			expirySeconds: 3600,
 		});

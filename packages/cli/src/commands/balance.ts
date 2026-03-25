@@ -29,7 +29,7 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 		if (!chainConfig) {
 			error(
 				"VALIDATION_ERROR",
-				`Unknown chain: ${chainInput ?? chain}. Use a supported alias like base/base-sepolia or a CAIP-2 ID like eip155:8453.`,
+				`Unknown chain: ${chainInput ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
 				opts,
 			);
 			process.exitCode = 2;

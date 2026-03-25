@@ -12,22 +12,21 @@ describe("tap identity show", () => {
 
 	const config: TrustedAgentsConfig = {
 		agentId: -1,
-		chain: "eip155:84532",
+		chain: "eip155:8453",
 		privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
 		dataDir: "/tmp/tap",
 		chains: {
-			"eip155:84532": {
-				name: "Base Sepolia",
-				caip2: "eip155:84532",
-				chainId: 84532,
-				rpcUrl: "https://example.test/base-sepolia",
-				registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+			"eip155:8453": {
+				name: "Base",
+				caip2: "eip155:8453",
+				chainId: 8453,
+				rpcUrl: "https://example.test/base",
+				registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 			},
 		},
 		inviteExpirySeconds: 3600,
 		resolveCacheTtlMs: 60000,
 		resolveCacheMaxEntries: 100,
-		xmtpEnv: "dev",
 		xmtpDbEncryptionKey: undefined,
 		execution: {
 			mode: "eip7702",
