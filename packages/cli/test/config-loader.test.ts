@@ -20,7 +20,8 @@ describe("config-loader", () => {
 		unsetEnv("TAP_DATA_DIR");
 		unsetEnv("TAP_AGENT_ID");
 		unsetEnv("TAP_CHAIN");
-		unsetEnv("TAP_PRIVATE_KEY");
+		unsetEnv("TAP_OWS_WALLET");
+		unsetEnv("TAP_OWS_API_KEY");
 		unsetEnv("TAP_RPC_URL");
 		unsetEnv("TAP_EXECUTION_MODE");
 		unsetEnv("TAP_PAYMASTER_PROVIDER");
@@ -36,12 +37,7 @@ describe("config-loader", () => {
 			process.env.HOME = tmpDir;
 			const defaultDataDir = join(tmpDir, ".trustedagents");
 			const configPath = join(tmpDir, "custom-config.yaml");
-			await mkdir(join(defaultDataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(defaultDataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+			await mkdir(defaultDataDir, { recursive: true });
 			await writeFile(configPath, ["agent_id: 1", "chain: eip155:8453", ""].join("\n"), "utf-8");
 
 			const config = await loadConfig({ config: configPath }, { requireAgentId: false });
@@ -88,8 +84,6 @@ describe("config-loader", () => {
 
 	describe("loadConfig", () => {
 		it("defaults Base networks to eip7702 with Circle", async () => {
-			process.env.TAP_PRIVATE_KEY =
-				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
 			await mkdir(tmpDir, { recursive: true });
 			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: base\n", "utf-8");
 
@@ -100,8 +94,6 @@ describe("config-loader", () => {
 		});
 
 		it("defaults Taiko mainnet to eip4337 with Servo", async () => {
-			process.env.TAP_PRIVATE_KEY =
-				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
 			await mkdir(tmpDir, { recursive: true });
 			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: taiko\n", "utf-8");
 
@@ -112,8 +104,6 @@ describe("config-loader", () => {
 		});
 
 		it("loads optional IPFS provider settings from config", async () => {
-			process.env.TAP_PRIVATE_KEY =
-				"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11";
 			await mkdir(tmpDir, { recursive: true });
 			await writeFile(
 				join(tmpDir, "config.yaml"),
@@ -135,12 +125,7 @@ describe("config-loader", () => {
 
 		it("defaults to Base mainnet when no config file exists", async () => {
 			const dataDir = join(tmpDir, "mainnet-default");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+			await mkdir(dataDir, { recursive: true });
 
 			const config = await loadConfig({ dataDir }, { requireAgentId: false });
 			expect(config.chain).toBe("eip155:8453");
@@ -148,12 +133,7 @@ describe("config-loader", () => {
 
 		it("preserves the saved chain when config.yaml already exists", async () => {
 			const dataDir = join(tmpDir, "existing-config");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+			await mkdir(dataDir, { recursive: true });
 			await writeFile(
 				join(dataDir, "config.yaml"),
 				["agent_id: -1", "chain: eip155:167000", ""].join("\n"),
@@ -166,12 +146,7 @@ describe("config-loader", () => {
 
 		it("overrides the selected chain RPC URL from CLI or env", async () => {
 			const dataDir = join(tmpDir, "rpc-override");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
+			await mkdir(dataDir, { recursive: true });
 			await writeFile(
 				join(dataDir, "config.yaml"),
 				["agent_id: 1", "chain: eip155:8453", ""].join("\n"),
@@ -187,13 +162,8 @@ describe("config-loader", () => {
 		it("rejects mismatched --config and --data-dir combinations", async () => {
 			const dataDir = join(tmpDir, "agent-a");
 			const otherDir = join(tmpDir, "agent-b");
-			await mkdir(join(dataDir, "identity"), { recursive: true });
+			await mkdir(dataDir, { recursive: true });
 			await mkdir(otherDir, { recursive: true });
-			await writeFile(
-				join(dataDir, "identity", "agent.key"),
-				"ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-				"utf-8",
-			);
 			await writeFile(
 				join(otherDir, "config.yaml"),
 				["agent_id: 1", "chain: eip155:8453", ""].join("\n"),
