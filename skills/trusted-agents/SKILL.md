@@ -71,9 +71,18 @@ Already registered? `tap config show` shows `agent_id >= 0` → skip to Connect 
 tap init --chain base
 ```
 
-This generates a fresh wallet and local config.
+This sets up an Open Wallet Standard (OWS) wallet and creates the agent's local config. OWS encrypts the key in a secure vault — the agent never handles raw private keys. During `tap init`:
 
-**Chain rules:** Always ask the user what chain they want to use. The two options currently are `taiko` and `bases`. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
+1. OWS is checked (and installed if missing)
+2. A new wallet is created (or an existing one selected via `--wallet <name>`)
+3. A signing policy is created with chain restrictions
+4. A scoped API key is issued for the agent
+
+Flags: `--wallet <name>` (use existing wallet), `--passphrase <passphrase>` (wallet passphrase), `--non-interactive` (skip prompts, use defaults).
+
+If the user already has an agent with a raw `identity/agent.key` file, use `tap migrate-wallet` instead (see Migration below).
+
+**Chain rules:** Always ask the user what chain they want to use. The two options are `base` and `taiko`. Only mainnet chains are supported.
 
 ### Step 2: Fund the wallet
 
@@ -453,11 +462,33 @@ tap identity resolve-self              # Check own published registration
 tap install                            # Auto-detect host
 tap install --runtime claude           # Claude Code skill install
 tap install --runtime openclaw         # OpenClaw plugin install
+tap migrate-wallet                     # Migrate legacy agent.key to OWS
 tap remove --dry-run                   # Preview what would be deleted
 tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode offers balance sweep first)
 ```
 
 `tap remove` is local only — does not unregister on-chain or notify peers. In interactive sessions it also shows the current native on-chain balance and can optionally transfer remaining funds before final wipe confirmation.
+
+## Migration (Legacy Key → OWS)
+
+If an agent was created before OWS integration and has a raw `identity/agent.key` file:
+
+```bash
+tap migrate-wallet
+```
+
+This command:
+1. Reads the existing private key from `identity/agent.key`
+2. Preserves the XMTP database encryption key (computed from the old key and saved to config)
+3. Imports the key into an OWS wallet
+4. Creates a signing policy and scoped API key
+5. Verifies the OWS wallet address matches the original
+6. Updates `config.yaml` with the `ows` block
+7. Deletes `identity/agent.key`
+
+Flags: `--passphrase <passphrase>` (wallet passphrase for OWS import), `--non-interactive` (skip prompts).
+
+The agent keeps its on-chain identity, contacts, and conversation history — only the key storage changes.
 
 ## Common Errors
 
@@ -478,3 +509,7 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode o
 | `No calendar provider configured` | Run `tap calendar setup --provider google` |
 | `Google Workspace CLI (gws) is not installed` | Install with `npm install -g @googleworkspace/cli` |
 | `No matching scheduling grant` | Peer needs to publish a `scheduling/request` grant to you |
+| `OWS not installed` | Install with `curl -fsSL https://docs.openwallet.sh/install.sh \| bash` |
+| `ows.wallet is required` | Run `tap init` to set up an OWS wallet, or `tap migrate-wallet` if you have a legacy key |
+| `ows.apiKey must start with ows_key_` | The API key in config is invalid — re-run `tap init` or create a new key with `ows key create` |
+| `Address mismatch after OWS import` | The OWS wallet derived a different address — check the wallet or try importing again |
