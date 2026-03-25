@@ -95,6 +95,26 @@ ${chainAliasHelpText()}
 			},
 		);
 
+	// migrate-wallet
+	program
+		.command("migrate-wallet")
+		.description("Migrate an existing agent from raw key file to OWS")
+		.option("--passphrase <passphrase>", "Wallet passphrase for import and API key creation")
+		.option("--non-interactive", "Skip prompts and use defaults")
+		.action(
+			async (cmdOpts: {
+				passphrase?: string;
+				nonInteractive?: boolean;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { migrateWalletCommand } = await import("./commands/migrate-wallet.js");
+				await migrateWalletCommand(opts, {
+					passphrase: cmdOpts.passphrase,
+					nonInteractive: cmdOpts.nonInteractive,
+				});
+			},
+		);
+
 	// register
 	const register = program
 		.command("register")

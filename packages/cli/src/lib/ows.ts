@@ -3,6 +3,7 @@ import {
 	createPolicy,
 	createWallet,
 	getWallet,
+	importWalletPrivateKey,
 	listPolicies,
 	listWallets,
 	signMessage,
@@ -195,4 +196,21 @@ export function deriveXmtpDbEncryptionKey(
 ): `0x${string}` {
 	const result = signMessage(walletName, chain, "xmtp-db-encryption-key", apiKey);
 	return keccak256(toHex(result.signature));
+}
+
+/**
+ * Import an existing hex-encoded private key into OWS.
+ * Returns the wallet name and EVM address.
+ */
+export function importOwsWalletPrivateKey(
+	name: string,
+	privateKeyHex: string,
+	passphrase?: string,
+): { name: string; address: string } {
+	const wallet = importWalletPrivateKey(name, privateKeyHex, passphrase ?? undefined);
+	const address = evmAddressFromWallet(wallet);
+	if (!address) {
+		throw new Error(`Wallet "${name}" was imported but has no EVM account.`);
+	}
+	return { name: wallet.name, address };
 }
