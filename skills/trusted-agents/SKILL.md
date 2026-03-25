@@ -65,17 +65,33 @@ tap install --runtime openclaw
 
 Already registered? `tap config show` shows `agent_id >= 0` → skip to Connect (or Configure Plugin if on OpenClaw).
 
-### Step 1: Create the wallet
+### Step 1: Set up wallet
+
+TAP uses Open Wallet Standard (OWS) for key management — the agent never handles raw private keys. Before running `tap init`, check if the user already has OWS wallets or policies they might want to reuse:
 
 ```bash
-tap init --chain base
+ows wallet list     # Show existing wallets with addresses
+ows policy list     # Show existing policies with chain rules
 ```
 
-This sets up an Open Wallet Standard (OWS) wallet and creates the agent's local config. OWS encrypts the key in a secure vault — the agent never handles raw private keys. During `tap init`:
+**If wallets exist:** Present them to the user in plain language — wallet name, EVM address, and what chains each wallet is used for. Ask if they want to reuse one for this agent or create a new one. If reusing, pass `--wallet <name>` to `tap init`.
 
+**If no wallets exist** (or user wants a new one): Just run `tap init` — it will create everything.
+
+```bash
+# New wallet (default)
+tap init --chain base
+
+# Reuse existing wallet
+tap init --chain base --wallet my-existing-wallet
+```
+
+**If policies exist** that already cover the selected chain: Mention them to the user. `tap init` will detect compatible policies and offer to reuse them.
+
+During `tap init`:
 1. OWS is checked (and installed if missing)
-2. A new wallet is created (or an existing one selected via `--wallet <name>`)
-3. A signing policy is created with chain restrictions
+2. A new wallet is created (or the specified one is used)
+3. A signing policy is created with chain restrictions (or a compatible one is reused)
 4. A scoped API key is issued for the agent
 
 Flags: `--wallet <name>` (use existing wallet), `--passphrase <passphrase>` (wallet passphrase), `--non-interactive` (skip prompts, use defaults).
