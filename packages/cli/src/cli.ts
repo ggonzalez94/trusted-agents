@@ -67,6 +67,9 @@ Examples:
 		.command("init")
 		.description("First-time setup wizard")
 		.option("--chain <name>", "Chain to register on (alias or CAIP-2)")
+		.option("--wallet <name>", "Use an existing OWS wallet by name")
+		.option("--passphrase <passphrase>", "Wallet passphrase for API key creation")
+		.option("--non-interactive", "Skip prompts and use defaults")
 		.addHelpText(
 			"after",
 			`
@@ -74,13 +77,23 @@ Supported chains:
 ${chainAliasHelpText()}
 `,
 		)
-		.action(async (cmdOpts: { chain?: string }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { initCommand } = await import("./commands/init.js");
-			await initCommand(opts, {
-				chain: opts.chain ?? cmdOpts.chain,
-			});
-		});
+		.action(
+			async (cmdOpts: {
+				chain?: string;
+				wallet?: string;
+				passphrase?: string;
+				nonInteractive?: boolean;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { initCommand } = await import("./commands/init.js");
+				await initCommand(opts, {
+					chain: opts.chain ?? cmdOpts.chain,
+					wallet: cmdOpts.wallet,
+					passphrase: cmdOpts.passphrase,
+					nonInteractive: cmdOpts.nonInteractive,
+				});
+			},
+		);
 
 	// register
 	const register = program
