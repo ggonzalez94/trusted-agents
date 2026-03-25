@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import YAML from "yaml";
 import { resolveDataDir } from "../common/index.js";
@@ -12,11 +11,13 @@ import type {
 	TrustedAgentsConfig,
 } from "./types.js";
 
-const KEYFILE_NAME = "agent.key";
-
 interface StoredYamlConfig {
 	agent_id?: number;
 	chain?: string;
+	ows?: {
+		wallet?: string;
+		api_key?: string;
+	};
 	execution?: {
 		mode?: ExecutionMode;
 		paymaster_provider?: ExecutionPaymasterProvider;
@@ -42,7 +43,8 @@ export interface LoadTrustedAgentConfigOptions {
 	requireAgentId?: boolean;
 	agentId?: number;
 	chain?: string;
-	privateKey?: `0x${string}`;
+	owsWallet?: string;
+	owsApiKey?: string;
 	configPath?: string;
 	extraChains?: Record<string, ChainConfig>;
 	executionMode?: ExecutionMode;
@@ -96,7 +98,8 @@ export async function loadTrustedAgentConfigFromDataDir(
 		}
 	}
 
-	const privateKey = options.privateKey ?? (await loadKeyfile(resolvedDataDir));
+	const owsWallet = options.owsWallet ?? yaml?.ows?.wallet ?? "";
+	const owsApiKey = options.owsApiKey ?? yaml?.ows?.api_key ?? "";
 	const chain = options.chain ?? yaml?.chain ?? "eip155:8453";
 	const executionMode =
 		options.executionMode ?? yaml?.execution?.mode ?? getDefaultExecutionModeForChain(chain);
@@ -129,7 +132,7 @@ export async function loadTrustedAgentConfigFromDataDir(
 	return {
 		agentId: agentId ?? 0,
 		chain,
-		privateKey,
+		ows: { wallet: owsWallet, apiKey: owsApiKey },
 		dataDir: resolvedDataDir,
 		chains,
 		inviteExpirySeconds: yaml?.invite_expiry_seconds ?? DEFAULT_CONFIG.inviteExpirySeconds,
@@ -152,15 +155,4 @@ function loadYamlConfig(configPath: string): StoredYamlConfig | undefined {
 		return undefined;
 	}
 	return YAML.parse(readFileSync(configPath, "utf-8")) as StoredYamlConfig;
-}
-
-async function loadKeyfile(dataDir: string): Promise<`0x${string}`> {
-	const keyPath = join(dataDir, "identity", KEYFILE_NAME);
-	const hex = (await readFile(keyPath, "utf-8")).trim();
-
-	if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-		throw new Error(`Invalid keyfile at ${keyPath}: expected 64-char hex`);
-	}
-
-	return `0x${hex}`;
 }

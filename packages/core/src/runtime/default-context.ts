@@ -3,6 +3,7 @@ import { buildChainPublicClient } from "../common/index.js";
 import type { ChainConfig, TrustedAgentsConfig } from "../config/types.js";
 import { FileConversationLogger, type IConversationLogger } from "../conversation/logger.js";
 import { AgentResolver, type IAgentResolver } from "../identity/resolver.js";
+import type { SigningProvider } from "../signing/provider.js";
 import type { TransportProvider } from "../transport/interface.js";
 import { XmtpTransport } from "../transport/xmtp.js";
 import { FileTrustStore } from "../trust/file-trust-store.js";
@@ -11,6 +12,7 @@ import { FileRequestJournal, type IRequestJournal } from "./request-journal.js";
 
 export interface TapRuntimeContext {
 	config: TrustedAgentsConfig;
+	signingProvider: SigningProvider;
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
@@ -19,6 +21,7 @@ export interface TapRuntimeContext {
 }
 
 export interface BuildTapRuntimeContextOptions {
+	signingProvider: SigningProvider;
 	trustStore?: ITrustStore;
 	resolver?: IAgentResolver;
 	conversationLogger?: IConversationLogger;
@@ -32,7 +35,7 @@ function createViemClient(chainConfig: ChainConfig) {
 
 export function buildDefaultTapRuntimeContext(
 	config: TrustedAgentsConfig,
-	options: BuildTapRuntimeContextOptions = {},
+	options: BuildTapRuntimeContextOptions,
 ): TapRuntimeContext {
 	const trustStore = options.trustStore ?? new FileTrustStore(config.dataDir);
 	const resolver =
@@ -47,7 +50,7 @@ export function buildDefaultTapRuntimeContext(
 		options.transport ??
 		new XmtpTransport(
 			{
-				privateKey: config.privateKey,
+				signingProvider: options.signingProvider,
 				chain: config.chain,
 				dbPath: join(config.dataDir, "xmtp"),
 				dbEncryptionKey: config.xmtpDbEncryptionKey,
@@ -59,6 +62,7 @@ export function buildDefaultTapRuntimeContext(
 
 	return {
 		config,
+		signingProvider: options.signingProvider,
 		trustStore,
 		resolver,
 		conversationLogger,

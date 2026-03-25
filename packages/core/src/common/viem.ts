@@ -1,6 +1,5 @@
 import { http, createPublicClient, createWalletClient, defineChain, fallback } from "viem";
-import type { Chain, PublicClient, WalletClient } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import type { Chain, LocalAccount, PublicClient, WalletClient } from "viem";
 import { base, taiko } from "viem/chains";
 import type { ChainConfig } from "../config/types.js";
 
@@ -50,10 +49,9 @@ export function buildChainTransport(chainConfig: ChainConfig) {
 }
 
 export function buildChainWalletClient(
-	privateKey: `0x${string}`,
+	account: LocalAccount,
 	chainConfig: ChainConfig,
 ): WalletClient {
-	const account = privateKeyToAccount(privateKey);
 	return createWalletClient({
 		account,
 		chain: getViemChain(chainConfig),

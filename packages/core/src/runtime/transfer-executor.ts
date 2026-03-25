@@ -1,6 +1,7 @@
 import { encodeFunctionData, parseEther, parseUnits } from "viem";
 import { ValidationError } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
+import type { SigningProvider } from "../signing/provider.js";
 import type { TransferActionRequest } from "./actions.js";
 import { getUsdcAsset } from "./assets.js";
 import { executeContractCalls } from "./execution.js";
@@ -20,6 +21,7 @@ export const ERC20_TRANSFER_ABI = [
 
 export async function executeOnchainTransfer(
 	config: TrustedAgentsConfig,
+	provider: SigningProvider,
 	request: TransferActionRequest,
 ): Promise<{ txHash: `0x${string}` }> {
 	const chainConfig = config.chains[request.chain];
@@ -28,7 +30,7 @@ export async function executeOnchainTransfer(
 	}
 
 	if (request.asset === "native") {
-		const result = await executeContractCalls(config, chainConfig, [
+		const result = await executeContractCalls(config, chainConfig, provider, [
 			{
 				to: request.toAddress,
 				data: "0x",
@@ -43,7 +45,7 @@ export async function executeOnchainTransfer(
 		throw new ValidationError(`USDC is not supported on ${request.chain}`);
 	}
 
-	const result = await executeContractCalls(config, chainConfig, [
+	const result = await executeContractCalls(config, chainConfig, provider, [
 		{
 			to: usdc.address,
 			data: encodeFunctionData({

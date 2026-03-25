@@ -1,7 +1,8 @@
 import type { IAgentResolver } from "../identity/resolver.js";
+import type { SigningProvider } from "../signing/provider.js";
 
 export interface XmtpTransportConfig {
-	privateKey: `0x${string}`;
+	signingProvider: SigningProvider;
 	chain: string;
 	dbPath?: string;
 	syncStatePath?: string;

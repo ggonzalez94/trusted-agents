@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import type { SigningProvider } from "../../src/signing/provider.js";
 import { createSigningProviderViemAccount } from "../../src/signing/viem-account.js";
 

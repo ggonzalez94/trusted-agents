@@ -1,21 +1,21 @@
 import type { Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import type { SigningProvider } from "../signing/provider.js";
 
 /** IdentifierKind.Ethereum from @xmtp/node-bindings (const enum, value inlined to avoid verbatimModuleSyntax issues) */
 const IDENTIFIER_KIND_ETHEREUM = 0 as const;
 
-export function createXmtpSigner(privateKey: `0x${string}`): Signer {
-	const account = privateKeyToAccount(privateKey);
+export async function createXmtpSigner(provider: SigningProvider): Promise<Signer> {
+	const address = await provider.getAddress();
 
 	return {
 		type: "EOA",
 		getIdentifier: () => ({
-			identifier: account.address,
+			identifier: address,
 			identifierKind: IDENTIFIER_KIND_ETHEREUM,
 		}),
 		signMessage: async (message: string): Promise<Uint8Array> => {
-			const signature = await account.signMessage({ message });
+			const signature = await provider.signMessage(message);
 			return hexToBytes(signature);
 		},
 	};

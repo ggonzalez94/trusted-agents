@@ -5,8 +5,7 @@ import { DEFAULT_CONFIG } from "./defaults.js";
 import type { TrustedAgentsConfig } from "./types.js";
 
 export function validateConfig(
-	partial: Partial<TrustedAgentsConfig> &
-		Pick<TrustedAgentsConfig, "agentId" | "chain" | "privateKey">,
+	partial: Partial<TrustedAgentsConfig> & Pick<TrustedAgentsConfig, "agentId" | "chain" | "ows">,
 ): TrustedAgentsConfig {
 	if (typeof partial.agentId !== "number" || partial.agentId < 0) {
 		throw new ConfigError("agentId must be a non-negative number");
@@ -18,8 +17,11 @@ export function validateConfig(
 		);
 	}
 
-	if (!/^0x[0-9a-fA-F]{64}$/.test(partial.privateKey)) {
-		throw new ConfigError("privateKey must be a 32-byte hex string prefixed with 0x");
+	if (!partial.ows?.wallet || typeof partial.ows.wallet !== "string") {
+		throw new ConfigError("ows.wallet is required and must be a non-empty string");
+	}
+	if (!partial.ows?.apiKey?.startsWith("ows_key_")) {
+		throw new ConfigError("ows.apiKey is required and must start with 'ows_key_'");
 	}
 
 	const mergedChains = {

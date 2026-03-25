@@ -14,7 +14,7 @@ import type { XmtpTransportConfig } from "../../../src/transport/xmtp-types.js";
 import { XmtpTransport } from "../../../src/transport/xmtp.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
-import { ALICE, BOB } from "../../fixtures/test-keys.js";
+import { ALICE, ALICE_SIGNING_PROVIDER, BOB } from "../../fixtures/test-keys.js";
 
 // --- Test internals access ---
 // biome-ignore lint/suspicious/noExplicitAny: test helper to access private members
@@ -229,9 +229,8 @@ function createMockTrustStore(contacts: Contact[] = []): ITrustStore {
 }
 
 const TEST_CONFIG: XmtpTransportConfig = {
-	privateKey: ALICE.privateKey,
+	signingProvider: ALICE_SIGNING_PROVIDER,
 	chain: "eip155:1",
-	env: "dev",
 	defaultResponseTimeoutMs: 5_000,
 };
 

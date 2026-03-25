@@ -9,6 +9,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
+import type { SigningProvider } from "../../../src/signing/provider.js";
 
 const ENTRY_POINT_07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032" as Address;
 const ENTRY_POINT_08 = "0x0000000000000000000000000000000000000008" as Address;
@@ -16,9 +17,10 @@ const EXECUTION_ADDRESS = "0x1000000000000000000000000000000000000001" as Addres
 const CIRCLE_PAYMASTER_ADDRESS = "0x0578cFB241215b77442a541325d6A4E6dFE700Ec" as Address;
 const CANDIDE_PAYMASTER_ADDRESS = "0x2000000000000000000000000000000000000002" as Address;
 const SERVO_FACTORY_ADDRESS = "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716" as Address;
-const OWNER_ADDRESS = privateKeyToAccount(
-	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
-).address;
+const TEST_PRIVATE_KEY =
+	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
+const OWNER_ADDRESS = privateKeyToAccount(TEST_PRIVATE_KEY).address;
+const OWNER_ACCOUNT = privateKeyToAccount(TEST_PRIVATE_KEY);
 
 const toSimple7702SmartAccount = vi.fn();
 const createBundlerClient = vi.fn();
@@ -51,6 +53,10 @@ vi.mock("../../../src/common/index.js", async (importOriginal) => {
 		buildChainWalletClient,
 	};
 });
+
+vi.mock("../../../src/signing/viem-account.js", () => ({
+	createSigningProviderViemAccount: vi.fn(async () => OWNER_ACCOUNT),
+}));
 
 function mockRpcFetch(
 	handler: (request: { url: string; method: string; params: unknown[] }) =>
@@ -94,7 +100,7 @@ function buildConfig(
 	return {
 		agentId: 1,
 		chain,
-		privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+		ows: { wallet: "test", apiKey: "ows_key_test" },
 		dataDir: "/tmp/tap",
 		chains: chainMap,
 		inviteExpirySeconds: 3600,
@@ -104,6 +110,21 @@ function buildConfig(
 		execution: executionOverrides,
 	};
 }
+
+const TEST_PROVIDER: SigningProvider = {
+	getAddress: async () => OWNER_ADDRESS,
+	signMessage: async () => "0x" as Hex,
+	signTypedData: async () => "0x" as Hex,
+	signTransaction: async () => "0x" as Hex,
+	signAuthorization: async () => ({
+		contractAddress: "0x0000000000000000000000000000000000000000",
+		chainId: 1,
+		nonce: 0,
+		r: "0x" as Hex,
+		s: "0x" as Hex,
+		v: 27n,
+	}),
+};
 
 function mock7702Account() {
 	toSimple7702SmartAccount.mockResolvedValue({
@@ -169,7 +190,7 @@ describe("execution", () => {
 	it("defaults to eip7702 with Circle on Base", async () => {
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
 		const config = buildConfig("eip155:8453", undefined);
-		const preview = await getExecutionPreview(config, config.chains[config.chain]!);
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, TEST_PROVIDER);
 
 		expect(preview.requestedMode).toBe("eip7702");
 		expect(preview.mode).toBe("eip7702");
@@ -197,7 +218,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		const preview = await getExecutionPreview(config, config.chains[config.chain]!, {
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, TEST_PROVIDER, {
 			requireProvider: true,
 		});
 
@@ -248,7 +269,7 @@ describe("execution", () => {
 			mode: "eip7702",
 			paymasterProvider: "servo",
 		});
-		const preview = await getExecutionPreview(config, config.chains[config.chain]!, {
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, TEST_PROVIDER, {
 			requireProvider: true,
 		});
 
@@ -351,7 +372,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		await ensureExecutionReady(config, config.chains[config.chain]!, {
+		await ensureExecutionReady(config, config.chains[config.chain]!, TEST_PROVIDER, {
 			preview: {
 				requestedMode: "eip4337",
 				mode: "eip4337",
@@ -461,7 +482,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		await ensureExecutionReady(config, config.chains[config.chain]!, {
+		await ensureExecutionReady(config, config.chains[config.chain]!, TEST_PROVIDER, {
 			preview: {
 				requestedMode: "eip4337",
 				mode: "eip4337",
@@ -539,7 +560,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		await ensureExecutionReady(config, config.chains[config.chain]!, {
+		await ensureExecutionReady(config, config.chains[config.chain]!, TEST_PROVIDER, {
 			preview: {
 				requestedMode: "eip4337",
 				mode: "eip4337",
@@ -587,7 +608,7 @@ describe("execution", () => {
 		});
 
 		await expect(
-			getExecutionPreview(config, config.chains[config.chain]!, {
+			getExecutionPreview(config, config.chains[config.chain]!, TEST_PROVIDER, {
 				requireProvider: true,
 			}),
 		).rejects.toThrow("Servo endpoint does not advertise Taiko");
@@ -642,7 +663,7 @@ describe("execution", () => {
 			mode: "eip7702",
 			paymasterProvider: "circle",
 		});
-		const preview = await getExecutionPreview(config, config.chains[config.chain]!, {
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, TEST_PROVIDER, {
 			requireProvider: true,
 		});
 
@@ -738,6 +759,7 @@ describe("execution", () => {
 		const result = await executeContractCalls(
 			config,
 			config.chains[config.chain]!,
+			TEST_PROVIDER,
 			[
 				{
 					to: "0x4000000000000000000000000000000000000004",
@@ -793,7 +815,7 @@ describe("execution", () => {
 
 		const { executeContractCalls } = await import("../../../src/runtime/execution.js");
 		const config = buildConfig("eip155:167000", { mode: "eoa" });
-		const result = await executeContractCalls(config, config.chains[config.chain]!, [
+		const result = await executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 			{
 				to: "0x3000000000000000000000000000000000000003",
 				data: "0x",
@@ -915,7 +937,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		const result = await executeContractCalls(config, config.chains[config.chain]!, [
+		const result = await executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 			{
 				to: "0x3000000000000000000000000000000000000003",
 				data: "0x1234",
@@ -1065,7 +1087,7 @@ describe("execution", () => {
 		});
 
 		await expect(
-			executeContractCalls(config, config.chains[config.chain]!, [
+			executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 				{
 					to: tokenAddress,
 					data: encodeFunctionData({
@@ -1182,7 +1204,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		await executeContractCalls(config, config.chains[config.chain]!, [
+		await executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 			{
 				to: "0x3000000000000000000000000000000000000003",
 				data: "0x1234",
@@ -1304,7 +1326,7 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		await executeContractCalls(config, config.chains[config.chain]!, [
+		await executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 			{
 				to: "0x3000000000000000000000000000000000000003",
 				data: "0x1234",
@@ -1341,7 +1363,7 @@ describe("execution", () => {
 		const config = buildConfig("eip155:167000", { mode: "eoa" });
 
 		await expect(
-			executeContractCalls(config, config.chains[config.chain]!, [
+			executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 				{
 					to: "0x3000000000000000000000000000000000000003",
 					data: "0x",
@@ -1425,7 +1447,7 @@ describe("execution", () => {
 			mode: "eip7702",
 			paymasterProvider: "circle",
 		});
-		const result = await executeContractCalls(config, config.chains[config.chain]!, [
+		const result = await executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
 			{
 				to: "0x4000000000000000000000000000000000000004",
 				data: "0x",
@@ -1460,13 +1482,18 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		const signer = await createExecutionEvmSigner(config, config.chains[config.chain]!, {
-			preview: {
-				requestedMode: "eip4337",
-				mode: "eip4337",
-				paymasterProvider: "servo",
+		const signer = await createExecutionEvmSigner(
+			config,
+			config.chains[config.chain]!,
+			TEST_PROVIDER,
+			{
+				preview: {
+					requestedMode: "eip4337",
+					mode: "eip4337",
+					paymasterProvider: "servo",
+				},
 			},
-		});
+		);
 		const signature = await signer.signTypedData({
 			domain: {
 				name: "USD Coin",
@@ -1518,13 +1545,18 @@ describe("execution", () => {
 			mode: "eip4337",
 			paymasterProvider: "servo",
 		});
-		const signer = await createExecutionEvmSigner(config, config.chains[config.chain]!, {
-			preview: {
-				requestedMode: "eip4337",
-				mode: "eip4337",
-				paymasterProvider: "servo",
+		const signer = await createExecutionEvmSigner(
+			config,
+			config.chains[config.chain]!,
+			TEST_PROVIDER,
+			{
+				preview: {
+					requestedMode: "eip4337",
+					mode: "eip4337",
+					paymasterProvider: "servo",
+				},
 			},
-		});
+		);
 		const signature = await signer.signTypedData({
 			domain: {
 				name: "USD Coin",

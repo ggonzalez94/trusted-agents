@@ -14,7 +14,7 @@ export const DEFAULT_CHAINS: Record<string, ChainConfig> = {
 	"eip155:8453": BASE_MAINNET,
 };
 
-export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "privateKey"> = {
+export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "ows"> = {
 	dataDir: `${homedir()}/.trustedagents`,
 	chains: DEFAULT_CHAINS,
 	inviteExpirySeconds: 86400, // 24 hours

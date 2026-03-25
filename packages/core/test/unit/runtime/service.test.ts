@@ -34,7 +34,12 @@ import type {
 } from "../../../src/transport/interface.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
-import { ALICE, BOB } from "../../fixtures/test-keys.js";
+import {
+	ALICE,
+	ALICE_SIGNING_PROVIDER,
+	BOB,
+	BOB_SIGNING_PROVIDER,
+} from "../../fixtures/test-keys.js";
 
 const tempDirs: string[] = [];
 
@@ -213,7 +218,7 @@ async function createService(
 	const config: TrustedAgentsConfig = {
 		agentId: 1,
 		chain: "eip155:8453",
-		privateKey: ALICE.privateKey,
+		ows: { wallet: "test", apiKey: "ows_key_test" },
 		dataDir,
 		chains: {},
 		inviteExpirySeconds: 3600,
@@ -225,6 +230,7 @@ async function createService(
 	const service = new TapMessagingService(
 		{
 			config,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			trustStore: dependencies.trustStore ?? createMemoryTrustStore(),
 			resolver: dependencies.resolver ?? createStaticResolver(),
 			conversationLogger: createNoopConversationLogger(),
@@ -327,7 +333,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -405,7 +411,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -479,7 +485,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -560,7 +566,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -615,7 +621,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 2,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -660,7 +666,7 @@ describe("TapMessagingService", () => {
 		const { url: selfInviteUrl } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 		const { service, transport } = await createService(
@@ -682,7 +688,7 @@ describe("TapMessagingService", () => {
 		const { url } = await generateInvite({
 			agentId: PEER_AGENT.agentId,
 			chain: PEER_AGENT.chain,
-			privateKey: BOB.privateKey,
+			signingProvider: BOB_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 		const transport = new FakeTransport({
@@ -718,7 +724,7 @@ describe("TapMessagingService", () => {
 		const { url } = await generateInvite({
 			agentId: PEER_AGENT.agentId,
 			chain: PEER_AGENT.chain,
-			privateKey: BOB.privateKey,
+			signingProvider: BOB_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -776,7 +782,7 @@ describe("TapMessagingService", () => {
 		const { url } = await generateInvite({
 			agentId: PEER_AGENT.agentId,
 			chain: PEER_AGENT.chain,
-			privateKey: BOB.privateKey,
+			signingProvider: BOB_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -908,7 +914,7 @@ describe("TapMessagingService", () => {
 		const invite = await generateInvite({
 			agentId: PEER_AGENT.agentId,
 			chain: PEER_AGENT.chain,
-			privateKey: BOB.privateKey,
+			signingProvider: BOB_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 		const queued = await outbox.enqueue({
@@ -1707,7 +1713,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -1769,7 +1775,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -1830,7 +1836,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -1890,7 +1896,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -1943,7 +1949,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -2015,7 +2021,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -2825,7 +2831,7 @@ describe("TapMessagingService", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:8453",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
