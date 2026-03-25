@@ -62,7 +62,7 @@ export function getLegacyWalletMigrationWarning(
 	return `Legacy TAP wallet detected at ${keyPath}. This agent still uses a raw key and has no OWS wallet config. Run \`tap migrate-wallet\` to upgrade it.`;
 }
 
-export function assertWalletConfigured(config: WalletBackedConfig): void {
+function assertWalletConfigured(config: WalletBackedConfig): void {
 	if (config.ows.wallet && config.ows.apiKey) {
 		return;
 	}

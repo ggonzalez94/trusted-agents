@@ -39,13 +39,22 @@ function createViemClient(chainConfig: ChainConfig) {
 	return buildChainPublicClient(chainConfig);
 }
 
-function createSigningProvider(config: TrustedAgentsConfig): SigningProvider {
-	return createConfiguredSigningProvider(config);
+function createLazySigningProvider(config: TrustedAgentsConfig): SigningProvider {
+	let cached: SigningProvider | undefined;
+	return new Proxy({} as SigningProvider, {
+		get(_target, prop, receiver) {
+			if (!cached) {
+				cached = createConfiguredSigningProvider(config);
+			}
+			const value = Reflect.get(cached, prop, receiver);
+			return typeof value === "function" ? value.bind(cached) : value;
+		},
+	});
 }
 
 export function buildContext(config: TrustedAgentsConfig): CliContext {
 	const override = getCliRuntimeOverride(config.dataDir);
-	const signingProvider = createSigningProvider(config);
+	const signingProvider = createLazySigningProvider(config);
 	if (override?.createContext) {
 		return { config, signingProvider, ...override.createContext(config) };
 	}

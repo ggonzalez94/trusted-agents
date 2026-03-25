@@ -97,6 +97,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 					installed: false,
 					reason:
 						"No supported runtimes detected. Looked for ~/.claude, ~/.codex, ~/.openclaw, and the openclaw CLI.",
+					warnings: legacyWarning ? [legacyWarning] : undefined,
 					next_steps: [
 						"Create the target runtime directory or pass --runtime <name> to install explicitly.",
 					],
