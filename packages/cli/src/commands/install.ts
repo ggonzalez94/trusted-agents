@@ -4,9 +4,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
+import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
+import { getLegacyWalletMigrationWarning } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -47,6 +49,14 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 		const autoDetect = runtimes.length === 0;
 		const results: RuntimeInstallResult[] = [];
 		let skillsInstalled = false;
+		const dataDir = resolveDataDir(opts);
+		const configPath = resolveConfigPath(opts, dataDir);
+		const legacyWarning = getLegacyWalletMigrationWarning({
+			dataDir,
+			configPath,
+			owsWallet: process.env.TAP_OWS_WALLET,
+			owsApiKey: process.env.TAP_OWS_API_KEY,
+		});
 
 		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {
 			const runtimeDir = join(homeDir, `.${runtime}`);
@@ -87,6 +97,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 					installed: false,
 					reason:
 						"No supported runtimes detected. Looked for ~/.claude, ~/.codex, ~/.openclaw, and the openclaw CLI.",
+					warnings: legacyWarning ? [legacyWarning] : undefined,
 					next_steps: [
 						"Create the target runtime directory or pass --runtime <name> to install explicitly.",
 					],
@@ -101,6 +112,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			{
 				installed: true,
 				runtimes: results,
+				warnings: legacyWarning ? [legacyWarning] : undefined,
 				next_steps: [
 					"Run `tap init` to create or import the TAP identity.",
 					"Fund the wallet, then run `tap register`.",

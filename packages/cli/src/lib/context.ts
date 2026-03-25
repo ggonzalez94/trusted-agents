@@ -3,7 +3,6 @@ import {
 	FileConversationLogger,
 	FileRequestJournal,
 	FileTrustStore,
-	OwsSigningProvider,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
@@ -20,6 +19,7 @@ import type {
 import { buildChainPublicClient } from "trusted-agents-core";
 import { resolveConfiguredCalendarProvider } from "./calendar/setup.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
+import { createConfiguredSigningProvider } from "./wallet-config.js";
 
 export interface CliContext {
 	config: TrustedAgentsConfig;
@@ -39,13 +39,22 @@ function createViemClient(chainConfig: ChainConfig) {
 	return buildChainPublicClient(chainConfig);
 }
 
-function createSigningProvider(config: TrustedAgentsConfig): SigningProvider {
-	return new OwsSigningProvider(config.ows.wallet, config.chain, config.ows.apiKey);
+function createLazySigningProvider(config: TrustedAgentsConfig): SigningProvider {
+	let cached: SigningProvider | undefined;
+	return new Proxy({} as SigningProvider, {
+		get(_target, prop, receiver) {
+			if (!cached) {
+				cached = createConfiguredSigningProvider(config);
+			}
+			const value = Reflect.get(cached, prop, receiver);
+			return typeof value === "function" ? value.bind(cached) : value;
+		},
+	});
 }
 
 export function buildContext(config: TrustedAgentsConfig): CliContext {
 	const override = getCliRuntimeOverride(config.dataDir);
-	const signingProvider = createSigningProvider(config);
+	const signingProvider = createLazySigningProvider(config);
 	if (override?.createContext) {
 		return { config, signingProvider, ...override.createContext(config) };
 	}
