@@ -6,7 +6,7 @@ This is the broader real-world smoke test for TAP.
 
 Use it to validate:
 - XMTP delivery with real listeners
-- Base Sepolia value transfer with real funds
+- Base mainnet value transfer with real funds
 - directional grant propagation between real agents
 - the full operator workflow outside the deterministic GH-safe E2E
 - optionally, fresh x402-backed registration before the messaging flow
@@ -32,9 +32,10 @@ Use the full path when the agent wallets have a small amount of Base mainnet USD
 ## Secrets
 
 Required:
-- `TAP_SMOKE_TREASURY_PRIVATE_KEY`
-- `TAP_SMOKE_AGENT_A_PRIVATE_KEY`
-- `TAP_SMOKE_AGENT_B_PRIVATE_KEY`
+- `TAP_SMOKE_AGENT_A_OWS_WALLET` — OWS wallet ID for Agent A
+- `TAP_SMOKE_AGENT_A_OWS_API_KEY` — OWS API key for Agent A
+- `TAP_SMOKE_AGENT_B_OWS_WALLET` — OWS wallet ID for Agent B
+- `TAP_SMOKE_AGENT_B_OWS_API_KEY` — OWS API key for Agent B
 
 Optional:
 - `TAP_PINATA_JWT`
@@ -42,7 +43,7 @@ Optional:
 Notes:
 - `TAP_PINATA_JWT` is not needed for the x402 path.
 - If you use `TAP_PINATA_JWT`, you are not testing x402 upload.
-- Do not commit the treasury key, the agent keys, or any funding mnemonic to the repository.
+- Do not commit OWS wallet IDs, API keys, or any funding mnemonic to the repository.
 
 ## Basic Prerequisites
 
@@ -50,23 +51,16 @@ Notes:
 - `bun` is available
 - `jq` is available
 - you can use at least two terminal sessions
+- OWS (Open Wallet Service) is installed and accessible
 
 Wallet/funding assumptions:
-- Treasury wallet:
-  - enough Base Sepolia ETH to top up both agents
 - Agent A and Agent B:
-  - Agent A: at least `0.02 ETH`, Agent B: at least `0.01 ETH`
-  - If an agent keeps the default Base Sepolia `execution.mode: eip7702`, also provision a small Base Sepolia USDC balance for gas. The checked-in top-up helper only funds ETH.
+  - Agent A: at least `0.02 ETH` on Base mainnet, Agent B: at least `0.01 ETH` on Base mainnet
 - Full x402 path only:
   - each agent wallet has a small amount of USDC on Base mainnet for the IPFS upload
 
-The checked-in top-up helper only handles Base Sepolia ETH. If you want to exercise x402 registration, make sure the agent wallets already have Base mainnet USDC before you call `tap register`.
-
 ## Wallet Roles
 
-- Treasury wallet:
-  - prefunded
-  - used only to top up agent wallets before the test
 - Agent A:
   - typically the payer or treasury agent in the scenario
   - typically the inviter
@@ -101,7 +95,7 @@ Worker request:
       "scope": "transfer/request",
       "constraints": {
         "asset": "native",
-        "chain": "eip155:84532",
+        "chain": "eip155:8453",
         "maxAmount": "0.001",
         "window": "week"
       }
@@ -139,7 +133,7 @@ Treasury grants:
       "scope": "transfer/request",
       "constraints": {
         "asset": "native",
-        "chain": "eip155:84532",
+        "chain": "eip155:8453",
         "maxAmount": "0.001",
         "window": "week"
       }
@@ -164,7 +158,7 @@ cat > ./worker-request.json <<'EOF'
       "scope": "transfer/request",
       "constraints": {
         "asset": "native",
-        "chain": "eip155:84532",
+        "chain": "eip155:8453",
         "maxAmount": "0.001",
         "window": "week"
       }
@@ -198,7 +192,7 @@ cat > ./treasury-grants.json <<'EOF'
       "scope": "transfer/request",
       "constraints": {
         "asset": "native",
-        "chain": "eip155:84532",
+        "chain": "eip155:8453",
         "maxAmount": "0.001",
         "window": "week"
       }
@@ -244,11 +238,16 @@ AGENT_A_DIR="$(mktemp -d /tmp/tap-live-a.XXXXXX)"
 AGENT_B_DIR="$(mktemp -d /tmp/tap-live-b.XXXXXX)"
 ```
 
-### 2. Initialize from the private keys
+### 2. Initialize from OWS wallets
 
 ```bash
-tap --data-dir "$AGENT_A_DIR" init --private-key "$TAP_SMOKE_AGENT_A_PRIVATE_KEY"
-tap --data-dir "$AGENT_B_DIR" init --private-key "$TAP_SMOKE_AGENT_B_PRIVATE_KEY"
+tap --data-dir "$AGENT_A_DIR" init \
+  --ows-wallet "$TAP_SMOKE_AGENT_A_OWS_WALLET" \
+  --ows-api-key "$TAP_SMOKE_AGENT_A_OWS_API_KEY"
+
+tap --data-dir "$AGENT_B_DIR" init \
+  --ows-wallet "$TAP_SMOKE_AGENT_B_OWS_WALLET" \
+  --ows-api-key "$TAP_SMOKE_AGENT_B_OWS_API_KEY"
 ```
 
 ### 3. Resolve the two agent addresses
@@ -258,27 +257,16 @@ AGENT_A_ADDRESS="$(tap --json --data-dir "$AGENT_A_DIR" balance | jq -r '.data.a
 AGENT_B_ADDRESS="$(tap --json --data-dir "$AGENT_B_DIR" balance | jq -r '.data.address')"
 ```
 
-### 4. Top up Base Sepolia ETH from the treasury wallet
+### 4. Make sure both agent wallets have Base mainnet USDC and ETH
 
-```bash
-bun packages/cli/scripts/live-smoke-top-up.ts \
-  --ensure "$AGENT_A_ADDRESS:0.02:0.001" \
-  --ensure "$AGENT_B_ADDRESS:0.01:0.001"
-```
+This runbook does not prescribe how to fund the wallets. Use whatever wallet tooling or funding flow you already trust.
 
-If both agents are already above the threshold and you still want to validate the treasury path itself, run one small explicit transfer:
+Requirements:
+- Agent A: at least `0.02 ETH` on Base mainnet
+- Agent B: at least `0.01 ETH` on Base mainnet
+- Both: a small amount of USDC on Base mainnet for x402 IPFS upload
 
-```bash
-bun packages/cli/scripts/live-smoke-top-up.ts --send "$AGENT_B_ADDRESS:0.0001"
-```
-
-### 5. Make sure both agent wallets also have Base mainnet USDC
-
-This runbook does not prescribe how to do that. Use whatever wallet tooling or funding flow you already trust.
-
-The only requirement for this branch is that both agent wallets can pay the x402 IPFS upload before `tap register` runs.
-
-### 6. Register both agents
+### 5. Register both agents
 
 ```bash
 tap --data-dir "$AGENT_A_DIR" register \
@@ -296,7 +284,7 @@ Expected behavior:
 - each command uploads the registration file through x402
 - each command writes the returned `agent_id` back into the local config
 
-### 7. Verify balances and on-chain identity
+### 6. Verify balances and on-chain identity
 
 ```bash
 tap --data-dir "$AGENT_A_DIR" balance
@@ -312,7 +300,7 @@ Continue with the shared live flow below.
 ### 1. Point at already-registered agent homes
 
 Use any two existing TAP data dirs that already contain:
-- the imported private key
+- a configured OWS wallet and API key
 - the correct `agent_id`
 - a registration that resolves on-chain
 
@@ -405,7 +393,7 @@ Stop Agent B's listener before requesting funds so the request command can recei
 tap --data-dir "$AGENT_B_DIR" message request-funds TreasuryAgent \
   --asset native \
   --amount 0.0002 \
-  --chain base-sepolia \
+  --chain base \
   --note "approved live smoke transfer"
 ```
 
@@ -439,7 +427,7 @@ tap --data-dir "$AGENT_A_DIR" message listen
 tap --data-dir "$AGENT_B_DIR" message request-funds TreasuryAgent \
   --asset native \
   --amount 0.0001 \
-  --chain base-sepolia \
+  --chain base \
   --note "should be rejected after revoke"
 ```
 
@@ -470,7 +458,7 @@ Required results:
 ## Pass Criteria
 
 The smoke run passes only if all of the following are true:
-- both agents resolve on-chain and have live Base Sepolia balances
+- both agents resolve on-chain and have live Base mainnet balances
 - connect succeeds and both sides surface the requested and offered grant intent
 - `tap permissions show` reflects the expected directional grant state on both agents
 - at least one normal chat message succeeds in each direction
@@ -498,13 +486,15 @@ Full-path-only extra pass criteria:
 - missing async action response
   - retry with a fresh listener session for the requester identity
 - insufficient funds
-  - top up from the treasury wallet before continuing
+  - top up the agent wallet before continuing
+- OWS signing errors
+  - verify `ows.wallet` and `ows.api_key` in the agent's config.yaml
+  - ensure OWS is reachable and the API key has not expired
 
 ## Automation Guidance
 
 If this becomes automated later:
 - prefer `workflow_dispatch` or nightly cron
-- store all keys in protected environment secrets
-- add a top-up helper step before the smoke flow
-- treat Base Sepolia ETH funding and Base mainnet USDC funding as separate setup concerns
+- store all OWS wallet IDs and API keys in protected environment secrets
+- add a funding verification step before the smoke flow
 - publish the tx hash, permissions snapshots, and ledger tails as workflow artifacts
