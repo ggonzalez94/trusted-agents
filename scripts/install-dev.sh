@@ -24,8 +24,9 @@ info "Installing dependencies..."
 cd "$REPO_ROOT"
 bun install
 
-info "Building all packages..."
-bun run build
+info "Building core and CLI..."
+bun run --cwd packages/core build
+bun run --cwd packages/cli build
 
 # ── Link CLI globally ────────────────────────────────────────────────────────
 
