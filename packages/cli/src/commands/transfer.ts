@@ -63,11 +63,7 @@ export async function transferCommand(
 		}
 		assertAmountIsParsable(asset, amount, usdcAsset?.decimals);
 
-		const signingProvider = new OwsSigningProvider(
-			config.ows.wallet,
-			chain,
-			config.ows.apiKey,
-		);
+		const signingProvider = new OwsSigningProvider(config.ows.wallet, chain, config.ows.apiKey);
 		const execution = await getExecutionPreview(config, chainConfig, signingProvider);
 		const gasEstimate = await estimateTransferGasAndFees({
 			chainConfig,
