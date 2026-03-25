@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TrustedAgentsConfig } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityShowCommand } from "../src/commands/identity-show.js";
@@ -27,6 +30,7 @@ vi.mock("trusted-agents-core", async () => {
 });
 
 describe("tap identity show", () => {
+	let tempRoot: string;
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
 	let origStdoutWrite: typeof process.stdout.write;
@@ -56,7 +60,8 @@ describe("tap identity show", () => {
 		},
 	};
 
-	beforeEach(() => {
+	beforeEach(async () => {
+		tempRoot = await mkdtemp(join(tmpdir(), "tap-identity-show-"));
 		stdoutWrites = [];
 		stderrWrites = [];
 		process.exitCode = undefined;
@@ -104,5 +109,32 @@ describe("tap identity show", () => {
 		expect(output.data?.execution_mode).toBe("eip7702");
 		expect(output.data?.execution_address).toBe(ADDRESS);
 		expect(output.data?.funding_address).toBe(ADDRESS);
+	});
+
+	it("shows a migration hint instead of an opaque OWS error for legacy raw-key agents", async () => {
+		const dataDir = join(tempRoot, "legacy-agent");
+		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await writeFile(
+			join(dataDir, "identity", "agent.key"),
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+			"utf-8",
+		);
+
+		vi.spyOn(configLoader, "loadConfig").mockResolvedValue({
+			...config,
+			agentId: 11,
+			dataDir,
+			ows: { wallet: "", apiKey: "" },
+		});
+
+		await identityShowCommand({ json: true });
+
+		const output = JSON.parse(stdoutWrites.join("")) as {
+			ok: boolean;
+			error?: { message?: string };
+		};
+		expect(output.ok).toBe(false);
+		expect(output.error?.message).toContain("tap migrate-wallet");
+		expect(mockOwsProvider).not.toHaveBeenCalled();
 	});
 });

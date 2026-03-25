@@ -8,6 +8,8 @@ describe("tap install", () => {
 	let tempRoot: string;
 	let homeDir: string;
 	let binDir: string;
+	let stdoutWrites: string[];
+	let origStdoutWrite: typeof process.stdout.write;
 	let originalHome: string | undefined;
 	let originalPath: string | undefined;
 
@@ -17,6 +19,12 @@ describe("tap install", () => {
 		binDir = join(tempRoot, "bin");
 		await mkdir(homeDir, { recursive: true });
 		await mkdir(binDir, { recursive: true });
+		stdoutWrites = [];
+		origStdoutWrite = process.stdout.write;
+		process.stdout.write = ((chunk: string) => {
+			stdoutWrites.push(chunk);
+			return true;
+		}) as typeof process.stdout.write;
 
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
@@ -38,6 +46,7 @@ describe("tap install", () => {
 	});
 
 	afterEach(async () => {
+		process.stdout.write = origStdoutWrite;
 		process.env.HOME = originalHome;
 		process.env.PATH = originalPath;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = "";
@@ -136,6 +145,31 @@ describe("tap install", () => {
 			"gateway status --json",
 			"gateway status --json",
 		]);
+	});
+
+	it("warns when the selected TAP data dir contains a legacy raw-key agent that needs migration", async () => {
+		await mkdir(join(homeDir, ".claude"), { recursive: true });
+		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
+		await mkdir(join(homeDir, ".trustedagents", "identity"), { recursive: true });
+		await writeFile(
+			join(homeDir, ".trustedagents", "config.yaml"),
+			"agent_id: 11\nchain: eip155:8453\n",
+			"utf-8",
+		);
+		await writeFile(
+			join(homeDir, ".trustedagents", "identity", "agent.key"),
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+			"utf-8",
+		);
+
+		await installCommand({}, { json: true });
+
+		const output = JSON.parse(stdoutWrites.join("")) as {
+			ok: boolean;
+			data?: { warnings?: string[] };
+		};
+		expect(output.ok).toBe(true);
+		expect(output.data?.warnings).toEqual([expect.stringContaining("tap migrate-wallet")]);
 	});
 });
 

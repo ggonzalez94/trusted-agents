@@ -11,7 +11,7 @@ import {
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
-import { OwsSigningProvider, createSigningProviderViemAccount } from "trusted-agents-core";
+import { createSigningProviderViemAccount } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
@@ -19,6 +19,10 @@ import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
+import {
+	createConfiguredSigningProvider,
+	getLegacyWalletMigrationWarning,
+} from "../lib/wallet-config.js";
 import { buildPublicClient, buildWalletClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -292,11 +296,7 @@ export async function probeRemoveNativeBalance(
 			};
 		}
 
-		const signingProvider = new OwsSigningProvider(
-			config.ows.wallet,
-			config.chain,
-			config.ows.apiKey,
-		);
+		const signingProvider = createConfiguredSigningProvider(config);
 		const address = await signingProvider.getAddress();
 		const publicClient = buildPublicClient(chainConfig);
 		const nativeBalanceWei = await publicClient.getBalance({ address });
@@ -340,10 +340,9 @@ export async function transferRemainingNativeBalance(
 	balanceContext: RemoveBalanceContext,
 	toAddress: `0x${string}`,
 ): Promise<RemoveTransferResult> {
-	const signingProvider = new OwsSigningProvider(
-		balanceContext.config.ows.wallet,
+	const signingProvider = createConfiguredSigningProvider(
+		balanceContext.config,
 		balanceContext.chainConfig.caip2,
-		balanceContext.config.ows.apiKey,
 	);
 	const account = await createSigningProviderViemAccount(signingProvider);
 	const publicClient = buildPublicClient(balanceContext.chainConfig);
@@ -578,10 +577,18 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 			(YAML.parse(raw) as { ows?: { wallet?: string; api_key?: string }; chain?: string } | null) ??
 			undefined;
 		if (!parsed?.ows?.wallet || !parsed?.ows?.api_key) {
-			return [null, "OWS wallet config is missing from config.yaml."];
+			const legacyWarning = getLegacyWalletMigrationWarning({ dataDir, configPath });
+			return [null, legacyWarning ?? "OWS wallet config is missing from config.yaml."];
 		}
 		const chain = parsed.chain ?? "eip155:8453";
-		const provider = new OwsSigningProvider(parsed.ows.wallet, chain, parsed.ows.api_key);
+		const provider = createConfiguredSigningProvider(
+			{
+				chain,
+				ows: { wallet: parsed.ows.wallet, apiKey: parsed.ows.api_key },
+				dataDir,
+			},
+			chain,
+		);
 		const address = await provider.getAddress();
 		return [address, null];
 	} catch (error: unknown) {

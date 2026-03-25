@@ -1,8 +1,8 @@
-import { OwsSigningProvider } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { getExecutionPreview } from "../lib/execution.js";
 import { error, success } from "../lib/output.js";
+import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function identityShowCommand(opts: GlobalOptions): Promise<void> {
@@ -10,11 +10,7 @@ export async function identityShowCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const config = await loadConfig(opts, { requireAgentId: false });
-		const signingProvider = new OwsSigningProvider(
-			config.ows.wallet,
-			config.chain,
-			config.ows.apiKey,
-		);
+		const signingProvider = createConfiguredSigningProvider(config);
 		const address = await signingProvider.getAddress();
 		const chainConfig = config.chains[config.chain];
 		const execution =

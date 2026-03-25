@@ -3,7 +3,6 @@ import {
 	FileConversationLogger,
 	FileRequestJournal,
 	FileTrustStore,
-	OwsSigningProvider,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
@@ -20,6 +19,7 @@ import type {
 import { buildChainPublicClient } from "trusted-agents-core";
 import { resolveConfiguredCalendarProvider } from "./calendar/setup.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
+import { createConfiguredSigningProvider } from "./wallet-config.js";
 
 export interface CliContext {
 	config: TrustedAgentsConfig;
@@ -40,7 +40,7 @@ function createViemClient(chainConfig: ChainConfig) {
 }
 
 function createSigningProvider(config: TrustedAgentsConfig): SigningProvider {
-	return new OwsSigningProvider(config.ows.wallet, config.chain, config.ows.apiKey);
+	return createConfiguredSigningProvider(config);
 }
 
 export function buildContext(config: TrustedAgentsConfig): CliContext {

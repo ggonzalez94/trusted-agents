@@ -1,6 +1,7 @@
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
+import { getLegacyWalletMigrationWarning } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function configShowCommand(opts: GlobalOptions): Promise<void> {
@@ -8,13 +9,18 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const config = await loadConfig(opts);
+		const legacyWarning = getLegacyWalletMigrationWarning({
+			dataDir: config.dataDir,
+			owsWallet: config.ows.wallet,
+			owsApiKey: config.ows.apiKey,
+		});
 
 		const redacted = {
 			agent_id: config.agentId,
 			chain: config.chain,
 			ows: {
 				wallet: config.ows.wallet,
-				api_key: "***redacted***",
+				api_key: config.ows.apiKey ? "***redacted***" : "",
 			},
 			data_dir: config.dataDir,
 			invite_expiry_seconds: config.inviteExpirySeconds,
@@ -32,6 +38,7 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 					{ name: v.name, rpc_url: v.rpcUrl, registry: v.registryAddress },
 				]),
 			),
+			warnings: legacyWarning ? [legacyWarning] : undefined,
 		};
 
 		success(redacted, opts, startTime);

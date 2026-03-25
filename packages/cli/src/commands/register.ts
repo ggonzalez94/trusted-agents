@@ -15,7 +15,6 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import type { SigningProvider } from "trusted-agents-core";
-import { OwsSigningProvider } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
 import { getUsdcAsset } from "../lib/assets.js";
@@ -37,6 +36,7 @@ import {
 } from "../lib/ipfs.js";
 import { error, info, success, verbose } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
+import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
 import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -547,11 +547,7 @@ export async function registerCommand(
 			return;
 		}
 
-		const signingProvider = new OwsSigningProvider(
-			config.ows.wallet,
-			config.chain,
-			config.ows.apiKey,
-		);
+		const signingProvider = createConfiguredSigningProvider(config);
 		const agentAddress = await signingProvider.getAddress();
 		const executionPreview = await getExecutionPreview(config, chainConfig, signingProvider, {
 			requireProvider: true,
@@ -695,11 +691,7 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const signingProvider = new OwsSigningProvider(
-			config.ows.wallet,
-			config.chain,
-			config.ows.apiKey,
-		);
+		const signingProvider = createConfiguredSigningProvider(config);
 		const agentAddress = await signingProvider.getAddress();
 
 		const hasManifestOverrides =
