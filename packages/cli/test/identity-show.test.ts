@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TrustedAgentsConfig } from "trusted-agents-core";
@@ -88,11 +88,12 @@ describe("tap identity show", () => {
 		});
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
+		await rm(tempRoot, { recursive: true, force: true });
 	});
 
 	it("works before registration and shows the execution funding address", async () => {
