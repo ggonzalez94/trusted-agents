@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
 	ERC20_TRANSFER_ABI,
+	OwsSigningProvider,
 	ValidationError,
 	executeOnchainTransfer,
 	isEthereumAddress,
@@ -62,7 +63,12 @@ export async function transferCommand(
 		}
 		assertAmountIsParsable(asset, amount, usdcAsset?.decimals);
 
-		const execution = await getExecutionPreview(config, chainConfig);
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
+		const execution = await getExecutionPreview(config, chainConfig, signingProvider);
 		const gasEstimate = await estimateTransferGasAndFees({
 			chainConfig,
 			asset,
@@ -103,7 +109,7 @@ export async function transferCommand(
 			return;
 		}
 
-		const transfer = await executeOnchainTransfer(config, {
+		const transfer = await executeOnchainTransfer(config, signingProvider, {
 			type: "transfer/request",
 			actionId: `local-${randomUUID()}`,
 			asset,

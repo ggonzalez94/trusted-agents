@@ -78,7 +78,7 @@ export function createCliTapMessagingService(
 				(await getCliRuntimeOverride(serviceConfig.dataDir)?.executeTransferAction?.(
 					serviceConfig,
 					request,
-				)) ?? (await executeOnchainTransfer(serviceConfig, request)),
+				)) ?? (await executeOnchainTransfer(serviceConfig, context.signingProvider, request)),
 			log: (_level, message) => {
 				info(message, opts);
 			},

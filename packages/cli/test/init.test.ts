@@ -38,7 +38,7 @@ describe("tap init", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	it("should create config file, keyfile, and directory structure", async () => {
+	it("should create config file and directory structure", async () => {
 		const dataDir = join(tmpDir, "data");
 
 		await initCommand({
@@ -54,12 +54,6 @@ describe("tap init", () => {
 		expect(yaml.agent_id).toBe(-1);
 		expect(yaml.chain).toBe("eip155:8453");
 
-		// Keyfile created
-		const keyfile = join(dataDir, "identity", "agent.key");
-		expect(existsSync(keyfile)).toBe(true);
-		const keyContent = await readFile(keyfile, "utf-8");
-		expect(keyContent).toMatch(/^[0-9a-fA-F]{64}$/);
-
 		// Directories created
 		expect(existsSync(join(dataDir, "conversations"))).toBe(true);
 		expect(existsSync(join(dataDir, "xmtp"))).toBe(true);
@@ -68,22 +62,22 @@ describe("tap init", () => {
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.ok).toBe(true);
-		expect(output.data.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
+		expect(output.data.chain).toBe("eip155:8453");
 	});
 
-	it("should not overwrite existing keyfile", async () => {
+	it("should not overwrite existing config", async () => {
 		const dataDir = join(tmpDir, "data");
 
 		// Run init twice
 		await initCommand({ json: true, config: configPath, dataDir });
-		const firstKey = await readFile(join(dataDir, "identity", "agent.key"), "utf-8");
+		const firstConfig = await readFile(configPath, "utf-8");
 
 		stdoutWrites = [];
-		await initCommand({ json: true, config: join(tmpDir, "config2.yaml"), dataDir });
-		const secondKey = await readFile(join(dataDir, "identity", "agent.key"), "utf-8");
+		await initCommand({ json: true, config: configPath, dataDir });
+		const secondConfig = await readFile(configPath, "utf-8");
 
-		// Key should not be regenerated
-		expect(firstKey).toBe(secondKey);
+		// Config should not be regenerated
+		expect(firstConfig).toBe(secondConfig);
 	});
 
 	it("should create config inside an explicit data dir without reusing legacy config", async () => {

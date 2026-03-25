@@ -1,24 +1,43 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as executionLib from "../src/lib/execution.js";
 import * as walletLib from "../src/lib/wallet.js";
 
+const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
+	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
+	return {
+		ADDRESS: addr,
+		mockOwsProvider: vi.fn().mockImplementation(() => ({
+			getAddress: vi.fn().mockResolvedValue(addr),
+			signMessage: vi.fn(),
+			signTypedData: vi.fn(),
+			signTransaction: vi.fn(),
+			signAuthorization: vi.fn(),
+		})),
+	};
+});
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: mockOwsProvider,
+	};
+});
+
 describe("tap balance", () => {
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
 	let origStdoutWrite: typeof process.stdout.write;
 	let origStderrWrite: typeof process.stderr.write;
-	const privateKey = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
-	const address = privateKeyToAccount(privateKey).address;
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: -1,
 			chain: "eip155:8453",
-			privateKey,
+			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:8453": {
@@ -65,9 +84,9 @@ describe("tap balance", () => {
 		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
 			requestedMode: "eip7702",
 			mode: "eip7702",
-			messagingAddress: address,
-			executionAddress: address,
-			fundingAddress: address,
+			messagingAddress: ADDRESS,
+			executionAddress: ADDRESS,
+			fundingAddress: ADDRESS,
 			paymasterProvider: "candide",
 			warnings: [],
 		});
@@ -77,7 +96,7 @@ describe("tap balance", () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 	});
 
 	it("uses the configured chain by default and returns native plus USDC balances", async () => {
@@ -103,9 +122,9 @@ describe("tap balance", () => {
 			data?: Record<string, unknown>;
 		};
 		expect(output.ok).toBe(true);
-		expect(output.data?.address).toBe(address);
-		expect(output.data?.messaging_address).toBe(address);
-		expect(output.data?.execution_address).toBe(address);
+		expect(output.data?.address).toBe(ADDRESS);
+		expect(output.data?.messaging_address).toBe(ADDRESS);
+		expect(output.data?.execution_address).toBe(ADDRESS);
 		expect(output.data?.chain).toBe("eip155:8453");
 		expect(output.data?.execution_native_balance).toBe("1.234");
 		expect(output.data?.execution_usdc_balance).toBe("9.876543");

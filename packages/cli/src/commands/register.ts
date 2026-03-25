@@ -14,8 +14,9 @@ import type {
 	RegistrationFileExecution,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
+import type { SigningProvider } from "trusted-agents-core";
+import { OwsSigningProvider } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { getUsdcAsset } from "../lib/assets.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
@@ -272,6 +273,7 @@ async function verifyCidAccessible(cid: string): Promise<boolean> {
 
 async function ensureX402UploadFunding(
 	config: TrustedAgentsConfig,
+	signingProvider: SigningProvider,
 	opts: GlobalOptions,
 ): Promise<void> {
 	const baseChainConfig = config.chains[BASE_MAINNET_CAIP2];
@@ -285,7 +287,7 @@ async function ensureX402UploadFunding(
 	}
 
 	const publicClient = buildPublicClient(baseChainConfig);
-	const messagingAddress = privateKeyToAccount(config.privateKey).address;
+	const messagingAddress = await signingProvider.getAddress();
 	const messagingBalance = (await publicClient.readContract({
 		address: usdc.address,
 		abi: erc20Abi,
@@ -297,7 +299,7 @@ async function ensureX402UploadFunding(
 		return;
 	}
 
-	const baseExecution = await getExecutionPreview(config, baseChainConfig, {
+	const baseExecution = await getExecutionPreview(config, baseChainConfig, signingProvider, {
 		requireProvider: true,
 	});
 	for (const warning of baseExecution.warnings) {
@@ -331,6 +333,7 @@ async function ensureX402UploadFunding(
 	const topUpResult = await executeContractCalls(
 		config,
 		baseChainConfig,
+		signingProvider,
 		[
 			{
 				to: usdc.address,
@@ -391,7 +394,7 @@ async function resolveAgentURI(
 	params: {
 		registrationFile?: RegistrationFile;
 		config: TrustedAgentsConfig;
-		privateKey: `0x${string}`;
+		signingProvider: SigningProvider;
 		executionPreview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
 		dataDir: string;
 		uri?: string;
@@ -445,8 +448,8 @@ async function resolveAgentURI(
 			opts,
 		);
 		try {
-			await ensureX402UploadFunding(params.config, opts);
-			const ipfs = await uploadToIpfsX402(params.registrationFile, params.privateKey);
+			await ensureX402UploadFunding(params.config, params.signingProvider, opts);
+			const ipfs = await uploadToIpfsX402(params.registrationFile, params.signingProvider);
 			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
 			await saveIpfsCache(params.dataDir, cache);
@@ -478,10 +481,15 @@ Alternatives:
 			opts,
 		);
 		try {
-			const ipfs = await uploadToIpfsTack(params.registrationFile, params.config, {
-				apiUrl: resolveTackApiUrl(params.config.ipfs?.tackApiUrl),
-				preview: params.executionPreview,
-			});
+			const ipfs = await uploadToIpfsTack(
+				params.registrationFile,
+				params.config,
+				params.signingProvider,
+				{
+					apiUrl: resolveTackApiUrl(params.config.ipfs?.tackApiUrl),
+					preview: params.executionPreview,
+				},
+			);
 			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
 			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
 			await saveIpfsCache(params.dataDir, cache);
@@ -539,9 +547,13 @@ export async function registerCommand(
 			return;
 		}
 
-		const account = privateKeyToAccount(config.privateKey);
-		const agentAddress = account.address;
-		const executionPreview = await getExecutionPreview(config, chainConfig, {
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
+		const agentAddress = await signingProvider.getAddress();
+		const executionPreview = await getExecutionPreview(config, chainConfig, signingProvider, {
 			requireProvider: true,
 		});
 		emitExecutionWarnings(executionPreview, opts);
@@ -549,7 +561,7 @@ export async function registerCommand(
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
-		await ensureExecutionReady(config, chainConfig, {
+		await ensureExecutionReady(config, chainConfig, signingProvider, {
 			preview: executionPreview,
 			deployEip4337Account:
 				executionPreview.mode === "eip4337" &&
@@ -579,7 +591,7 @@ export async function registerCommand(
 			{
 				registrationFile,
 				config,
-				privateKey: config.privateKey,
+				signingProvider,
 				executionPreview,
 				dataDir: config.dataDir,
 				uri: cmdOpts.uri,
@@ -599,6 +611,7 @@ export async function registerCommand(
 		const executionResult = await executeContractCalls(
 			config,
 			chainConfig,
+			signingProvider,
 			[
 				{
 					to: chainConfig.registryAddress,
@@ -682,8 +695,12 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const account = privateKeyToAccount(config.privateKey);
-		const agentAddress = account.address;
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
+		const agentAddress = await signingProvider.getAddress();
 
 		const hasManifestOverrides =
 			cmdOpts.name !== undefined ||
@@ -711,15 +728,18 @@ export async function registerUpdateCommand(
 				return;
 			}
 
-			const executionPreview = await getExecutionPreview(config, chainConfig, {
+			const executionPreview = await getExecutionPreview(config, chainConfig, signingProvider, {
 				requireProvider: true,
 			});
 			emitExecutionWarnings(executionPreview, opts);
-			await ensureExecutionReady(config, chainConfig, { preview: executionPreview });
+			await ensureExecutionReady(config, chainConfig, signingProvider, {
+				preview: executionPreview,
+			});
 			info(`Updating agent #${config.agentId} URI on ${chainConfig.name}...`, opts);
 			const executionResult = await executeContractCalls(
 				config,
 				chainConfig,
+				signingProvider,
 				[
 					{
 						to: chainConfig.registryAddress,
@@ -812,11 +832,11 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const executionPreview = await getExecutionPreview(config, chainConfig, {
+		const executionPreview = await getExecutionPreview(config, chainConfig, signingProvider, {
 			requireProvider: true,
 		});
 		emitExecutionWarnings(executionPreview, opts);
-		await ensureExecutionReady(config, chainConfig, {
+		await ensureExecutionReady(config, chainConfig, signingProvider, {
 			preview: executionPreview,
 			deployEip4337Account:
 				executionPreview.mode === "eip4337" &&
@@ -854,7 +874,7 @@ export async function registerUpdateCommand(
 			{
 				registrationFile,
 				config,
-				privateKey: config.privateKey,
+				signingProvider,
 				executionPreview,
 				dataDir: config.dataDir,
 				pinataJwt: cmdOpts.pinataJwt,
@@ -877,6 +897,7 @@ export async function registerUpdateCommand(
 		const executionResult = await executeContractCalls(
 			config,
 			chainConfig,
+			signingProvider,
 			[
 				{
 					to: chainConfig.registryAddress,

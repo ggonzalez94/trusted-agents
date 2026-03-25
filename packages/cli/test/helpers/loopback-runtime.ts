@@ -15,13 +15,12 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import { clearCliRuntimeOverride, setCliRuntimeOverride } from "../../src/lib/runtime-overrides.js";
 
 export interface TestAgentFixture {
 	agentId: number;
 	chain: string;
-	privateKey: `0x${string}`;
+	address: `0x${string}`;
 	name: string;
 	description: string;
 	capabilities: string[];
@@ -33,7 +32,7 @@ interface LoopbackEnvelope {
 }
 
 export function createResolvedAgentFixture(fixture: TestAgentFixture): ResolvedAgent {
-	const address = privateKeyToAccount(fixture.privateKey).address;
+	const address = fixture.address;
 	return {
 		agentId: fixture.agentId,
 		chain: fixture.chain,

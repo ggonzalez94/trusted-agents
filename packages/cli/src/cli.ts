@@ -66,7 +66,6 @@ Examples:
 	program
 		.command("init")
 		.description("First-time setup wizard")
-		.option("--private-key <hex>", "Import an existing private key instead of generating one")
 		.option("--chain <name>", "Chain to register on (alias or CAIP-2)")
 		.addHelpText(
 			"after",
@@ -75,11 +74,10 @@ Supported chains:
 ${chainAliasHelpText()}
 `,
 		)
-		.action(async (cmdOpts: { privateKey?: string; chain?: string }) => {
+		.action(async (cmdOpts: { chain?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { initCommand } = await import("./commands/init.js");
 			await initCommand(opts, {
-				privateKey: cmdOpts.privateKey,
 				chain: opts.chain ?? cmdOpts.chain,
 			});
 		});

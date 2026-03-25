@@ -28,7 +28,7 @@ describe("identity resolve", () => {
 		const config: TrustedAgentsConfig = {
 			agentId: 42,
 			chain: "eip155:8453",
-			privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:8453": {

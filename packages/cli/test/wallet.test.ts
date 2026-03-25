@@ -1,4 +1,5 @@
 import type { ChainConfig } from "trusted-agents-core";
+import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { buildPublicClient, buildWalletClient } from "../src/lib/wallet.js";
 
@@ -13,7 +14,8 @@ const TEST_CHAIN: ChainConfig = {
 
 describe("wallet", () => {
 	it("should build a wallet client", () => {
-		const client = buildWalletClient(TEST_KEY, TEST_CHAIN);
+		const account = privateKeyToAccount(TEST_KEY);
+		const client = buildWalletClient(account, TEST_CHAIN);
 		expect(client).toBeDefined();
 		expect(client.account?.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
 	});

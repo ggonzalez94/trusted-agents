@@ -11,10 +11,12 @@ import type {
 	AvailabilityWindow,
 	CalendarEvent,
 	ICalendarProvider,
+	SigningProvider,
 	TransportProvider,
 	TransportReceipt,
 } from "trusted-agents-core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { privateKeyToAccount } from "viem/accounts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type MessageListenerSession,
 	createMessageListenerSession,
@@ -55,6 +57,59 @@ class MockCalendarProvider implements ICalendarProvider {
 const CHAIN = "eip155:8453";
 const TREASURY_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const WORKER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
+const TREASURY_ADDRESS = privateKeyToAccount(TREASURY_KEY).address;
+const WORKER_ADDRESS = privateKeyToAccount(WORKER_KEY).address;
+
+function createTestSigningProvider(key: `0x${string}`): SigningProvider {
+	const account = privateKeyToAccount(key);
+	return {
+		getAddress: async () => account.address,
+		signMessage: async (message) => await account.signMessage({ message }),
+		signTypedData: async (params) =>
+			await account.signTypedData({
+				domain: params.domain as Record<string, unknown>,
+				types: params.types as Record<string, readonly { name: string; type: string }[]>,
+				primaryType: params.primaryType,
+				message: params.message as Record<string, unknown>,
+			}),
+		signTransaction: async (tx) => await account.signTransaction(tx as never),
+		signAuthorization: async () => {
+			throw new Error("not implemented in test");
+		},
+	};
+}
+
+const treasurySigningProvider = createTestSigningProvider(TREASURY_KEY);
+const workerSigningProvider = createTestSigningProvider(WORKER_KEY);
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: class MockOwsSigningProvider {
+			private provider: SigningProvider;
+			constructor(wallet: string) {
+				this.provider =
+					wallet === "worker-wallet" ? workerSigningProvider : treasurySigningProvider;
+			}
+			getAddress() {
+				return this.provider.getAddress();
+			}
+			signMessage(msg: unknown) {
+				return this.provider.signMessage(msg as never);
+			}
+			signTypedData(params: unknown) {
+				return this.provider.signTypedData(params as never);
+			}
+			signTransaction(tx: unknown) {
+				return this.provider.signTransaction(tx as never);
+			}
+			signAuthorization(params: unknown) {
+				return this.provider.signAuthorization(params as never);
+			}
+		},
+	};
+});
 
 interface PermissionSnapshot {
 	granted_by_me: {
@@ -89,7 +144,7 @@ describe("two-agent CLI E2E flow", () => {
 			createResolvedAgentFixture({
 				agentId: 7001,
 				chain: CHAIN,
-				privateKey: TREASURY_KEY,
+				address: TREASURY_ADDRESS,
 				name: "TreasuryAgent",
 				description: "Loopback treasury agent",
 				capabilities: ["general-chat", "payments", "treasury"],
@@ -97,7 +152,7 @@ describe("two-agent CLI E2E flow", () => {
 			createResolvedAgentFixture({
 				agentId: 7002,
 				chain: CHAIN,
-				privateKey: WORKER_KEY,
+				address: WORKER_ADDRESS,
 				name: "WorkerAgent",
 				description: "Loopback worker agent",
 				capabilities: ["general-chat", "payments", "worker"],
@@ -158,36 +213,14 @@ describe("two-agent CLI E2E flow", () => {
 		});
 
 		expect(
-			await runCli([
-				"--plain",
-				"--data-dir",
-				treasuryDir,
-				"init",
-				"--chain",
-				"base",
-				"--private-key",
-				TREASURY_KEY.slice(2),
-			]),
+			await runCli(["--plain", "--data-dir", treasuryDir, "init", "--chain", "base"]),
 		).toMatchObject({ exitCode: 0 });
 		expect(
-			await runCli([
-				"--plain",
-				"--data-dir",
-				workerDir,
-				"init",
-				"--chain",
-				"base",
-				"--private-key",
-				WORKER_KEY.slice(2),
-			]),
+			await runCli(["--plain", "--data-dir", workerDir, "init", "--chain", "base"]),
 		).toMatchObject({ exitCode: 0 });
 
-		expect(
-			await runCli(["--json", "--data-dir", treasuryDir, "config", "set", "agent_id", "7001"]),
-		).toMatchObject({ exitCode: 0 });
-		expect(
-			await runCli(["--json", "--data-dir", workerDir, "config", "set", "agent_id", "7002"]),
-		).toMatchObject({ exitCode: 0 });
+		await setOwsConfig(treasuryDir, "treasury-wallet", "treasury-key", 7001);
+		await setOwsConfig(workerDir, "worker-wallet", "worker-key", 7002);
 
 		const resolveSelf = await runCli([
 			"--json",
@@ -584,33 +617,14 @@ describe("two-agent CLI E2E flow", () => {
 			});
 
 			expect(
-				await runCli([
-					"--plain",
-					"--data-dir",
-					pendingConnectorDir,
-					"init",
-					"--chain",
-					"base",
-					"--private-key",
-					WORKER_KEY.slice(2),
-				]),
+				await runCli(["--plain", "--data-dir", pendingConnectorDir, "init", "--chain", "base"]),
 			).toMatchObject({ exitCode: 0 });
-			expect(
-				await runCli([
-					"--json",
-					"--data-dir",
-					pendingConnectorDir,
-					"config",
-					"set",
-					"agent_id",
-					"7002",
-				]),
-			).toMatchObject({ exitCode: 0 });
+			await setOwsConfig(pendingConnectorDir, "worker-wallet", "worker-key", 7002);
 
 			const invite = await generateInvite({
 				agentId: pendingAgentId,
 				chain: CHAIN,
-				privateKey: TREASURY_KEY,
+				signingProvider: treasurySigningProvider,
 				expirySeconds: 3600,
 			});
 
@@ -647,35 +661,13 @@ describe("two-agent CLI E2E flow", () => {
 
 	it("queues connect behind a live listener and still converges to active", async () => {
 		expect(
-			await runCli([
-				"--plain",
-				"--data-dir",
-				treasuryDir,
-				"init",
-				"--chain",
-				"base",
-				"--private-key",
-				TREASURY_KEY.slice(2),
-			]),
+			await runCli(["--plain", "--data-dir", treasuryDir, "init", "--chain", "base"]),
 		).toMatchObject({ exitCode: 0 });
 		expect(
-			await runCli([
-				"--plain",
-				"--data-dir",
-				workerDir,
-				"init",
-				"--chain",
-				"base",
-				"--private-key",
-				WORKER_KEY.slice(2),
-			]),
+			await runCli(["--plain", "--data-dir", workerDir, "init", "--chain", "base"]),
 		).toMatchObject({ exitCode: 0 });
-		expect(
-			await runCli(["--json", "--data-dir", treasuryDir, "config", "set", "agent_id", "7001"]),
-		).toMatchObject({ exitCode: 0 });
-		expect(
-			await runCli(["--json", "--data-dir", workerDir, "config", "set", "agent_id", "7002"]),
-		).toMatchObject({ exitCode: 0 });
+		await setOwsConfig(treasuryDir, "treasury-wallet", "treasury-key", 7001);
+		await setOwsConfig(workerDir, "worker-wallet", "worker-key", 7002);
 
 		const invite = await runCli(["--json", "--data-dir", treasuryDir, "invite", "create"]);
 		const inviteUrl = JSON.parse(invite.stdout).data.url as string;
@@ -829,4 +821,19 @@ async function waitForCondition<T>(
 	}
 
 	throw new Error(`Timed out waiting for ${description}`);
+}
+
+async function setOwsConfig(
+	dataDir: string,
+	walletName: string,
+	apiKey: string,
+	agentId: number,
+): Promise<void> {
+	const configPath = join(dataDir, "config.yaml");
+	const { default: YAML } = await import("yaml");
+	const content = await readFile(configPath, "utf-8");
+	const yaml = YAML.parse(content) as Record<string, unknown>;
+	yaml.agent_id = agentId;
+	yaml.ows = { wallet: walletName, api_key: apiKey };
+	await writeFile(configPath, YAML.stringify(yaml), "utf-8");
 }

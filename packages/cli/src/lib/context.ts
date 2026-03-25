@@ -3,6 +3,7 @@ import {
 	FileConversationLogger,
 	FileRequestJournal,
 	FileTrustStore,
+	OwsSigningProvider,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
@@ -12,6 +13,7 @@ import type {
 	IConversationLogger,
 	IRequestJournal,
 	ITrustStore,
+	SigningProvider,
 	TransportProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
@@ -21,6 +23,7 @@ import { getCliRuntimeOverride } from "./runtime-overrides.js";
 
 export interface CliContext {
 	config: TrustedAgentsConfig;
+	signingProvider: SigningProvider;
 	trustStore: ITrustStore;
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
@@ -36,10 +39,15 @@ function createViemClient(chainConfig: ChainConfig) {
 	return buildChainPublicClient(chainConfig);
 }
 
+function createSigningProvider(config: TrustedAgentsConfig): SigningProvider {
+	return new OwsSigningProvider(config.ows.wallet, config.chain, config.ows.apiKey);
+}
+
 export function buildContext(config: TrustedAgentsConfig): CliContext {
 	const override = getCliRuntimeOverride(config.dataDir);
+	const signingProvider = createSigningProvider(config);
 	if (override?.createContext) {
-		return { config, ...override.createContext(config) };
+		return { config, signingProvider, ...override.createContext(config) };
 	}
 
 	const trustStore = new FileTrustStore(config.dataDir);
@@ -51,7 +59,15 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 
 	const calendarProvider = resolveCalendarProvider(config.dataDir);
 
-	return { config, trustStore, resolver, conversationLogger, requestJournal, calendarProvider };
+	return {
+		config,
+		signingProvider,
+		trustStore,
+		resolver,
+		conversationLogger,
+		requestJournal,
+		calendarProvider,
+	};
 }
 
 export function buildContextWithTransport(config: TrustedAgentsConfig): CliContextWithTransport {
@@ -64,7 +80,7 @@ export function buildContextWithTransport(config: TrustedAgentsConfig): CliConte
 
 	const transport = new XmtpTransport(
 		{
-			privateKey: config.privateKey,
+			signingProvider: ctx.signingProvider,
 			chain: config.chain,
 			dbPath: `${config.dataDir}/xmtp`,
 			dbEncryptionKey: config.xmtpDbEncryptionKey,

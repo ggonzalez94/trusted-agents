@@ -99,9 +99,16 @@ describe("OpenClawTapRegistry", () => {
 			config: {
 				agentId: 7,
 				chain: "eip155:8453",
-				privateKey: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+				ows: { wallet: "test-wallet", apiKey: "test-key" },
 				inviteExpirySeconds: 600,
 				dataDir,
+			},
+			signingProvider: {
+				getAddress: vi.fn().mockResolvedValue("0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B"),
+				signMessage: vi.fn().mockResolvedValue(`0x${"ab".repeat(65)}`),
+				signTypedData: vi.fn().mockResolvedValue(`0x${"ab".repeat(65)}`),
+				signTransaction: vi.fn(),
+				signAuthorization: vi.fn(),
 			},
 			mutex: { runExclusive },
 		} as never);

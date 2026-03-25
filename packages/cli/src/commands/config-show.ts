@@ -12,7 +12,10 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 		const redacted = {
 			agent_id: config.agentId,
 			chain: config.chain,
-			private_key: "***redacted***",
+			ows: {
+				wallet: config.ows.wallet,
+				api_key: "***redacted***",
+			},
 			data_dir: config.dataDir,
 			invite_expiry_seconds: config.inviteExpirySeconds,
 			execution: {

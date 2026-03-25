@@ -4,6 +4,28 @@ import { identityShowCommand } from "../src/commands/identity-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as executionLib from "../src/lib/execution.js";
 
+const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
+	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
+	return {
+		ADDRESS: addr,
+		mockOwsProvider: vi.fn().mockImplementation(() => ({
+			getAddress: vi.fn().mockResolvedValue(addr),
+			signMessage: vi.fn(),
+			signTypedData: vi.fn(),
+			signTransaction: vi.fn(),
+			signAuthorization: vi.fn(),
+		})),
+	};
+});
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: mockOwsProvider,
+	};
+});
+
 describe("tap identity show", () => {
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
@@ -13,7 +35,7 @@ describe("tap identity show", () => {
 	const config: TrustedAgentsConfig = {
 		agentId: -1,
 		chain: "eip155:8453",
-		privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+		ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 		dataDir: "/tmp/tap",
 		chains: {
 			"eip155:8453": {
@@ -53,9 +75,9 @@ describe("tap identity show", () => {
 		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
 			requestedMode: "eip7702",
 			mode: "eip7702",
-			messagingAddress: "0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B",
-			executionAddress: "0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B",
-			fundingAddress: "0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B",
+			messagingAddress: ADDRESS,
+			executionAddress: ADDRESS,
+			fundingAddress: ADDRESS,
 			paymasterProvider: "circle",
 			warnings: [],
 		});
@@ -65,7 +87,7 @@ describe("tap identity show", () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 	});
 
 	it("works before registration and shows the execution funding address", async () => {
@@ -80,7 +102,7 @@ describe("tap identity show", () => {
 		expect(output.ok).toBe(true);
 		expect(output.data?.agent_id).toBe(-1);
 		expect(output.data?.execution_mode).toBe("eip7702");
-		expect(output.data?.execution_address).toBe("0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B");
-		expect(output.data?.funding_address).toBe("0xE4a5fA6c3a91B3e8FbA6ecbE261B8f7Ba6c58e5B");
+		expect(output.data?.execution_address).toBe(ADDRESS);
+		expect(output.data?.funding_address).toBe(ADDRESS);
 	});
 });

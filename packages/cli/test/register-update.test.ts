@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RegistrationFile, TrustedAgentsConfig } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerUpdateCommand } from "../src/commands/register.js";
 import { getUsdcAsset } from "../src/lib/assets.js";
@@ -12,9 +11,27 @@ import * as executionLib from "../src/lib/execution.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
 import * as walletLib from "../src/lib/wallet.js";
 
+const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
+	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
+	const mockProvider = vi.fn().mockImplementation(() => ({
+		getAddress: vi.fn().mockResolvedValue(addr),
+		signMessage: vi.fn(),
+		signTypedData: vi.fn(),
+		signTransaction: vi.fn(),
+		signAuthorization: vi.fn(),
+	}));
+	return { agentAddress: addr, mockOwsProvider: mockProvider };
+});
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: mockOwsProvider,
+	};
+});
+
 describe("register update", () => {
-	const privateKey = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
-	const agentAddress = privateKeyToAccount(privateKey).address;
 	let tmpDir: string;
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
@@ -25,7 +42,7 @@ describe("register update", () => {
 		return {
 			agentId: 7,
 			chain: "eip155:8453",
-			privateKey,
+			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: tmpDir,
 			chains: {
 				"eip155:8453": {
@@ -146,7 +163,7 @@ describe("register update", () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
@@ -158,14 +175,15 @@ describe("register update", () => {
 
 		await registerUpdateCommand({}, { json: true });
 
-		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
-		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
-		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
-
 		const output = lastJsonOutput() as {
 			ok: boolean;
 			data?: { no_change?: boolean; agent_uri?: string };
 		};
+
+		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
+		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
+
 		expect(output.ok).toBe(true);
 		expect(output.data?.no_change).toBe(true);
 		expect(output.data?.agent_uri).toBe("ipfs://existing-cid");
@@ -244,7 +262,7 @@ describe("register update", () => {
 				executionLib.executeContractCalls as unknown as {
 					mock: { calls: unknown[][] };
 				}
-			).mock.calls[0]?.[3],
+			).mock.calls[0]?.[4],
 		).toMatchObject({
 			preview: {
 				mode: "eip4337",
@@ -393,8 +411,8 @@ describe("register update", () => {
 		).mock.calls[1];
 
 		expect(topUpCall?.[1]).toMatchObject({ caip2: "eip155:8453" });
-		expect(topUpCall?.[2]).toHaveLength(1);
-		expect((topUpCall?.[2] as Array<{ to: string }>)[0]?.to).toBe(
+		expect(topUpCall?.[3]).toHaveLength(1);
+		expect((topUpCall?.[3] as Array<{ to: string }>)[0]?.to).toBe(
 			getUsdcAsset("eip155:8453")?.address,
 		);
 		expect(updateCall?.[1]).toMatchObject({ caip2: "eip155:8453" });
