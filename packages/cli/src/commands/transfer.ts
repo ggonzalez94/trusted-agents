@@ -65,7 +65,7 @@ export async function transferCommand(
 
 		const signingProvider = new OwsSigningProvider(
 			config.ows.wallet,
-			config.chain,
+			chain,
 			config.ows.apiKey,
 		);
 		const execution = await getExecutionPreview(config, chainConfig, signingProvider);

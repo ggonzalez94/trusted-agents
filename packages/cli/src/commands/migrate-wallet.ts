@@ -84,7 +84,7 @@ export async function migrateWalletCommand(
 
 		// ── Step 2: Compute XMTP DB encryption key from OLD key ───────
 		// Uses the legacy formula to preserve existing XMTP database
-		const xmtpDbEncryptionKey = keccak256(toHex(`xmtp-db-encryption:${hexKey}`));
+		const xmtpDbEncryptionKey = keccak256(toHex(`xmtp-db-encryption:0x${hexKey}`));
 
 		// ── Step 3: Import key into OWS ───────────────────────────────
 

@@ -130,7 +130,7 @@ describe("tap migrate-wallet", () => {
 		expect(updatedConfig.xmtp.db_encryption_key).toMatch(/^0x[0-9a-fA-F]{64}$/);
 
 		// Verify it matches the legacy derivation
-		const expectedKey = keccak256(toHex(`xmtp-db-encryption:${TEST_PRIVATE_KEY}`));
+		const expectedKey = keccak256(toHex(`xmtp-db-encryption:0x${TEST_PRIVATE_KEY}`));
 		expect(updatedConfig.xmtp.db_encryption_key).toBe(expectedKey);
 
 		// agent.key should be deleted

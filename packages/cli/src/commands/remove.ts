@@ -342,7 +342,7 @@ export async function transferRemainingNativeBalance(
 ): Promise<RemoveTransferResult> {
 	const signingProvider = new OwsSigningProvider(
 		balanceContext.config.ows.wallet,
-		balanceContext.config.chain,
+		balanceContext.chainConfig.caip2,
 		balanceContext.config.ows.apiKey,
 	);
 	const account = await createSigningProviderViemAccount(signingProvider);
