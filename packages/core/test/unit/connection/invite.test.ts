@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { generateInvite } from "../../../src/connection/invite.js";
-import { ALICE } from "../../fixtures/test-keys.js";
+import { ALICE_SIGNING_PROVIDER } from "../../fixtures/test-keys.js";
 
 describe("generateInvite", () => {
 	it("should generate an invite with a valid URL", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 		});
 
 		expect(url).toContain("https://trustedagents.link/connect");
@@ -21,7 +21,7 @@ describe("generateInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 42,
 			chain: "eip155:137",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 7200,
 		});
 
@@ -36,7 +36,7 @@ describe("generateInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 		});
 
 		// Should expire approximately 3600 seconds from now (allow 5s tolerance)
@@ -48,14 +48,14 @@ describe("generateInvite", () => {
 		const { invite: invite1 } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
 		const { invite: invite2 } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 7200,
 		});
 

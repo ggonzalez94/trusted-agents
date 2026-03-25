@@ -1,6 +1,6 @@
 import { createEmptyPermissionState } from "../../src/permissions/types.js";
 import type { Contact } from "../../src/trust/types.js";
-import { ALICE, BOB } from "../fixtures/test-keys.js";
+import { BOB } from "../fixtures/test-keys.js";
 
 export function createTestContact(overrides: Partial<Contact> = {}): Contact {
 	const timestamp = "2025-01-01T12:00:00.000Z";
@@ -16,13 +16,5 @@ export function createTestContact(overrides: Partial<Contact> = {}): Contact {
 		lastContactAt: timestamp,
 		status: "active",
 		...overrides,
-	};
-}
-
-export function createAliceSignerConfig() {
-	return {
-		privateKey: ALICE.privateKey,
-		chainId: 1,
-		address: ALICE.address,
 	};
 }

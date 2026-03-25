@@ -1,5 +1,4 @@
 import { parseEther, parseUnits } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import {
 	AsyncMutex,
 	PermissionError,
@@ -55,6 +54,7 @@ import type {
 	SchedulingHandler,
 } from "../scheduling/handler.js";
 import type { SchedulingProposal } from "../scheduling/types.js";
+import type { SigningProvider } from "../signing/provider.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type {
 	TransportHandlers,
@@ -322,9 +322,10 @@ export class TapMessagingService {
 	private readonly context: TapRuntimeContext;
 	private readonly hooks: TapServiceHooks;
 	private readonly ownerLabel: string;
+	private readonly signingProvider: SigningProvider;
 	private readonly ownerLock: TransportOwnerLock;
 	private readonly pendingConnectStore: FilePendingConnectStore;
-	private readonly localAgentAddress: `0x${string}`;
+	private localAgentAddress: `0x${string}` | undefined;
 	private readonly executionMutex = new AsyncMutex();
 	private readonly commandOutbox: FileTapCommandOutbox;
 	private readonly outboxPollIntervalMs: number;
@@ -348,11 +349,11 @@ export class TapMessagingService {
 
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
 		this.context = context;
+		this.signingProvider = context.signingProvider;
 		this.hooks = options.hooks ?? {};
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
 		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
-		this.localAgentAddress = privateKeyToAccount(context.config.privateKey).address;
 		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
 		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
@@ -362,6 +363,13 @@ export class TapMessagingService {
 			onRequest: async (envelope) => await this.onRequest(envelope),
 			onResult: async (envelope) => await this.onResult(envelope),
 		};
+	}
+
+	private async getLocalAgentAddress(): Promise<`0x${string}`> {
+		if (!this.localAgentAddress) {
+			this.localAgentAddress = await this.signingProvider.getAddress();
+		}
+		return this.localAgentAddress;
 	}
 
 	get transport(): TransportProvider {
@@ -1794,7 +1802,7 @@ export class TapMessagingService {
 		}
 
 		const verification = await verifyInvite(invite, {
-			expectedSignerAddress: this.localAgentAddress,
+			expectedSignerAddress: await this.getLocalAgentAddress(),
 		});
 		if (!verification.valid) {
 			return verification.error ?? "Invite verification failed";

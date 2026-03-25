@@ -2,17 +2,41 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as removeCommandModule from "../src/commands/remove.js";
 import * as walletLib from "../src/lib/wallet.js";
 import { runCli } from "./helpers/run-cli.js";
 
-const KEYFILE_PRIVATE_KEY =
-	"0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
-const KEYFILE_ADDRESS = privateKeyToAccount(KEYFILE_PRIVATE_KEY).address;
-const ENV_OVERRIDE_PRIVATE_KEY =
-	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
+const { TEST_ADDRESS, mockOwsProvider, mockCreateViemAccount } = vi.hoisted(() => {
+	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
+	return {
+		TEST_ADDRESS: addr,
+		mockOwsProvider: vi.fn().mockImplementation(() => ({
+			getAddress: vi.fn().mockResolvedValue(addr),
+			signMessage: vi.fn(),
+			signTypedData: vi.fn(),
+			signTransaction: vi.fn(),
+			signAuthorization: vi.fn(),
+		})),
+		mockCreateViemAccount: vi.fn().mockResolvedValue({
+			address: addr,
+			type: "local",
+			signMessage: vi.fn(),
+			signTypedData: vi.fn(),
+			signTransaction: vi.fn(),
+			sign: vi.fn(),
+		}),
+	};
+});
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: mockOwsProvider,
+		createSigningProviderViemAccount: mockCreateViemAccount,
+	};
+});
 
 describe("tap remove", () => {
 	let tmpDir: string;
@@ -23,7 +47,8 @@ describe("tap remove", () => {
 	let stdinIsTTY: boolean | undefined;
 	let origStdinOnce: typeof process.stdin.once;
 	let origStdinSetEncoding: typeof process.stdin.setEncoding;
-	let origTapPrivateKey: string | undefined;
+	let origTapOwsWallet: string | undefined;
+	let origTapOwsApiKey: string | undefined;
 	let origTapChain: string | undefined;
 	let origTapRpcUrl: string | undefined;
 
@@ -36,7 +61,8 @@ describe("tap remove", () => {
 		stdinIsTTY = process.stdin.isTTY;
 		origStdinOnce = process.stdin.once.bind(process.stdin);
 		origStdinSetEncoding = process.stdin.setEncoding.bind(process.stdin);
-		origTapPrivateKey = process.env.TAP_PRIVATE_KEY;
+		origTapOwsWallet = process.env.TAP_OWS_WALLET;
+		origTapOwsApiKey = process.env.TAP_OWS_API_KEY;
 		origTapChain = process.env.TAP_CHAIN;
 		origTapRpcUrl = process.env.TAP_RPC_URL;
 		process.stdout.write = ((chunk: string) => {
@@ -73,10 +99,11 @@ describe("tap remove", () => {
 		process.stdin.once = origStdinOnce;
 		process.stdin.setEncoding = origStdinSetEncoding;
 		process.exitCode = undefined;
-		process.env.TAP_PRIVATE_KEY = origTapPrivateKey;
+		process.env.TAP_OWS_WALLET = origTapOwsWallet;
+		process.env.TAP_OWS_API_KEY = origTapOwsApiKey;
 		process.env.TAP_CHAIN = origTapChain;
 		process.env.TAP_RPC_URL = origTapRpcUrl;
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
@@ -90,7 +117,6 @@ describe("tap remove", () => {
 		expect(output.data.data_dir).toBe(resolvedDataDir);
 		expect(output.data.config_path).toBe(join(resolvedDataDir, "config.yaml"));
 		expect(output.data.agent_id).toBe(42);
-		expect(output.data.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
 		expect(output.data.paths_to_remove).toContain(join(resolvedDataDir, "contacts.json"));
 		expect(output.data.paths_to_remove).toContain(
 			join(resolvedDataDir, "conversations", "peer-1.json"),
@@ -198,7 +224,6 @@ describe("tap remove", () => {
 		expect(output.ok).toBe(true);
 		expect(output.data.removed).toBe(true);
 		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "config.yaml"));
-		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "identity", "agent.key"));
 		expect(existsSync(dataDir)).toBe(false);
 	});
 
@@ -319,7 +344,8 @@ describe("tap remove", () => {
 	});
 
 	it("probes balance from the target data dir instead of env overrides", async () => {
-		process.env.TAP_PRIVATE_KEY = ENV_OVERRIDE_PRIVATE_KEY;
+		process.env.TAP_OWS_WALLET = "env-override-wallet";
+		process.env.TAP_OWS_API_KEY = "env-override-key";
 		process.env.TAP_CHAIN = "taiko";
 		const getBalance = vi.fn().mockResolvedValue(1n);
 		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
@@ -333,8 +359,8 @@ describe("tap remove", () => {
 
 		expect(result.probe.checked).toBe(true);
 		expect(result.probe.chain).toBe("eip155:8453");
-		expect(result.probe.address).toBe(KEYFILE_ADDRESS);
-		expect(getBalance).toHaveBeenCalledWith({ address: KEYFILE_ADDRESS });
+		expect(result.probe.address).toBe(TEST_ADDRESS);
+		expect(getBalance).toHaveBeenCalledWith({ address: TEST_ADDRESS });
 	});
 
 	it("refreshes the native balance right before transferring funds", async () => {
@@ -355,10 +381,13 @@ describe("tap remove", () => {
 
 		const result = await removeCommandModule.transferRemainingNativeBalance(
 			{
-				config: { privateKey: KEYFILE_PRIVATE_KEY } as never,
+				config: {
+					ows: { wallet: "test-wallet", apiKey: "test-key" },
+					chain: "eip155:8453",
+				} as never,
 				chain: "eip155:8453",
 				chainConfig: { name: "Base" } as never,
-				address: KEYFILE_ADDRESS,
+				address: TEST_ADDRESS,
 				nativeBalanceWei: 1_000_000_000_000_000_000n,
 				nativeBalanceEth: "1",
 			},
@@ -379,8 +408,11 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "identity"), { recursive: true });
 	await mkdir(join(dataDir, "conversations"), { recursive: true });
 	await mkdir(join(dataDir, "xmtp"), { recursive: true });
-	await writeFile(join(dataDir, "config.yaml"), "agent_id: 42\nchain: eip155:8453\n", "utf-8");
-	await writeFile(join(dataDir, "identity", "agent.key"), KEYFILE_PRIVATE_KEY.slice(2), "utf-8");
+	await writeFile(
+		join(dataDir, "config.yaml"),
+		"agent_id: 42\nchain: eip155:8453\nows:\n  wallet: test-wallet\n  api_key: test-api-key\n",
+		"utf-8",
+	);
 	await writeFile(join(dataDir, "contacts.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "conversations", "peer-1.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");

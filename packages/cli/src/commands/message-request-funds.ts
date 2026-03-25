@@ -1,5 +1,4 @@
 import { ValidationError, isEthereumAddress } from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import { normalizeAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
@@ -35,7 +34,7 @@ export async function messageRequestFundsCommand(
 		const ctx = buildContextWithTransport(config);
 		const asset = normalizeAsset(cmdOpts.asset);
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
-		const ownAddress = privateKeyToAccount(config.privateKey).address;
+		const ownAddress = await ctx.signingProvider.getAddress();
 		const toAddress = resolveRecipientAddress(cmdOpts.to, ownAddress);
 		const service = createCliTapMessagingService(ctx, opts, {
 			ownerLabel: "tap:request-funds",

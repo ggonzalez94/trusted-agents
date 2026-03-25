@@ -12,7 +12,10 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 		const redacted = {
 			agent_id: config.agentId,
 			chain: config.chain,
-			private_key: "***redacted***",
+			ows: {
+				wallet: config.ows.wallet,
+				api_key: "***redacted***",
+			},
 			data_dir: config.dataDir,
 			invite_expiry_seconds: config.inviteExpirySeconds,
 			execution: {
@@ -23,7 +26,6 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 				provider: config.ipfs?.provider ?? "auto",
 				tack_api_url: config.ipfs?.tackApiUrl,
 			},
-			xmtp_env: config.xmtpEnv ?? "production",
 			chains: Object.fromEntries(
 				Object.entries(config.chains).map(([k, v]) => [
 					k,

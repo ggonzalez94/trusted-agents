@@ -186,7 +186,7 @@ File: `packages/core/src/identity/registration-file.ts`
 
 ### Chain identifier standard
 - Core expects CAIP-2 (`eip155:<chainId>`)
-- CLI accepts aliases (`base-sepolia`, `taiko`, etc.) and normalizes to CAIP-2
+- CLI accepts aliases (`base`, `taiko`, etc.) and normalizes to CAIP-2
 
 ## Runtime Composition (Where behavior is decided)
 
@@ -207,15 +207,18 @@ File: `packages/sdk/src/orchestrator.ts`
 
 ## Non-Obvious Behavior You Need To Know
 
-1. Single private key is used for all trust roots:
-- ERC-8004 ownership
-- invite signing
-- XMTP identity
-- XMTP db encryption seed (unless overridden)
+1. One OWS wallet per agent (no raw private key):
+- Each agent identity is backed by an Open Wallet Service (OWS) wallet
+- A scoped API key authenticates CLI/SDK requests to OWS
+- All signing (ERC-8004 ownership, invite signing, XMTP identity) goes through OWS policy-gated signing
+- The agent process never sees or stores a raw private key
+- Config stores `ows.wallet` (wallet ID) and `ows.api_key` (scoped API key)
+- Env overrides: `TAP_OWS_WALLET`, `TAP_OWS_API_KEY`
 
-2. XMTP DB encryption key is deterministic by default:
-- `keccak256("xmtp-db-encryption:" + privateKey)`
-- This keeps XMTP DB readable across restarts without extra secrets.
+2. XMTP DB encryption key:
+- New agents: derived from `signMessage("xmtp-db-encryption-key")` via OWS, then hashed
+- Migrated agents: key computed from the old private key and persisted as `xmtp.db_encryption_key` in config.yaml during migration
+- Once persisted, the config value is used directly on subsequent startups
 
 3. Unknown inbound senders are hard-rejected unless bootstrap path passes:
 - In `XmtpTransport`, unknown sender can only proceed via `connection/request` or `connection/result`
@@ -241,8 +244,7 @@ File: `packages/sdk/src/orchestrator.ts`
 9. **Config lives inside data-dir** — `--data-dir` (or `TAP_DATA_DIR`) is the single root for all per-agent state:
 ```
 <dataDir>/
-├── config.yaml              # agent_id, chain, xmtp.env
-├── identity/agent.key       # Raw private key hex (chmod 0600)
+├── config.yaml              # agent_id, chain, xmtp.env, ows.wallet, ows.api_key, xmtp.db_encryption_key
 ├── contacts.json            # Connected peers (trust store)
 ├── request-journal.json     # Durable TAP action request state
 ├── pending-connects.json    # Minimal outbound connection state awaiting connection/result
@@ -255,8 +257,8 @@ File: `packages/sdk/src/orchestrator.ts`
 - This means setting `TAP_DATA_DIR` alone fully isolates an agent (useful for running multiple agents on one machine)
 
 10. Chain support differs between layers:
-- Core defaults: Base + Base Sepolia
-- CLI extends chain map with Taiko + Taiko Hoodi
+- Core defaults: Base
+- CLI extends chain map with Taiko
 - Wallet helper has explicit viem mappings for known chain IDs
 
 11. Register upload path has hidden cache:
@@ -329,12 +331,19 @@ File: `packages/sdk/src/orchestrator.ts`
 - Preserve pending request timeout cleanup to avoid memory leaks
 - Validate both unit tests and optional XMTP integration test
 
+### Changing signing or wallet integration
+- All signing goes through `SigningProvider` (backed by OWS), never raw private keys
+- If adding a new signing operation, wire it through the existing `SigningProvider` from context
+- Update OWS wallet provisioning tests if wallet creation flow changes
+- Keep `ows.wallet` and `ows.api_key` config fields in sync with env overrides (`TAP_OWS_WALLET`, `TAP_OWS_API_KEY`)
+
 ### Adding/changing/removing a CLI command
 - Update `skills/trusted-agents/SKILL.md` (the single unified skill). The OpenClaw plugin copies this file at build time, so both hosts update automatically.
 - Every CLI command must appear in the skill file as a documented command.
 - OpenClaw-specific content (tap_gateway actions, notifications) lives in the "OpenClaw Plugin Mode" section, gated with "Skip this section if you're not running inside OpenClaw Gateway."
 - Keep skills concise: command syntax + flags + one example + errors. No internal implementation details.
 - The `SKILL.md` must have YAML frontmatter with `name` and `description`
+- Commands that perform signing should accept a `SigningProvider` from context, never raw keys
 
 ### Changing TAP skill/reference semantics
 - The unified skill lives in `skills/trusted-agents/SKILL.md`. The OpenClaw plugin copies skills at build time. Edit only the canonical file at `skills/trusted-agents/`.
@@ -350,6 +359,7 @@ bun run test
 # Optional integration:
 XMTP_INTEGRATION=true bun run test:xmtp
 ```
+Note: OWS (Open Wallet Service) must be installed and accessible for tests that exercise signing or wallet operations. Tests that mock `SigningProvider` do not require a live OWS instance.
 
 ## Deterministic E2E Maintenance
 - The GH-safe two-agent CLI flow test lives at `packages/cli/test/e2e-two-agent-flow.test.ts`.
@@ -367,7 +377,7 @@ XMTP_INTEGRATION=true bun run test:xmtp
 	- comments
 	- copy-only docs with no behavioral change
 	- internal refactors that preserve observable CLI/protocol behavior
-- The live XMTP/testnet smoke runbook is `LIVE_SMOKE_RUNBOOK.md`. Update it when the real-world setup, required secrets, or operational flow changes.
+- The live XMTP/mainnet smoke runbook is `LIVE_SMOKE_RUNBOOK.md`. Update it when the real-world setup, required secrets, or operational flow changes.
 
 ## Repository Conventions Worth Respecting
 - ESM only; TypeScript imports use `.js` extension in source.

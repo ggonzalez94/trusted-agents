@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { parseInviteUrl, verifyInvite } from "../../../src/connection/invite-verifier.js";
 import { generateInvite } from "../../../src/connection/invite.js";
-import { ALICE } from "../../fixtures/test-keys.js";
+import { ALICE, ALICE_SIGNING_PROVIDER } from "../../fixtures/test-keys.js";
 
 describe("parseInviteUrl", () => {
 	it("should parse a valid invite URL", async () => {
 		const { url } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 		});
 
 		const parsed = parseInviteUrl(url);
@@ -51,7 +51,7 @@ describe("verifyInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
 
@@ -65,7 +65,7 @@ describe("verifyInvite", () => {
 		const { invite } = await generateInvite({
 			agentId: 1,
 			chain: "eip155:1",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 			expirySeconds: -10, // already expired
 		});
 
@@ -79,7 +79,7 @@ describe("verifyInvite", () => {
 		const { url } = await generateInvite({
 			agentId: 5,
 			chain: "eip155:137",
-			privateKey: ALICE.privateKey,
+			signingProvider: ALICE_SIGNING_PROVIDER,
 		});
 
 		const parsed = parseInviteUrl(url);

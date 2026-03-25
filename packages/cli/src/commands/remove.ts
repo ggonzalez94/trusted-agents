@@ -11,8 +11,8 @@ import {
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
+import { OwsSigningProvider, createSigningProviderViemAccount } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
@@ -292,7 +292,12 @@ export async function probeRemoveNativeBalance(
 			};
 		}
 
-		const address = privateKeyToAccount(config.privateKey).address;
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
+		const address = await signingProvider.getAddress();
 		const publicClient = buildPublicClient(chainConfig);
 		const nativeBalanceWei = await publicClient.getBalance({ address });
 		const context: RemoveBalanceContext = {
@@ -335,12 +340,14 @@ export async function transferRemainingNativeBalance(
 	balanceContext: RemoveBalanceContext,
 	toAddress: `0x${string}`,
 ): Promise<RemoveTransferResult> {
-	const account = privateKeyToAccount(balanceContext.config.privateKey);
-	const publicClient = buildPublicClient(balanceContext.chainConfig);
-	const walletClient = buildWalletClient(
-		balanceContext.config.privateKey,
-		balanceContext.chainConfig,
+	const signingProvider = new OwsSigningProvider(
+		balanceContext.config.ows.wallet,
+		balanceContext.chainConfig.caip2,
+		balanceContext.config.ows.apiKey,
 	);
+	const account = await createSigningProviderViemAccount(signingProvider);
+	const publicClient = buildPublicClient(balanceContext.chainConfig);
+	const walletClient = buildWalletClient(account, balanceContext.chainConfig);
 	const currentBalanceWei = await publicClient.getBalance({ address: account.address });
 	const currentBalanceEth = formatUnits(currentBalanceWei, 18);
 	const gasEstimate = await publicClient.estimateGas({
@@ -564,22 +571,28 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 }
 
 async function readAgentAddress(dataDir: string): Promise<[string | null, string | null]> {
-	const keyPath = join(dataDir, "identity", "agent.key");
+	const configPath = join(dataDir, "config.yaml");
 	try {
-		const raw = (await readFile(keyPath, "utf-8")).trim();
-		if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
-			return [null, `identity/agent.key is present but invalid at ${keyPath}.`];
+		const raw = await readFile(configPath, "utf-8");
+		const parsed =
+			(YAML.parse(raw) as { ows?: { wallet?: string; api_key?: string }; chain?: string } | null) ??
+			undefined;
+		if (!parsed?.ows?.wallet || !parsed?.ows?.api_key) {
+			return [null, "OWS wallet config is missing from config.yaml."];
 		}
-		return [privateKeyToAccount(`0x${raw}`).address, null];
+		const chain = parsed.chain ?? "eip155:8453";
+		const provider = new OwsSigningProvider(parsed.ows.wallet, chain, parsed.ows.api_key);
+		const address = await provider.getAddress();
+		return [address, null];
 	} catch (error: unknown) {
 		const code =
 			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 		if (code === "ENOENT") {
-			return [null, "identity/agent.key is missing from the resolved data dir."];
+			return [null, "config.yaml is missing from the resolved data dir."];
 		}
 		return [
 			null,
-			`identity/agent.key could not be read: ${error instanceof Error ? error.message : String(error)}`,
+			`Agent address could not be read: ${error instanceof Error ? error.message : String(error)}`,
 		];
 	}
 }

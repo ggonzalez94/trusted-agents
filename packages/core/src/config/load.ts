@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import YAML from "yaml";
 import { resolveDataDir } from "../common/index.js";
@@ -12,17 +11,18 @@ import type {
 	TrustedAgentsConfig,
 } from "./types.js";
 
-const KEYFILE_NAME = "agent.key";
-
 interface StoredYamlConfig {
 	agent_id?: number;
 	chain?: string;
+	ows?: {
+		wallet?: string;
+		api_key?: string;
+	};
 	execution?: {
 		mode?: ExecutionMode;
 		paymaster_provider?: ExecutionPaymasterProvider;
 	};
 	xmtp?: {
-		env?: "dev" | "production" | "local";
 		db_encryption_key?: string;
 	};
 	ipfs?: {
@@ -43,7 +43,8 @@ export interface LoadTrustedAgentConfigOptions {
 	requireAgentId?: boolean;
 	agentId?: number;
 	chain?: string;
-	privateKey?: `0x${string}`;
+	owsWallet?: string;
+	owsApiKey?: string;
 	configPath?: string;
 	extraChains?: Record<string, ChainConfig>;
 	executionMode?: ExecutionMode;
@@ -55,7 +56,7 @@ export function resolveTrustedAgentConfigPath(dataDir: string): string {
 }
 
 export function getDefaultExecutionModeForChain(chain: string): ExecutionMode {
-	if (["base", "base-sepolia", "eip155:8453", "eip155:84532"].includes(chain)) {
+	if (["base", "eip155:8453"].includes(chain)) {
 		return "eip7702";
 	}
 
@@ -97,8 +98,9 @@ export async function loadTrustedAgentConfigFromDataDir(
 		}
 	}
 
-	const privateKey = options.privateKey ?? (await loadKeyfile(resolvedDataDir));
-	const chain = options.chain ?? yaml?.chain ?? "eip155:84532";
+	const owsWallet = options.owsWallet ?? yaml?.ows?.wallet ?? "";
+	const owsApiKey = options.owsApiKey ?? yaml?.ows?.api_key ?? "";
+	const chain = options.chain ?? yaml?.chain ?? "eip155:8453";
 	const executionMode =
 		options.executionMode ?? yaml?.execution?.mode ?? getDefaultExecutionModeForChain(chain);
 	const paymasterProvider =
@@ -130,13 +132,12 @@ export async function loadTrustedAgentConfigFromDataDir(
 	return {
 		agentId: agentId ?? 0,
 		chain,
-		privateKey,
+		ows: { wallet: owsWallet, apiKey: owsApiKey },
 		dataDir: resolvedDataDir,
 		chains,
 		inviteExpirySeconds: yaml?.invite_expiry_seconds ?? DEFAULT_CONFIG.inviteExpirySeconds,
 		resolveCacheTtlMs: DEFAULT_CONFIG.resolveCacheTtlMs,
 		resolveCacheMaxEntries: DEFAULT_CONFIG.resolveCacheMaxEntries,
-		xmtpEnv: yaml?.xmtp?.env ?? DEFAULT_CONFIG.xmtpEnv,
 		xmtpDbEncryptionKey: yaml?.xmtp?.db_encryption_key as `0x${string}` | undefined,
 		ipfs: {
 			provider: yaml?.ipfs?.provider ?? DEFAULT_CONFIG.ipfs?.provider,
@@ -154,15 +155,4 @@ function loadYamlConfig(configPath: string): StoredYamlConfig | undefined {
 		return undefined;
 	}
 	return YAML.parse(readFileSync(configPath, "utf-8")) as StoredYamlConfig;
-}
-
-async function loadKeyfile(dataDir: string): Promise<`0x${string}`> {
-	const keyPath = join(dataDir, "identity", KEYFILE_NAME);
-	const hex = (await readFile(keyPath, "utf-8")).trim();
-
-	if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-		throw new Error(`Invalid keyfile at ${keyPath}: expected 64-char hex`);
-	}
-
-	return `0x${hex}`;
 }

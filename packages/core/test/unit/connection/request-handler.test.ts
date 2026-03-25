@@ -9,7 +9,7 @@ import { ALICE } from "../../fixtures/test-keys.js";
 
 const ALICE_AGENT: ResolvedAgent = {
 	agentId: 10,
-	chain: "eip155:84532",
+	chain: "eip155:8453",
 	ownerAddress: ALICE.address,
 	agentAddress: ALICE.address,
 	capabilities: ["chat"],
@@ -33,10 +33,10 @@ function makeRequest(overrides: Partial<ProtocolMessage> = {}): ProtocolMessage 
 		id: "req-1",
 		method: "connection/request",
 		params: {
-			from: { agentId: 10, chain: "eip155:84532" },
+			from: { agentId: 10, chain: "eip155:8453" },
 			invite: {
 				agentId: 20,
-				chain: "eip155:84532",
+				chain: "eip155:8453",
 				expires: 1_893_456_000,
 				signature: `0x${"1".repeat(130)}` as `0x${string}`,
 			},
@@ -79,7 +79,7 @@ describe("handleConnectionRequest", () => {
 			message: makeRequest(),
 			resolver,
 			trustStore,
-			ownAgent: { agentId: 20, chain: "eip155:84532" },
+			ownAgent: { agentId: 20, chain: "eip155:8453" },
 		});
 
 		expect(response.peer).toEqual(ALICE_AGENT);
@@ -101,7 +101,7 @@ describe("handleConnectionRequest", () => {
 		const existingContact: Contact = {
 			connectionId: "existing-conn",
 			peerAgentId: 10,
-			peerChain: "eip155:84532",
+			peerChain: "eip155:8453",
 			peerOwnerAddress: ALICE.address,
 			peerDisplayName: "Alice",
 			peerAgentAddress: ALICE.address,
@@ -127,7 +127,7 @@ describe("handleConnectionRequest", () => {
 			message: makeRequest(),
 			resolver,
 			trustStore,
-			ownAgent: { agentId: 20, chain: "eip155:84532" },
+			ownAgent: { agentId: 20, chain: "eip155:8453" },
 		});
 
 		expect(response.result.status).toBe("accepted");
@@ -144,7 +144,7 @@ describe("handleConnectionRequest", () => {
 				message: makeRequest({ params: {} }),
 				resolver,
 				trustStore,
-				ownAgent: { agentId: 20, chain: "eip155:84532" },
+				ownAgent: { agentId: 20, chain: "eip155:8453" },
 			}),
 		).rejects.toThrow("Invalid connection request parameters");
 	});
@@ -160,7 +160,7 @@ describe("handleConnectionRequest", () => {
 				message: makeRequest(),
 				resolver,
 				trustStore,
-				ownAgent: { agentId: 20, chain: "eip155:84532" },
+				ownAgent: { agentId: 20, chain: "eip155:8453" },
 			}),
 		).rejects.toThrow("not found");
 	});
@@ -170,7 +170,7 @@ describe("handleConnectionRequest", () => {
 		const existingContact: Contact = {
 			connectionId: "existing-conn",
 			peerAgentId: 10,
-			peerChain: "eip155:84532",
+			peerChain: "eip155:8453",
 			peerOwnerAddress: ALICE.address,
 			peerDisplayName: "Alice",
 			peerAgentAddress: ALICE.address,
@@ -196,7 +196,7 @@ describe("handleConnectionRequest", () => {
 			message: makeRequest(),
 			resolver,
 			trustStore,
-			ownAgent: { agentId: 20, chain: "eip155:84532" },
+			ownAgent: { agentId: 20, chain: "eip155:8453" },
 		});
 
 		expect(response.result.status).toBe("accepted");

@@ -1,4 +1,4 @@
-import type { TrustedAgentsConfig } from "trusted-agents-core";
+import type { SigningProvider, TrustedAgentsConfig } from "trusted-agents-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	ensureExecutionReady,
@@ -26,24 +26,31 @@ vi.mock("trusted-agents-core", async () => {
 
 const config = {
 	agentId: 1,
-	chain: "eip155:84532",
-	privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+	chain: "eip155:8453",
+	ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 	dataDir: "/tmp/tap",
 	chains: {
-		"eip155:84532": {
-			name: "Base Sepolia",
-			caip2: "eip155:84532",
-			chainId: 84532,
-			rpcUrl: "https://example.test/base-sepolia",
-			registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+		"eip155:8453": {
+			name: "Base",
+			caip2: "eip155:8453",
+			chainId: 8453,
+			rpcUrl: "https://example.test/base",
+			registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 		},
 	},
 	inviteExpirySeconds: 3600,
 	resolveCacheTtlMs: 60000,
 	resolveCacheMaxEntries: 100,
-	xmtpEnv: "dev",
 	xmtpDbEncryptionKey: undefined,
 } satisfies TrustedAgentsConfig;
+
+const fakeProvider: SigningProvider = {
+	getAddress: vi.fn().mockResolvedValue("0x0000000000000000000000000000000000000001"),
+	signMessage: vi.fn(),
+	signTypedData: vi.fn(),
+	signTransaction: vi.fn(),
+	signAuthorization: vi.fn(),
+};
 
 afterEach(() => {
 	vi.clearAllMocks();
@@ -62,12 +69,13 @@ describe("cli execution wrappers", () => {
 		};
 		coreGetExecutionPreview.mockResolvedValue(expected);
 
-		await expect(getExecutionPreview(config, config.chains[config.chain]!)).resolves.toEqual(
-			expected,
-		);
+		await expect(
+			getExecutionPreview(config, config.chains[config.chain]!, fakeProvider),
+		).resolves.toEqual(expected);
 		expect(coreGetExecutionPreview).toHaveBeenCalledWith(
 			config,
 			config.chains[config.chain]!,
+			fakeProvider,
 			undefined,
 		);
 	});
@@ -91,13 +99,14 @@ describe("cli execution wrappers", () => {
 			userOperationHash: "0xdef",
 		});
 
-		await ensureExecutionReady(config, config.chains[config.chain]!, {
+		await ensureExecutionReady(config, config.chains[config.chain]!, fakeProvider, {
 			preview: { requestedMode: "eip7702", mode: "eip7702" },
 		});
 		await expect(
 			executeContractCalls(
 				config,
 				config.chains[config.chain]!,
+				fakeProvider,
 				[{ to: "0x0000000000000000000000000000000000000002", data: "0x" }],
 				{ preview: { requestedMode: "eip7702", mode: "eip7702" } },
 			),
@@ -106,12 +115,18 @@ describe("cli execution wrappers", () => {
 			userOperationHash: "0xdef",
 		});
 
-		expect(coreEnsureExecutionReady).toHaveBeenCalledWith(config, config.chains[config.chain]!, {
-			preview: { requestedMode: "eip7702", mode: "eip7702" },
-		});
+		expect(coreEnsureExecutionReady).toHaveBeenCalledWith(
+			config,
+			config.chains[config.chain]!,
+			fakeProvider,
+			{
+				preview: { requestedMode: "eip7702", mode: "eip7702" },
+			},
+		);
 		expect(coreExecuteContractCalls).toHaveBeenCalledWith(
 			config,
 			config.chains[config.chain]!,
+			fakeProvider,
 			[{ to: "0x0000000000000000000000000000000000000002", data: "0x" }],
 			{ preview: { requestedMode: "eip7702", mode: "eip7702" } },
 		);

@@ -64,7 +64,7 @@ export async function configSetCommand(
 		const content = await readFile(configPath, "utf-8");
 		const yaml = (YAML.parse(content) as Record<string, unknown>) ?? {};
 
-		// Handle nested keys like xmtp.env
+		// Handle nested keys like xmtp.db_encryption_key
 		const parts = normalizeConfigPath(key);
 		let target: Record<string, unknown> = yaml;
 		for (let i = 0; i < parts.length - 1; i++) {

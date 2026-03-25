@@ -1,5 +1,5 @@
+import { OwsSigningProvider } from "trusted-agents-core";
 import { formatUnits } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import { getUsdcAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
@@ -29,15 +29,20 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 		if (!chainConfig) {
 			error(
 				"VALIDATION_ERROR",
-				`Unknown chain: ${chainInput ?? chain}. Use a supported alias like base/base-sepolia or a CAIP-2 ID like eip155:8453.`,
+				`Unknown chain: ${chainInput ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
 				opts,
 			);
 			process.exitCode = 2;
 			return;
 		}
 
-		const messagingAddress = privateKeyToAccount(config.privateKey).address;
-		const execution = await getExecutionPreview(config, chainConfig);
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
+		const messagingAddress = await signingProvider.getAddress();
+		const execution = await getExecutionPreview(config, chainConfig, signingProvider);
 		const executionAddress = execution.executionAddress;
 		const publicClient = buildPublicClient(chainConfig);
 		const usdcAsset = getUsdcAsset(chain);

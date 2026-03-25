@@ -7,6 +7,28 @@ import * as executionLib from "../src/lib/execution.js";
 import * as promptLib from "../src/lib/prompt.js";
 import * as walletLib from "../src/lib/wallet.js";
 
+const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
+	mockOwsProvider: vi.fn().mockImplementation(() => ({
+		getAddress: vi.fn().mockResolvedValue("0x0000000000000000000000000000000000000001"),
+		signMessage: vi.fn(),
+		signTypedData: vi.fn(),
+		signTransaction: vi.fn(),
+		signAuthorization: vi.fn(),
+	})),
+	mockExecuteOnchainTransfer: vi.fn().mockResolvedValue({
+		txHash: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
+	}),
+}));
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: mockOwsProvider,
+		executeOnchainTransfer: mockExecuteOnchainTransfer,
+	};
+});
+
 describe("tap transfer", () => {
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
@@ -16,8 +38,8 @@ describe("tap transfer", () => {
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: 42,
-			chain: "eip155:84532",
-			privateKey: "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11",
+			chain: "eip155:8453",
+			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:1": {
@@ -34,18 +56,10 @@ describe("tap transfer", () => {
 					rpcUrl: "https://example.test/base",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:84532": {
-					name: "Base Sepolia",
-					caip2: "eip155:84532",
-					chainId: 84532,
-					rpcUrl: "https://example.test/base-sepolia",
-					registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-				},
 			},
 			inviteExpirySeconds: 3600,
 			resolveCacheTtlMs: 60000,
 			resolveCacheMaxEntries: 100,
-			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
 			execution: {
 				mode: "eip7702",
@@ -81,9 +95,6 @@ describe("tap transfer", () => {
 			warnings: [],
 		});
 		vi.spyOn(promptLib, "promptYesNo").mockResolvedValue(true);
-		vi.spyOn(core, "executeOnchainTransfer").mockResolvedValue({
-			txHash: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
-		});
 		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
 			estimateGas: vi.fn().mockResolvedValue(21000n),
 			estimateFeesPerGas: vi.fn().mockResolvedValue({
@@ -98,7 +109,7 @@ describe("tap transfer", () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 	});
 
 	it("returns validation error for invalid recipient address", async () => {
@@ -215,6 +226,7 @@ describe("tap transfer", () => {
 		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
 		expect(core.executeOnchainTransfer).toHaveBeenCalledWith(
 			expect.anything(),
+			expect.anything(),
 			expect.objectContaining({
 				asset: "usdc",
 				amount: "5",
@@ -252,7 +264,7 @@ describe("tap transfer", () => {
 				to: "0x1111111111111111111111111111111111111111",
 				asset: "usdc",
 				amount: "10",
-				chain: "base-sepolia",
+				chain: "base",
 				yes: true,
 			},
 			{ json: true },
@@ -260,7 +272,7 @@ describe("tap transfer", () => {
 
 		expect(estimateGas).toHaveBeenCalledWith(
 			expect.objectContaining({
-				to: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+				to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 			}),
 		);
 	});

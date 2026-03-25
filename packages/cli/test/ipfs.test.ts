@@ -48,22 +48,18 @@ describe("ipfs", () => {
 
 	it("auto-selects tack for Taiko chains", () => {
 		expect(resolveAutoProvider("eip155:167000")).toBe("tack");
-		expect(resolveAutoProvider("eip155:167013")).toBe("tack");
 	});
 
 	it("auto-selects x402 for Base chains", () => {
 		expect(resolveAutoProvider("eip155:8453")).toBe("x402");
-		expect(resolveAutoProvider("eip155:84532")).toBe("x402");
 	});
 
 	it("auto prefers tack on Taiko even when JWT is present", () => {
 		expect(resolveAutoProvider("eip155:167000", "jwt")).toBe("tack");
-		expect(resolveAutoProvider("eip155:167013", "jwt")).toBe("tack");
 	});
 
 	it("auto prefers pinata when JWT is present on non-Taiko chains", () => {
 		expect(resolveAutoProvider("eip155:8453", "jwt")).toBe("pinata");
-		expect(resolveAutoProvider("eip155:84532", "jwt")).toBe("pinata");
 	});
 
 	it("resolves the effective provider from config and credentials", () => {

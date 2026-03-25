@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
-import { hexToBytes, keccak256, toHex } from "viem";
+import { hexToBytes } from "viem";
 import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import { CONNECTION_REQUEST, CONNECTION_RESULT, isResultMethod } from "../protocol/index.js";
@@ -83,16 +83,19 @@ export class XmtpTransport implements TransportProvider {
 			return;
 		}
 
-		const signer = createXmtpSigner(this.config.privateKey);
-		const dbEncryptionKey = this.config.dbEncryptionKey
-			? hexToBytes(this.config.dbEncryptionKey)
-			: hexToBytes(keccak256(toHex(`xmtp-db-encryption:${this.config.privateKey}`)));
+		const signer = await createXmtpSigner(this.config.signingProvider);
+		if (!this.config.dbEncryptionKey) {
+			throw new TransportError(
+				"xmtpDbEncryptionKey is required. Set it in config.yaml or provide it via the host runtime.",
+			);
+		}
+		const dbEncryptionKey = hexToBytes(this.config.dbEncryptionKey);
 		if (this.config.dbPath) {
 			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
 		}
 
 		const clientPromise = Client.create(signer, {
-			env: this.config.env ?? "production",
+			env: "production",
 			dbEncryptionKey,
 			...(this.config.dbPath
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }

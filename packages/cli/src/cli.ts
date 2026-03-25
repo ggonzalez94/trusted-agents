@@ -66,8 +66,10 @@ Examples:
 	program
 		.command("init")
 		.description("First-time setup wizard")
-		.option("--private-key <hex>", "Import an existing private key instead of generating one")
 		.option("--chain <name>", "Chain to register on (alias or CAIP-2)")
+		.option("--wallet <name>", "Use an existing OWS wallet by name")
+		.option("--passphrase <passphrase>", "Wallet passphrase for API key creation")
+		.option("--non-interactive", "Skip prompts and use defaults")
 		.addHelpText(
 			"after",
 			`
@@ -75,14 +77,43 @@ Supported chains:
 ${chainAliasHelpText()}
 `,
 		)
-		.action(async (cmdOpts: { privateKey?: string; chain?: string }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { initCommand } = await import("./commands/init.js");
-			await initCommand(opts, {
-				privateKey: cmdOpts.privateKey,
-				chain: opts.chain ?? cmdOpts.chain,
-			});
-		});
+		.action(
+			async (cmdOpts: {
+				chain?: string;
+				wallet?: string;
+				passphrase?: string;
+				nonInteractive?: boolean;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { initCommand } = await import("./commands/init.js");
+				await initCommand(opts, {
+					chain: opts.chain ?? cmdOpts.chain,
+					wallet: cmdOpts.wallet,
+					passphrase: cmdOpts.passphrase,
+					nonInteractive: cmdOpts.nonInteractive,
+				});
+			},
+		);
+
+	// migrate-wallet
+	program
+		.command("migrate-wallet")
+		.description("Migrate an existing agent from raw key file to OWS")
+		.option("--passphrase <passphrase>", "Wallet passphrase for import and API key creation")
+		.option("--non-interactive", "Skip prompts and use defaults")
+		.action(
+			async (cmdOpts: {
+				passphrase?: string;
+				nonInteractive?: boolean;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { migrateWalletCommand } = await import("./commands/migrate-wallet.js");
+				await migrateWalletCommand(opts, {
+					passphrase: cmdOpts.passphrase,
+					nonInteractive: cmdOpts.nonInteractive,
+				});
+			},
+		);
 
 	// register
 	const register = program

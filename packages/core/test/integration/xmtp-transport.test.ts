@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IAgentResolver } from "../../src/identity/resolver.js";
@@ -10,6 +11,7 @@ import { CONNECTION_REQUEST } from "../../src/protocol/index.js";
 import { XmtpTransport } from "../../src/transport/xmtp.js";
 import { FileTrustStore } from "../../src/trust/file-trust-store.js";
 import type { Contact } from "../../src/trust/types.js";
+import { createTestSigningProvider } from "../fixtures/test-keys.js";
 
 const XMTP_ENABLED = process.env.XMTP_INTEGRATION === "true";
 let ALICE_PRIVATE_KEY: `0x${string}`;
@@ -37,6 +39,10 @@ function contact(args: {
 		lastContactAt: now,
 		status: "active",
 	};
+}
+
+function dbEncryptionKeyForPrivateKey(privateKey: `0x${string}`): `0x${string}` {
+	return keccak256(toHex(`xmtp-db-encryption:${privateKey}`));
 }
 
 describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
@@ -78,10 +84,10 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const aliceTransport = new XmtpTransport(
 			{
-				privateKey: ALICE_PRIVATE_KEY,
+				signingProvider: createTestSigningProvider(ALICE_PRIVATE_KEY),
 				chain: "eip155:1",
-				env: "dev",
 				dbPath: join(testDir, "db-alice"),
+				dbEncryptionKey: dbEncryptionKeyForPrivateKey(ALICE_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 			},
 			aliceStore,
@@ -89,10 +95,10 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const bobTransport = new XmtpTransport(
 			{
-				privateKey: BOB_PRIVATE_KEY,
+				signingProvider: createTestSigningProvider(BOB_PRIVATE_KEY),
 				chain: "eip155:1",
-				env: "dev",
 				dbPath: join(testDir, "db-bob"),
+				dbEncryptionKey: dbEncryptionKeyForPrivateKey(BOB_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 			},
 			bobStore,
@@ -156,10 +162,10 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const bobTransport = new XmtpTransport(
 			{
-				privateKey: BOB_PRIVATE_KEY,
+				signingProvider: createTestSigningProvider(BOB_PRIVATE_KEY),
 				chain: "eip155:1",
-				env: "dev",
 				dbPath: join(testDir, "db-bob"),
+				dbEncryptionKey: dbEncryptionKeyForPrivateKey(BOB_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 				agentResolver: resolver,
 			},
@@ -168,10 +174,10 @@ describe.skipIf(!XMTP_ENABLED)("XmtpTransport integration", () => {
 
 		const carolTransport = new XmtpTransport(
 			{
-				privateKey: CAROL_PRIVATE_KEY,
+				signingProvider: createTestSigningProvider(CAROL_PRIVATE_KEY),
 				chain: "eip155:1",
-				env: "dev",
 				dbPath: join(testDir, "db-carol"),
+				dbEncryptionKey: dbEncryptionKeyForPrivateKey(CAROL_PRIVATE_KEY),
 				defaultResponseTimeoutMs: 45_000,
 			},
 			carolStore,

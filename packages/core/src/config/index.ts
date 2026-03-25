@@ -5,9 +5,10 @@ export type {
 	ExecutionPaymasterProvider,
 	IpfsConfig,
 	IpfsUploadProvider,
+	OwsConfig,
 	TrustedAgentsConfig,
 } from "./types.js";
-export { BASE_MAINNET, BASE_SEPOLIA, DEFAULT_CHAINS, DEFAULT_CONFIG } from "./defaults.js";
+export { BASE_MAINNET, DEFAULT_CHAINS, DEFAULT_CONFIG } from "./defaults.js";
 export { validateConfig } from "./schema.js";
 export {
 	getDefaultExecutionModeForChain,

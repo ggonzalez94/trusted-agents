@@ -21,7 +21,7 @@ import { DEFAULT_MESSAGE_SCOPE } from "../src/lib/scopes.js";
 const CONTACT: Contact = {
 	connectionId: "conn-alice-001",
 	peerAgentId: 42,
-	peerChain: "eip155:84532",
+	peerChain: "eip155:8453",
 	peerOwnerAddress: "0x1111111111111111111111111111111111111111",
 	peerDisplayName: "Alice",
 	peerAgentAddress: "0x2222222222222222222222222222222222222222",

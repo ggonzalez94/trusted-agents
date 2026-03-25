@@ -3,13 +3,10 @@ import {
 	buildChainPublicClient as buildCorePublicClient,
 	buildChainWalletClient as buildCoreWalletClient,
 } from "trusted-agents-core";
-import type { PublicClient, WalletClient } from "viem";
+import type { LocalAccount, PublicClient, WalletClient } from "viem";
 
-export function buildWalletClient(
-	privateKey: `0x${string}`,
-	chainConfig: ChainConfig,
-): WalletClient {
-	return buildCoreWalletClient(privateKey, chainConfig);
+export function buildWalletClient(account: LocalAccount, chainConfig: ChainConfig): WalletClient {
+	return buildCoreWalletClient(account, chainConfig);
 }
 
 export function buildPublicClient(chainConfig: ChainConfig): PublicClient {

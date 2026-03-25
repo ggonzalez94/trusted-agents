@@ -1,9 +1,10 @@
 import type {
 	ExecutionPreview,
 	IpfsUploadProvider,
+	SigningProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
-import { createExecutionEvmSigner } from "trusted-agents-core";
+import { createExecutionEvmSigner, createSigningProviderViemAccount } from "trusted-agents-core";
 
 const PINATA_X402_ENDPOINT = "https://402.pinata.cloud/v1/pin/public";
 const PINATA_API_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
@@ -15,7 +16,7 @@ function trimTrailingSlash(url: string): string {
 	return url.replace(/\/+$/, "");
 }
 
-const TAIKO_CHAINS = new Set(["eip155:167000", "eip155:167013"]);
+const TAIKO_CHAINS = new Set(["eip155:167000"]);
 
 export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | undefined {
 	if (!value) {
@@ -83,7 +84,7 @@ export function resolveTackApiUrl(configValue?: string): string {
  *
  * Pays with USDC on Base mainnet — no Pinata account or API key needed.
  * The agent's wallet must have USDC on Base mainnet even if it's registered
- * on a different chain (e.g. Base Sepolia).
+ * on a different chain (e.g. Taiko).
  *
  * Uses @x402/fetch + @x402/evm to handle x402 v2 payment automatically:
  *   1. POST fileSize to 402.pinata.cloud → 402
@@ -92,17 +93,16 @@ export function resolveTackApiUrl(configValue?: string): string {
  */
 export async function uploadToIpfsX402(
 	json: unknown,
-	privateKey: `0x${string}`,
+	signingProvider: SigningProvider,
 ): Promise<{ cid: string; uri: string }> {
 	const { x402Client, wrapFetchWithPayment } = await import("@x402/fetch");
 	const { ExactEvmScheme } = await import("@x402/evm/exact/client");
 	const { toClientEvmSigner } = await import("@x402/evm");
-	const { privateKeyToAccount } = await import("viem/accounts");
 	const { createPublicClient, http } = await import("viem");
 	const { base } = await import("viem/chains");
 
 	// Create signer for Base mainnet (x402 payment always uses Base mainnet USDC)
-	const account = privateKeyToAccount(privateKey);
+	const account = await createSigningProviderViemAccount(signingProvider);
 	const publicClient = createPublicClient({ chain: base, transport: http() });
 	const signer = toClientEvmSigner(account, publicClient);
 
@@ -171,6 +171,7 @@ export async function uploadToIpfsX402(
 export async function uploadToIpfsTack(
 	json: unknown,
 	config: TrustedAgentsConfig,
+	signingProvider: SigningProvider,
 	options?: {
 		apiUrl?: string;
 		preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode">;
@@ -182,7 +183,7 @@ export async function uploadToIpfsTack(
 	if (!chainConfig) {
 		throw new Error(`No chain config for ${config.chain}`);
 	}
-	const signer = await createExecutionEvmSigner(config, chainConfig, {
+	const signer = await createExecutionEvmSigner(config, chainConfig, signingProvider, {
 		preview: options?.preview,
 	});
 

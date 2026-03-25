@@ -5,13 +5,15 @@ import {
 	formatUserOperationRequest,
 	toSimple7702SmartAccount,
 } from "viem/account-abstraction";
-import { privateKeyToAccount } from "viem/accounts";
+import type { PrivateKeyAccount } from "viem/accounts";
 import { signAuthorization } from "viem/actions";
 import {
 	buildChainPublicClient as buildPublicClient,
 	buildChainWalletClient as buildWalletClient,
 } from "../common/index.js";
 import type { ChainConfig, TrustedAgentsConfig } from "../config/types.js";
+import type { SigningProvider } from "../signing/provider.js";
+import { createSigningProviderViemAccount } from "../signing/viem-account.js";
 import { getUsdcAsset } from "./assets.js";
 import { CANDIDE_ALLOWANCE_BUFFER, ENTRY_POINT_08 } from "./execution/catalog.js";
 import { createCirclePaymaster, warmCirclePermitMetadata } from "./execution/circle.js";
@@ -51,6 +53,7 @@ import type {
 async function resolveExecutionContext(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
+	provider: SigningProvider,
 	{
 		pinnedPreview,
 		requireProvider,
@@ -62,9 +65,9 @@ async function resolveExecutionContext(
 	const warnings: string[] = [];
 	const requestedMode = pinnedPreview?.requestedMode ?? requestedExecutionMode(config, chainConfig);
 	const mode = pinnedPreview?.mode ?? resolveExecutionMode(chainConfig, requestedMode, warnings);
-	const owner = privateKeyToAccount(config.privateKey);
+	const owner = await createSigningProviderViemAccount(provider);
 	const publicClient = buildPublicClient(chainConfig);
-	const walletClient = buildWalletClient(config.privateKey, chainConfig);
+	const walletClient = buildWalletClient(owner, chainConfig);
 	const baseContext = {
 		requestedMode,
 		mode,
@@ -137,7 +140,7 @@ async function resolveExecutionContext(
 
 	const account = await toSimple7702SmartAccount({
 		client: publicClient,
-		owner,
+		owner: owner as unknown as PrivateKeyAccount,
 		entryPoint: ENTRY_POINT_08.version,
 	});
 
@@ -154,9 +157,10 @@ async function resolveExecutionContext(
 export async function getExecutionPreview(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
+	provider: SigningProvider,
 	{ requireProvider = false }: { requireProvider?: boolean } = {},
 ): Promise<ExecutionPreview> {
-	const context = await resolveExecutionContext(config, chainConfig, { requireProvider });
+	const context = await resolveExecutionContext(config, chainConfig, provider, { requireProvider });
 	return {
 		requestedMode: context.requestedMode,
 		mode: context.mode,
@@ -171,6 +175,7 @@ export async function getExecutionPreview(
 export async function ensureExecutionReady(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
+	provider: SigningProvider,
 	{
 		preview,
 		deployEip4337Account = false,
@@ -179,7 +184,7 @@ export async function ensureExecutionReady(
 		deployEip4337Account?: boolean;
 	} = {},
 ): Promise<void> {
-	const context = await resolveExecutionContext(config, chainConfig, {
+	const context = await resolveExecutionContext(config, chainConfig, provider, {
 		pinnedPreview: preview,
 		requireProvider: true,
 	});
@@ -199,17 +204,18 @@ export async function ensureExecutionReady(
 export async function createExecutionEvmSigner(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
+	provider: SigningProvider,
 	{
 		preview,
 	}: { preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode"> } = {},
 ): Promise<ExecutionEvmSigner> {
-	let context = await resolveExecutionContext(config, chainConfig, {
+	let context = await resolveExecutionContext(config, chainConfig, provider, {
 		pinnedPreview: preview,
 		requireProvider: false,
 	});
 
 	if (context.mode === "eip4337" && !context.providerConfig?.accountFactoryAddress) {
-		context = await resolveExecutionContext(config, chainConfig, {
+		context = await resolveExecutionContext(config, chainConfig, provider, {
 			pinnedPreview: preview,
 			requireProvider: true,
 		});
@@ -398,12 +404,13 @@ async function executeEip7702Calls(
 export async function executeContractCalls(
 	config: TrustedAgentsConfig,
 	chainConfig: ChainConfig,
+	provider: SigningProvider,
 	calls: ExecutionCall[],
 	{
 		preview,
 	}: { preview?: Pick<ExecutionPreview, "mode" | "paymasterProvider" | "requestedMode"> } = {},
 ): Promise<ExecutionSendResult> {
-	const context = await resolveExecutionContext(config, chainConfig, {
+	const context = await resolveExecutionContext(config, chainConfig, provider, {
 		pinnedPreview: preview,
 		requireProvider: true,
 	});

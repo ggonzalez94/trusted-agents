@@ -10,29 +10,16 @@ export const BASE_MAINNET: ChainConfig = {
 	blockExplorerUrl: "https://basescan.org",
 };
 
-export const BASE_SEPOLIA: ChainConfig = {
-	chainId: 84532,
-	caip2: "eip155:84532",
-	name: "Base Sepolia",
-	rpcUrl: "https://sepolia.base.org",
-	// Testnet registries use a different address than mainnet.
-	// See https://github.com/erc-8004/erc-8004-contracts
-	registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-	blockExplorerUrl: "https://sepolia.basescan.org",
-};
-
 export const DEFAULT_CHAINS: Record<string, ChainConfig> = {
 	"eip155:8453": BASE_MAINNET,
-	"eip155:84532": BASE_SEPOLIA,
 };
 
-export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "privateKey"> = {
+export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "ows"> = {
 	dataDir: `${homedir()}/.trustedagents`,
 	chains: DEFAULT_CHAINS,
 	inviteExpirySeconds: 86400, // 24 hours
 	resolveCacheTtlMs: 86400000, // 24 hours
 	resolveCacheMaxEntries: 1000,
-	xmtpEnv: "production",
 	ipfs: {
 		provider: "auto",
 	},

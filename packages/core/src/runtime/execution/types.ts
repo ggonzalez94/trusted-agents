@@ -1,10 +1,12 @@
-import type { Address, Hex, TransactionReceipt } from "viem";
-import type { toSimple7702SmartAccount } from "viem/account-abstraction";
-import type { privateKeyToAccount } from "viem/accounts";
 import type {
-	buildChainPublicClient as buildPublicClient,
-	buildChainWalletClient as buildWalletClient,
-} from "../../common/index.js";
+	Address,
+	Hex,
+	LocalAccount,
+	PublicClient,
+	TransactionReceipt,
+	WalletClient,
+} from "viem";
+import type { toSimple7702SmartAccount } from "viem/account-abstraction";
 import type { ExecutionMode, ExecutionPaymasterProvider } from "../../config/types.js";
 
 export type EntryPointVersion = "0.7" | "0.8";
@@ -121,9 +123,9 @@ export interface BaseExecutionContext {
 	fundingAddress: Address;
 	paymasterProvider?: ExecutionPaymasterProvider;
 	warnings: string[];
-	publicClient: ReturnType<typeof buildPublicClient>;
-	walletClient: ReturnType<typeof buildWalletClient>;
-	owner: ReturnType<typeof privateKeyToAccount>;
+	publicClient: PublicClient;
+	walletClient: WalletClient;
+	owner: LocalAccount;
 }
 
 export interface EoaExecutionContext extends BaseExecutionContext {

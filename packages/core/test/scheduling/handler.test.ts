@@ -40,7 +40,7 @@ function makeContact(grants: PermissionGrant[]): Contact {
 		connectionId: "conn-1",
 		peerAgentId: 42,
 		peerDisplayName: "Alice",
-		peerChain: "eip155:84532",
+		peerChain: "eip155:8453",
 		peerOwnerAddress: "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`,
 		peerAgentAddress: "0xabcdef1234567890abcdef1234567890abcdef12" as `0x${string}`,
 		status: "active" as const,

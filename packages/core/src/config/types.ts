@@ -21,16 +21,20 @@ export interface IpfsConfig {
 	tackApiUrl?: string;
 }
 
+export interface OwsConfig {
+	wallet: string;
+	apiKey: string;
+}
+
 export interface TrustedAgentsConfig {
 	agentId: number;
 	chain: string;
-	privateKey: `0x${string}`;
+	ows: OwsConfig;
 	dataDir: string;
 	chains: Record<string, ChainConfig>;
 	inviteExpirySeconds: number;
 	resolveCacheTtlMs: number;
 	resolveCacheMaxEntries: number;
-	xmtpEnv?: "dev" | "production" | "local";
 	xmtpDbPath?: string;
 	xmtpDbEncryptionKey?: `0x${string}`;
 	execution?: ExecutionConfig;

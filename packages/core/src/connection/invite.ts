@@ -1,6 +1,6 @@
 import { encodeAbiParameters, keccak256, parseAbiParameters, toBytes } from "viem";
-import { signMessage } from "viem/accounts";
 import { expiresIn } from "../common/index.js";
+import type { SigningProvider } from "../signing/provider.js";
 import type { InviteData } from "./types.js";
 
 const DEFAULT_EXPIRY_SECONDS = 3600;
@@ -8,10 +8,10 @@ const DEFAULT_EXPIRY_SECONDS = 3600;
 export async function generateInvite(params: {
 	agentId: number;
 	chain: string;
-	privateKey: `0x${string}`;
+	signingProvider: SigningProvider;
 	expirySeconds?: number;
 }): Promise<{ url: string; invite: InviteData }> {
-	const { agentId, chain, privateKey, expirySeconds = DEFAULT_EXPIRY_SECONDS } = params;
+	const { agentId, chain, signingProvider, expirySeconds = DEFAULT_EXPIRY_SECONDS } = params;
 
 	const expires = expiresIn(expirySeconds);
 
@@ -23,10 +23,7 @@ export async function generateInvite(params: {
 		]),
 	);
 
-	const signature = await signMessage({
-		message: { raw: toBytes(message) },
-		privateKey,
-	});
+	const signature = await signingProvider.signMessage({ raw: toBytes(message) });
 
 	const invite: InviteData = {
 		agentId,

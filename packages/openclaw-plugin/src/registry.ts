@@ -1,9 +1,11 @@
 import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,
+	OwsSigningProvider,
 	type PermissionGrantSet,
 	SchedulingHandler,
 	type SchedulingProposal,
+	type SigningProvider,
 	TapMessagingService,
 	type TapPendingSchedulingDetails,
 	type TapRequestFundsInput,
@@ -15,7 +17,6 @@ import {
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import { generateInvite } from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
@@ -33,6 +34,7 @@ function truncateText(text: string, maxLen: number): string {
 interface ManagedTapRuntime {
 	definition: TapOpenClawIdentityConfig;
 	config: TrustedAgentsConfig;
+	signingProvider: SigningProvider;
 	service: TapMessagingService;
 	mutex: AsyncMutex;
 	interval: NodeJS.Timeout | null;
@@ -213,7 +215,7 @@ export class OpenClawTapRegistry {
 			const result = await generateInvite({
 				agentId: runtime.config.agentId,
 				chain: runtime.config.chain,
-				privateKey: runtime.config.privateKey,
+				signingProvider: runtime.signingProvider,
 				expirySeconds: expiresIn,
 			});
 			return {
@@ -290,12 +292,13 @@ export class OpenClawTapRegistry {
 		note?: string;
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
+		const ownAddress = await runtime.signingProvider.getAddress();
 		const input: TapRequestFundsInput = {
 			peer: params.peer,
 			asset: params.asset,
 			amount: params.amount,
 			chain: params.chain ?? runtime.config.chain,
-			toAddress: params.toAddress ?? privateKeyToAccount(runtime.config.privateKey).address,
+			toAddress: params.toAddress ?? ownAddress,
 			note: params.note,
 		};
 		return await runtime.mutex.runExclusive(async () => await runtime.service.requestFunds(input));
@@ -320,7 +323,7 @@ export class OpenClawTapRegistry {
 		const chain = params.chain ?? runtime.config.chain;
 		const result = await runtime.mutex.runExclusive(
 			async () =>
-				await executeOnchainTransfer(runtime.config, {
+				await executeOnchainTransfer(runtime.config, runtime.signingProvider, {
 					type: "transfer/request",
 					actionId: `gateway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 					asset: params.asset,
@@ -557,7 +560,12 @@ export class OpenClawTapRegistry {
 		const config = await loadTrustedAgentConfigFromDataDir(definition.dataDir, {
 			requireAgentId: true,
 		});
-		const context = buildDefaultTapRuntimeContext(config);
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
+		const context = buildDefaultTapRuntimeContext(config, { signingProvider });
 		const notificationQueue = new TapNotificationQueue();
 		this.notificationQueues.set(name, notificationQueue);
 		const schedulingHandler = new SchedulingHandler({
@@ -570,12 +578,13 @@ export class OpenClawTapRegistry {
 		const runtime: ManagedTapRuntime = {
 			definition,
 			config,
+			signingProvider,
 			service: new TapMessagingService(context, {
 				ownerLabel: `openclaw:${definition.name}`,
 				schedulingHandler,
 				hooks: {
 					executeTransfer: async (serviceConfig, request) =>
-						await executeOnchainTransfer(serviceConfig, request),
+						await executeOnchainTransfer(serviceConfig, signingProvider, request),
 					log: (level, message) => {
 						logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
 					},

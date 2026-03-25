@@ -1,24 +1,43 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
-import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as executionLib from "../src/lib/execution.js";
 import * as walletLib from "../src/lib/wallet.js";
 
+const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
+	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
+	return {
+		ADDRESS: addr,
+		mockOwsProvider: vi.fn().mockImplementation(() => ({
+			getAddress: vi.fn().mockResolvedValue(addr),
+			signMessage: vi.fn(),
+			signTypedData: vi.fn(),
+			signTransaction: vi.fn(),
+			signAuthorization: vi.fn(),
+		})),
+	};
+});
+
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		OwsSigningProvider: mockOwsProvider,
+	};
+});
+
 describe("tap balance", () => {
 	let stdoutWrites: string[];
 	let stderrWrites: string[];
 	let origStdoutWrite: typeof process.stdout.write;
 	let origStderrWrite: typeof process.stderr.write;
-	const privateKey = "0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
-	const address = privateKeyToAccount(privateKey).address;
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
 			agentId: -1,
-			chain: "eip155:84532",
-			privateKey,
+			chain: "eip155:8453",
+			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:8453": {
@@ -28,13 +47,6 @@ describe("tap balance", () => {
 					rpcUrl: "https://example.test/base",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:84532": {
-					name: "Base Sepolia",
-					caip2: "eip155:84532",
-					chainId: 84532,
-					rpcUrl: "https://example.test/base-sepolia",
-					registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-				},
 				"eip155:167000": {
 					name: "Taiko",
 					caip2: "eip155:167000",
@@ -42,18 +54,10 @@ describe("tap balance", () => {
 					rpcUrl: "https://example.test/taiko",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:167013": {
-					name: "Taiko Hoodi",
-					caip2: "eip155:167013",
-					chainId: 167013,
-					rpcUrl: "https://example.test/taiko-hoodi",
-					registryAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
-				},
 			},
 			inviteExpirySeconds: 3600,
 			resolveCacheTtlMs: 60000,
 			resolveCacheMaxEntries: 100,
-			xmtpEnv: "dev",
 			xmtpDbEncryptionKey: undefined,
 			execution: {
 				mode: "eip7702",
@@ -80,9 +84,9 @@ describe("tap balance", () => {
 		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
 			requestedMode: "eip7702",
 			mode: "eip7702",
-			messagingAddress: address,
-			executionAddress: address,
-			fundingAddress: address,
+			messagingAddress: ADDRESS,
+			executionAddress: ADDRESS,
+			fundingAddress: ADDRESS,
 			paymasterProvider: "candide",
 			warnings: [],
 		});
@@ -92,7 +96,7 @@ describe("tap balance", () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
 	});
 
 	it("uses the configured chain by default and returns native plus USDC balances", async () => {
@@ -108,7 +112,7 @@ describe("tap balance", () => {
 		expect(getBalance).toHaveBeenCalledOnce();
 		expect(readContract).toHaveBeenCalledWith(
 			expect.objectContaining({
-				address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+				address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 				functionName: "balanceOf",
 			}),
 		);
@@ -118,10 +122,10 @@ describe("tap balance", () => {
 			data?: Record<string, unknown>;
 		};
 		expect(output.ok).toBe(true);
-		expect(output.data?.address).toBe(address);
-		expect(output.data?.messaging_address).toBe(address);
-		expect(output.data?.execution_address).toBe(address);
-		expect(output.data?.chain).toBe("eip155:84532");
+		expect(output.data?.address).toBe(ADDRESS);
+		expect(output.data?.messaging_address).toBe(ADDRESS);
+		expect(output.data?.execution_address).toBe(ADDRESS);
+		expect(output.data?.chain).toBe("eip155:8453");
 		expect(output.data?.execution_native_balance).toBe("1.234");
 		expect(output.data?.execution_usdc_balance).toBe("9.876543");
 	});
@@ -149,15 +153,15 @@ describe("tap balance", () => {
 			readContract: vi.fn().mockResolvedValue(2n),
 		} as never);
 
-		await balanceCommand({ json: true }, "eip155:84532");
+		await balanceCommand({ json: true }, "eip155:8453");
 
 		expect(walletLib.buildPublicClient).toHaveBeenCalledWith(
-			expect.objectContaining({ caip2: "eip155:84532" }),
+			expect.objectContaining({ caip2: "eip155:8453" }),
 		);
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			data?: Record<string, unknown>;
 		};
-		expect(output.data?.chain).toBe("eip155:84532");
+		expect(output.data?.chain).toBe("eip155:8453");
 	});
 
 	it("returns native plus USDC balances on Taiko", async () => {
@@ -181,29 +185,6 @@ describe("tap balance", () => {
 		expect(output.data?.chain).toBe("eip155:167000");
 		expect(output.data?.usdc_supported).toBe(true);
 		expect(output.data?.execution_usdc_balance).toBe("7.654321");
-	});
-
-	it("returns native plus USDC balances on Taiko Hoodi", async () => {
-		const readContract = vi.fn().mockResolvedValue(333n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
-			getBalance: vi.fn().mockResolvedValue(7n),
-			readContract,
-		} as never);
-
-		await balanceCommand({ json: true }, "taiko-hoodi");
-
-		expect(readContract).toHaveBeenCalledWith(
-			expect.objectContaining({
-				address: "0xf501925c8FE6c5B2FC8faD86b8C9acb2596f3295",
-				functionName: "balanceOf",
-			}),
-		);
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			data?: Record<string, unknown>;
-		};
-		expect(output.data?.chain).toBe("eip155:167013");
-		expect(output.data?.usdc_supported).toBe(true);
-		expect(output.data?.execution_usdc_balance).toBe("0.000333");
 	});
 
 	it("returns a validation error for an unknown chain", async () => {

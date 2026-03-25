@@ -65,15 +65,40 @@ tap install --runtime openclaw
 
 Already registered? `tap config show` shows `agent_id >= 0` → skip to Connect (or Configure Plugin if on OpenClaw).
 
-### Step 1: Create the wallet
+### Step 1: Set up wallet
+
+TAP uses Open Wallet Standard (OWS) for key management — the agent never handles raw private keys. Before running `tap init`, check if the user already has OWS wallets or policies they might want to reuse:
 
 ```bash
-tap init --chain base
+ows wallet list     # Show existing wallets with addresses
+ows policy list     # Show existing policies with chain rules
 ```
 
-This generates a fresh wallet and local config.
+**If wallets exist:** Present them to the user in plain language — wallet name, EVM address, and what chains each wallet is used for. Ask if they want to reuse one for this agent or create a new one. If reusing, pass `--wallet <name>` to `tap init`.
 
-**Chain rules:** Always ask the user what chain they want to use. The two options currently are `taiko` and `bases`. **Never suggest, mention, or present testnets** (`base-sepolia`, `taiko-hoodi`) — not in tables, options, or comparisons. They don't exist as far as onboarding is concerned.
+**If no wallets exist** (or user wants a new one): Just run `tap init` — it will create everything.
+
+```bash
+# New wallet (default)
+tap init --chain base
+
+# Reuse existing wallet
+tap init --chain base --wallet my-existing-wallet
+```
+
+**If policies exist** that already cover the selected chain: Mention them to the user. `tap init` will detect compatible policies and offer to reuse them.
+
+During `tap init`:
+1. OWS is checked (and installed if missing)
+2. A new wallet is created (or the specified one is used)
+3. A signing policy is created with chain restrictions (or a compatible one is reused)
+4. A scoped API key is issued for the agent
+
+Flags: `--wallet <name>` (use existing wallet), `--passphrase <passphrase>` (wallet passphrase), `--non-interactive` (skip prompts, use defaults).
+
+If the user already has an agent with a raw `identity/agent.key` file, use `tap migrate-wallet` instead (see Migration below).
+
+**Chain rules:** Always ask the user what chain they want to use. The two options are `base` and `taiko`. Only mainnet chains are supported.
 
 ### Step 2: Fund the wallet
 
@@ -453,11 +478,33 @@ tap identity resolve-self              # Check own published registration
 tap install                            # Auto-detect host
 tap install --runtime claude           # Claude Code skill install
 tap install --runtime openclaw         # OpenClaw plugin install
+tap migrate-wallet                     # Migrate legacy agent.key to OWS
 tap remove --dry-run                   # Preview what would be deleted
 tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode offers balance sweep first)
 ```
 
 `tap remove` is local only — does not unregister on-chain or notify peers. In interactive sessions it also shows the current native on-chain balance and can optionally transfer remaining funds before final wipe confirmation.
+
+## Migration (Legacy Key → OWS)
+
+If an agent was created before OWS integration and has a raw `identity/agent.key` file:
+
+```bash
+tap migrate-wallet
+```
+
+This command:
+1. Reads the existing private key from `identity/agent.key`
+2. Preserves the XMTP database encryption key (computed from the old key and saved to config)
+3. Imports the key into an OWS wallet
+4. Creates a signing policy and scoped API key
+5. Verifies the OWS wallet address matches the original
+6. Updates `config.yaml` with the `ows` block
+7. Deletes `identity/agent.key`
+
+Flags: `--passphrase <passphrase>` (wallet passphrase for OWS import), `--non-interactive` (skip prompts).
+
+The agent keeps its on-chain identity, contacts, and conversation history — only the key storage changes.
 
 ## Common Errors
 
@@ -478,3 +525,7 @@ tap remove --unsafe-wipe-data-dir --yes  # Wipe the data dir (interactive mode o
 | `No calendar provider configured` | Run `tap calendar setup --provider google` |
 | `Google Workspace CLI (gws) is not installed` | Install with `npm install -g @googleworkspace/cli` |
 | `No matching scheduling grant` | Peer needs to publish a `scheduling/request` grant to you |
+| `OWS not installed` | Install with `curl -fsSL https://docs.openwallet.sh/install.sh \| bash` |
+| `ows.wallet is required` | Run `tap init` to set up an OWS wallet, or `tap migrate-wallet` if you have a legacy key |
+| `ows.apiKey must start with ows_key_` | The API key in config is invalid — re-run `tap init` or create a new key with `ows key create` |
+| `Address mismatch after OWS import` | The OWS wallet derived a different address — check the wallet or try importing again |

@@ -1,4 +1,4 @@
-import { generateInvite } from "trusted-agents-core";
+import { OwsSigningProvider, generateInvite } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
@@ -12,11 +12,16 @@ export async function inviteCreateCommand(
 
 	try {
 		const config = await loadConfig(opts);
+		const signingProvider = new OwsSigningProvider(
+			config.ows.wallet,
+			config.chain,
+			config.ows.apiKey,
+		);
 
 		const result = await generateInvite({
 			agentId: config.agentId,
 			chain: config.chain,
-			privateKey: config.privateKey,
+			signingProvider,
 			expirySeconds,
 		});
 
