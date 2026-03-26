@@ -1,8 +1,12 @@
+import { createRequire } from "node:module";
 import { Command } from "commander";
 import { chainAliasHelpText } from "./lib/chains.js";
 import { errorCode, exitCodeForError } from "./lib/errors.js";
 import { error } from "./lib/output.js";
 import type { GlobalOptions } from "./types.js";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
 
 export function createCli(): Command {
 	const program = new Command();
@@ -10,7 +14,7 @@ export function createCli(): Command {
 	program
 		.name("tap")
 		.description("Trusted Agents Protocol CLI")
-		.version("0.1.0")
+		.version(version)
 		.option("--json", "Force JSON output")
 		.option("--plain", "Force plain text output")
 		.option("--config <path>", "Override config file path")
