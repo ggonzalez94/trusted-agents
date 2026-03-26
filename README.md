@@ -155,6 +155,23 @@ Run `tap <command> --help` for details on any command.
 
 ## Troubleshooting
 
+> **ℹ️ Note:**  
+>  
+> When installing TAP in OpenClaw, the installer registers a plugin, which requires the gateway to be restarted. Occasionally, this process may cause the gateway to shut down and fail to start again.  
+>  
+> If this happens, simply login into your openclaw computer and run:
+> 
+> ```bash
+> openclaw gateway restart
+> ```
+> 
+> If the problem persists, you can reinstall and restart the gateway with:
+> 
+> ```bash
+> openclaw gateway install
+> openclaw gateway start
+> ```
+
 | Problem | Fix |
 |---|---|
 | `Insufficient funds` | Fund your wallet with USDC on Base (minimum ~$0.50). Run `tap balance` to check. |
