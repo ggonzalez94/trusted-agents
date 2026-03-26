@@ -54,12 +54,49 @@ jobs:
       - name: Verify release package metadata
         run: bun run verify:release
 
-      # Verify tarballs before publishing
+      # Replace workspace:* with the actual tag version so tarballs have correct deps.
+      # bun publish resolves workspace:* from the lockfile, which may be stale after
+      # a version bump commit. This step makes the resolution explicit.
+      - name: Resolve workspace dependencies
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          for pkg in packages/cli/package.json packages/openclaw-plugin/package.json; do
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
+              let changed = false;
+              for (const [dep, ver] of Object.entries(pkg.dependencies || {})) {
+                if (typeof ver === 'string' && ver.startsWith('workspace:')) {
+                  pkg.dependencies[dep] = '$TAG_VERSION';
+                  changed = true;
+                }
+              }
+              if (changed) {
+                fs.writeFileSync('$pkg', JSON.stringify(pkg, null, 2) + '\n');
+                console.log('Resolved workspace deps in $pkg to $TAG_VERSION');
+              }
+            "
+          done
+
+      # Verify tarballs have correct dependency versions before publishing
       - name: Verify tarballs
         run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
           cd packages/core && bun pm pack --dry-run && cd ../..
-          cd packages/cli && bun pm pack --dry-run && cd ../..
-          cd packages/openclaw-plugin && bun pm pack --dry-run && cd ../..
+          for pkg_dir in packages/cli packages/openclaw-plugin; do
+            cd "$pkg_dir"
+            bun pm pack --dry-run
+            TARBALL=$(bun pm pack 2>&1 | grep '\.tgz$')
+            tar -xzf "$TARBALL"
+            CORE_DEP=$(node -e "console.log(JSON.parse(require('fs').readFileSync('package/package.json','utf8')).dependencies['trusted-agents-core'] || 'MISSING')")
+            rm -rf package "$TARBALL"
+            if [[ "$CORE_DEP" != "$TAG_VERSION" ]]; then
+              echo "::error::$pkg_dir has trusted-agents-core@$CORE_DEP but expected $TAG_VERSION"
+              exit 1
+            fi
+            echo "$pkg_dir: trusted-agents-core@$CORE_DEP ✓"
+            cd ../..
+          done
 
       # Configure npm auth
       - name: Configure npm
