@@ -1,4 +1,6 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,20 +18,26 @@ for (const pkg of packages) {
 	const packageDir = join(rootDir, pkg.dir);
 	const packageJsonPath = join(packageDir, "package.json");
 	const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+	const packedPackageDir = packPackage(packageDir, pkg.name);
 
 	assertPath(packageDir, `${pkg.name} README`, "README.md");
 	assertPath(packageDir, `${pkg.name} main`, manifest.main);
 	assertPath(packageDir, `${pkg.name} types`, manifest.types);
+	assertPath(packedPackageDir, `${pkg.name} packed README`, "README.md");
+	assertPath(packedPackageDir, `${pkg.name} packed main`, manifest.main);
+	assertPath(packedPackageDir, `${pkg.name} packed types`, manifest.types);
 
 	if (manifest.bin && typeof manifest.bin === "object") {
 		for (const [binName, binPath] of Object.entries(manifest.bin)) {
 			assertPath(packageDir, `${pkg.name} bin:${binName}`, binPath);
+			assertPath(packedPackageDir, `${pkg.name} packed bin:${binName}`, binPath);
 		}
 	}
 
 	if (manifest.exports && typeof manifest.exports === "object") {
 		for (const [exportName, exportValue] of Object.entries(manifest.exports)) {
 			assertExports(packageDir, `${pkg.name} export:${exportName}`, exportValue);
+			assertExports(packedPackageDir, `${pkg.name} packed export:${exportName}`, exportValue);
 		}
 	}
 
@@ -38,6 +46,8 @@ for (const pkg of packages) {
 			assertPath(packageDir, `${pkg.name} files:${entry}`, entry);
 		}
 	}
+
+	assertOpenClawExtensions(pkg.name, packedPackageDir);
 }
 
 if (errors.length > 0) {
@@ -85,5 +95,75 @@ function assertPath(packageDir, label, relativePath) {
 		errors.push(
 			`${label} could not be read at ${relativePath}: ${error instanceof Error ? error.message : String(error)}`,
 		);
+	}
+}
+
+function packPackage(packageDir, packageName) {
+	const packRoot = mkdtempSync(join(tmpdir(), "trusted-agents-pack-"));
+
+	try {
+		const tarballOutput = execFileSync(
+			"bun",
+			["pm", "pack", "--destination", packRoot, "--quiet", "--ignore-scripts"],
+			{
+				cwd: packageDir,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		)
+			.trim()
+			.split("\n")
+			.pop();
+
+		if (!tarballOutput) {
+			errors.push(`${packageName} bun pm pack did not report a tarball name`);
+			return packRoot;
+		}
+
+		const tarballPath = tarballOutput.startsWith("/")
+			? tarballOutput
+			: join(packRoot, tarballOutput);
+
+		execFileSync("tar", ["-xzf", tarballPath, "-C", packRoot], {
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		return join(packRoot, "package");
+	} catch (error) {
+		errors.push(
+			`${packageName} could not be packed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return packRoot;
+	} finally {
+		process.on("exit", () => {
+			rmSync(packRoot, { recursive: true, force: true });
+		});
+	}
+}
+
+function assertOpenClawExtensions(packageName, packedPackageDir) {
+	const packageJsonPath = join(packedPackageDir, "package.json");
+	if (!existsSync(packageJsonPath)) {
+		return;
+	}
+
+	const packedManifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+	const extensions = packedManifest.openclaw?.extensions;
+
+	if (!Array.isArray(extensions)) {
+		return;
+	}
+
+	for (const [index, entry] of extensions.entries()) {
+		assertPath(packedPackageDir, `${packageName} packed openclaw.extensions[${index}]`, entry);
+		if (!entry.startsWith("./dist/") || !entry.endsWith(".js")) {
+			errors.push(
+				`${packageName} openclaw.extensions[${index}] must point at a built JS entry under dist/, got ${entry}`,
+			);
+		}
+	}
+
+	if (existsSync(join(packedPackageDir, "index.ts"))) {
+		errors.push(`${packageName} packed tarball should not ship a root source entrypoint index.ts`);
 	}
 }

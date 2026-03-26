@@ -17,6 +17,13 @@ Direct plugin install:
 openclaw plugins install trusted-agents-tap
 ```
 
+From a local checkout, build first so OpenClaw loads the compiled plugin entrypoint:
+
+```bash
+bun run build
+openclaw plugins install --link ./packages/openclaw-plugin
+```
+
 ## Configure
 
 Point the plugin at one or more existing TAP data directories:
