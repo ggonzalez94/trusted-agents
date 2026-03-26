@@ -23,14 +23,14 @@ for (const pkg of packages) {
 	assertPath(packageDir, `${pkg.name} README`, "README.md");
 	assertPath(packageDir, `${pkg.name} main`, manifest.main);
 	assertPath(packageDir, `${pkg.name} types`, manifest.types);
-	assertPackedPath(packedPackageDir, `${pkg.name} packed README`, "README.md");
-	assertPackedPath(packedPackageDir, `${pkg.name} packed main`, manifest.main);
-	assertPackedPath(packedPackageDir, `${pkg.name} packed types`, manifest.types);
+	assertPath(packedPackageDir, `${pkg.name} packed README`, "README.md");
+	assertPath(packedPackageDir, `${pkg.name} packed main`, manifest.main);
+	assertPath(packedPackageDir, `${pkg.name} packed types`, manifest.types);
 
 	if (manifest.bin && typeof manifest.bin === "object") {
 		for (const [binName, binPath] of Object.entries(manifest.bin)) {
 			assertPath(packageDir, `${pkg.name} bin:${binName}`, binPath);
-			assertPackedPath(packedPackageDir, `${pkg.name} packed bin:${binName}`, binPath);
+			assertPath(packedPackageDir, `${pkg.name} packed bin:${binName}`, binPath);
 		}
 	}
 
@@ -98,10 +98,6 @@ function assertPath(packageDir, label, relativePath) {
 	}
 }
 
-function assertPackedPath(packageDir, label, relativePath) {
-	assertPath(packageDir, label, relativePath);
-}
-
 function packPackage(packageDir, packageName) {
 	const packRoot = mkdtempSync(join(tmpdir(), "trusted-agents-pack-"));
 
@@ -159,11 +155,7 @@ function assertOpenClawExtensions(packageName, packedPackageDir) {
 	}
 
 	for (const [index, entry] of extensions.entries()) {
-		assertPackedPath(
-			packedPackageDir,
-			`${packageName} packed openclaw.extensions[${index}]`,
-			entry,
-		);
+		assertPath(packedPackageDir, `${packageName} packed openclaw.extensions[${index}]`, entry);
 		if (!entry.startsWith("./dist/") || !entry.endsWith(".js")) {
 			errors.push(
 				`${packageName} openclaw.extensions[${index}] must point at a built JS entry under dist/, got ${entry}`,
