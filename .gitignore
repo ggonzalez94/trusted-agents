@@ -10,6 +10,7 @@ xmtp-*.db3*
 *.tgz
 .tmp/
 skill-workspace/
+.claude/
 packages/openclaw-plugin/skills/
 .next/
 out/
