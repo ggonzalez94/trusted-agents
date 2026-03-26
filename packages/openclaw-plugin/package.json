@@ -7,7 +7,6 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "index.ts",
     "skills",
     "openclaw.plugin.json"
   ],
@@ -41,7 +40,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ]
   }
 }
