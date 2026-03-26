@@ -58,13 +58,34 @@ describe("normalizeCliArgv", () => {
 		).toEqual([
 			"node",
 			"tap",
+			"--data-dir=/tmp/tap",
 			"--chain",
 			"eip155:8453",
-			"--data-dir=/tmp/tap",
 			"register",
 			"create",
 			"--name",
 			"Smoke",
+		]);
+	});
+
+	it("hoists global output options even when they are placed after the command", () => {
+		expect(normalizeCliArgv(["node", "tap", "contacts", "list", "--output", "json"])).toEqual([
+			"node",
+			"tap",
+			"--output",
+			"json",
+			"contacts",
+			"list",
+		]);
+	});
+
+	it("rewrites command-local --describe into the schema command", () => {
+		expect(normalizeCliArgv(["node", "tap", "contacts", "list", "--describe"])).toEqual([
+			"node",
+			"tap",
+			"schema",
+			"contacts",
+			"list",
 		]);
 	});
 });

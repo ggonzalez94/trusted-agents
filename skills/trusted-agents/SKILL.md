@@ -7,16 +7,34 @@ description: Operate a Trusted Agents Protocol agent with the `tap` CLI — inst
 
 TAP gives your AI agent a verifiable on-chain identity so it can connect, message, and transact with other agents. It combines ERC-8004 on-chain registration with XMTP encrypted messaging and a directional permission system. Think of it as a secure contact list where each contact comes with explicit permissions for what you can ask each other to do.
 
+## Agent-First Rules
+
+- Start with `tap schema` or `tap <command> --describe` when you are unsure about flags, defaults, or response shape.
+- Default to machine-readable output. Use `--output text` only when a human is actively reading the command result.
+- Add `--select` on list/show commands unless you truly need the full payload.
+- Run `--dry-run` before every supported mutation.
+- Pipe grant JSON with `--file -` when you are generating the payload dynamically.
+
+Examples:
+
+```bash
+tap schema contacts list
+tap contacts list --output json --select name,status --limit 10
+tap connect "<invite-url>" --dry-run
+cat grants.json | tap permissions grant WorkerAgent --file - --dry-run
+```
+
 ## Status Check
 
 Run these to figure out where things stand:
 
 ```
-which tap            → Not found? See Install
-tap config show      → Errors? Start at Onboard step 1
-tap identity show    → agent_id < 0? Resume Onboard (fund + register)
-tap balance          → Check funding
-tap contacts list    → Empty? See Connect
+which tap                                               → Not found? See Install
+tap schema                                              → Inspect runtime contract
+tap config show --output json --select agent_id,chain   → Errors? Start at Onboard step 1
+tap identity show --output json --select agent_id,chain → agent_id < 0? Resume Onboard (fund + register)
+tap balance --output json                               → Check funding
+tap contacts list --output json --select name,status    → Empty? See Connect
 ```
 
 If you're inside **OpenClaw Gateway** and `tap_gateway` is available, also check:
@@ -113,7 +131,7 @@ Your chain determines everything — registration chain, gas payment, and IPFS u
 
 IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
 
-**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. On Taiko, `tap register` now deploys that execution account before the Tack x402 upload, then continues with the on-chain ERC-8004 registration. Run `tap balance --json` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
+**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. On Taiko, `tap register` now deploys that execution account before the Tack x402 upload, then continues with the on-chain ERC-8004 registration. Run `tap balance --output json --select messaging_address,execution_address` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
 
 If the user chooses Taiko read the full [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md). It will help you use the smart account and the paymaster effectively.
 
@@ -180,6 +198,7 @@ This is async — agents don't need to be online at the same time. Run `tap mess
 
 ```bash
 tap invite create --expiry 3600
+tap connect "<invite-url>" --dry-run
 tap connect "<invite-url>" --yes --wait 60
 tap contacts list
 tap contacts show WorkerAgent
@@ -203,9 +222,9 @@ Connections create trust. **Grants** define what each side is allowed to ask the
 
 ```bash
 tap permissions show WorkerAgent
-tap permissions grant WorkerAgent --file ./grants.json --note "weekly payment policy"
-tap permissions request TreasuryAgent --file ./request.json --note "need weekly budget"
-tap permissions revoke WorkerAgent --grant-id worker-weekly-usdc --note "budget paused"
+tap permissions grant WorkerAgent --file ./grants.json --note "weekly payment policy" --dry-run
+cat ./request.json | tap permissions request TreasuryAgent --file - --note "need weekly budget" --dry-run
+tap permissions revoke WorkerAgent --grant-id worker-weekly-usdc --note "budget paused" --dry-run
 ```
 
 In OpenClaw plugin mode, use `tap_gateway publish_grants` and `tap_gateway request_grants` for write operations. Read-only commands (`tap permissions show`) are safe to use alongside the plugin.
@@ -276,7 +295,7 @@ After syncing, proactively relay what arrived — don't wait for the user to ask
 tap message send WorkerAgent "Status update?" --scope general-chat
 tap message sync
 tap message listen
-tap conversations list --with TreasuryAgent
+tap conversations list --with TreasuryAgent --output json --select id,peer,last_message
 tap conversations show conv-abc123
 ```
 
@@ -288,7 +307,7 @@ Transfer requests ask a peer to send ETH or USDC. If an existing grant exists th
 When showing the human transfer requests or summaries always show the reason if it exists.
 
 ```bash
-tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget"
+tap message request-funds TreasuryAgent --asset usdc --amount 5 --chain base --note "weekly research budget" --dry-run
 ```
 
 In OpenClaw plugin mode, use `tap_gateway request_funds` instead.
@@ -302,7 +321,7 @@ Before approving inbound transfers, inspect `tap permissions show <peer>` and `<
 Direct transfers send funds from the local agent wallet to any EVM address (no peer request, no XMTP).
 
 ```bash
-tap transfer --to <address> --asset <native|usdc> --amount <amount> [--chain <chain>] [--yes]
+tap transfer --to <address> --asset <native|usdc> --amount <amount> [--chain <chain>] [--dry-run] [--yes]
 ```
 
 Example:
@@ -335,7 +354,7 @@ Without a calendar provider, scheduling still works — you just respond to prop
 ### Request a meeting
 
 ```bash
-tap message request-meeting BobAgent --title "Dinner" --duration 90 --preferred "2026-03-28T19:00:00Z" --note "That Italian place?"
+tap message request-meeting BobAgent --title "Dinner" --duration 90 --preferred "2026-03-28T19:00:00Z" --note "That Italian place?" --dry-run
 ```
 
 - `--preferred` is optional. If set and a calendar is configured, the agent checks availability around that time and proposes the best free slots.
@@ -345,8 +364,8 @@ tap message request-meeting BobAgent --title "Dinner" --duration 90 --preferred 
 ### Respond to a proposal
 
 ```bash
-tap message respond-meeting sch_abc123 --accept
-tap message respond-meeting sch_abc123 --reject --reason "Busy that week"
+tap message respond-meeting sch_abc123 --accept --dry-run
+tap message respond-meeting sch_abc123 --reject --reason "Busy that week" --dry-run
 ```
 
 When your agent has a calendar configured and a scheduling grant covers the request, it auto-negotiates (checks your calendar, counters if no overlap) and surfaces the best matching slot for your approval. You just confirm with `--accept`.
@@ -354,7 +373,7 @@ When your agent has a calendar configured and a scheduling grant covers the requ
 ### Cancel a confirmed meeting
 
 ```bash
-tap message cancel-meeting sch_abc123 --reason "Something came up"
+tap message cancel-meeting sch_abc123 --reason "Something came up" --dry-run
 ```
 
 Sends cancellation to the peer and removes the event from your calendar.
@@ -468,6 +487,13 @@ Execute commands before asking questions. When a user asks to install, set up, o
 
 Do not present overviews, tables, or summaries of TAP before acting. Do not bundle multiple questions into one message.
 
+When you need to explore the interface, prefer:
+
+```bash
+tap schema
+tap <command> --describe
+```
+
 ```bash
 tap balance [chain]                    # ETH + USDC balances
 tap config show                        # Resolved config (secrets redacted)
@@ -475,6 +501,7 @@ tap config set <key> <value>           # Update one config value
 tap identity show                      # Wallet address, agent ID, chain
 tap identity resolve <id> [chain]      # Look up another agent
 tap identity resolve-self              # Check own published registration
+tap schema [command...]                # Machine-readable CLI schema
 tap install                            # Auto-detect host
 tap install --runtime claude           # Claude Code skill install
 tap install --runtime openclaw         # OpenClaw plugin install
@@ -516,7 +543,7 @@ The agent keeps its on-chain identity, contacts, and conversation history — on
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
-| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or USDC to the Servo execution account on Taiko (Taiko agents, run `tap balance --json` for the address) |
+| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or USDC to the Servo execution account on Taiko (Taiko agents, run `tap balance --output json --select messaging_address,execution_address` for the address) |
 | `Invalid or expired invite` | Create a fresh invite |
 | `Contact not active yet` | Peer hasn't synced — run `tap message sync` |
 | `Peer not found in contacts` | Connect first or check the name/agent ID |

@@ -1,8 +1,10 @@
 import { createRequire } from "node:module";
 import { Command } from "commander";
 import { chainAliasHelpText } from "./lib/chains.js";
+import { formatMetadataHelp } from "./lib/command-metadata.js";
 import { errorCode, exitCodeForError } from "./lib/errors.js";
-import { error } from "./lib/output.js";
+import { error, success } from "./lib/output.js";
+import { commandPath, findCommand, serializeCommand } from "./lib/schema.js";
 import type { GlobalOptions } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -13,16 +15,46 @@ export function createCli(): Command {
 
 	program
 		.name("tap")
-		.description("Trusted Agents Protocol CLI")
+		.description("Trusted Agents Protocol CLI for agents and operators")
 		.version(version)
+		.option("--output <format>", "Output format: json, text, ndjson")
 		.option("--json", "Force JSON output")
-		.option("--plain", "Force plain text output")
+		.option("--plain", "Force text output")
 		.option("--config <path>", "Override config file path")
 		.option("--data-dir <path>", "Override data directory")
 		.option("--chain <caip2>", "Override chain (e.g. eip155:8453)")
 		.option("--rpc-url <url>", "Override the RPC URL for the selected chain")
+		.option("--select <fields>", "Comma-separated response fields to include")
+		.option("--fields <fields>", "Alias for --select")
+		.option("--limit <count>", "Maximum records to return from list-style responses")
+		.option("--offset <count>", "Offset into list-style responses")
+		.option("--describe", "Print machine-readable schema for the selected command")
 		.option("-v, --verbose", "Verbose logging to stderr")
 		.option("-q, --quiet", "Suppress non-essential output");
+
+	program
+		.command("schema")
+		.description("Print the machine-readable TAP CLI schema")
+		.argument("[command...]", "Optional command path to describe")
+		.action(async (requestedPath?: string[]) => {
+			const opts = program.opts<GlobalOptions>();
+			const startTime = Date.now();
+			const path = requestedPath ?? [];
+			const target = path.length === 0 ? program : findCommand(program, path);
+			if (!target) {
+				error("NOT_FOUND", `Unknown command path: ${path.join(" ")}`, opts);
+				process.exitCode = 4;
+				return;
+			}
+
+			success(
+				serializeCommand(target, {
+					includeInheritedOptions: path.length > 0,
+				}),
+				opts,
+				startTime,
+			);
+		});
 
 	program
 		.command("install")
@@ -203,6 +235,7 @@ Examples:
 		.requiredOption("--asset <asset>", "Asset to transfer: native or usdc")
 		.requiredOption("--amount <amount>", "Human-readable transfer amount")
 		.option("--chain <chain>", "Chain alias or CAIP-2 ID (defaults to local config chain)")
+		.option("--dry-run", "Validate and preview the transfer without sending it")
 		.option("--yes", "Skip the confirmation prompt")
 		.action(
 			async (cmdOpts: {
@@ -210,6 +243,7 @@ Examples:
 				asset: string;
 				amount: string;
 				chain?: string;
+				dryRun?: boolean;
 				yes?: boolean;
 			}) => {
 				const opts = program.opts<GlobalOptions>();
@@ -295,6 +329,7 @@ Examples:
 	program
 		.command("connect <invite-url>")
 		.description("Send a connection request from an invite")
+		.option("--dry-run", "Validate the invite and preview the connection without sending it")
 		.option("--yes", "Auto-approve connection (no interactive prompt)")
 		.option("--wait [seconds]", "Wait for connection to become active (default: 60s)")
 		.addHelpText(
@@ -308,13 +343,18 @@ Examples:
   tap connect "<invite-url>" --yes --wait 120
 `,
 		)
-		.action(async (inviteUrl: string, cmdOpts: { yes?: boolean; wait?: string | boolean }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { connectCommand } = await import("./commands/connect.js");
-			const waitSeconds =
-				cmdOpts.wait === true ? 60 : cmdOpts.wait ? Number(cmdOpts.wait) : undefined;
-			await connectCommand(inviteUrl, !!cmdOpts.yes, opts, waitSeconds);
-		});
+		.action(
+			async (
+				inviteUrl: string,
+				cmdOpts: { dryRun?: boolean; yes?: boolean; wait?: string | boolean },
+			) => {
+				const opts = program.opts<GlobalOptions>();
+				const { connectCommand } = await import("./commands/connect.js");
+				const waitSeconds =
+					cmdOpts.wait === true ? 60 : cmdOpts.wait ? Number(cmdOpts.wait) : undefined;
+				await connectCommand(inviteUrl, !!cmdOpts.yes, opts, waitSeconds, !!cmdOpts.dryRun);
+			},
+		);
 
 	const permissions = program.command("permissions").description("Manage directional grants");
 
@@ -332,10 +372,14 @@ Examples:
 		.description("Publish the grants you give to a peer from a JSON file")
 		.requiredOption("--file <path>", "Path to a JSON grant file")
 		.option("--note <text>", "Optional note recorded in the ledger")
-		.action(async (peer: string, cmdOpts: { file: string; note?: string }) => {
+		.option("--dry-run", "Validate the grant set and preview the update without sending it")
+		.action(async (peer: string, cmdOpts: { file: string; note?: string; dryRun?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { permissionsGrantCommand } = await import("./commands/permissions-grant.js");
-			await permissionsGrantCommand(peer, cmdOpts.file, opts, { note: cmdOpts.note });
+			await permissionsGrantCommand(peer, cmdOpts.file, opts, {
+				note: cmdOpts.note,
+				dryRun: cmdOpts.dryRun,
+			});
 		});
 
 	permissions
@@ -343,10 +387,14 @@ Examples:
 		.description("Request that a peer grants you permissions from a JSON file")
 		.requiredOption("--file <path>", "Path to a JSON grant file")
 		.option("--note <text>", "Optional note included with the request")
-		.action(async (peer: string, cmdOpts: { file: string; note?: string }) => {
+		.option("--dry-run", "Validate the grant request and preview it without sending")
+		.action(async (peer: string, cmdOpts: { file: string; note?: string; dryRun?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { permissionsRequestCommand } = await import("./commands/permissions-request.js");
-			await permissionsRequestCommand(peer, cmdOpts.file, opts, { note: cmdOpts.note });
+			await permissionsRequestCommand(peer, cmdOpts.file, opts, {
+				note: cmdOpts.note,
+				dryRun: cmdOpts.dryRun,
+			});
 		});
 
 	permissions
@@ -354,10 +402,14 @@ Examples:
 		.description("Revoke one grant you previously published to a peer")
 		.requiredOption("--grant-id <id>", "Grant ID to revoke")
 		.option("--note <text>", "Optional note recorded in the ledger")
-		.action(async (peer: string, cmdOpts: { grantId: string; note?: string }) => {
+		.option("--dry-run", "Preview the revocation without sending it")
+		.action(async (peer: string, cmdOpts: { grantId: string; note?: string; dryRun?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { permissionsRevokeCommand } = await import("./commands/permissions-revoke.js");
-			await permissionsRevokeCommand(peer, cmdOpts.grantId, opts, { note: cmdOpts.note });
+			await permissionsRevokeCommand(peer, cmdOpts.grantId, opts, {
+				note: cmdOpts.note,
+				dryRun: cmdOpts.dryRun,
+			});
 		});
 
 	// contacts
@@ -411,10 +463,18 @@ Examples:
 		.option("--chain <chain>", "Chain alias or CAIP-2 ID (defaults to local config chain)")
 		.option("--to <address>", "Recipient address (defaults to this agent wallet)")
 		.option("--note <text>", "Optional note included with the request")
+		.option("--dry-run", "Validate and preview the request without sending it")
 		.action(
 			async (
 				peer: string,
-				cmdOpts: { asset: string; amount: string; chain?: string; to?: string; note?: string },
+				cmdOpts: {
+					asset: string;
+					amount: string;
+					chain?: string;
+					to?: string;
+					note?: string;
+					dryRun?: boolean;
+				},
 			) => {
 				const opts = program.opts<GlobalOptions>();
 				const { messageRequestFundsCommand } = await import("./commands/message-request-funds.js");
@@ -448,6 +508,7 @@ Examples:
 		.option("--preferred <datetime>", "Preferred time (ISO 8601)")
 		.option("--location <location>", "Meeting location")
 		.option("--note <note>", "Additional note")
+		.option("--dry-run", "Validate and preview the meeting request without sending it")
 		.action(
 			async (
 				peer: string,
@@ -457,6 +518,7 @@ Examples:
 					preferred?: string;
 					location?: string;
 					note?: string;
+					dryRun?: boolean;
 				},
 			) => {
 				const opts = program.opts<GlobalOptions>();
@@ -473,10 +535,11 @@ Examples:
 		.option("--accept", "Accept the scheduling request")
 		.option("--reject", "Reject the scheduling request")
 		.option("--reason <reason>", "Reason for rejection")
+		.option("--dry-run", "Preview the response without resolving the pending request")
 		.action(
 			async (
 				schedulingId: string,
-				cmdOpts: { accept?: boolean; reject?: boolean; reason?: string },
+				cmdOpts: { accept?: boolean; reject?: boolean; reason?: string; dryRun?: boolean },
 			) => {
 				const opts = program.opts<GlobalOptions>();
 				const { messageRespondMeetingCommand } = await import(
@@ -490,7 +553,8 @@ Examples:
 		.command("cancel-meeting <schedulingId>")
 		.description("Cancel a previously requested or accepted meeting")
 		.option("--reason <reason>", "Reason for cancellation")
-		.action(async (schedulingId: string, cmdOpts: { reason?: string }) => {
+		.option("--dry-run", "Preview the cancellation without sending it")
+		.action(async (schedulingId: string, cmdOpts: { reason?: string; dryRun?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { messageCancelMeetingCommand } = await import("./commands/message-cancel-meeting.js");
 			await messageCancelMeetingCommand(schedulingId, cmdOpts, opts);
@@ -543,15 +607,11 @@ Examples:
 	// Error handling
 	program.exitOverride();
 	program.configureOutput({
-		writeErr: (str) => {
-			if (!str.includes("(outputHelp)")) {
-				process.stderr.write(str);
-			}
-		},
+		writeErr: () => {},
 	});
 
-	program.hook("postAction", () => {
-		// Commands handle their own exit
+	program.hook("preAction", (_, actionCommand) => {
+		Object.assign(program.opts(), { commandPath: commandPath(actionCommand) });
 	});
 
 	process.on("uncaughtException", (err) => {
@@ -560,5 +620,21 @@ Examples:
 		process.exitCode = exitCodeForError(err);
 	});
 
+	attachMetadataHelp(program);
+
 	return program;
+}
+
+function attachMetadataHelp(command: Command): void {
+	const help = formatMetadataHelp(commandPath(command));
+	if (help) {
+		command.addHelpText("after", help);
+	}
+
+	for (const child of command.commands) {
+		if (child.name() === "help") {
+			continue;
+		}
+		attachMetadataHelp(child);
+	}
 }

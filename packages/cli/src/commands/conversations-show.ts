@@ -14,7 +14,7 @@ export async function conversationsShowCommand(id: string, opts: GlobalOptions):
 
 		if (!conversation) {
 			error("NOT_FOUND", `Conversation not found: ${id}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 4;
 			return;
 		}
 

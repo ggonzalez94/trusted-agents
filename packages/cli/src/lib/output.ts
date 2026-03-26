@@ -1,16 +1,43 @@
+import { createRequire } from "node:module";
 import type { GlobalOptions } from "../types.js";
+import type { OutputFormat } from "../types.js";
 
 export interface Envelope<T = unknown> {
+	status: "ok" | "error";
 	ok: boolean;
 	data?: T;
 	error?: { code: string; message: string };
-	meta?: { duration_ms: number; version: string };
+	metadata: {
+		command?: string;
+		duration_ms?: number;
+		format: OutputFormat;
+		pagination?: {
+			limit: number;
+			offset: number;
+			returned: number;
+			total: number;
+		};
+		selected_fields?: string[];
+		version: string;
+	};
 }
 
-function isJsonMode(opts: GlobalOptions): boolean {
-	if (opts.json) return true;
-	if (opts.plain) return false;
-	return !process.stdout.isTTY;
+const require = createRequire(import.meta.url);
+const { version } = require("../../package.json") as { version: string };
+
+export function resolveOutputFormat(opts: GlobalOptions): OutputFormat {
+	if (opts.output === "json" || opts.output === "text" || opts.output === "ndjson") {
+		return opts.output;
+	}
+	if (opts.json) return "json";
+	if (opts.plain) return "text";
+
+	const envFormat = process.env.TAP_OUTPUT_FORMAT ?? process.env.OUTPUT_FORMAT;
+	if (envFormat === "json" || envFormat === "text" || envFormat === "ndjson") {
+		return envFormat;
+	}
+
+	return "json";
 }
 
 /* ── Key label formatting ── */
@@ -27,32 +54,56 @@ function humanizeKey(key: string): string {
 /* ── Public helpers ── */
 
 export function success<T>(data: T, opts: GlobalOptions, startTime?: number): void {
-	const envelope: Envelope<T> = { ok: true, data };
-	if (startTime) {
-		envelope.meta = {
-			duration_ms: Date.now() - startTime,
-			version: "0.1.0",
-		};
+	const format = resolveOutputFormat(opts);
+	const transformed = transformData(data, opts);
+	if (format === "text") {
+		printPlain(transformed.data);
+		return;
+	}
+	if (format === "ndjson") {
+		printNdjson(transformed.data);
+		return;
 	}
 
-	if (isJsonMode(opts)) {
-		process.stdout.write(`${JSON.stringify(envelope)}\n`);
-	} else {
-		printPlain(data);
-	}
+	const envelope: Envelope<T> = {
+		status: "ok",
+		ok: true,
+		data: transformed.data as T,
+		metadata: buildMetadata(opts, format, startTime, transformed),
+	};
+	process.stdout.write(`${stableStringify(envelope)}\n`);
 }
 
 export function error(code: string, message: string, opts: GlobalOptions): void {
+	const format = resolveOutputFormat(opts);
 	const envelope: Envelope = {
+		status: "error",
 		ok: false,
 		error: { code, message },
+		metadata: buildMetadata(opts, format),
 	};
 
-	if (isJsonMode(opts)) {
-		process.stdout.write(`${JSON.stringify(envelope)}\n`);
+	if (format === "json" || format === "ndjson") {
+		process.stdout.write(`${stableStringify(envelope)}\n`);
 	} else {
 		process.stderr.write(`Error [${code}]: ${message}\n`);
 	}
+}
+
+function buildMetadata(
+	opts: GlobalOptions,
+	format: OutputFormat,
+	startTime?: number,
+	transformed?: TransformMetadata,
+): Envelope["metadata"] {
+	return {
+		...(opts.commandPath ? { command: opts.commandPath } : {}),
+		...(startTime !== undefined ? { duration_ms: Date.now() - startTime } : {}),
+		format,
+		...(transformed?.pagination ? { pagination: transformed.pagination } : {}),
+		...(transformed?.selectedFields ? { selected_fields: transformed.selectedFields } : {}),
+		version,
+	};
 }
 
 /* ── Plain-text rendering ── */
@@ -125,6 +176,32 @@ function printPlain(data: unknown): void {
 	}
 
 	process.stdout.write(`${String(data)}\n`);
+}
+
+function printNdjson(data: unknown): void {
+	if (data === null || data === undefined) {
+		return;
+	}
+
+	if (Array.isArray(data)) {
+		for (const item of data) {
+			process.stdout.write(`${stableStringify(item)}\n`);
+		}
+		return;
+	}
+
+	if (typeof data === "object" && data !== null) {
+		const obj = data as Record<string, unknown>;
+		const entries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
+		if (entries.length === 1) {
+			for (const item of entries[0]![1] as unknown[]) {
+				process.stdout.write(`${stableStringify(item)}\n`);
+			}
+			return;
+		}
+	}
+
+	process.stdout.write(`${stableStringify(data)}\n`);
 }
 
 function printKeyValue(label: string, val: unknown, maxLabelLen: number): void {
@@ -206,4 +283,209 @@ export function info(message: string, opts: GlobalOptions): void {
 	if (!opts.quiet) {
 		process.stderr.write(`${message}\n`);
 	}
+}
+
+interface TransformMetadata {
+	data: unknown;
+	pagination?: {
+		limit: number;
+		offset: number;
+		returned: number;
+		total: number;
+	};
+	selectedFields?: string[];
+}
+
+function transformData(data: unknown, opts: GlobalOptions): TransformMetadata {
+	let transformed = data;
+	let selectedFields: string[] | undefined;
+	let pagination: TransformMetadata["pagination"];
+
+	const fields = parseFieldSelection(opts.select ?? opts.fields);
+	if (fields) {
+		transformed = applyFieldSelection(transformed, fields);
+		selectedFields = fields;
+	}
+
+	const limit = parseNonNegativeInteger(opts.limit);
+	const offset = parseNonNegativeInteger(opts.offset) ?? 0;
+	if (limit !== undefined || offset > 0) {
+		const paginated = applyPagination(transformed, limit, offset);
+		transformed = paginated.data;
+		pagination = paginated.pagination;
+	}
+
+	return {
+		data: transformed,
+		...(pagination ? { pagination } : {}),
+		...(selectedFields ? { selectedFields } : {}),
+	};
+}
+
+function parseFieldSelection(raw: string | undefined): string[] | undefined {
+	if (!raw) {
+		return undefined;
+	}
+
+	const fields = raw
+		.split(",")
+		.map((field) => field.trim())
+		.filter(Boolean);
+
+	return fields.length > 0 ? fields : undefined;
+}
+
+function parseNonNegativeInteger(raw: string | number | undefined): number | undefined {
+	if (raw === undefined) {
+		return undefined;
+	}
+
+	const parsed = typeof raw === "number" ? raw : Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return undefined;
+	}
+	return parsed;
+}
+
+function applyFieldSelection(data: unknown, fields: string[]): unknown {
+	if (Array.isArray(data)) {
+		return data.map((item) => selectFields(item, fields));
+	}
+
+	if (typeof data !== "object" || data === null) {
+		return data;
+	}
+
+	const obj = data as Record<string, unknown>;
+	const arrayEntries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
+	if (arrayEntries.length === 1) {
+		const [arrayKey, arrayValue] = arrayEntries[0]!;
+		return {
+			...Object.fromEntries(Object.entries(obj).filter(([key]) => key !== arrayKey)),
+			[arrayKey]: (arrayValue as unknown[]).map((item) => selectFields(item, fields)),
+		};
+	}
+
+	return selectFields(obj, fields);
+}
+
+function selectFields(value: unknown, fields: string[]): unknown {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return value;
+	}
+
+	const result: Record<string, unknown> = {};
+	for (const field of fields) {
+		const path = field.split(".").filter(Boolean);
+		const selected = getPath(value as Record<string, unknown>, path);
+		if (selected !== undefined) {
+			setPath(result, path, selected);
+		}
+	}
+
+	return result;
+}
+
+function getPath(obj: Record<string, unknown>, path: string[]): unknown {
+	let current: unknown = obj;
+	for (const segment of path) {
+		if (typeof current !== "object" || current === null || Array.isArray(current)) {
+			return undefined;
+		}
+		current = (current as Record<string, unknown>)[segment];
+	}
+	return current;
+}
+
+function setPath(target: Record<string, unknown>, path: string[], value: unknown): void {
+	let current = target;
+	for (let index = 0; index < path.length; index += 1) {
+		const segment = path[index]!;
+		if (index === path.length - 1) {
+			current[segment] = value;
+			return;
+		}
+
+		const existing = current[segment];
+		if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
+			current[segment] = {};
+		}
+		current = current[segment] as Record<string, unknown>;
+	}
+}
+
+function applyPagination(
+	data: unknown,
+	limit: number | undefined,
+	offset: number,
+): {
+	data: unknown;
+	pagination?: TransformMetadata["pagination"];
+} {
+	if (Array.isArray(data)) {
+		return paginateArray(data, limit, offset, (items) => items);
+	}
+
+	if (typeof data !== "object" || data === null) {
+		return { data };
+	}
+
+	const obj = data as Record<string, unknown>;
+	const arrayEntries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
+	if (arrayEntries.length !== 1) {
+		return { data };
+	}
+
+	const [arrayKey, arrayValue] = arrayEntries[0]!;
+	const paginated = paginateArray(arrayValue as unknown[], limit, offset, (items) => ({
+		...Object.fromEntries(Object.entries(obj).filter(([key]) => key !== arrayKey)),
+		[arrayKey]: items,
+	}));
+
+	return paginated;
+}
+
+function paginateArray<T>(
+	items: T[],
+	limit: number | undefined,
+	offset: number,
+	wrap: (items: T[]) => unknown,
+): {
+	data: unknown;
+	pagination: NonNullable<TransformMetadata["pagination"]>;
+} {
+	const boundedOffset = Math.min(offset, items.length);
+	const sliced =
+		limit === undefined
+			? items.slice(boundedOffset)
+			: items.slice(boundedOffset, boundedOffset + limit);
+
+	return {
+		data: wrap(sliced),
+		pagination: {
+			limit: limit ?? sliced.length,
+			offset: boundedOffset,
+			returned: sliced.length,
+			total: items.length,
+		},
+	};
+}
+
+function stableStringify(value: unknown): string {
+	return JSON.stringify(sortValue(value));
+}
+
+function sortValue(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map(sortValue);
+	}
+	if (typeof value !== "object" || value === null) {
+		return value;
+	}
+
+	return Object.fromEntries(
+		Object.entries(value)
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([key, innerValue]) => [key, sortValue(innerValue)]),
+	);
 }

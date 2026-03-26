@@ -16,7 +16,7 @@ export async function permissionsRevokeCommand(
 	peer: string,
 	grantId: string,
 	opts: GlobalOptions,
-	cmdOpts?: { note?: string },
+	cmdOpts?: { note?: string; dryRun?: boolean },
 ): Promise<void> {
 	const startTime = Date.now();
 
@@ -31,7 +31,7 @@ export async function permissionsRevokeCommand(
 		);
 		if (!contact) {
 			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 4;
 			return;
 		}
 
@@ -48,7 +48,23 @@ export async function permissionsRevokeCommand(
 		const match = grantSet.grants.find((grant) => grant.grantId === grantId);
 		if (!match) {
 			error("NOT_FOUND", `Grant not found for ${contact.peerDisplayName}: ${grantId}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 4;
+			return;
+		}
+
+		if (cmdOpts?.dryRun) {
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					peer: contact.peerDisplayName,
+					agent_id: contact.peerAgentId,
+					grant: match,
+					note: cmdOpts.note ?? `Revoked ${grantId}`,
+				},
+				opts,
+				startTime,
+			);
 			return;
 		}
 

@@ -10,6 +10,7 @@ export interface RespondMeetingOptions {
 	accept?: boolean;
 	reject?: boolean;
 	reason?: string;
+	dryRun?: boolean;
 }
 
 export async function messageRespondMeetingCommand(
@@ -50,6 +51,23 @@ export async function messageRespondMeetingCommand(
 			throw new ValidationError(
 				`No pending scheduling request found with schedulingId: ${schedulingId}`,
 			);
+		}
+
+		if (cmdOpts.dryRun) {
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					scheduling_id: schedulingId,
+					action: approve ? "accept" : "reject",
+					request_id: matching.requestId,
+					peer_agent_id: matching.peerAgentId,
+					...(cmdOpts.reason ? { reason: cmdOpts.reason } : {}),
+				},
+				opts,
+				startTime,
+			);
+			return;
 		}
 
 		const report = await service.resolvePending(matching.requestId, approve, cmdOpts.reason);

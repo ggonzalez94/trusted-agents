@@ -7,6 +7,7 @@ import type { GlobalOptions } from "../types.js";
 
 export interface CancelMeetingOptions {
 	reason?: string;
+	dryRun?: boolean;
 }
 
 export async function messageCancelMeetingCommand(
@@ -17,6 +18,20 @@ export async function messageCancelMeetingCommand(
 	const startTime = Date.now();
 
 	try {
+		if (cmdOpts.dryRun) {
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					scheduling_id: schedulingId,
+					...(cmdOpts.reason ? { reason: cmdOpts.reason } : {}),
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
 		const config = await loadConfig(opts);
 		const ctx = buildContextWithTransport(config);
 		const service = createCliTapMessagingService(ctx, opts, {

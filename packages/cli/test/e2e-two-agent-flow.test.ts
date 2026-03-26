@@ -456,8 +456,8 @@ describe("two-agent CLI E2E flow", () => {
 			"--note",
 			"rejected deterministic request",
 		]);
-		expect([0, 5]).toContain(rejectedFundsRequest.exitCode);
-		if (rejectedFundsRequest.exitCode === 5) {
+		expect([0, 3]).toContain(rejectedFundsRequest.exitCode);
+		if (rejectedFundsRequest.exitCode === 3) {
 			expect(rejectedFundsRequest.stderr).toContain("Action rejected by agent");
 		}
 

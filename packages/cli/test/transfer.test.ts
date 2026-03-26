@@ -248,6 +248,31 @@ describe("tap transfer", () => {
 		expect(output.data?.chain).toBe("eip155:8453");
 	});
 
+	it("returns a preview and skips execution in dry-run mode", async () => {
+		await transferCommand(
+			{
+				to: "0x1111111111111111111111111111111111111111",
+				asset: "usdc",
+				amount: "5",
+				chain: "base",
+				dryRun: true,
+			},
+			{ output: "json" },
+		);
+
+		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
+		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
+
+		const output = JSON.parse(stdoutWrites.join("")) as {
+			status: string;
+			data?: Record<string, unknown>;
+		};
+		expect(output.status).toBe("ok");
+		expect(output.data?.status).toBe("preview");
+		expect(output.data?.dry_run).toBe(true);
+		expect(output.data?.execution_mode).toBe("eip7702");
+	});
+
 	it("passes the USDC contract address (not recipient) to gas estimation", async () => {
 		const estimateGas = vi.fn().mockResolvedValue(65000n);
 		vi.mocked(walletLib.buildPublicClient).mockReturnValue({

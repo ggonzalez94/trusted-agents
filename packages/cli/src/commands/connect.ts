@@ -24,6 +24,7 @@ export async function connectCommand(
 	autoApprove: boolean,
 	opts: GlobalOptions,
 	waitSeconds?: number,
+	dryRun = false,
 ): Promise<void> {
 	const startTime = Date.now();
 
@@ -32,7 +33,7 @@ export async function connectCommand(
 		const chainId = caip2ToChainId(config.chain);
 		if (chainId === null) {
 			error("VALIDATION_ERROR", `Invalid chain format: ${config.chain}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 2;
 			return;
 		}
 
@@ -50,7 +51,7 @@ export async function connectCommand(
 		});
 		if (!verification.valid) {
 			error("VALIDATION_ERROR", verification.error ?? "Invite verification failed", opts);
-			process.exitCode = 1;
+			process.exitCode = 2;
 			return;
 		}
 
@@ -64,6 +65,25 @@ export async function connectCommand(
 			opts,
 		);
 
+		if (dryRun) {
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					peer_name: peerAgent.registrationFile.name,
+					peer_agent_id: peerAgent.agentId,
+					peer_chain: peerAgent.chain,
+					capabilities: peerAgent.capabilities,
+					invite_expires_at: new Date(invite.expires * 1000).toISOString(),
+					verified: verification.valid,
+					wait_seconds: waitSeconds ?? null,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
 		if (!autoApprove) {
 			info(
 				`Send connection request to ${peerAgent.registrationFile.name} (#${peerAgent.agentId})?`,
@@ -72,7 +92,7 @@ export async function connectCommand(
 			info("Use --yes to approve in non-interactive mode", opts);
 			if (!process.stdin.isTTY) {
 				error("VALIDATION_ERROR", "Use --yes to approve in non-interactive mode", opts);
-				process.exitCode = 1;
+				process.exitCode = 2;
 				return;
 			}
 			const answer = await promptYesNo("Proceed? [y/N] ");

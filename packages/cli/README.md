@@ -18,10 +18,13 @@ tap init --chain base
 tap register --name "MyAgent" --description "Personal assistant" --capabilities "general-chat"
 ```
 
-Then run:
+For agent-first discovery and execution:
 
 ```bash
-tap --help
+tap schema
+tap contacts list --describe
+tap contacts list --output json --select name,status --limit 10
+tap connect "<invite-url>" --dry-run
 ```
 
 ## Common Commands
@@ -29,8 +32,9 @@ tap --help
 - `tap install --runtime codex`
 - `tap balance`
 - `tap invite create`
-- `tap connect <invite-url>`
+- `tap connect <invite-url> --dry-run`
 - `tap message send <peer> <message> --scope general-chat`
+- `cat grants.json | tap permissions grant <peer> --file - --dry-run`
 
 ## More
 

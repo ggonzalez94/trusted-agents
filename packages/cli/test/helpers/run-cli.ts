@@ -1,4 +1,7 @@
 import { createCli } from "../../src/cli.js";
+import { normalizeCliArgv, readGlobalOptionsFromArgv } from "../../src/lib/argv.js";
+import { exitCodeForError } from "../../src/lib/errors.js";
+import { error } from "../../src/lib/output.js";
 
 export interface CliRunResult {
 	stdout: string;
@@ -25,20 +28,29 @@ export async function runCli(args: string[]): Promise<CliRunResult> {
 
 	try {
 		const program = createCli();
-		await program.parseAsync(args, { from: "user" });
-	} catch (error) {
-		const err = error as Error & { code?: string };
+		const argv = normalizeCliArgv(["node", "tap", ...args]);
+		await program.parseAsync(argv);
+	} catch (caught) {
+		const err = caught as Error & { code?: string };
 		if (
 			err.code !== "commander.helpDisplayed" &&
 			err.code !== "commander.version" &&
+			err.code !== "commander.unknownCommand" &&
 			err.code !== "commander.missingArgument" &&
 			err.code !== "commander.unknownOption" &&
 			err.code !== "commander.missingMandatoryOptionValue"
 		) {
-			throw error;
-		}
-		if (process.exitCode === undefined || process.exitCode === 0) {
-			process.exitCode = 2;
+			error("UNEXPECTED_ERROR", stripCommanderPrefix(err.message), {});
+			process.exitCode = exitCodeForError(err);
+		} else {
+			error(
+				"USAGE_ERROR",
+				stripCommanderPrefix(err.message),
+				readGlobalOptionsFromArgv(["node", "tap", ...args]),
+			);
+			if (process.exitCode === undefined || process.exitCode === 0) {
+				process.exitCode = 2;
+			}
 		}
 	} finally {
 		process.stdout.write = origStdoutWrite;
@@ -48,4 +60,8 @@ export async function runCli(args: string[]): Promise<CliRunResult> {
 	const exitCode = process.exitCode ?? 0;
 	process.exitCode = origExitCode;
 	return { stdout: stdout.join(""), stderr: stderr.join(""), exitCode };
+}
+
+function stripCommanderPrefix(message: string): string {
+	return message.replace(/^error:\s*/i, "");
 }

@@ -12,18 +12,20 @@ import {
 export const EXIT_SUCCESS = 0;
 export const EXIT_GENERAL_ERROR = 1;
 export const EXIT_USAGE_ERROR = 2;
-export const EXIT_NETWORK_ERROR = 3;
-export const EXIT_IDENTITY_ERROR = 4;
-export const EXIT_PERMISSION_ERROR = 5;
+export const EXIT_AUTH_ERROR = 3;
+export const EXIT_NOT_FOUND = 4;
+export const EXIT_TEMPORARY_ERROR = 5;
 
 export function exitCodeForError(err: unknown): number {
-	if (err instanceof TransportError) return EXIT_NETWORK_ERROR;
-	if (err instanceof IdentityError) return EXIT_IDENTITY_ERROR;
-	if (err instanceof AuthenticationError) return EXIT_IDENTITY_ERROR;
-	if (err instanceof PermissionError) return EXIT_PERMISSION_ERROR;
-	if (err instanceof ConnectionError) return EXIT_PERMISSION_ERROR;
-	if (err instanceof ConfigError) return EXIT_GENERAL_ERROR;
-	if (err instanceof ValidationError) return EXIT_GENERAL_ERROR;
+	if (err instanceof TransportError) return EXIT_TEMPORARY_ERROR;
+	if (err instanceof AuthenticationError) return EXIT_AUTH_ERROR;
+	if (err instanceof PermissionError) return EXIT_AUTH_ERROR;
+	if (err instanceof ConnectionError) return EXIT_AUTH_ERROR;
+	if (err instanceof ValidationError) return EXIT_USAGE_ERROR;
+	if (err instanceof ConfigError) return EXIT_USAGE_ERROR;
+	if (err instanceof IdentityError)
+		return errorCode(err).includes("NOT_FOUND") ? EXIT_NOT_FOUND : EXIT_GENERAL_ERROR;
+	if (errorCode(err).includes("NOT_FOUND")) return EXIT_NOT_FOUND;
 	if (err instanceof TrustedAgentError) return EXIT_GENERAL_ERROR;
 	return EXIT_GENERAL_ERROR;
 }
