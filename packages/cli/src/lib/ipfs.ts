@@ -8,7 +8,7 @@ import { createExecutionEvmSigner, createSigningProviderViemAccount } from "trus
 
 const PINATA_X402_ENDPOINT = "https://402.pinata.cloud/v1/pin/public";
 const PINATA_API_ENDPOINT = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
-export const DEFAULT_TACK_API_ENDPOINT = "https://tack-api-production.up.railway.app";
+export const DEFAULT_TACK_API_ENDPOINT = "https://tack.taiko.xyz";
 
 const IPFS_UPLOAD_PROVIDERS = ["auto", "x402", "pinata", "tack"] as const;
 

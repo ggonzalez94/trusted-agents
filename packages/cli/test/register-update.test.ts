@@ -301,6 +301,14 @@ describe("register update", () => {
 		expect(ipfsLib.uploadToIpfsTack).toHaveBeenCalledOnce();
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
 		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
+		expect(ipfsLib.uploadToIpfsTack).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			expect.objectContaining({
+				apiUrl: "https://tack.taiko.xyz",
+			}),
+		);
 	});
 
 	it("honors explicit pinata provider when JWT is supplied", async () => {
