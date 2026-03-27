@@ -9,7 +9,7 @@ import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { findContactForPeer } from "../lib/message-conversations.js";
+import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
@@ -71,6 +71,7 @@ export async function messageRequestMeetingCommand(
 			process.exitCode = 4;
 			return;
 		}
+		assertContactActive(contact, peer);
 
 		if (cmdOpts.dryRun) {
 			success(
