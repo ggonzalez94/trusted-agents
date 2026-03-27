@@ -119,10 +119,10 @@ describe("tap transfer", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: { code?: string; message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("Invalid recipient address");
 		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
@@ -140,10 +140,10 @@ describe("tap transfer", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: { code?: string; message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("Amount must be a positive number");
 	});
@@ -160,10 +160,10 @@ describe("tap transfer", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: { code?: string; message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("Unsupported asset");
 	});
@@ -181,10 +181,10 @@ describe("tap transfer", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: { code?: string; message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("Unknown chain");
 		expect(process.exitCode).toBe(2);
@@ -203,10 +203,10 @@ describe("tap transfer", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: { code?: string; message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("USDC is not supported");
 	});
@@ -237,15 +237,41 @@ describe("tap transfer", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: Record<string, unknown>;
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.status).toBe("submitted");
 		expect(output.data?.tx_hash).toBe(
 			"0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
 		);
 		expect(output.data?.chain).toBe("eip155:8453");
+	});
+
+	it("returns a preview and skips execution in dry-run mode", async () => {
+		await transferCommand(
+			{
+				to: "0x1111111111111111111111111111111111111111",
+				asset: "usdc",
+				amount: "5",
+				chain: "base",
+				dryRun: true,
+			},
+			{ output: "json" },
+		);
+
+		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
+		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
+
+		const output = JSON.parse(stdoutWrites.join("")) as {
+			status: string;
+			data?: Record<string, unknown>;
+		};
+		expect(output.status).toBe("ok");
+		expect(output.data?.status).toBe("preview");
+		expect(output.data?.dry_run).toBe(true);
+		expect(output.data?.scope).toBe("transfer/execute");
+		expect(output.data?.execution_mode).toBe("eip7702");
 	});
 
 	it("passes the USDC contract address (not recipient) to gas estimation", async () => {
@@ -291,10 +317,10 @@ describe("tap transfer", () => {
 
 		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: Record<string, unknown>;
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.status).toBe("cancelled");
 		expect(output.data?.cancelled).toBe(true);
 	});

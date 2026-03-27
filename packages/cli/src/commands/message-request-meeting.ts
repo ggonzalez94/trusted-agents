@@ -9,6 +9,7 @@ import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
@@ -25,6 +26,7 @@ export interface RequestMeetingOptions {
 	preferred?: string;
 	location?: string;
 	note?: string;
+	dryRun?: boolean;
 }
 
 export async function messageRequestMeetingCommand(
@@ -63,6 +65,36 @@ export async function messageRequestMeetingCommand(
 		};
 
 		validateSchedulingProposal(proposal);
+		const contact = findContactForPeer(await ctx.trustStore.getContacts(), peer);
+		if (!contact) {
+			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
+			process.exitCode = 4;
+			return;
+		}
+		assertContactActive(contact, peer);
+
+		if (cmdOpts.dryRun) {
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					peer: contact.peerDisplayName,
+					agent_id: contact.peerAgentId,
+					scheduling_id: schedulingId,
+					title: proposal.title,
+					duration: proposal.duration,
+					slot_count: proposal.slots.length,
+					slots: proposal.slots,
+					scope: "scheduling/request",
+					origin_timezone: proposal.originTimezone,
+					...(proposal.location ? { location: proposal.location } : {}),
+					...(proposal.note ? { note: proposal.note } : {}),
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
 
 		verbose(`Requesting meeting with ${peer}: "${cmdOpts.title}"...`, opts);
 

@@ -29,31 +29,34 @@ describe("output", () => {
 
 	it("should output JSON envelope on success with --json", async () => {
 		const { success } = await import("../src/lib/output.js");
-		success({ foo: "bar" }, { json: true });
+		success({ foo: "bar" }, { output: "json" });
 		expect(stdoutWrites).toHaveLength(1);
 		const parsed = JSON.parse(stdoutWrites[0]!);
-		expect(parsed.ok).toBe(true);
+		expect(parsed.status).toBe("ok");
 		expect(parsed.data).toEqual({ foo: "bar" });
+		expect(parsed.metadata.format).toBe("json");
 	});
 
 	it("should include meta with duration when startTime provided", async () => {
 		const { success } = await import("../src/lib/output.js");
 		const startTime = Date.now() - 100;
-		success({ x: 1 }, { json: true }, startTime);
+		success({ x: 1 }, { output: "json", commandPath: "tap config show" }, startTime);
 		const parsed = JSON.parse(stdoutWrites[0]!);
-		expect(parsed.ok).toBe(true);
-		expect(parsed.meta).toBeDefined();
-		expect(parsed.meta.duration_ms).toBeGreaterThanOrEqual(0);
-		expect(parsed.meta.version).toBe("0.1.0");
+		expect(parsed.status).toBe("ok");
+		expect(parsed.metadata).toBeDefined();
+		expect(parsed.metadata.duration_ms).toBeGreaterThanOrEqual(0);
+		expect(parsed.metadata.command).toBe("tap config show");
+		expect(parsed.metadata.format).toBe("json");
 	});
 
 	it("should output error envelope in JSON mode", async () => {
 		const { error } = await import("../src/lib/output.js");
-		error("TEST_ERROR", "something went wrong", { json: true });
+		error("TEST_ERROR", "something went wrong", { output: "json" });
 		const parsed = JSON.parse(stdoutWrites[0]!);
-		expect(parsed.ok).toBe(false);
+		expect(parsed.status).toBe("error");
 		expect(parsed.error.code).toBe("TEST_ERROR");
 		expect(parsed.error.message).toBe("something went wrong");
+		expect(parsed.metadata.format).toBe("json");
 	});
 
 	it("should write error to stderr in plain mode", async () => {
@@ -98,5 +101,30 @@ describe("output", () => {
 		);
 		expect(stdoutWrites.join("")).toContain('"content": "hello"');
 		expect(stdoutWrites.join("")).not.toContain("[object Object]");
+	});
+
+	it("applies field selection and pagination before writing JSON envelopes", async () => {
+		const { success } = await import("../src/lib/output.js");
+		success(
+			{
+				contacts: [
+					{ name: "Alpha", status: "active", connection_id: "c1" },
+					{ name: "Beta", status: "pending", connection_id: "c2" },
+				],
+			},
+			{ output: "json", select: "name,status", limit: 1, offset: 0 },
+		);
+
+		const parsed = JSON.parse(stdoutWrites[0]!);
+		expect(parsed.data).toEqual({
+			contacts: [{ name: "Alpha", status: "active" }],
+		});
+		expect(parsed.metadata.pagination).toEqual({
+			limit: 1,
+			offset: 0,
+			returned: 1,
+			total: 2,
+		});
+		expect(parsed.metadata.selected_fields).toEqual(["name", "status"]);
 	});
 });

@@ -133,7 +133,7 @@ describe("tap remove", () => {
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("--unsafe-wipe-data-dir");
 		expect(existsSync(dataDir)).toBe(true);
 	});
@@ -143,7 +143,7 @@ describe("tap remove", () => {
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("--yes");
 		expect(existsSync(dataDir)).toBe(true);
 	});
@@ -165,7 +165,7 @@ describe("tap remove", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.removed).toBe(false);
 		expect(output.data.aborted).toBe(true);
 		expect(existsSync(dataDir)).toBe(true);
@@ -193,7 +193,7 @@ describe("tap remove", () => {
 
 		expect(process.exitCode).toBe(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("owns the transport");
 		expect(existsSync(dataDir)).toBe(true);
 	});
@@ -208,7 +208,7 @@ describe("tap remove", () => {
 
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("non-TAP top-level entries");
 		expect(existsSync(dataDir)).toBe(true);
 	});
@@ -221,7 +221,7 @@ describe("tap remove", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.removed).toBe(true);
 		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "config.yaml"));
 		expect(existsSync(dataDir)).toBe(false);
@@ -238,7 +238,7 @@ describe("tap remove", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.dry_run).toBe(true);
 		expect(output.data.paths_to_remove).toEqual([]);
 		expect(output.data.can_remove).toBe(false);
@@ -253,7 +253,7 @@ describe("tap remove", () => {
 
 		expect(process.exitCode).toBe(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("External config paths are not supported");
 	});
 
@@ -263,7 +263,7 @@ describe("tap remove", () => {
 		await removeCommandModule.removeCommand({ dryRun: true }, { json: true, dataDir });
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.can_remove).toBe(false);
 		expect(output.data.blocking_reasons[0]).toContain("non-TAP top-level entries");
 		expect(output.data.paths_to_remove).not.toContain(join(dataDir, "keep.txt"));
@@ -275,7 +275,7 @@ describe("tap remove", () => {
 		);
 
 		const blocked = JSON.parse(stdoutWrites[0]!);
-		expect(blocked.ok).toBe(false);
+		expect(blocked.status).toBe("error");
 		expect(blocked.error.message).toContain("non-TAP top-level entries");
 		expect(existsSync(join(dataDir, "keep.txt"))).toBe(true);
 		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
@@ -295,7 +295,7 @@ describe("tap remove", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.data_dir).toBe(resolvedActualDataDir);
 		expect(output.data.removed_paths).toContain(join(resolvedActualDataDir, "config.yaml"));
 		expect(existsSync(actualDataDir)).toBe(false);
@@ -335,7 +335,7 @@ describe("tap remove", () => {
 		await removeCommandModule.removeCommand({ unsafeWipeDataDir: true }, { json: true, dataDir });
 
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.removed).toBe(false);
 		expect(output.data.aborted).toBe(true);
 		expect(output.data.funds_transfer.attempted).toBe(false);

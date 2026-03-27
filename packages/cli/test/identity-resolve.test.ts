@@ -69,10 +69,10 @@ describe("identity resolve", () => {
 
 		expect(resolve).toHaveBeenCalledWith(42, "eip155:1");
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: { agent_id?: number; chain?: string };
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.agent_id).toBe(42);
 		expect(output.data?.chain).toBe("eip155:1");
 	});

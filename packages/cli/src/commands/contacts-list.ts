@@ -8,7 +8,7 @@ export async function contactsListCommand(opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
 	try {
-		const config = await loadConfig(opts);
+		const config = await loadConfig(opts, { requireAgentId: false });
 		const store = new FileTrustStore(config.dataDir);
 		const contacts = await store.getContacts();
 

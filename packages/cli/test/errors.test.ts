@@ -10,41 +10,48 @@ import {
 } from "trusted-agents-core";
 import { describe, expect, it } from "vitest";
 import {
+	EXIT_AUTH_ERROR,
 	EXIT_GENERAL_ERROR,
-	EXIT_IDENTITY_ERROR,
-	EXIT_NETWORK_ERROR,
-	EXIT_PERMISSION_ERROR,
+	EXIT_NOT_FOUND,
+	EXIT_TEMPORARY_ERROR,
+	EXIT_USAGE_ERROR,
 	errorCode,
 	exitCodeForError,
 } from "../src/lib/errors.js";
 
 describe("exitCodeForError", () => {
-	it("should return 3 for TransportError", () => {
-		expect(exitCodeForError(new TransportError("fail"))).toBe(EXIT_NETWORK_ERROR);
+	it("should return 5 for TransportError", () => {
+		expect(exitCodeForError(new TransportError("fail"))).toBe(EXIT_TEMPORARY_ERROR);
 	});
 
-	it("should return 4 for IdentityError", () => {
-		expect(exitCodeForError(new IdentityError("fail"))).toBe(EXIT_IDENTITY_ERROR);
+	it("should return 1 for generic IdentityError", () => {
+		expect(exitCodeForError(new IdentityError("fail"))).toBe(EXIT_GENERAL_ERROR);
 	});
 
-	it("should return 4 for AuthenticationError", () => {
-		expect(exitCodeForError(new AuthenticationError("fail"))).toBe(EXIT_IDENTITY_ERROR);
+	it("should return 3 for AuthenticationError", () => {
+		expect(exitCodeForError(new AuthenticationError("fail"))).toBe(EXIT_AUTH_ERROR);
 	});
 
-	it("should return 5 for PermissionError", () => {
-		expect(exitCodeForError(new PermissionError("fail"))).toBe(EXIT_PERMISSION_ERROR);
+	it("should return 3 for PermissionError", () => {
+		expect(exitCodeForError(new PermissionError("fail"))).toBe(EXIT_AUTH_ERROR);
 	});
 
-	it("should return 5 for ConnectionError", () => {
-		expect(exitCodeForError(new ConnectionError("fail"))).toBe(EXIT_PERMISSION_ERROR);
+	it("should return 3 for ConnectionError", () => {
+		expect(exitCodeForError(new ConnectionError("fail"))).toBe(EXIT_AUTH_ERROR);
 	});
 
-	it("should return 1 for ConfigError", () => {
-		expect(exitCodeForError(new ConfigError("fail"))).toBe(EXIT_GENERAL_ERROR);
+	it("should return 2 for ConfigError", () => {
+		expect(exitCodeForError(new ConfigError("fail"))).toBe(EXIT_USAGE_ERROR);
 	});
 
-	it("should return 1 for ValidationError", () => {
-		expect(exitCodeForError(new ValidationError("fail"))).toBe(EXIT_GENERAL_ERROR);
+	it("should return 2 for ValidationError", () => {
+		expect(exitCodeForError(new ValidationError("fail"))).toBe(EXIT_USAGE_ERROR);
+	});
+
+	it("should return 4 for NOT_FOUND style errors", () => {
+		expect(exitCodeForError(new TrustedAgentError("missing peer", "NOT_FOUND"))).toBe(
+			EXIT_NOT_FOUND,
+		);
 	});
 
 	it("should return 1 for generic TrustedAgentError", () => {

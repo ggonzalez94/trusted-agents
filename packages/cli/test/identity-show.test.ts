@@ -102,10 +102,10 @@ describe("tap identity show", () => {
 		expect(configLoader.loadConfig).toHaveBeenCalledWith({ json: true }, { requireAgentId: false });
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: Record<string, unknown>;
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.agent_id).toBe(-1);
 		expect(output.data?.execution_mode).toBe("eip7702");
 		expect(output.data?.execution_address).toBe(ADDRESS);
@@ -131,10 +131,10 @@ describe("tap identity show", () => {
 		await identityShowCommand({ json: true });
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: { message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.message).toContain("tap migrate-wallet");
 		expect(mockOwsProvider).not.toHaveBeenCalled();
 	});

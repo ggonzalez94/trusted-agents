@@ -1,5 +1,5 @@
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
+import { buildContext, buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
 import { createCliTapMessagingService } from "../lib/tap-service.js";
@@ -7,6 +7,7 @@ import type { GlobalOptions } from "../types.js";
 
 export interface CancelMeetingOptions {
 	reason?: string;
+	dryRun?: boolean;
 }
 
 export async function messageCancelMeetingCommand(
@@ -17,6 +18,39 @@ export async function messageCancelMeetingCommand(
 	const startTime = Date.now();
 
 	try {
+		if (cmdOpts.dryRun) {
+			const config = await loadConfig(opts);
+			const ctx = buildContext(config);
+			const entries = await ctx.requestJournal.list();
+			const match = entries.find((entry) => {
+				const request = entry.metadata?.request;
+				if (typeof request !== "object" || request === null) return false;
+				const req = request as { type?: string; payload?: { schedulingId?: string } };
+				return req.type === "scheduling-request" && req.payload?.schedulingId === schedulingId;
+			});
+
+			if (!match) {
+				error("NOT_FOUND", `No scheduling request found with schedulingId: ${schedulingId}`, opts);
+				process.exitCode = 4;
+				return;
+			}
+
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					scope: "scheduling/cancel",
+					scheduling_id: schedulingId,
+					request_id: match.requestId,
+					peer_agent_id: match.peerAgentId,
+					...(cmdOpts.reason ? { reason: cmdOpts.reason } : {}),
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
 		const config = await loadConfig(opts);
 		const ctx = buildContextWithTransport(config);
 		const service = createCliTapMessagingService(ctx, opts, {

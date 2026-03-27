@@ -1,0 +1,4 @@
+interface:
+  display_name: "Trusted Agents"
+  short_description: "Operate TAP agents end-to-end safely"
+  default_prompt: "Use TAP to inspect state, onboard or migrate an agent, connect to peers, manage permissions, and handle messaging, transfer, or scheduling workflows safely."

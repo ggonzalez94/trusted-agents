@@ -12,7 +12,7 @@ export async function permissionsShowCommand(
 	const startTime = Date.now();
 
 	try {
-		const config = await loadConfig(opts);
+		const config = await loadConfig(opts, { requireAgentId: false });
 		const store = new FileTrustStore(config.dataDir);
 		const contacts = await store.getContacts();
 
@@ -37,7 +37,7 @@ export async function permissionsShowCommand(
 		const contact = findContactForPeer(contacts, peer);
 		if (!contact) {
 			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 4;
 			return;
 		}
 

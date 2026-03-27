@@ -9,7 +9,7 @@ import {
 } from "trusted-agents-core";
 
 export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
-	const raw = await readFile(path, "utf-8");
+	const raw = path === "-" ? await readGrantStdin() : await readFile(path, "utf-8");
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
@@ -20,6 +20,19 @@ export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
 	}
 
 	return normalizeGrantInput(parsed);
+}
+
+async function readGrantStdin(): Promise<string> {
+	if (process.stdin.isTTY) {
+		throw new ValidationError("Grant input '-' requires piped JSON on stdin");
+	}
+
+	const chunks: Buffer[] = [];
+	for await (const chunk of process.stdin) {
+		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+	}
+
+	return Buffer.concat(chunks).toString("utf-8");
 }
 
 export function normalizeGrantInput(input: unknown): PermissionGrantSet {

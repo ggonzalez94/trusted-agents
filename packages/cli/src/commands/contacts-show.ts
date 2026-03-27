@@ -8,7 +8,7 @@ export async function contactsShowCommand(nameOrId: string, opts: GlobalOptions)
 	const startTime = Date.now();
 
 	try {
-		const config = await loadConfig(opts);
+		const config = await loadConfig(opts, { requireAgentId: false });
 		const store = new FileTrustStore(config.dataDir);
 		const contacts = await store.getContacts();
 
@@ -23,7 +23,7 @@ export async function contactsShowCommand(nameOrId: string, opts: GlobalOptions)
 
 		if (!contact) {
 			error("NOT_FOUND", `Contact not found: ${nameOrId}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 4;
 			return;
 		}
 

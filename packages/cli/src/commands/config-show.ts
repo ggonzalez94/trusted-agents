@@ -8,7 +8,7 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
 	try {
-		const config = await loadConfig(opts);
+		const config = await loadConfig(opts, { requireAgentId: false });
 		const legacyWarning = getLegacyWalletMigrationWarning({
 			dataDir: config.dataDir,
 			owsWallet: config.ows.wallet,

@@ -19,7 +19,7 @@ export async function contactsRemoveCommand(
 		const exists = contacts.some((c) => c.connectionId === connectionId);
 		if (!exists) {
 			error("NOT_FOUND", `Contact not found: ${connectionId}`, opts);
-			process.exitCode = 1;
+			process.exitCode = 4;
 			return;
 		}
 

@@ -139,7 +139,7 @@ describe("tap migrate-wallet", () => {
 		// JSON output should indicate success
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.status).toBe("migrated");
 		expect(output.data.wallet).toBe("tap-agent-42");
 		expect(output.data.address).toBe(TEST_ADDRESS);
@@ -154,7 +154,7 @@ describe("tap migrate-wallet", () => {
 
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("No config found");
 	});
 
@@ -168,7 +168,7 @@ describe("tap migrate-wallet", () => {
 
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("No key file found");
 	});
 
@@ -184,7 +184,7 @@ describe("tap migrate-wallet", () => {
 
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error.message).toContain("already has OWS wallet configuration");
 
 		// agent.key should NOT be deleted
@@ -272,7 +272,7 @@ describe("tap migrate-wallet", () => {
 
 		expect(result.exitCode).toBe(0);
 		const output = JSON.parse(result.stdout);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.status).toBe("migrated");
 
 		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));

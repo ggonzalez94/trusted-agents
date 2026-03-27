@@ -76,12 +76,41 @@ describe("tap config show", () => {
 		await configShowCommand({ json: true });
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: { ows?: { wallet?: string; api_key?: string }; warnings?: string[] };
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.ows).toEqual({ wallet: "", api_key: "" });
 		expect(output.data?.warnings).toEqual([expect.stringContaining("tap migrate-wallet")]);
 		expect(stderrWrites).toEqual([]);
+	});
+
+	it("loads config show without requiring a registered agent id", async () => {
+		const dataDir = join(tempRoot, "unregistered-agent");
+		await mkdir(dataDir, { recursive: true });
+		await writeFile(
+			join(dataDir, "config.yaml"),
+			[
+				"agent_id: -1",
+				"chain: eip155:8453",
+				"ows:",
+				"  wallet: demo-wallet",
+				"  api_key: demo-key",
+			].join("\n"),
+			"utf-8",
+		);
+
+		await configShowCommand({ output: "json", dataDir });
+
+		const output = JSON.parse(stdoutWrites.join("")) as {
+			status: string;
+			data?: { agent_id?: number; ows?: { wallet?: string; api_key?: string } };
+		};
+		expect(output.status).toBe("ok");
+		expect(output.data?.agent_id).toBe(-1);
+		expect(output.data?.ows).toEqual({
+			wallet: "demo-wallet",
+			api_key: "***redacted***",
+		});
 	});
 });

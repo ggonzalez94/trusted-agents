@@ -125,7 +125,7 @@ describe("tap init", () => {
 		// JSON output
 		expect(stdoutWrites).toHaveLength(1);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data.chain).toBe("eip155:8453");
 		expect(output.data.wallet).toBeTruthy();
 

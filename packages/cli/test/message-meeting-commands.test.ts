@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const {
 	loadConfigMock,
+	buildContextMock,
 	buildContextWithTransportMock,
 	createCliTapMessagingServiceMock,
 	successMock,
@@ -9,6 +10,11 @@ const {
 	verboseMock,
 } = vi.hoisted(() => ({
 	loadConfigMock: vi.fn(async () => ({})),
+	buildContextMock: vi.fn(() => ({
+		requestJournal: {
+			list: vi.fn(async () => []),
+		},
+	})),
 	buildContextWithTransportMock: vi.fn(() => ({})),
 	createCliTapMessagingServiceMock: vi.fn(),
 	successMock: vi.fn(),
@@ -21,6 +27,7 @@ vi.mock("../src/lib/config-loader.js", () => ({
 }));
 
 vi.mock("../src/lib/context.js", () => ({
+	buildContext: buildContextMock,
 	buildContextWithTransport: buildContextWithTransportMock,
 }));
 
@@ -96,5 +103,103 @@ describe("meeting CLI commands", () => {
 		expect(cancelMeeting).toHaveBeenCalledTimes(1);
 		expect(cancelMeeting).toHaveBeenCalledWith("sch-2", "Conflict");
 		expect(errorMock).not.toHaveBeenCalled();
+	});
+
+	it("respond-meeting supports dry-run previews without resolving the request", async () => {
+		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
+		createCliTapMessagingServiceMock.mockReturnValue({
+			listPendingRequests: vi.fn(async () => [
+				{
+					requestId: "inbound-target",
+					peerAgentId: 10,
+					direction: "inbound",
+					kind: "request",
+					method: "action/request",
+					status: "pending",
+					details: { type: "scheduling", schedulingId: "sch-3" },
+				},
+			]),
+			resolvePending,
+		});
+
+		await messageRespondMeetingCommand("sch-3", { accept: true, dryRun: true }, { plain: true });
+
+		expect(resolvePending).not.toHaveBeenCalled();
+		expect(successMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				dry_run: true,
+				scope: "scheduling/respond",
+				scheduling_id: "sch-3",
+				action: "accept",
+				status: "preview",
+			}),
+			expect.anything(),
+			expect.any(Number),
+		);
+	});
+
+	it("cancel-meeting supports dry-run previews without cancelling the request", async () => {
+		const cancelMeeting = vi.fn(async () => ({
+			requestId: "matched-request",
+			peerAgentId: 10,
+			schedulingId: "sch-4",
+			report: { pendingRequests: [] },
+		}));
+		createCliTapMessagingServiceMock.mockReturnValue({
+			cancelMeeting,
+		});
+		buildContextMock.mockReturnValue({
+			requestJournal: {
+				list: vi.fn(async () => [
+					{
+						requestId: "req-4",
+						peerAgentId: 10,
+						metadata: {
+							request: {
+								type: "scheduling-request",
+								payload: { schedulingId: "sch-4" },
+							},
+						},
+					},
+				]),
+			},
+		});
+
+		await messageCancelMeetingCommand(
+			"sch-4",
+			{ reason: "Conflict", dryRun: true },
+			{ plain: true },
+		);
+
+		expect(cancelMeeting).not.toHaveBeenCalled();
+		expect(successMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				dry_run: true,
+				scope: "scheduling/cancel",
+				scheduling_id: "sch-4",
+				request_id: "req-4",
+				peer_agent_id: 10,
+				reason: "Conflict",
+				status: "preview",
+			}),
+			expect.anything(),
+			expect.any(Number),
+		);
+	});
+
+	it("cancel-meeting dry-run errors when no matching scheduling request is found", async () => {
+		buildContextMock.mockReturnValue({
+			requestJournal: {
+				list: vi.fn(async () => []),
+			},
+		});
+
+		await messageCancelMeetingCommand("sch-missing", { dryRun: true }, { plain: true });
+
+		expect(errorMock).toHaveBeenCalledWith(
+			"NOT_FOUND",
+			expect.stringContaining("sch-missing"),
+			expect.anything(),
+		);
 	});
 });

@@ -3,6 +3,7 @@ import {
 	ACTION_REQUEST,
 	ACTION_RESULT,
 	MESSAGE_SEND,
+	ValidationError,
 	assertSafeFileComponent,
 	createJsonRpcRequest,
 	generateNonce,
@@ -40,6 +41,12 @@ export function findUniqueContactForAgentId(
 		(contact) => contact.peerAgentId === agentId && contact.status === "active",
 	);
 	return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function assertContactActive(contact: Contact, peer: string): void {
+	if (contact.status !== "active") {
+		throw new ValidationError(`Cannot send to ${peer}: contact status is "${contact.status}"`);
+	}
 }
 
 export function buildOutgoingMessageRequest(

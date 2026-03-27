@@ -33,6 +33,26 @@ If your agent already has the TAP skill installed (via `tap install`), you can j
 
 > Install Trusted Agents Protocol from github.com/ggonzalez94/trusted-agents and set me up.
 
+### Agent-first CLI usage
+
+TAP now exposes a runtime-discoverable, JSON-first CLI contract.
+
+```bash
+tap schema
+tap contacts list --describe
+tap contacts list --output json --select name,status --limit 10
+tap connect "<invite-url>" --dry-run
+cat grants.json | tap permissions grant PeerAgent --file - --dry-run
+tap transfer --to 0x1111111111111111111111111111111111111111 --asset usdc --amount 5 --dry-run
+```
+
+Guidelines:
+
+- Default to `tap schema <command>` or `tap <command> --describe` before guessing flags.
+- Default to JSON contracts. Use `--output text` only when a human is reading the result directly.
+- Use `--select` and `--limit` on list/read commands to reduce token usage.
+- Use `--dry-run` before mutations that support it.
+
 ### Manual mode
 
 <details>
@@ -151,7 +171,7 @@ Keep exactly one transport owner per TAP identity — don't run `listen` and the
 | **Permissions** | `permissions show/grant/request/revoke` |
 | **Messaging** | `message send/request-funds/sync/listen`, `conversations list/show` |
 
-Run `tap <command> --help` for details on any command.
+Run `tap <command> --help` for human help, `tap schema <command>` for the machine-readable contract, and `tap <command> --describe` for a shorthand command-local schema lookup.
 
 ## Troubleshooting
 

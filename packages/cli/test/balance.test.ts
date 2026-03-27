@@ -118,10 +118,10 @@ describe("tap balance", () => {
 		);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: Record<string, unknown>;
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.address).toBe(ADDRESS);
 		expect(output.data?.messaging_address).toBe(ADDRESS);
 		expect(output.data?.execution_address).toBe(ADDRESS);
@@ -195,10 +195,10 @@ describe("tap balance", () => {
 		expect(buildPublicClientSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			error?: Record<string, unknown>;
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("Unknown chain");
 	});

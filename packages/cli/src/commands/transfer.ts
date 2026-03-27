@@ -23,6 +23,7 @@ interface TransferCommandOptions {
 	asset: string;
 	amount: string;
 	chain?: string;
+	dryRun?: boolean;
 	yes?: boolean;
 }
 
@@ -74,6 +75,42 @@ export async function transferCommand(
 			erc20ContractAddress: usdcAsset?.address,
 			erc20Decimals: usdcAsset?.decimals,
 		});
+		const warnings = [...execution.warnings, ...(gasEstimate.warning ? [gasEstimate.warning] : [])];
+
+		if (cmdOpts.dryRun) {
+			success(
+				{
+					status: "preview",
+					dry_run: true,
+					scope: "transfer/execute",
+					asset,
+					amount,
+					chain,
+					chain_name: chainConfig.name,
+					to_address: toAddress,
+					execution_mode: execution.mode,
+					execution_address: execution.executionAddress,
+					funding_address: execution.fundingAddress,
+					paymaster_provider: execution.paymasterProvider,
+					estimated_gas_units:
+						gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
+					max_fee_per_gas_wei:
+						gasEstimate.maxFeePerGasWei !== undefined
+							? gasEstimate.maxFeePerGasWei.toString()
+							: undefined,
+					max_priority_fee_per_gas_wei:
+						gasEstimate.maxPriorityFeePerGasWei !== undefined
+							? gasEstimate.maxPriorityFeePerGasWei.toString()
+							: undefined,
+					gas_price_wei:
+						gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+					warnings: warnings.length > 0 ? warnings : undefined,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
 
 		const approved = cmdOpts.yes
 			? true
@@ -116,7 +153,6 @@ export async function transferCommand(
 		const txUrl = chainConfig.blockExplorerUrl
 			? `${chainConfig.blockExplorerUrl.replace(/\/$/, "")}/tx/${transfer.txHash}`
 			: undefined;
-		const warnings = [...execution.warnings, ...(gasEstimate.warning ? [gasEstimate.warning] : [])];
 
 		success(
 			{
