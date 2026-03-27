@@ -1,4 +1,4 @@
-import { nowISO } from "trusted-agents-core";
+import { ValidationError, nowISO } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -34,6 +34,9 @@ export async function permissionsRevokeCommand(
 			process.exitCode = 4;
 			return;
 		}
+		if (contact.status !== "active") {
+			throw new ValidationError(`Cannot send to ${peer}: contact status is "${contact.status}"`);
+		}
 
 		const grantSet = {
 			...contact.permissions.grantedByMe,
@@ -57,8 +60,10 @@ export async function permissionsRevokeCommand(
 				{
 					status: "preview",
 					dry_run: true,
+					scope: "permissions/update",
 					peer: contact.peerDisplayName,
 					agent_id: contact.peerAgentId,
+					connection_id: contact.connectionId,
 					grant: match,
 					note: cmdOpts.note ?? `Revoked ${grantId}`,
 				},

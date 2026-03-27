@@ -58,6 +58,7 @@ export async function messageRespondMeetingCommand(
 				{
 					status: "preview",
 					dry_run: true,
+					scope: "scheduling/respond",
 					scheduling_id: schedulingId,
 					action: approve ? "accept" : "reject",
 					request_id: matching.requestId,

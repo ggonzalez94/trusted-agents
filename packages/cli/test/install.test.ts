@@ -165,10 +165,10 @@ describe("tap install", () => {
 		await installCommand({}, { json: true });
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: { warnings?: string[] };
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.warnings).toEqual([expect.stringContaining("tap migrate-wallet")]);
 	});
 });

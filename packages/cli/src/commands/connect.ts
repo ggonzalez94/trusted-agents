@@ -70,6 +70,7 @@ export async function connectCommand(
 				{
 					status: "preview",
 					dry_run: true,
+					scope: "connection/request",
 					peer_name: peerAgent.registrationFile.name,
 					peer_agent_id: peerAgent.agentId,
 					peer_chain: peerAgent.chain,

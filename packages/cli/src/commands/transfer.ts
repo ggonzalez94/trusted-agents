@@ -82,6 +82,7 @@ export async function transferCommand(
 				{
 					status: "preview",
 					dry_run: true,
+					scope: "transfer/execute",
 					asset,
 					amount,
 					chain,

@@ -2,7 +2,7 @@ import { loadConfig } from "../lib/config-loader.js";
 import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
-import { findContactForPeer } from "../lib/message-conversations.js";
+import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
@@ -31,14 +31,17 @@ export async function permissionsGrantCommand(
 			process.exitCode = 4;
 			return;
 		}
+		assertContactActive(contact, peer);
 
 		if (cmdOpts?.dryRun) {
 			success(
 				{
 					status: "preview",
 					dry_run: true,
+					scope: "permissions/update",
 					peer: contact.peerDisplayName,
 					agent_id: contact.peerAgentId,
+					connection_id: contact.connectionId,
 					grant_count: grantSet.grants.length,
 					grants: grantSet.grants,
 					...(cmdOpts.note ? { note: cmdOpts.note } : {}),

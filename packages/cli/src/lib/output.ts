@@ -4,7 +4,6 @@ import type { OutputFormat } from "../types.js";
 
 export interface Envelope<T = unknown> {
 	status: "ok" | "error";
-	ok: boolean;
 	data?: T;
 	error?: { code: string; message: string };
 	metadata: {
@@ -37,7 +36,7 @@ export function resolveOutputFormat(opts: GlobalOptions): OutputFormat {
 		return envFormat;
 	}
 
-	return "json";
+	return process.stdout.isTTY ? "text" : "json";
 }
 
 /* ── Key label formatting ── */
@@ -67,7 +66,6 @@ export function success<T>(data: T, opts: GlobalOptions, startTime?: number): vo
 
 	const envelope: Envelope<T> = {
 		status: "ok",
-		ok: true,
 		data: transformed.data as T,
 		metadata: buildMetadata(opts, format, startTime, transformed),
 	};
@@ -78,7 +76,6 @@ export function error(code: string, message: string, opts: GlobalOptions): void 
 	const format = resolveOutputFormat(opts);
 	const envelope: Envelope = {
 		status: "error",
-		ok: false,
 		error: { code, message },
 		metadata: buildMetadata(opts, format),
 	};

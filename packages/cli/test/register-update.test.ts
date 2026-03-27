@@ -184,7 +184,7 @@ describe("register update", () => {
 		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
 		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
 
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.no_change).toBe(true);
 		expect(output.data?.agent_uri).toBe("ipfs://existing-cid");
 	});
@@ -204,7 +204,7 @@ describe("register update", () => {
 			ok: boolean;
 			data?: { no_change?: boolean; agent_uri?: string };
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.no_change).toBe(true);
 		expect(output.data?.agent_uri).toBe("ipfs://existing-cid");
 	});
@@ -224,7 +224,7 @@ describe("register update", () => {
 			ok: boolean;
 			error?: { message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.message).toContain("Circle permit preflight failed");
 	});
 
@@ -340,7 +340,7 @@ describe("register update", () => {
 			ok: boolean;
 			error?: { code?: string; message?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 		expect(output.error?.message).toContain("Pinata provider selected");
 	});
@@ -363,7 +363,7 @@ describe("register update", () => {
 			ok: boolean;
 			error?: { code?: string };
 		};
-		expect(output.ok).toBe(false);
+		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
 	});
 

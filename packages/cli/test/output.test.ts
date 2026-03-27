@@ -33,7 +33,6 @@ describe("output", () => {
 		expect(stdoutWrites).toHaveLength(1);
 		const parsed = JSON.parse(stdoutWrites[0]!);
 		expect(parsed.status).toBe("ok");
-		expect(parsed.ok).toBe(true);
 		expect(parsed.data).toEqual({ foo: "bar" });
 		expect(parsed.metadata.format).toBe("json");
 	});
@@ -55,7 +54,6 @@ describe("output", () => {
 		error("TEST_ERROR", "something went wrong", { output: "json" });
 		const parsed = JSON.parse(stdoutWrites[0]!);
 		expect(parsed.status).toBe("error");
-		expect(parsed.ok).toBe(false);
 		expect(parsed.error.code).toBe("TEST_ERROR");
 		expect(parsed.error.message).toBe("something went wrong");
 		expect(parsed.metadata.format).toBe("json");

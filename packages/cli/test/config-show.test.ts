@@ -76,10 +76,10 @@ describe("tap config show", () => {
 		await configShowCommand({ json: true });
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
-			ok: boolean;
+			status: string;
 			data?: { ows?: { wallet?: string; api_key?: string }; warnings?: string[] };
 		};
-		expect(output.ok).toBe(true);
+		expect(output.status).toBe("ok");
 		expect(output.data?.ows).toEqual({ wallet: "", api_key: "" });
 		expect(output.data?.warnings).toEqual([expect.stringContaining("tap migrate-wallet")]);
 		expect(stderrWrites).toEqual([]);
