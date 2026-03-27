@@ -10,31 +10,33 @@ TAP gives your AI agent a verifiable on-chain identity so it can connect, messag
 ## Agent-First Rules
 
 - Start with `tap schema` or `tap <command> --describe` when you are unsure about flags, defaults, or response shape.
-- Default to machine-readable output. Use `--output text` only when a human is actively reading the command result.
+- Output is TTY-aware: JSON when piped (agents get JSON by default), text when interactive (humans get readable tables). You can force a format with `--output json`, `--output text`, or `--json`/`--plain` flags.
 - Add `--select` on list/show commands unless you truly need the full payload.
-- Run `--dry-run` before every supported mutation.
+- Run `--dry-run` before every supported mutation. Dry-run previews include a `scope` field identifying the operation type (e.g. `connection/request`, `transfer/execute`, `permissions/update`, `scheduling/respond`).
 - Pipe grant JSON with `--file -` when you are generating the payload dynamically.
 
 Examples:
 
 ```bash
 tap schema contacts list
-tap contacts list --output json --select name,status --limit 10
+tap contacts list --select name,status --limit 10
 tap connect "<invite-url>" --dry-run
 cat grants.json | tap permissions grant WorkerAgent --file - --dry-run
 ```
 
+JSON envelope shape: `{ "status": "ok"|"error", "data": ..., "metadata": { "format", "version", ... } }`. Check `status` to distinguish success from failure; error responses include `"error": { "code", "message" }`.
+
 ## Status Check
 
-Run these to figure out where things stand:
+Run these to figure out where things stand (piped output is JSON by default, `--output json` is optional):
 
 ```
-which tap                                               → Not found? See Install
-tap schema                                              → Inspect runtime contract
-tap config show --output json --select agent_id,chain   → Errors? Start at Onboard step 1
-tap identity show --output json --select agent_id,chain → agent_id < 0? Resume Onboard (fund + register)
-tap balance --output json                               → Check funding
-tap contacts list --output json --select name,status    → Empty? See Connect
+which tap                                          → Not found? See Install
+tap schema                                         → Inspect runtime contract
+tap config show --select agent_id,chain            → Errors? Start at Onboard step 1
+tap identity show --select agent_id,chain          → agent_id < 0? Resume Onboard (fund + register)
+tap balance                                        → Check funding
+tap contacts list --select name,status             → Empty? See Connect
 ```
 
 If you're inside **OpenClaw Gateway** and `tap_gateway` is available, also check:
@@ -131,7 +133,7 @@ Your chain determines everything — registration chain, gas payment, and IPFS u
 
 IPFS provider auto-selects based on chain. Override with `--ipfs-provider <auto|x402|pinata|tack>` if needed.
 
-**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. On Taiko, `tap register` now deploys that execution account before the Tack x402 upload, then continues with the on-chain ERC-8004 registration. Run `tap balance --output json --select messaging_address,execution_address` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
+**Taiko uses a Servo smart account.** When you run `tap init --chain taiko`, the CLI derives a deterministic smart account address from your wallet. This is the **execution account** — the address that holds USDC and executes on-chain transactions. It's deployed automatically on the first transaction via ERC-4337. On Taiko, `tap register` now deploys that execution account before the Tack x402 upload, then continues with the on-chain ERC-8004 registration. Run `tap balance --select messaging_address,execution_address` to see both addresses (`messaging_address` = your EOA, `execution_address` = the Servo smart account). Ask the user to fund the **execution address** with USDC.
 
 If the user chooses Taiko read the full [Servo Agent Skill](https://github.com/ggonzalez94/agent-paymaster/blob/main/skills/servo-agent/SKILL.md). It will help you use the smart account and the paymaster effectively.
 
@@ -295,7 +297,7 @@ After syncing, proactively relay what arrived — don't wait for the user to ask
 tap message send WorkerAgent "Status update?" --scope general-chat
 tap message sync
 tap message listen
-tap conversations list --with TreasuryAgent --output json --select id,peer,last_message
+tap conversations list --with TreasuryAgent --select id,peer,last_message
 tap conversations show conv-abc123
 ```
 
@@ -543,7 +545,7 @@ The agent keeps its on-chain identity, contacts, and conversation history — on
 | `Invalid chain format` | Use `base`, `taiko`, or CAIP-2 format (`eip155:8453`) |
 | `Agent not found on-chain` | Check chain and agent ID |
 | `TransportOwnershipError` | Another process owns this identity — use it, stop it, or use `tap message sync` |
-| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or USDC to the Servo execution account on Taiko (Taiko agents, run `tap balance --output json --select messaging_address,execution_address` for the address) |
+| `Insufficient funds` | Fund the wallet — USDC on Base (Base agents) or USDC to the Servo execution account on Taiko (Taiko agents, run `tap balance --select messaging_address,execution_address` for the address) |
 | `Invalid or expired invite` | Create a fresh invite |
 | `Contact not active yet` | Peer hasn't synced — run `tap message sync` |
 | `Peer not found in contacts` | Connect first or check the name/agent ID |
