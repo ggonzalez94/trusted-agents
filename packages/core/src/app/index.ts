@@ -11,3 +11,13 @@ export {
 	defineTapApp,
 } from "./types.js";
 export { FileAppStorage } from "./storage.js";
+export {
+	type AppManifest,
+	type AppManifestEntry,
+	type RoutingEntry,
+	loadAppManifest,
+	saveAppManifest,
+	addAppToManifest,
+	removeAppFromManifest,
+	buildRoutingTable,
+} from "./manifest.js";
