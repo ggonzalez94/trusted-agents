@@ -1,8 +1,7 @@
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function messageSyncCommand(opts: GlobalOptions): Promise<void> {
@@ -10,8 +9,9 @@ export async function messageSyncCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const config = await loadConfig(opts);
-		const ctx = buildContextWithTransport(config);
-		const service = createCliTapMessagingService(ctx, opts, {
+		const { service } = createCliRuntime({
+			config,
+			opts,
 			emitEvents: false,
 			ownerLabel: "tap:sync",
 		});

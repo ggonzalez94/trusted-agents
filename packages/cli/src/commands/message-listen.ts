@@ -1,8 +1,7 @@
+import { type CliTapServiceHooks, createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, info } from "../lib/output.js";
-import { type CliTapServiceHooks, createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface MessageListenerHooks extends CliTapServiceHooks {
@@ -40,8 +39,9 @@ export async function createMessageListenerSession(
 	hooks?: MessageListenerHooks,
 ): Promise<MessageListenerSession> {
 	const config = await loadConfig(opts);
-	const ctx = buildContextWithTransport(config);
-	const service = createCliTapMessagingService(ctx, opts, {
+	const { service } = createCliRuntime({
+		config,
+		opts,
 		emitEvents: true,
 		ownerLabel: "tap:listen",
 		hooks,
