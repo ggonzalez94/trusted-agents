@@ -106,6 +106,18 @@
         "openclaw",
       ],
     },
+    "packages/sdk": {
+      "name": "@trustedagents/sdk",
+      "version": "0.1.0",
+      "dependencies": {
+        "trusted-agents-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^25.3.3",
+        "typescript": "^5.7.0",
+        "vitest": "^3.0.0",
+      },
+    },
   },
   "packages": {
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.11.1", "", {}, "sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ=="],
@@ -851,6 +863,8 @@
     "@trustedagents/app-scheduling": ["@trustedagents/app-scheduling@workspace:packages/app-scheduling"],
 
     "@trustedagents/app-transfer": ["@trustedagents/app-transfer@workspace:packages/app-transfer"],
+
+    "@trustedagents/sdk": ["@trustedagents/sdk@workspace:packages/sdk"],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg=="],
 

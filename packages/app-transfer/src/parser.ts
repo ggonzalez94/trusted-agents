@@ -2,9 +2,7 @@ import { extractMessageData, isEthereumAddress } from "trusted-agents-core";
 import type { ProtocolMessage } from "trusted-agents-core";
 import type { TransferActionRequest, TransferActionResponse } from "./types.js";
 
-export function parseTransferActionRequest(
-	message: ProtocolMessage,
-): TransferActionRequest | null {
+export function parseTransferActionRequest(message: ProtocolMessage): TransferActionRequest | null {
 	if (message.method !== "action/request") {
 		return null;
 	}

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type { TapActionContext } from "trusted-agents-core";
+import { describe, expect, it, vi } from "vitest";
 import { handleTransferRequest } from "../src/handler.js";
 
 function buildMockContext(
@@ -176,7 +176,8 @@ describe("handleTransferRequest", () => {
 	});
 
 	it("should succeed when a matching grant exists and transfer executes", async () => {
-		const txHash = "0x0000000000000000000000000000000000000000000000000000000000000abc" as `0x${string}`;
+		const txHash =
+			"0x0000000000000000000000000000000000000000000000000000000000000abc" as `0x${string}`;
 		const ctx = buildMockContext({
 			grantsToPeer: [
 				{
@@ -208,7 +209,8 @@ describe("handleTransferRequest", () => {
 	});
 
 	it("should succeed with constrained grant that matches", async () => {
-		const txHash = "0x0000000000000000000000000000000000000000000000000000000000000def" as `0x${string}`;
+		const txHash =
+			"0x0000000000000000000000000000000000000000000000000000000000000def" as `0x${string}`;
 		const ctx = buildMockContext({
 			grantsToPeer: [
 				{
@@ -290,7 +292,8 @@ describe("handleTransferRequest", () => {
 	});
 
 	it("should include note in payload when provided", async () => {
-		const txHash = "0x0000000000000000000000000000000000000000000000000000000000000111" as `0x${string}`;
+		const txHash =
+			"0x0000000000000000000000000000000000000000000000000000000000000111" as `0x${string}`;
 		const ctx = buildMockContext({
 			payload: {
 				type: "transfer/request",

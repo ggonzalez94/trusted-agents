@@ -10,7 +10,8 @@ export async function handleTransferRequest(ctx: TapActionContext): Promise<TapA
 			success: false,
 			error: {
 				code: "INVALID_PAYLOAD",
-				message: "Missing or invalid transfer/request fields: asset, amount, chain, toAddress, actionId",
+				message:
+					"Missing or invalid transfer/request fields: asset, amount, chain, toAddress, actionId",
 			},
 		};
 	}
@@ -119,10 +120,7 @@ function validatePayload(payload: Record<string, unknown>): TransferActionReques
 		return null;
 	}
 
-	if (
-		typeof payload.actionId !== "string" ||
-		payload.actionId.length === 0
-	) {
+	if (typeof payload.actionId !== "string" || payload.actionId.length === 0) {
 		return null;
 	}
 
@@ -130,24 +128,15 @@ function validatePayload(payload: Record<string, unknown>): TransferActionReques
 		return null;
 	}
 
-	if (
-		typeof payload.amount !== "string" ||
-		payload.amount.length === 0
-	) {
+	if (typeof payload.amount !== "string" || payload.amount.length === 0) {
 		return null;
 	}
 
-	if (
-		typeof payload.chain !== "string" ||
-		payload.chain.length === 0
-	) {
+	if (typeof payload.chain !== "string" || payload.chain.length === 0) {
 		return null;
 	}
 
-	if (
-		typeof payload.toAddress !== "string" ||
-		!isEthereumAddress(payload.toAddress)
-	) {
+	if (typeof payload.toAddress !== "string" || !isEthereumAddress(payload.toAddress)) {
 		return null;
 	}
 
