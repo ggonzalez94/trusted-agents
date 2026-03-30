@@ -10,3 +10,4 @@ export {
 	type TransferExecuteParams,
 	defineTapApp,
 } from "./types.js";
+export { FileAppStorage } from "./storage.js";
