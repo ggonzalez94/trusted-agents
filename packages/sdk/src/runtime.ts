@@ -8,11 +8,17 @@ import {
 	OwsSigningProvider,
 	type PermissionGrantSet,
 	type RegisteredAppInfo,
+	type SchedulingHandler,
+	type TapCancelMeetingResult,
 	type TapConnectResult,
 	TapMessagingService,
 	type TapPendingRequest,
 	type TapPublishGrantSetResult,
+	type TapRequestFundsInput,
+	type TapRequestFundsResult,
 	type TapRequestGrantSetResult,
+	type TapRequestMeetingInput,
+	type TapRequestMeetingResult,
 	type TapRuntimeContext,
 	type TapSendMessageResult,
 	type TapServiceHooks,
@@ -42,6 +48,9 @@ export interface CreateTapRuntimeOptions {
 
 	/** Label identifying this runtime owner (for transport lock) */
 	ownerLabel?: string;
+
+	/** Scheduling handler for calendar integration and scheduling approval hooks */
+	schedulingHandler?: SchedulingHandler;
 
 	/** Factory for creating a SigningProvider. Called during init() with loaded config. */
 	createSigningProvider?: (config: TrustedAgentsConfig) => Promise<SigningProviderLike>;
@@ -76,7 +85,7 @@ export class TapRuntime extends EventEmitter {
 	private readonly options: CreateTapRuntimeOptions;
 	private config: TrustedAgentsConfig | undefined;
 	private context: TapRuntimeContext | undefined;
-	private service: TapMessagingService | undefined;
+	private _service: TapMessagingService | undefined;
 	private initialized = false;
 
 	constructor(options: CreateTapRuntimeOptions) {
@@ -135,19 +144,30 @@ export class TapRuntime extends EventEmitter {
 		};
 
 		// Create the messaging service
-		this.service = new TapMessagingService(this.context, {
+		this._service = new TapMessagingService(this.context, {
 			hooks,
 			ownerLabel: this.options.ownerLabel,
+			schedulingHandler: this.options.schedulingHandler,
 		});
 
 		this.initialized = true;
 	}
 
+	/**
+	 * Advanced escape hatch: access the underlying TapMessagingService directly.
+	 *
+	 * Use this when you need service methods not yet wrapped by the SDK.
+	 * Requires the runtime to be initialized (call start() first).
+	 */
+	get service(): TapMessagingService {
+		return this.requireService();
+	}
+
 	private requireService(): TapMessagingService {
-		if (!this.service) {
+		if (!this._service) {
 			throw new Error("Runtime not initialized. Call start() first.");
 		}
-		return this.service;
+		return this._service;
 	}
 
 	private requireContext(): TapRuntimeContext {
@@ -198,6 +218,32 @@ export class TapRuntime extends EventEmitter {
 			payload,
 			text,
 		);
+	}
+
+	// ── Funds ──
+
+	async requestFunds(input: TapRequestFundsInput): Promise<TapRequestFundsResult> {
+		return await this.requireService().requestFunds(input);
+	}
+
+	// ── Scheduling ──
+
+	async requestMeeting(input: TapRequestMeetingInput): Promise<TapRequestMeetingResult> {
+		return await this.requireService().requestMeeting(input);
+	}
+
+	async cancelMeeting(schedulingId: string, reason?: string): Promise<TapCancelMeetingResult> {
+		return await this.requireService().cancelMeeting(schedulingId, reason);
+	}
+
+	async cancelPendingSchedulingRequest(requestId: string, reason?: string): Promise<TapSyncReport> {
+		return await this.requireService().cancelPendingSchedulingRequest(requestId, reason);
+	}
+
+	// ── Outbox ──
+
+	async processOutboxOnce(): Promise<number> {
+		return await this.requireService().processOutboxOnce();
 	}
 
 	// ── Grants ──

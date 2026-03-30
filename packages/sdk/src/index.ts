@@ -29,16 +29,94 @@ export type {
 	PermissionGrant,
 } from "trusted-agents-core";
 
-// ── Service result types (from core) ──
+// ── Service + messaging types (from core) ──
+export { TapMessagingService } from "trusted-agents-core";
 export type {
 	TapConnectResult,
 	TapSendMessageResult,
 	TapPublishGrantSetResult,
 	TapRequestGrantSetResult,
+	TapRequestFundsInput,
+	TapRequestFundsResult,
+	TapRequestMeetingInput,
+	TapRequestMeetingResult,
+	TapCancelMeetingResult,
 	TapSyncReport,
 	TapServiceStatus,
 	TapPendingRequest,
 	TapServiceHooks,
+	TapServiceOptions,
+	TapTransferApprovalContext,
+	TapConnectionApprovalContext,
+	TapPendingRequestDetails,
+	TapPendingSchedulingDetails,
+	TapPendingTransferDetails,
 	RegisteredAppInfo,
 	PermissionGrantSet,
 } from "trusted-agents-core";
+
+// ── Scheduling (from core) ──
+export { SchedulingHandler } from "trusted-agents-core";
+export type {
+	SchedulingHooks,
+	SchedulingApprovalContext,
+	SchedulingDecision,
+	ProposedMeeting,
+	ConfirmedMeeting,
+	SchedulingProposal,
+	TimeSlot,
+	ICalendarProvider,
+	AvailabilityWindow,
+	CalendarEvent,
+} from "trusted-agents-core";
+
+// ── Config (from core) ──
+export { loadTrustedAgentConfigFromDataDir } from "trusted-agents-core";
+export type {
+	TrustedAgentsConfig,
+	LoadTrustedAgentConfigOptions,
+	ChainConfig,
+} from "trusted-agents-core";
+
+// ── Trust / contacts (from core) ──
+export { FileTrustStore } from "trusted-agents-core";
+export type {
+	Contact,
+	ConnectionStatus,
+	ContactPermissionState,
+} from "trusted-agents-core";
+
+// ── Conversation (from core) ──
+export {
+	FileConversationLogger,
+	generateMarkdownTranscript,
+} from "trusted-agents-core";
+export type {
+	ConversationMessage,
+	ConversationLog,
+} from "trusted-agents-core";
+
+// ── Request journal (from core) ──
+export { FileRequestJournal } from "trusted-agents-core";
+export type { RequestJournalEntry } from "trusted-agents-core";
+
+// ── Transport (from core) ──
+export { XmtpTransport } from "trusted-agents-core";
+export type {
+	XmtpTransportConfig,
+	TransportReceipt,
+} from "trusted-agents-core";
+
+// ── Signing (from core) ──
+export { OwsSigningProvider } from "trusted-agents-core";
+export type { SigningProvider } from "trusted-agents-core";
+
+// ── Runtime context (from core) ──
+export { buildDefaultTapRuntimeContext } from "trusted-agents-core";
+export type {
+	BuildTapRuntimeContextOptions,
+	TapRuntimeContext,
+} from "trusted-agents-core";
+
+// ── Permissions (from core) ──
+export type { PermissionGrantStatus } from "trusted-agents-core";

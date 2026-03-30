@@ -75,6 +75,7 @@ export {
 } from "./grants.js";
 export {
 	TapMessagingService,
+	type TapCancelMeetingResult,
 	type TapConnectResult,
 	type TapConnectionApprovalContext,
 	type TapPendingRequest,
