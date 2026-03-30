@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@open-wallet-standard/core": "^1.1.0",
+    "@trustedagents/sdk": "workspace:*",
     "@x402/evm": "^2.5.0",
     "@x402/fetch": "^2.5.0",
     "commander": "^13.0.0",
