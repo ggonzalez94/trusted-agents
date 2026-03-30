@@ -1,15 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-	TapAppRegistry,
-} from "../../../src/app/registry.js";
-import {
-	addAppToManifest,
-	type AppManifestEntry,
-} from "../../../src/app/manifest.js";
-import { defineTapApp, type TapActionContext } from "../../../src/app/types.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TapAppRegistry } from "../../../src/app/registry.js";
+import { type TapActionContext, defineTapApp } from "../../../src/app/types.js";
 
 // A simple in-memory test app
 const testApp = defineTapApp({
@@ -79,9 +73,7 @@ describe("TapAppRegistry", () => {
 				},
 			},
 		});
-		expect(() => registry.registerApp(duplicate)).toThrow(
-			/already registered/,
-		);
+		expect(() => registry.registerApp(duplicate)).toThrow(/already registered/);
 	});
 
 	it("unregisters an app", () => {

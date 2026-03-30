@@ -55,6 +55,7 @@ export {
 	buildPermissionGrantRequestText,
 	buildTransferRequestText,
 	buildTransferResponseText,
+	extractMessageData,
 	parsePermissionGrantRequest,
 	parseTransferActionRequest,
 	parseTransferActionResponse,

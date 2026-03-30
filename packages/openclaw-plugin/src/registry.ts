@@ -565,7 +565,7 @@ export class OpenClawTapRegistry {
 			config.chain,
 			config.ows.apiKey,
 		);
-		const context = buildDefaultTapRuntimeContext(config, { signingProvider });
+		const context = await buildDefaultTapRuntimeContext(config, { signingProvider });
 		const notificationQueue = new TapNotificationQueue();
 		this.notificationQueues.set(name, notificationQueue);
 		const schedulingHandler = new SchedulingHandler({

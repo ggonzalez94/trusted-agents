@@ -1,5 +1,5 @@
-import type { Contact } from "../trust/types.js";
 import type { PermissionGrant } from "../permissions/types.js";
+import type { Contact } from "../trust/types.js";
 
 // ── Read-only contact view for apps ──
 

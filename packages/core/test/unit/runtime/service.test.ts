@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TapAppRegistry } from "../../../src/app/registry.js";
 import { TransportError, ValidationError } from "../../../src/common/errors.js";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import {
@@ -227,6 +228,7 @@ async function createService(
 	};
 	const requestJournal = new FileRequestJournalImpl(dataDir);
 	const transport = dependencies.transport ?? new FakeTransport(options);
+	const appRegistry = new TapAppRegistry(dataDir);
 	const service = new TapMessagingService(
 		{
 			config,
@@ -236,6 +238,7 @@ async function createService(
 			conversationLogger: createNoopConversationLogger(),
 			requestJournal,
 			transport,
+			appRegistry,
 		},
 		{
 			ownerLabel: "tap:test-service",
@@ -2883,5 +2886,83 @@ describe("TapMessagingService", () => {
 		await expect(service.resolvePending("msg-send-123", true)).rejects.toThrow(
 			"cannot be resolved manually",
 		);
+	});
+
+	it("sends UNSUPPORTED_ACTION error for unrecognized action types", async () => {
+		const contact: Contact = {
+			connectionId: "conn-unsupported-action",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const emitEvent = vi.fn();
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { emitEvent },
+			},
+		);
+
+		await service.start();
+
+		// Build an action/request with an unrecognized type
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Do something exotic",
+			{
+				type: "exotic/unknown-action",
+				actionId: "exotic-1",
+				foo: "bar",
+			},
+			"exotic/unknown-action",
+		);
+
+		const result = await transport.handlers.onRequest?.({
+			from: contact.peerAgentId,
+			senderInboxId: "peer-inbox-unsupported",
+			message: request,
+		});
+
+		expect(result).toEqual({ status: "received" });
+
+		// Should have sent an action/result with UNSUPPORTED_ACTION error
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(1);
+		const resultParams = actionResults[0].message.params as {
+			status?: string;
+			message?: { parts?: Array<{ kind: string; data?: Record<string, unknown>; text?: string }> };
+		};
+		expect(resultParams.status).toBe("failed");
+
+		// Check the data part contains the UNSUPPORTED_ACTION error
+		const dataPart = resultParams.message?.parts?.find((p) => p.kind === "data");
+		expect(dataPart?.data).toEqual(
+			expect.objectContaining({
+				error: expect.objectContaining({
+					code: "UNSUPPORTED_ACTION",
+				}),
+			}),
+		);
+
+		// Check the emitEvent was called with the error info
+		expect(emitEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				error: "UNSUPPORTED_ACTION",
+				actionType: "exotic/unknown-action",
+			}),
+		);
+
+		await service.stop();
 	});
 });

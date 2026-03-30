@@ -223,7 +223,7 @@ export function buildPermissionGrantRequestText(request: PermissionGrantRequestA
 	return `Requesting grant update for ${summary}${note}`;
 }
 
-function extractMessageData(message: ProtocolMessage): Record<string, unknown> | null {
+export function extractMessageData(message: ProtocolMessage): Record<string, unknown> | null {
 	if (typeof message.params !== "object" || message.params === null) {
 		return null;
 	}

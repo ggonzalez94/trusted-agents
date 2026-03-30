@@ -11,6 +11,7 @@ export {
 	defineTapApp,
 } from "./types.js";
 export { FileAppStorage } from "./storage.js";
+export { buildActionContext, type BuildActionContextDeps } from "./context.js";
 export {
 	type AppManifest,
 	type AppManifestEntry,

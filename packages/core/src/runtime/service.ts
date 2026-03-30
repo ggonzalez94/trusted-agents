@@ -1,4 +1,7 @@
 import { parseEther, parseUnits } from "viem";
+import { buildActionContext } from "../app/context.js";
+import type { TapActionResult } from "../app/types.js";
+import { defineTapApp } from "../app/types.js";
 import {
 	AsyncMutex,
 	PermissionError,
@@ -69,6 +72,7 @@ import {
 	buildPermissionGrantRequestText,
 	buildTransferRequestText,
 	buildTransferResponseText,
+	extractMessageData,
 	parsePermissionGrantRequest,
 	parseTransferActionRequest,
 	parseTransferActionResponse,
@@ -363,6 +367,72 @@ export class TapMessagingService {
 			onRequest: async (envelope) => await this.onRequest(envelope),
 			onResult: async (envelope) => await this.onResult(envelope),
 		};
+		this.registerBuiltinApps();
+	}
+
+	private registerBuiltinApps(): void {
+		// Register transfer/request as an inline app that delegates to the
+		// existing processTransferRequest method.
+		this.context.appRegistry.registerApp(
+			defineTapApp({
+				id: "tap-transfer",
+				name: "TAP Transfer",
+				version: "0.0.0",
+				grantScopes: ["transfer/request"],
+				actions: {
+					"transfer/request": {
+						handler: async (_ctx) => {
+							// The actual processing is still done by the existing
+							// processTransferRequest method via the dispatch in onRequest.
+							// This registration exists so that resolveHandler succeeds and
+							// the dispatch does not emit UNSUPPORTED_ACTION.
+							// The real handler is never called directly — the dispatch
+							// delegates to the legacy codepath.
+							return { success: true };
+						},
+					},
+				},
+			}),
+		);
+
+		// Register scheduling action types as an inline app.
+		this.context.appRegistry.registerApp(
+			defineTapApp({
+				id: "tap-scheduling",
+				name: "TAP Scheduling",
+				version: "0.0.0",
+				grantScopes: ["scheduling/request"],
+				actions: {
+					"scheduling/propose": {
+						handler: async (_ctx) => {
+							return { success: true };
+						},
+					},
+					"scheduling/counter": {
+						handler: async (_ctx) => {
+							return { success: true };
+						},
+					},
+				},
+			}),
+		);
+
+		// Register permission grant request as an inline app.
+		this.context.appRegistry.registerApp(
+			defineTapApp({
+				id: "tap-permissions",
+				name: "TAP Permissions",
+				version: "0.0.0",
+				grantScopes: [],
+				actions: {
+					"permissions/request-grants": {
+						handler: async (_ctx) => {
+							return { success: true };
+						},
+					},
+				},
+			}),
+		);
 	}
 
 	private async getLocalAgentAddress(): Promise<`0x${string}`> {
@@ -829,6 +899,71 @@ export class TapMessagingService {
 		return await this.withTransportSession(async () => {
 			const contact = await this.requireActiveContact(peer);
 			const request = buildOutgoingMessageRequest(contact, text, scope, options);
+			const timestamp = nowISO();
+			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
+				peerAddress: contact.peerAgentAddress,
+			});
+
+			await appendConversationLog(
+				this.context.conversationLogger,
+				contact,
+				request,
+				"outgoing",
+				timestamp,
+			);
+			await this.context.trustStore.touchContact(contact.connectionId);
+
+			return {
+				receipt,
+				peerName: contact.peerDisplayName,
+				peerAgentId: contact.peerAgentId,
+				scope,
+			};
+		});
+	}
+
+	async sendActionRequest(
+		peer: { agentId: number } | { connectionId: string },
+		actionType: string,
+		payload: Record<string, unknown>,
+		text?: string,
+	): Promise<TapSendMessageResult> {
+		return await this.executionMutex.runExclusive(
+			async () => await this.sendActionRequestInternal(peer, actionType, payload, text),
+		);
+	}
+
+	private async sendActionRequestInternal(
+		peer: { agentId: number } | { connectionId: string },
+		actionType: string,
+		payload: Record<string, unknown>,
+		text?: string,
+	): Promise<TapSendMessageResult> {
+		return await this.withTransportSession(async () => {
+			let contact: Contact;
+			if ("connectionId" in peer) {
+				const c = await this.context.trustStore.getContact(peer.connectionId);
+				if (!c || c.status !== "active") {
+					throw new ValidationError(`No active contact found for connection ${peer.connectionId}`);
+				}
+				contact = c;
+			} else {
+				const contacts = await this.context.trustStore.getContacts();
+				const c = findUniqueContactForAgentId(contacts, peer.agentId);
+				if (!c || c.status !== "active") {
+					throw new ValidationError(`No active contact found for agent ${peer.agentId}`);
+				}
+				contact = c;
+			}
+
+			const data = { type: actionType, ...payload };
+			const scope = actionType;
+			const request = buildOutgoingActionRequest(
+				contact,
+				text ?? `Action request: ${actionType}`,
+				data,
+				scope,
+			);
 			const timestamp = nowISO();
 			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
 				peerAddress: contact.peerAgentAddress,
@@ -1580,9 +1715,23 @@ export class TapMessagingService {
 			throw new ValidationError(`Unsupported request method: ${envelope.message.method}`);
 		}
 
-		const permissionRequest = parsePermissionGrantRequest(envelope.message);
-		if (permissionRequest) {
-			await this.handlePermissionGrantRequest(contact, permissionRequest);
+		// Extract the action type from the data payload
+		const actionData = extractMessageData(envelope.message);
+		const actionType = typeof actionData?.type === "string" ? actionData.type : undefined;
+
+		// Route through the app registry to determine if a handler exists
+		const resolved = actionType
+			? await this.context.appRegistry.resolveHandler(actionType)
+			: undefined;
+
+		if (!resolved) {
+			// No handler registered — send an error result back
+			await this.sendUnsupportedActionResult(
+				contact,
+				String(envelope.message.id),
+				actionType ?? "unknown",
+				requestKey,
+			);
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
 			const status = claimed.duplicate ? "duplicate" : "received";
 			this.emitEvent({
@@ -1592,59 +1741,111 @@ export class TapMessagingService {
 				method: envelope.message.method,
 				id: envelope.message.id,
 				receipt_status: status,
+				error: "UNSUPPORTED_ACTION",
+				actionType: actionType ?? "unknown",
 			});
 			return { status };
 		}
 
-		const schedulingRequest = parseSchedulingActionRequest(envelope.message);
-		if (schedulingRequest) {
-			await this.context.requestJournal.updateMetadata(
-				String(envelope.message.id),
-				serializePendingSchedulingRequestDetails(
-					contact,
-					schedulingRequest,
-					this.context.config.dataDir,
-				),
-			);
-			if (schedulingRequest.type === "scheduling/counter") {
-				await this.closePendingOutboundSchedulingRequestForCounter(
-					contact.peerAgentId,
-					schedulingRequest.schedulingId,
-				);
+		// Delegate to built-in handlers that use the existing codepaths.
+		// The inline app registrations (tap-transfer, tap-scheduling, tap-permissions)
+		// exist to claim action types in the registry. Their actual processing
+		// is still done by the existing methods below.
+		if (resolved.app.id === "tap-permissions") {
+			const permissionRequest = parsePermissionGrantRequest(envelope.message);
+			if (permissionRequest) {
+				await this.handlePermissionGrantRequest(contact, permissionRequest);
+				await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+				const status = claimed.duplicate ? "duplicate" : "received";
+				this.emitEvent({
+					direction: "incoming",
+					from: envelope.from,
+					fromName: contact.peerDisplayName,
+					method: envelope.message.method,
+					id: envelope.message.id,
+					receipt_status: status,
+				});
+				return { status };
 			}
+		}
 
-			this.enqueue(requestKey, async () => {
-				await this.processSchedulingRequest(
-					contact,
+		if (resolved.app.id === "tap-scheduling") {
+			const schedulingRequest = parseSchedulingActionRequest(envelope.message);
+			if (schedulingRequest) {
+				await this.context.requestJournal.updateMetadata(
 					String(envelope.message.id),
-					schedulingRequest,
+					serializePendingSchedulingRequestDetails(
+						contact,
+						schedulingRequest,
+						this.context.config.dataDir,
+					),
 				);
-			});
+				if (schedulingRequest.type === "scheduling/counter") {
+					await this.closePendingOutboundSchedulingRequestForCounter(
+						contact.peerAgentId,
+						schedulingRequest.schedulingId,
+					);
+				}
 
-			const status = claimed.duplicate ? "duplicate" : "queued";
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
-				fromName: contact.peerDisplayName,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: status,
-				scope: "scheduling/request",
-			});
-			return { status };
+				this.enqueue(requestKey, async () => {
+					await this.processSchedulingRequest(
+						contact,
+						String(envelope.message.id),
+						schedulingRequest,
+					);
+				});
+
+				const status = claimed.duplicate ? "duplicate" : "queued";
+				this.emitEvent({
+					direction: "incoming",
+					from: envelope.from,
+					fromName: contact.peerDisplayName,
+					method: envelope.message.method,
+					id: envelope.message.id,
+					receipt_status: status,
+					scope: "scheduling/request",
+				});
+				return { status };
+			}
 		}
 
-		const transferRequest = parseTransferActionRequest(envelope.message);
-		if (!transferRequest) {
-			throw new ValidationError("Unsupported action request payload");
-		}
-		await this.context.requestJournal.updateMetadata(
-			String(envelope.message.id),
-			serializePendingTransferRequestDetails(contact, transferRequest, this.context.config.dataDir),
-		);
+		if (resolved.app.id === "tap-transfer") {
+			const transferRequest = parseTransferActionRequest(envelope.message);
+			if (transferRequest) {
+				await this.context.requestJournal.updateMetadata(
+					String(envelope.message.id),
+					serializePendingTransferRequestDetails(
+						contact,
+						transferRequest,
+						this.context.config.dataDir,
+					),
+				);
 
+				this.enqueue(requestKey, async () => {
+					await this.processTransferRequest(contact, String(envelope.message.id), transferRequest);
+				});
+				const status = claimed.duplicate ? "duplicate" : "queued";
+				this.emitEvent({
+					direction: "incoming",
+					from: envelope.from,
+					fromName: contact.peerDisplayName,
+					method: envelope.message.method,
+					id: envelope.message.id,
+					receipt_status: status,
+				});
+				return { status };
+			}
+		}
+
+		// For dynamically loaded (non-builtin) apps, use the full app dispatch path
 		this.enqueue(requestKey, async () => {
-			await this.processTransferRequest(contact, String(envelope.message.id), transferRequest);
+			await this.dispatchToApp(
+				contact,
+				String(envelope.message.id),
+				resolved,
+				actionData ?? {},
+				requestKey,
+			);
 		});
 		const status = claimed.duplicate ? "duplicate" : "queued";
 		this.emitEvent({
@@ -1654,6 +1855,7 @@ export class TapMessagingService {
 			method: envelope.message.method,
 			id: envelope.message.id,
 			receipt_status: status,
+			scope: actionType,
 		});
 		return { status };
 	}
@@ -2744,6 +2946,157 @@ export class TapMessagingService {
 			"error",
 			`Failed to deliver ${subject.toLowerCase()} to ${peerLabel}: ${errorMessage}`,
 		);
+	}
+
+	private async sendUnsupportedActionResult(
+		contact: Contact,
+		requestId: string,
+		actionType: string,
+		_requestKey: string,
+	): Promise<void> {
+		const errorData: Record<string, unknown> = {
+			error: {
+				code: "UNSUPPORTED_ACTION",
+				message: `No handler registered for action type "${actionType}"`,
+			},
+		};
+		const outgoing = buildOutgoingActionResult(
+			contact,
+			requestId,
+			`Unsupported action type: ${actionType}`,
+			errorData,
+			actionType,
+			"failed",
+		);
+
+		try {
+			await this.context.transport.send(contact.peerAgentId, outgoing, {
+				peerAddress: contact.peerAgentAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+			await this.touchContactSafe(contact.connectionId);
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to deliver UNSUPPORTED_ACTION result for "${actionType}": ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	private async dispatchToApp(
+		contact: Contact,
+		requestId: string,
+		resolved: {
+			app: import("../app/types.js").TapApp;
+			handler: import("../app/types.js").TapActionHandler;
+		},
+		payload: Record<string, unknown>,
+		_requestKey: string,
+	): Promise<void> {
+		const agentAddress = await this.getLocalAgentAddress();
+		const actionType = typeof payload.type === "string" ? payload.type : resolved.app.id;
+
+		// Extract text from the request
+		let text: string | undefined;
+		// We don't have the raw message here, so text is not extracted from the wire.
+		// Apps that need it should read from payload.
+
+		const conversationId = contact.connectionId;
+		const ctx = buildActionContext({
+			config: this.context.config,
+			agentAddress,
+			contact,
+			payload,
+			text,
+			app: resolved.app,
+			reply: async (replyText: string) => {
+				await this.sendMessageInternal(
+					String(contact.peerAgentId),
+					replyText,
+					DEFAULT_MESSAGE_SCOPE,
+				);
+			},
+			sendToPeer: async (peerId: number, sendText: string) => {
+				await this.sendMessageInternal(String(peerId), sendText, DEFAULT_MESSAGE_SCOPE);
+			},
+			requestPayment: async (_params) => {
+				// Delegate to requestFunds if available
+				throw new ValidationError("Payment request not supported in app dispatch context");
+			},
+			executeTransfer: async (params) => {
+				if (!this.hooks.executeTransfer) {
+					throw new ValidationError("No transfer executor configured");
+				}
+				const result = await this.hooks.executeTransfer(this.context.config, {
+					type: "transfer/request",
+					actionId: generateNonce(),
+					asset: params.asset as "native" | "usdc",
+					amount: params.amount,
+					chain: params.chain,
+					toAddress: params.toAddress,
+					note: params.note,
+				});
+				return result;
+			},
+			emitEvent: (event) => {
+				this.emitEvent({
+					type: event.type,
+					summary: event.summary,
+					appId: resolved.app.id,
+					...event.data,
+				});
+			},
+			conversationLogger: this.context.conversationLogger,
+			conversationId,
+		});
+
+		let result: TapActionResult;
+		try {
+			result = await resolved.handler.handler(ctx);
+		} catch (error: unknown) {
+			result = {
+				success: false,
+				error: {
+					code: "HANDLER_ERROR",
+					message: error instanceof Error ? error.message : String(error),
+				},
+			};
+		}
+
+		const resultData: Record<string, unknown> = {
+			type: actionType,
+			...(result.data ?? {}),
+			...(result.error ? { error: result.error } : {}),
+		};
+		const resultStatus = result.success ? "completed" : "failed";
+		const resultText = result.success
+			? `Action ${actionType} completed`
+			: `Action ${actionType} failed: ${result.error?.message ?? "unknown error"}`;
+		const outgoing = buildOutgoingActionResult(
+			contact,
+			requestId,
+			resultText,
+			resultData,
+			actionType,
+			resultStatus,
+		);
+
+		try {
+			await this.context.transport.send(contact.peerAgentId, outgoing, {
+				peerAddress: contact.peerAgentAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+			await this.touchContactSafe(contact.connectionId);
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to deliver app result for "${actionType}": ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+
+		await this.context.requestJournal.updateStatus(requestId, "completed");
 	}
 
 	private async requireContact(peer: string): Promise<Contact> {

@@ -1,5 +1,5 @@
-import type { TapApp, TapActionHandler } from "./types.js";
-import { loadAppManifest, type AppManifest } from "./manifest.js";
+import { type AppManifest, loadAppManifest } from "./manifest.js";
+import type { TapActionHandler, TapApp } from "./types.js";
 
 export interface RegisteredAppInfo {
 	id: string;
@@ -34,16 +34,17 @@ export class TapAppRegistry {
 		for (const actionType of Object.keys(app.actions)) {
 			const existing = this.actionMap.get(actionType);
 			if (existing && existing !== app.id) {
-				throw new Error(
-					`Action type "${actionType}" is already registered by app "${existing}"`,
-				);
+				throw new Error(`Action type "${actionType}" is already registered by app "${existing}"`);
 			}
 		}
 		this.apps.set(app.id, app);
 		for (const actionType of Object.keys(app.actions)) {
 			this.actionMap.set(actionType, app.id);
 		}
-		this.log("info", `Registered app "${app.id}" with actions: ${Object.keys(app.actions).join(", ")}`);
+		this.log(
+			"info",
+			`Registered app "${app.id}" with actions: ${Object.keys(app.actions).join(", ")}`,
+		);
 	}
 
 	unregisterApp(appId: string): void {

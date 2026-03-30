@@ -1,6 +1,6 @@
-import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
-import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 export interface AppManifestEntry {
 	package: string;
@@ -31,10 +31,7 @@ export async function loadAppManifest(dataDir: string): Promise<AppManifest> {
 	}
 }
 
-export async function saveAppManifest(
-	dataDir: string,
-	manifest: AppManifest,
-): Promise<void> {
+export async function saveAppManifest(dataDir: string, manifest: AppManifest): Promise<void> {
 	const filePath = manifestPath(dataDir);
 	const dir = dirname(filePath);
 	await mkdir(dir, { recursive: true });
@@ -53,18 +50,13 @@ export async function addAppToManifest(
 	await saveAppManifest(dataDir, manifest);
 }
 
-export async function removeAppFromManifest(
-	dataDir: string,
-	appId: string,
-): Promise<void> {
+export async function removeAppFromManifest(dataDir: string, appId: string): Promise<void> {
 	const manifest = await loadAppManifest(dataDir);
 	delete manifest.apps[appId];
 	await saveAppManifest(dataDir, manifest);
 }
 
-export function buildRoutingTable(
-	manifest: AppManifest,
-): Map<string, RoutingEntry> {
+export function buildRoutingTable(manifest: AppManifest): Map<string, RoutingEntry> {
 	const table = new Map<string, RoutingEntry>();
 	for (const [appId, entry] of Object.entries(manifest.apps)) {
 		if (entry.status !== "active") continue;
