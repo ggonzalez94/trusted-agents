@@ -535,6 +535,26 @@ Flags: `--passphrase <passphrase>` (wallet passphrase for OWS import), `--non-in
 
 The agent keeps its on-chain identity, contacts, and conversation history — only the key storage changes.
 
+## TAP Apps
+
+TAP apps extend agent capabilities with installable action handlers (e.g., transfer, scheduling). Apps are installed per-agent and store their state inside the agent's data directory under `apps/<name>/`.
+
+```bash
+tap app install <name>     # Install a TAP app from npm
+tap app remove <name>      # Remove a TAP app
+tap app list               # List installed apps
+```
+
+Examples:
+
+```bash
+tap app list
+tap app install @tap/app-transfer
+tap app remove @tap/app-scheduling
+```
+
+Built-in apps (`app-transfer`, `app-scheduling`) are installed automatically when you register. Third-party apps can be installed from npm by package name.
+
 ## Common Errors
 
 | Error | Fix |
