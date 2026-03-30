@@ -39,7 +39,7 @@ describe("tap identity show", () => {
 	const config: TrustedAgentsConfig = {
 		agentId: -1,
 		chain: "eip155:8453",
-		ows: { wallet: "test-wallet", apiKey: "test-api-key" },
+		ows: { wallet: "test-wallet", passphrase: "test-passphrase" },
 		dataDir: "/tmp/tap",
 		chains: {
 			"eip155:8453": {
@@ -125,7 +125,7 @@ describe("tap identity show", () => {
 			...config,
 			agentId: 11,
 			dataDir,
-			ows: { wallet: "", apiKey: "" },
+			ows: { wallet: "", passphrase: "" },
 		});
 
 		await identityShowCommand({ json: true });

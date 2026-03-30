@@ -563,7 +563,7 @@ export class OpenClawTapRegistry {
 		const signingProvider = new OwsSigningProvider(
 			config.ows.wallet,
 			config.chain,
-			config.ows.apiKey,
+			config.ows.passphrase,
 		);
 		const context = buildDefaultTapRuntimeContext(config, { signingProvider });
 		const notificationQueue = new TapNotificationQueue();

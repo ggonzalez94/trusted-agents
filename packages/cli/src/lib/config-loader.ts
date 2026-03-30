@@ -51,7 +51,7 @@ export async function loadConfig(
 		(!existsSync(configPath) ? DEFAULT_CHAIN_ALIAS : undefined);
 	const chain = chainRaw ? resolveChainAlias(chainRaw) : undefined;
 	const owsWallet = process.env.TAP_OWS_WALLET;
-	const owsApiKey = process.env.TAP_OWS_API_KEY;
+	const owsPassphrase = process.env.TAP_OWS_PASSPHRASE;
 	const executionMode = process.env.TAP_EXECUTION_MODE as ExecutionMode | undefined;
 	const paymasterProvider = process.env.TAP_PAYMASTER_PROVIDER as
 		| ExecutionPaymasterProvider
@@ -63,7 +63,7 @@ export async function loadConfig(
 		agentId,
 		chain,
 		owsWallet,
-		owsApiKey,
+		owsPassphrase,
 		configPath,
 		extraChains: ALL_CHAINS,
 		executionMode,

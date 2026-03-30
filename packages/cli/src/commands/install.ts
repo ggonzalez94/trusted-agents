@@ -55,7 +55,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			dataDir,
 			configPath,
 			owsWallet: process.env.TAP_OWS_WALLET,
-			owsApiKey: process.env.TAP_OWS_API_KEY,
+			owsPassphrase: process.env.TAP_OWS_PASSPHRASE,
 		});
 
 		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {

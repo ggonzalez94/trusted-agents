@@ -574,9 +574,11 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 	try {
 		const raw = await readFile(configPath, "utf-8");
 		const parsed =
-			(YAML.parse(raw) as { ows?: { wallet?: string; api_key?: string }; chain?: string } | null) ??
-			undefined;
-		if (!parsed?.ows?.wallet || !parsed?.ows?.api_key) {
+			(YAML.parse(raw) as {
+				ows?: { wallet?: string; passphrase?: string };
+				chain?: string;
+			} | null) ?? undefined;
+		if (!parsed?.ows?.wallet) {
 			const legacyWarning = getLegacyWalletMigrationWarning({ dataDir, configPath });
 			return [null, legacyWarning ?? "OWS wallet config is missing from config.yaml."];
 		}
@@ -584,7 +586,7 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 		const provider = createConfiguredSigningProvider(
 			{
 				chain,
-				ows: { wallet: parsed.ows.wallet, apiKey: parsed.ows.api_key },
+				ows: { wallet: parsed.ows.wallet, passphrase: parsed.ows.passphrase ?? "" },
 				dataDir,
 			},
 			chain,

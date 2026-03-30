@@ -826,7 +826,7 @@ async function waitForCondition<T>(
 async function setOwsConfig(
 	dataDir: string,
 	walletName: string,
-	apiKey: string,
+	passphrase: string,
 	agentId: number,
 ): Promise<void> {
 	const configPath = join(dataDir, "config.yaml");
@@ -834,6 +834,6 @@ async function setOwsConfig(
 	const content = await readFile(configPath, "utf-8");
 	const yaml = YAML.parse(content) as Record<string, unknown>;
 	yaml.agent_id = agentId;
-	yaml.ows = { wallet: walletName, api_key: apiKey };
+	yaml.ows = { wallet: walletName, passphrase };
 	await writeFile(configPath, YAML.stringify(yaml), "utf-8");
 }

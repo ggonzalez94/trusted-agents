@@ -21,7 +21,7 @@ describe("config-loader", () => {
 		unsetEnv("TAP_AGENT_ID");
 		unsetEnv("TAP_CHAIN");
 		unsetEnv("TAP_OWS_WALLET");
-		unsetEnv("TAP_OWS_API_KEY");
+		unsetEnv("TAP_OWS_PASSPHRASE");
 		unsetEnv("TAP_RPC_URL");
 		unsetEnv("TAP_EXECUTION_MODE");
 		unsetEnv("TAP_PAYMASTER_PROVIDER");

@@ -6,7 +6,7 @@ import YAML from "yaml";
 interface StoredWalletConfig {
 	ows?: {
 		wallet?: string;
-		api_key?: string;
+		passphrase?: string;
 	};
 }
 
@@ -14,7 +14,7 @@ interface WalletConfigStatusOptions {
 	dataDir: string;
 	configPath?: string;
 	owsWallet?: string;
-	owsApiKey?: string;
+	owsPassphrase?: string;
 }
 
 type WalletBackedConfig = Pick<TrustedAgentsConfig, "dataDir" | "chain" | "ows">;
@@ -35,14 +35,14 @@ function loadStoredWalletConfig(configPath: string): StoredWalletConfig | undefi
 
 function resolveEffectiveOwsConfig(options: WalletConfigStatusOptions): {
 	wallet: string;
-	apiKey: string;
+	passphrase: string;
 } {
 	const configPath = options.configPath ?? join(options.dataDir, "config.yaml");
 	const stored = loadStoredWalletConfig(configPath);
 
 	return {
 		wallet: options.owsWallet ?? stored?.ows?.wallet ?? "",
-		apiKey: options.owsApiKey ?? stored?.ows?.api_key ?? "",
+		passphrase: options.owsPassphrase ?? stored?.ows?.passphrase ?? "",
 	};
 }
 
@@ -50,7 +50,7 @@ export function getLegacyWalletMigrationWarning(
 	options: WalletConfigStatusOptions,
 ): string | undefined {
 	const effective = resolveEffectiveOwsConfig(options);
-	if (effective.wallet && effective.apiKey) {
+	if (effective.wallet) {
 		return undefined;
 	}
 
@@ -63,21 +63,21 @@ export function getLegacyWalletMigrationWarning(
 }
 
 function assertWalletConfigured(config: WalletBackedConfig): void {
-	if (config.ows.wallet && config.ows.apiKey) {
+	if (config.ows.wallet) {
 		return;
 	}
 
 	const legacyWarning = getLegacyWalletMigrationWarning({
 		dataDir: config.dataDir,
 		owsWallet: config.ows.wallet,
-		owsApiKey: config.ows.apiKey,
+		owsPassphrase: config.ows.passphrase,
 	});
 	if (legacyWarning) {
 		throw new ConfigError(legacyWarning);
 	}
 
 	throw new ConfigError(
-		"OWS wallet config is missing for this agent. Run `tap init` to create an OWS wallet and API key.",
+		"OWS wallet config is missing for this agent. Run `tap init` to create an OWS wallet and set its passphrase.",
 	);
 }
 
@@ -86,5 +86,5 @@ export function createConfiguredSigningProvider(
 	chain = config.chain,
 ): OwsSigningProvider {
 	assertWalletConfigured(config);
-	return new OwsSigningProvider(config.ows.wallet, chain, config.ows.apiKey);
+	return new OwsSigningProvider(config.ows.wallet, chain, config.ows.passphrase);
 }

@@ -42,7 +42,7 @@ describe("register update", () => {
 		return {
 			agentId: 7,
 			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
+			ows: { wallet: "test-wallet", passphrase: "test-passphrase" },
 			dataDir: tmpDir,
 			chains: {
 				"eip155:8453": {

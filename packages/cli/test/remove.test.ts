@@ -48,7 +48,7 @@ describe("tap remove", () => {
 	let origStdinOnce: typeof process.stdin.once;
 	let origStdinSetEncoding: typeof process.stdin.setEncoding;
 	let origTapOwsWallet: string | undefined;
-	let origTapOwsApiKey: string | undefined;
+	let origTapOwsPassphrase: string | undefined;
 	let origTapChain: string | undefined;
 	let origTapRpcUrl: string | undefined;
 
@@ -62,7 +62,7 @@ describe("tap remove", () => {
 		origStdinOnce = process.stdin.once.bind(process.stdin);
 		origStdinSetEncoding = process.stdin.setEncoding.bind(process.stdin);
 		origTapOwsWallet = process.env.TAP_OWS_WALLET;
-		origTapOwsApiKey = process.env.TAP_OWS_API_KEY;
+		origTapOwsPassphrase = process.env.TAP_OWS_PASSPHRASE;
 		origTapChain = process.env.TAP_CHAIN;
 		origTapRpcUrl = process.env.TAP_RPC_URL;
 		process.stdout.write = ((chunk: string) => {
@@ -100,7 +100,7 @@ describe("tap remove", () => {
 		process.stdin.setEncoding = origStdinSetEncoding;
 		process.exitCode = undefined;
 		process.env.TAP_OWS_WALLET = origTapOwsWallet;
-		process.env.TAP_OWS_API_KEY = origTapOwsApiKey;
+		process.env.TAP_OWS_PASSPHRASE = origTapOwsPassphrase;
 		process.env.TAP_CHAIN = origTapChain;
 		process.env.TAP_RPC_URL = origTapRpcUrl;
 		vi.clearAllMocks();
@@ -345,7 +345,7 @@ describe("tap remove", () => {
 
 	it("probes balance from the target data dir instead of env overrides", async () => {
 		process.env.TAP_OWS_WALLET = "env-override-wallet";
-		process.env.TAP_OWS_API_KEY = "env-override-key";
+		process.env.TAP_OWS_PASSPHRASE = "env-override-passphrase";
 		process.env.TAP_CHAIN = "taiko";
 		const getBalance = vi.fn().mockResolvedValue(1n);
 		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
@@ -382,7 +382,7 @@ describe("tap remove", () => {
 		const result = await removeCommandModule.transferRemainingNativeBalance(
 			{
 				config: {
-					ows: { wallet: "test-wallet", apiKey: "test-key" },
+					ows: { wallet: "test-wallet", passphrase: "test-passphrase" },
 					chain: "eip155:8453",
 				} as never,
 				chain: "eip155:8453",
@@ -410,7 +410,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "xmtp"), { recursive: true });
 	await writeFile(
 		join(dataDir, "config.yaml"),
-		"agent_id: 42\nchain: eip155:8453\nows:\n  wallet: test-wallet\n  api_key: test-api-key\n",
+		"agent_id: 42\nchain: eip155:8453\nows:\n  wallet: test-wallet\n  passphrase: test-passphrase\n",
 		"utf-8",
 	);
 	await writeFile(join(dataDir, "contacts.json"), "[]\n", "utf-8");

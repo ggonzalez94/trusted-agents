@@ -12,7 +12,7 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 		const legacyWarning = getLegacyWalletMigrationWarning({
 			dataDir: config.dataDir,
 			owsWallet: config.ows.wallet,
-			owsApiKey: config.ows.apiKey,
+			owsPassphrase: config.ows.passphrase,
 		});
 
 		const redacted = {
@@ -20,7 +20,7 @@ export async function configShowCommand(opts: GlobalOptions): Promise<void> {
 			chain: config.chain,
 			ows: {
 				wallet: config.ows.wallet,
-				api_key: config.ows.apiKey ? "***redacted***" : "",
+				passphrase: config.ows.passphrase ? "***redacted***" : "",
 			},
 			data_dir: config.dataDir,
 			invite_expiry_seconds: config.inviteExpirySeconds,

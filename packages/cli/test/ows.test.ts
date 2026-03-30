@@ -1,11 +1,8 @@
-import { createWallet, deletePolicy, deleteWallet, revokeApiKey } from "@open-wallet-standard/core";
+import { createWallet, deleteWallet } from "@open-wallet-standard/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-	createOwsApiKey,
-	createOwsPolicy,
 	createOwsWallet,
 	deriveXmtpDbEncryptionKey,
-	findCompatiblePolicies,
 	getOwsWalletAddress,
 	isOwsInstalled,
 	listOwsWallets,
@@ -13,10 +10,7 @@ import {
 
 const TEST_PREFIX = `ows-test-${Date.now()}`;
 const WALLET_NAME = `${TEST_PREFIX}-wallet`;
-const POLICY_ID = `${TEST_PREFIX}-policy`;
 const PASSPHRASE = "test-passphrase";
-
-let apiKeyId: string | undefined;
 
 describe("OWS helpers", () => {
 	beforeAll(() => {
@@ -26,18 +20,6 @@ describe("OWS helpers", () => {
 
 	afterAll(() => {
 		// Cleanup: best-effort removal of test artifacts
-		if (apiKeyId) {
-			try {
-				revokeApiKey(apiKeyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		try {
-			deletePolicy(POLICY_ID);
-		} catch (_) {
-			/* ignore */
-		}
 		try {
 			deleteWallet(WALLET_NAME);
 		} catch (_) {
@@ -90,72 +72,14 @@ describe("OWS helpers", () => {
 		});
 	});
 
-	describe("createOwsPolicy", () => {
-		it("creates a policy and returns the policy ID", () => {
-			const oneYear = new Date();
-			oneYear.setFullYear(oneYear.getFullYear() + 1);
-
-			const id = createOwsPolicy({
-				id: POLICY_ID,
-				chains: ["eip155:8453"],
-				expiresAt: oneYear.toISOString(),
-			});
-			expect(id).toBe(POLICY_ID);
-		});
-	});
-
-	describe("findCompatiblePolicies", () => {
-		it("finds the test policy for eip155:8453", () => {
-			const policies = findCompatiblePolicies("eip155:8453");
-			const found = policies.find((p) => p.id === POLICY_ID);
-			expect(found).toBeDefined();
-			expect(found!.chains).toContain("eip155:8453");
-		});
-
-		it("returns empty for an unknown chain", () => {
-			const policies = findCompatiblePolicies("eip155:999999");
-			const found = policies.find((p) => p.id === POLICY_ID);
-			expect(found).toBeUndefined();
-		});
-	});
-
-	describe("createOwsApiKey", () => {
-		it("creates an API key and returns a token starting with ows_key_", () => {
-			const result = createOwsApiKey({
-				name: `${TEST_PREFIX}-key`,
-				walletName: WALLET_NAME,
-				policyId: POLICY_ID,
-				passphrase: PASSPHRASE,
-			});
-			expect(result.token).toMatch(/^ows_key_/);
-			expect(result.id).toBeTruthy();
-			apiKeyId = result.id;
-		});
-	});
-
 	describe("deriveXmtpDbEncryptionKey", () => {
 		it("returns a 0x-prefixed 32-byte hex string", () => {
-			// Need an API key to sign
-			const keyResult = createOwsApiKey({
-				name: `${TEST_PREFIX}-derive-key`,
-				walletName: WALLET_NAME,
-				policyId: POLICY_ID,
-				passphrase: PASSPHRASE,
-			});
-
-			const key = deriveXmtpDbEncryptionKey(WALLET_NAME, "eip155:8453", keyResult.token);
+			const key = deriveXmtpDbEncryptionKey(WALLET_NAME, "eip155:8453", PASSPHRASE);
 			expect(key).toMatch(/^0x[0-9a-fA-F]{64}$/);
 
 			// Deterministic — same inputs produce same key
-			const key2 = deriveXmtpDbEncryptionKey(WALLET_NAME, "eip155:8453", keyResult.token);
+			const key2 = deriveXmtpDbEncryptionKey(WALLET_NAME, "eip155:8453", PASSPHRASE);
 			expect(key).toBe(key2);
-
-			// Cleanup
-			try {
-				revokeApiKey(keyResult.id);
-			} catch (_) {
-				/* ignore */
-			}
 		});
 	});
 });

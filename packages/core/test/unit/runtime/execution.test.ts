@@ -100,7 +100,7 @@ function buildConfig(
 	return {
 		agentId: 1,
 		chain,
-		ows: { wallet: "test", apiKey: "ows_key_test" },
+		ows: { wallet: "test", passphrase: "test-passphrase" },
 		dataDir: "/tmp/tap",
 		chains: chainMap,
 		inviteExpirySeconds: 3600,
@@ -197,6 +197,57 @@ describe("execution", () => {
 		expect(preview.executionAddress).toBe(OWNER_ADDRESS);
 		expect(preview.paymasterProvider).toBe("circle");
 		expect(toSimple7702SmartAccount).toHaveBeenCalledOnce();
+	});
+
+	it("falls back to eoa on Base when the signer cannot produce 7702 authorizations", async () => {
+		const sendTransaction = vi.fn().mockResolvedValue("0xtxhash");
+		const waitForTransactionReceipt = vi.fn().mockResolvedValue({
+			status: "success",
+			transactionHash: "0xtxhash",
+			logs: [],
+		});
+		buildChainPublicClient.mockReturnValue({
+			readContract: vi.fn(),
+			verifyTypedData: vi.fn(),
+			waitForTransactionReceipt,
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 8453, name: "Base" },
+			sendTransaction,
+		});
+
+		const { executeContractCalls, getExecutionPreview } = await import(
+			"../../../src/runtime/execution.js"
+		);
+		const config = buildConfig("eip155:8453", {
+			mode: "eip7702",
+			paymasterProvider: "circle",
+		});
+		const provider = {
+			...TEST_PROVIDER,
+			supportsAuthorizationSignatures: () => false,
+		} as SigningProvider;
+
+		const preview = await getExecutionPreview(config, config.chains[config.chain]!, provider);
+		expect(preview.mode).toBe("eoa");
+		expect(preview.paymasterProvider).toBeUndefined();
+		expect(preview.warnings).toContain(
+			"Base EIP-7702 execution requires a signer that can produce raw authorization signatures; using eoa instead",
+		);
+
+		const result = await executeContractCalls(config, config.chains[config.chain]!, provider, [
+			{
+				to: "0x3000000000000000000000000000000000000003",
+				data: "0x",
+			},
+		]);
+
+		expect(result.mode).toBe("eoa");
+		expect(result.gasPaymentMode).toBe("native");
+		expect(sendTransaction).toHaveBeenCalledOnce();
+		expect(waitForTransactionReceipt).toHaveBeenCalledOnce();
+		expect(signAuthorization).not.toHaveBeenCalled();
+		expect(toSimple7702SmartAccount).not.toHaveBeenCalled();
 	});
 
 	it("coerces Base eip4337 requests back to an eip7702-compatible paymaster", async () => {

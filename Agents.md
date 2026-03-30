@@ -209,11 +209,11 @@ File: `packages/sdk/src/orchestrator.ts`
 
 1. One OWS wallet per agent (no raw private key):
 - Each agent identity is backed by an Open Wallet Service (OWS) wallet
-- A scoped API key authenticates CLI/SDK requests to OWS
-- All signing (ERC-8004 ownership, invite signing, XMTP identity) goes through OWS policy-gated signing
+- TAP unlocks the local OWS wallet with its configured passphrase
+- All signing (ERC-8004 ownership, invite signing, XMTP identity, EIP-712) goes through OWS native signing
 - The agent process never sees or stores a raw private key
-- Config stores `ows.wallet` (wallet ID) and `ows.api_key` (scoped API key)
-- Env overrides: `TAP_OWS_WALLET`, `TAP_OWS_API_KEY`
+- Config stores `ows.wallet` (wallet ID) and `ows.passphrase`
+- Env overrides: `TAP_OWS_WALLET`, `TAP_OWS_PASSPHRASE`
 
 2. XMTP DB encryption key:
 - New agents: derived from `signMessage("xmtp-db-encryption-key")` via OWS, then hashed
@@ -244,7 +244,7 @@ File: `packages/sdk/src/orchestrator.ts`
 9. **Config lives inside data-dir** — `--data-dir` (or `TAP_DATA_DIR`) is the single root for all per-agent state:
 ```
 <dataDir>/
-├── config.yaml              # agent_id, chain, xmtp.env, ows.wallet, ows.api_key, xmtp.db_encryption_key
+├── config.yaml              # agent_id, chain, xmtp.env, ows.wallet, ows.passphrase, xmtp.db_encryption_key
 ├── contacts.json            # Connected peers (trust store)
 ├── request-journal.json     # Durable TAP action request state
 ├── pending-connects.json    # Minimal outbound connection state awaiting connection/result
@@ -335,7 +335,7 @@ File: `packages/sdk/src/orchestrator.ts`
 - All signing goes through `SigningProvider` (backed by OWS), never raw private keys
 - If adding a new signing operation, wire it through the existing `SigningProvider` from context
 - Update OWS wallet provisioning tests if wallet creation flow changes
-- Keep `ows.wallet` and `ows.api_key` config fields in sync with env overrides (`TAP_OWS_WALLET`, `TAP_OWS_API_KEY`)
+- Keep `ows.wallet` and `ows.passphrase` config fields in sync with env overrides (`TAP_OWS_WALLET`, `TAP_OWS_PASSPHRASE`)
 
 ### Adding/changing/removing a CLI command
 - Update `skills/trusted-agents/SKILL.md` (the single unified skill). The OpenClaw plugin copies this file at build time, so both hosts update automatically.

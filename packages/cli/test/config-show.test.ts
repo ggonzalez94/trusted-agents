@@ -50,7 +50,7 @@ describe("tap config show", () => {
 		const config: TrustedAgentsConfig = {
 			agentId: 11,
 			chain: "eip155:8453",
-			ows: { wallet: "", apiKey: "" },
+			ows: { wallet: "", passphrase: "" },
 			dataDir,
 			chains: {
 				"eip155:8453": {
@@ -77,10 +77,10 @@ describe("tap config show", () => {
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
-			data?: { ows?: { wallet?: string; api_key?: string }; warnings?: string[] };
+			data?: { ows?: { wallet?: string; passphrase?: string }; warnings?: string[] };
 		};
 		expect(output.status).toBe("ok");
-		expect(output.data?.ows).toEqual({ wallet: "", api_key: "" });
+		expect(output.data?.ows).toEqual({ wallet: "", passphrase: "" });
 		expect(output.data?.warnings).toEqual([expect.stringContaining("tap migrate-wallet")]);
 		expect(stderrWrites).toEqual([]);
 	});
@@ -95,7 +95,7 @@ describe("tap config show", () => {
 				"chain: eip155:8453",
 				"ows:",
 				"  wallet: demo-wallet",
-				"  api_key: demo-key",
+				"  passphrase: demo-passphrase",
 			].join("\n"),
 			"utf-8",
 		);
@@ -104,13 +104,13 @@ describe("tap config show", () => {
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
-			data?: { agent_id?: number; ows?: { wallet?: string; api_key?: string } };
+			data?: { agent_id?: number; ows?: { wallet?: string; passphrase?: string } };
 		};
 		expect(output.status).toBe("ok");
 		expect(output.data?.agent_id).toBe(-1);
 		expect(output.data?.ows).toEqual({
 			wallet: "demo-wallet",
-			api_key: "***redacted***",
+			passphrase: "***redacted***",
 		});
 	});
 });

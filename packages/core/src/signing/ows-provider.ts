@@ -2,23 +2,18 @@ import {
 	getWallet as owsGetWallet,
 	signMessage as owsSignMessage,
 	signTransaction as owsSignTransaction,
+	signTypedData as owsSignTypedData,
 } from "@open-wallet-standard/core";
 import type { Hex, SignableMessage, TransactionSerializable } from "viem";
-import {
-	concatHex,
-	hashTypedData,
-	keccak256,
-	numberToHex,
-	serializeTransaction,
-	toHex,
-	toRlp,
-} from "viem";
+import { serializeTransaction, toHex } from "viem";
 import type {
 	AuthorizationParameters,
 	SignTypedDataParameters,
 	SignedAuthorization,
 	SigningProvider,
 } from "./provider.js";
+
+type TypedDataField = { name: string; type: string };
 
 function ensureHexPrefix(value: string): Hex {
 	if (value.startsWith("0x")) {
@@ -27,12 +22,50 @@ function ensureHexPrefix(value: string): Hex {
 	return `0x${value}` as Hex;
 }
 
+function inferDomainTypes(domain: Record<string, unknown>): TypedDataField[] {
+	const fields: TypedDataField[] = [];
+	if (domain.name !== undefined) fields.push({ name: "name", type: "string" });
+	if (domain.version !== undefined) fields.push({ name: "version", type: "string" });
+	if (domain.chainId !== undefined) fields.push({ name: "chainId", type: "uint256" });
+	if (domain.verifyingContract !== undefined) {
+		fields.push({ name: "verifyingContract", type: "address" });
+	}
+	if (domain.salt !== undefined) fields.push({ name: "salt", type: "bytes32" });
+	return fields;
+}
+
+function normalizeTypedDataForOws(value: SignTypedDataParameters): SignTypedDataParameters {
+	if ("EIP712Domain" in value.types) {
+		return value;
+	}
+
+	const domainTypes = inferDomainTypes(value.domain);
+	if (domainTypes.length === 0) {
+		return value;
+	}
+
+	return {
+		...value,
+		types: {
+			EIP712Domain: domainTypes,
+			...value.types,
+		},
+	};
+}
+
+function stringifyTypedData(value: SignTypedDataParameters): string {
+	const normalized = normalizeTypedDataForOws(value);
+	return JSON.stringify(normalized, (_key, item) =>
+		typeof item === "bigint" ? item.toString() : item,
+	);
+}
+
 /**
  * SigningProvider backed by Open Wallet Standard (OWS).
  *
  * Delegates all cryptographic operations to the OWS vault via its native SDK.
- * The `apiKey` is passed as the `passphrase` parameter to OWS signing functions,
- * which uses it for API-key-based authentication and policy enforcement.
+ * TAP unlocks the local OWS wallet with its passphrase so it can use the
+ * native signing primitives OWS exposes for the wallet.
  */
 export class OwsSigningProvider implements SigningProvider {
 	private cachedAddress: `0x${string}` | undefined;
@@ -40,7 +73,7 @@ export class OwsSigningProvider implements SigningProvider {
 	constructor(
 		private readonly walletName: string,
 		private readonly chain: string,
-		private readonly apiKey: string,
+		private readonly passphrase: string,
 	) {}
 
 	async getAddress(): Promise<`0x${string}`> {
@@ -80,26 +113,24 @@ export class OwsSigningProvider implements SigningProvider {
 			encoding = "hex";
 		}
 
-		const result = owsSignMessage(this.walletName, this.chain, messageStr, this.apiKey, encoding);
+		const result = owsSignMessage(
+			this.walletName,
+			this.chain,
+			messageStr,
+			this.passphrase,
+			encoding,
+		);
 
 		return ensureHexPrefix(result.signature);
 	}
 
 	async signTypedData(params: SignTypedDataParameters): Promise<Hex> {
-		const { domain, types, primaryType, message } = params;
-
-		// OWS does not support signTypedData via API key auth, so we compute
-		// the EIP-712 hash ourselves and sign the raw hash with signMessage.
-		const hash = hashTypedData({
-			domain: domain as Record<string, unknown>,
-			types: types as Record<string, unknown>,
-			primaryType,
-			message: message as Record<string, unknown>,
-		});
-
-		// Sign the raw 32-byte hash — strip 0x for OWS hex encoding
-		const result = owsSignMessage(this.walletName, this.chain, hash.slice(2), this.apiKey, "hex");
-
+		const result = owsSignTypedData(
+			this.walletName,
+			this.chain,
+			stringifyTypedData(params),
+			this.passphrase,
+		);
 		return ensureHexPrefix(result.signature);
 	}
 
@@ -108,13 +139,13 @@ export class OwsSigningProvider implements SigningProvider {
 		// Remove the 0x prefix — OWS expects raw hex
 		const txHex = serialized.slice(2);
 
-		const result = owsSignTransaction(this.walletName, this.chain, txHex, this.apiKey);
+		const result = owsSignTransaction(this.walletName, this.chain, txHex, this.passphrase);
 
 		return ensureHexPrefix(result.signature);
 	}
 
 	async signAuthorization(params: AuthorizationParameters): Promise<SignedAuthorization> {
-		const { contractAddress, chainId, nonce } = params;
+		const { chainId, nonce } = params;
 
 		if (chainId === undefined) {
 			throw new Error("chainId is required for signAuthorization");
@@ -123,45 +154,12 @@ export class OwsSigningProvider implements SigningProvider {
 			throw new Error("nonce is required for signAuthorization");
 		}
 
-		// EIP-7702 authorization hash:
-		// keccak256(0x05 || rlp([chain_id, address, nonce]))
-		const encoded = toRlp([numberToHex(chainId), contractAddress, numberToHex(nonce)]);
-		const authHash = keccak256(concatHex(["0x05", encoded]));
-
-		// Sign the raw hash using signMessage with hex encoding
-		// Strip 0x prefix — OWS expects raw hex
-		const result = owsSignMessage(
-			this.walletName,
-			this.chain,
-			authHash.slice(2),
-			this.apiKey,
-			"hex",
+		throw new Error(
+			`OWS wallet "${this.walletName}" does not support raw EIP-7702 authorization signing`,
 		);
+	}
 
-		const sig = ensureHexPrefix(result.signature);
-
-		// Parse r, s, v from the 65-byte signature
-		// Signature format: r (32 bytes) + s (32 bytes) + v (1 byte) = 65 bytes = 130 hex chars
-		const sigBytes = sig.slice(2); // remove 0x
-		if (sigBytes.length !== 130) {
-			throw new Error(
-				`Expected 65-byte signature (130 hex chars), got ${sigBytes.length} hex chars`,
-			);
-		}
-
-		const r = `0x${sigBytes.slice(0, 64)}` as Hex;
-		const s = `0x${sigBytes.slice(64, 128)}` as Hex;
-		const vByte = Number.parseInt(sigBytes.slice(128, 130), 16);
-		// Normalize v: if v is 0 or 1 (recovery id), convert to 27/28
-		const v = BigInt(vByte < 27 ? vByte + 27 : vByte);
-
-		return {
-			contractAddress,
-			chainId,
-			nonce,
-			r,
-			s,
-			v,
-		};
+	supportsAuthorizationSignatures(): boolean {
+		return false;
 	}
 }

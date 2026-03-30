@@ -8,15 +8,7 @@ import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
-import {
-	createOwsApiKey,
-	createOwsPolicy,
-	ensureOwsInstalled,
-	findCompatiblePolicies,
-	getOwsWalletAddress,
-	importOwsWalletPrivateKey,
-} from "../lib/ows.js";
-import { promptInput } from "../lib/prompt.js";
+import { ensureOwsInstalled, getOwsWalletAddress, importOwsWalletPrivateKey } from "../lib/ows.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface MigrateWalletOptions {
@@ -45,8 +37,8 @@ export async function migrateWalletCommand(
 		const yaml = (YAML.parse(configContent) ?? {}) as Record<string, unknown>;
 
 		// Already migrated?
-		const existingOws = yaml.ows as { wallet?: string; api_key?: string } | undefined;
-		if (existingOws?.wallet && existingOws?.api_key) {
+		const existingOws = yaml.ows as { wallet?: string; passphrase?: string } | undefined;
+		if (existingOws?.wallet) {
 			throw new Error("This agent already has OWS wallet configuration. Migration is not needed.");
 		}
 
@@ -106,61 +98,7 @@ export async function migrateWalletCommand(
 			);
 		}
 
-		// ── Step 5: Policy setup ──────────────────────────────────────
-
-		const policyChains = [chain];
-		if (chain !== "eip155:8453") {
-			policyChains.push("eip155:8453");
-		}
-
-		let policyId: string;
-		const compatible = findCompatiblePolicies(chain);
-
-		if (compatible.length > 0 && !cmdOpts?.nonInteractive) {
-			info("\nCompatible OWS policies:", opts);
-			for (let i = 0; i < compatible.length; i++) {
-				const p = compatible[i]!;
-				info(`  ${i + 1}. ${p.name} (chains: ${p.chains.join(", ")})`, opts);
-			}
-
-			const choice = await promptInput("\nReuse an existing policy? [1/2/.../no]: ");
-			if (choice && choice !== "no") {
-				const idx = Number.parseInt(choice, 10) - 1;
-				if (idx >= 0 && idx < compatible.length) {
-					policyId = compatible[idx]!.id;
-					info(`Using policy: ${policyId}`, opts);
-				} else {
-					policyId = createNewPolicy(policyChains);
-					info(`Created policy: ${policyId}`, opts);
-				}
-			} else {
-				policyId = createNewPolicy(policyChains);
-				info(`Created policy: ${policyId}`, opts);
-			}
-		} else {
-			// Non-interactive or no compatible policies
-			if (compatible.length > 0) {
-				// Non-interactive: reuse first compatible
-				policyId = compatible[0]!.id;
-				info(`Using existing policy: ${policyId}`, opts);
-			} else {
-				policyId = createNewPolicy(policyChains);
-				info(`Created policy: ${policyId}`, opts);
-			}
-		}
-
-		// ── Step 6: Create API key ────────────────────────────────────
-
-		const keyName = `tap-${walletName}-${Date.now()}`;
-		const apiKeyResult = createOwsApiKey({
-			name: keyName,
-			walletName,
-			policyId,
-			passphrase,
-		});
-		info(`Created API key: ${keyName}`, opts);
-
-		// ── Step 7: Verify signing works via OWS ──────────────────────
+		// ── Step 5: Verify signing works via OWS ──────────────────────
 
 		const owsAddress = getOwsWalletAddress(walletName);
 		if (owsAddress.toLowerCase() !== originalAddress.toLowerCase()) {
@@ -169,11 +107,11 @@ export async function migrateWalletCommand(
 			);
 		}
 
-		// ── Step 8: Update config.yaml ────────────────────────────────
+		// ── Step 6: Update config.yaml ────────────────────────────────
 
 		yaml.ows = {
 			wallet: walletName,
-			api_key: apiKeyResult.token,
+			passphrase,
 		};
 
 		const existingXmtp = (yaml.xmtp ?? {}) as Record<string, unknown>;
@@ -185,7 +123,7 @@ export async function migrateWalletCommand(
 		await writeFile(configPath, YAML.stringify(yaml), "utf-8");
 		info(`Updated config at ${configPath}`, opts);
 
-		// ── Step 9: Delete raw key file ───────────────────────────────
+		// ── Step 7: Delete raw key file ───────────────────────────────
 
 		await unlink(keyPath);
 		info("Deleted raw key file.", opts);
@@ -206,18 +144,4 @@ export async function migrateWalletCommand(
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
 	}
-}
-
-function createNewPolicy(chains: string[]): string {
-	const policyId = `tap-${randomBytes(4).toString("hex")}`;
-	const oneYearFromNow = new Date();
-	oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-
-	createOwsPolicy({
-		id: policyId,
-		chains,
-		expiresAt: oneYearFromNow.toISOString(),
-	});
-
-	return policyId;
 }

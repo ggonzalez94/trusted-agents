@@ -99,7 +99,7 @@ describe("OpenClawTapRegistry", () => {
 			config: {
 				agentId: 7,
 				chain: "eip155:8453",
-				ows: { wallet: "test-wallet", apiKey: "test-key" },
+				ows: { wallet: "test-wallet", passphrase: "test-passphrase" },
 				inviteExpirySeconds: 600,
 				dataDir,
 			},

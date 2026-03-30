@@ -106,13 +106,10 @@ tap init --chain base
 tap init --chain base --wallet my-existing-wallet
 ```
 
-**If policies exist** that already cover the selected chain: Mention them to the user. `tap init` will detect compatible policies and offer to reuse them.
-
 During `tap init`:
 1. OWS is checked (and installed if missing)
 2. A new wallet is created (or the specified one is used)
-3. A signing policy is created with chain restrictions (or a compatible one is reused)
-4. A scoped API key is issued for the agent
+3. The wallet passphrase is saved in TAP config so the local runtime can use OWS native signing
 
 Flags: `--wallet <name>` (use existing wallet), `--passphrase <passphrase>` (wallet passphrase), `--non-interactive` (skip prompts, use defaults).
 
@@ -526,10 +523,9 @@ This command:
 1. Reads the existing private key from `identity/agent.key`
 2. Preserves the XMTP database encryption key (computed from the old key and saved to config)
 3. Imports the key into an OWS wallet
-4. Creates a signing policy and scoped API key
-5. Verifies the OWS wallet address matches the original
-6. Updates `config.yaml` with the `ows` block
-7. Deletes `identity/agent.key`
+4. Verifies the OWS wallet address matches the original
+5. Updates `config.yaml` with the `ows` block
+6. Deletes `identity/agent.key`
 
 Flags: `--passphrase <passphrase>` (wallet passphrase for OWS import), `--non-interactive` (skip prompts).
 
@@ -556,5 +552,5 @@ The agent keeps its on-chain identity, contacts, and conversation history — on
 | `No matching scheduling grant` | Peer needs to publish a `scheduling/request` grant to you |
 | `OWS not installed` | Install with `curl -fsSL https://docs.openwallet.sh/install.sh \| bash` |
 | `ows.wallet is required` | Run `tap init` to set up an OWS wallet, or `tap migrate-wallet` if you have a legacy key |
-| `ows.apiKey must start with ows_key_` | The API key in config is invalid — re-run `tap init` or create a new key with `ows key create` |
+| `ows.passphrase must be a string` | Fix the configured wallet passphrase, or re-run `tap init` / `tap migrate-wallet` |
 | `Address mismatch after OWS import` | The OWS wallet derived a different address — check the wallet or try importing again |

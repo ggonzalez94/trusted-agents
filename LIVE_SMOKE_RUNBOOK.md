@@ -33,9 +33,9 @@ Use the full path when the agent wallets have a small amount of Base mainnet USD
 
 Required:
 - `TAP_SMOKE_AGENT_A_OWS_WALLET` — OWS wallet ID for Agent A
-- `TAP_SMOKE_AGENT_A_OWS_API_KEY` — OWS API key for Agent A
+- `TAP_SMOKE_AGENT_A_OWS_PASSPHRASE` — OWS wallet passphrase for Agent A
 - `TAP_SMOKE_AGENT_B_OWS_WALLET` — OWS wallet ID for Agent B
-- `TAP_SMOKE_AGENT_B_OWS_API_KEY` — OWS API key for Agent B
+- `TAP_SMOKE_AGENT_B_OWS_PASSPHRASE` — OWS wallet passphrase for Agent B
 
 Optional:
 - `TAP_PINATA_JWT`
@@ -43,7 +43,7 @@ Optional:
 Notes:
 - `TAP_PINATA_JWT` is not needed for the x402 path.
 - If you use `TAP_PINATA_JWT`, you are not testing x402 upload.
-- Do not commit OWS wallet IDs, API keys, or any funding mnemonic to the repository.
+- Do not commit OWS wallet IDs, passphrases, or any funding mnemonic to the repository.
 
 ## Basic Prerequisites
 
@@ -242,12 +242,12 @@ AGENT_B_DIR="$(mktemp -d /tmp/tap-live-b.XXXXXX)"
 
 ```bash
 tap --data-dir "$AGENT_A_DIR" init \
-  --ows-wallet "$TAP_SMOKE_AGENT_A_OWS_WALLET" \
-  --ows-api-key "$TAP_SMOKE_AGENT_A_OWS_API_KEY"
+  --wallet "$TAP_SMOKE_AGENT_A_OWS_WALLET" \
+  --passphrase "$TAP_SMOKE_AGENT_A_OWS_PASSPHRASE"
 
 tap --data-dir "$AGENT_B_DIR" init \
-  --ows-wallet "$TAP_SMOKE_AGENT_B_OWS_WALLET" \
-  --ows-api-key "$TAP_SMOKE_AGENT_B_OWS_API_KEY"
+  --wallet "$TAP_SMOKE_AGENT_B_OWS_WALLET" \
+  --passphrase "$TAP_SMOKE_AGENT_B_OWS_PASSPHRASE"
 ```
 
 ### 3. Resolve the two agent addresses
@@ -300,7 +300,7 @@ Continue with the shared live flow below.
 ### 1. Point at already-registered agent homes
 
 Use any two existing TAP data dirs that already contain:
-- a configured OWS wallet and API key
+- a configured OWS wallet and passphrase
 - the correct `agent_id`
 - a registration that resolves on-chain
 
@@ -488,13 +488,13 @@ Full-path-only extra pass criteria:
 - insufficient funds
   - top up the agent wallet before continuing
 - OWS signing errors
-  - verify `ows.wallet` and `ows.api_key` in the agent's config.yaml
-  - ensure OWS is reachable and the API key has not expired
+  - verify `ows.wallet` and `ows.passphrase` in the agent's config.yaml
+  - ensure OWS is reachable and the passphrase is correct
 
 ## Automation Guidance
 
 If this becomes automated later:
 - prefer `workflow_dispatch` or nightly cron
-- store all OWS wallet IDs and API keys in protected environment secrets
+- store all OWS wallet IDs and passphrases in protected environment secrets
 - add a funding verification step before the smoke flow
 - publish the tx hash, permissions snapshots, and ledger tails as workflow artifacts

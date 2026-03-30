@@ -218,7 +218,7 @@ async function createService(
 	const config: TrustedAgentsConfig = {
 		agentId: 1,
 		chain: "eip155:8453",
-		ows: { wallet: "test", apiKey: "ows_key_test" },
+		ows: { wallet: "test", passphrase: "test-passphrase" },
 		dataDir,
 		chains: {},
 		inviteExpirySeconds: 3600,

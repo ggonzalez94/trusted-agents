@@ -28,4 +28,5 @@ export interface SigningProvider {
 	signTypedData(params: SignTypedDataParameters): Promise<Hex>;
 	signTransaction(tx: TransactionSerializable): Promise<Hex>;
 	signAuthorization(params: AuthorizationParameters): Promise<SignedAuthorization>;
+	supportsAuthorizationSignatures?(): boolean;
 }

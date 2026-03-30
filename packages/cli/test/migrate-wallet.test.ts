@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deletePolicy, deleteWallet, listApiKeys, revokeApiKey } from "@open-wallet-standard/core";
+import { deleteWallet } from "@open-wallet-standard/core";
 import { keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,8 +26,6 @@ describe("tap migrate-wallet", () => {
 
 	// Track OWS artifacts for cleanup
 	const createdWallets: string[] = [];
-	const createdPolicies: string[] = [];
-	const createdApiKeyIds: string[] = [];
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-migrate-test-"));
@@ -54,20 +52,6 @@ describe("tap migrate-wallet", () => {
 		process.stderr.write = origStderrWrite;
 
 		// Clean up OWS artifacts
-		for (const keyId of createdApiKeyIds) {
-			try {
-				revokeApiKey(keyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		for (const policyId of createdPolicies) {
-			try {
-				deletePolicy(policyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
 		for (const walletName of createdWallets) {
 			try {
 				deleteWallet(walletName);
@@ -75,8 +59,6 @@ describe("tap migrate-wallet", () => {
 				/* ignore */
 			}
 		}
-		createdApiKeyIds.length = 0;
-		createdPolicies.length = 0;
 		createdWallets.length = 0;
 
 		await rm(tmpDir, { recursive: true, force: true });
@@ -86,16 +68,6 @@ describe("tap migrate-wallet", () => {
 		const ows = yaml.ows as { wallet?: string } | undefined;
 		if (ows?.wallet) {
 			createdWallets.push(ows.wallet);
-		}
-		try {
-			const keys = listApiKeys();
-			for (const k of keys) {
-				if (k.name && typeof k.name === "string" && k.name.startsWith("tap-")) {
-					createdApiKeyIds.push(k.id);
-				}
-			}
-		} catch (_) {
-			/* ignore */
 		}
 	}
 
@@ -123,7 +95,7 @@ describe("tap migrate-wallet", () => {
 		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
 		expect(updatedConfig.ows).toBeDefined();
 		expect(updatedConfig.ows.wallet).toBe("tap-agent-42");
-		expect(updatedConfig.ows.api_key).toMatch(/^ows_key_/);
+		expect(updatedConfig.ows.passphrase).toBe("");
 
 		// XMTP DB encryption key should be persisted (legacy formula)
 		expect(updatedConfig.xmtp).toBeDefined();
@@ -177,7 +149,7 @@ describe("tap migrate-wallet", () => {
 
 		// Add OWS block to config
 		const configContent = YAML.parse(await readFile(configPath, "utf-8"));
-		configContent.ows = { wallet: "existing-wallet", api_key: "ows_key_existing" };
+		configContent.ows = { wallet: "existing-wallet", passphrase: "existing-passphrase" };
 		await writeFile(configPath, YAML.stringify(configContent), "utf-8");
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true });

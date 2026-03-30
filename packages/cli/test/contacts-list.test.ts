@@ -45,7 +45,7 @@ describe("tap contacts list", () => {
 				"chain: eip155:8453",
 				"ows:",
 				"  wallet: demo-wallet",
-				"  api_key: demo-key",
+				"  passphrase: demo-passphrase",
 			].join("\n"),
 			"utf-8",
 		);

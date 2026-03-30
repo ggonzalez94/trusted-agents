@@ -39,7 +39,7 @@ describe("tap transfer", () => {
 		return {
 			agentId: 42,
 			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
+			ows: { wallet: "test-wallet", passphrase: "test-passphrase" },
 			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:1": {

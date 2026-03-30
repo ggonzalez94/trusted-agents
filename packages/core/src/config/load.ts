@@ -16,7 +16,7 @@ interface StoredYamlConfig {
 	chain?: string;
 	ows?: {
 		wallet?: string;
-		api_key?: string;
+		passphrase?: string;
 	};
 	execution?: {
 		mode?: ExecutionMode;
@@ -44,7 +44,7 @@ export interface LoadTrustedAgentConfigOptions {
 	agentId?: number;
 	chain?: string;
 	owsWallet?: string;
-	owsApiKey?: string;
+	owsPassphrase?: string;
 	configPath?: string;
 	extraChains?: Record<string, ChainConfig>;
 	executionMode?: ExecutionMode;
@@ -99,7 +99,7 @@ export async function loadTrustedAgentConfigFromDataDir(
 	}
 
 	const owsWallet = options.owsWallet ?? yaml?.ows?.wallet ?? "";
-	const owsApiKey = options.owsApiKey ?? yaml?.ows?.api_key ?? "";
+	const owsPassphrase = options.owsPassphrase ?? yaml?.ows?.passphrase ?? "";
 	const chain = options.chain ?? yaml?.chain ?? "eip155:8453";
 	const executionMode =
 		options.executionMode ?? yaml?.execution?.mode ?? getDefaultExecutionModeForChain(chain);
@@ -132,7 +132,7 @@ export async function loadTrustedAgentConfigFromDataDir(
 	return {
 		agentId: agentId ?? 0,
 		chain,
-		ows: { wallet: owsWallet, apiKey: owsApiKey },
+		ows: { wallet: owsWallet, passphrase: owsPassphrase },
 		dataDir: resolvedDataDir,
 		chains,
 		inviteExpirySeconds: yaml?.invite_expiry_seconds ?? DEFAULT_CONFIG.inviteExpirySeconds,

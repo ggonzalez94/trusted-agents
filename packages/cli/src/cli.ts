@@ -104,7 +104,7 @@ Examples:
 		.description("First-time setup wizard")
 		.option("--chain <name>", "Chain to register on (alias or CAIP-2)")
 		.option("--wallet <name>", "Use an existing OWS wallet by name")
-		.option("--passphrase <passphrase>", "Wallet passphrase for API key creation")
+		.option("--passphrase <passphrase>", "OWS wallet passphrase")
 		.option("--non-interactive", "Skip prompts and use defaults")
 		.addHelpText(
 			"after",
@@ -135,7 +135,7 @@ ${chainAliasHelpText()}
 	program
 		.command("migrate-wallet")
 		.description("Migrate an existing agent from raw key file to OWS")
-		.option("--passphrase <passphrase>", "Wallet passphrase for import and API key creation")
+		.option("--passphrase <passphrase>", "OWS wallet passphrase for import")
 		.option("--non-interactive", "Skip prompts and use defaults")
 		.action(
 			async (cmdOpts: {

@@ -23,7 +23,7 @@ export interface IpfsConfig {
 
 export interface OwsConfig {
 	wallet: string;
-	apiKey: string;
+	passphrase: string;
 }
 
 export interface TrustedAgentsConfig {

@@ -87,6 +87,16 @@ async function resolveExecutionContext(
 		};
 	}
 
+	if (mode === "eip7702" && provider.supportsAuthorizationSignatures?.() === false) {
+		warnings.push(
+			`${chainConfig.name} EIP-7702 execution requires a signer that can produce raw authorization signatures; using eoa instead`,
+		);
+		return {
+			...baseContext,
+			mode: "eoa",
+		};
+	}
+
 	const paymasterProvider =
 		pinnedPreview?.paymasterProvider ??
 		resolvePaymasterProvider(config, chainConfig, mode, warnings);

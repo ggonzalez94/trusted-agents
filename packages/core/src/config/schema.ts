@@ -20,8 +20,8 @@ export function validateConfig(
 	if (!partial.ows?.wallet || typeof partial.ows.wallet !== "string") {
 		throw new ConfigError("ows.wallet is required and must be a non-empty string");
 	}
-	if (!partial.ows?.apiKey?.startsWith("ows_key_")) {
-		throw new ConfigError("ows.apiKey is required and must start with 'ows_key_'");
+	if (partial.ows?.passphrase !== undefined && typeof partial.ows.passphrase !== "string") {
+		throw new ConfigError("ows.passphrase must be a string");
 	}
 
 	const mergedChains = {

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deletePolicy, deleteWallet, listApiKeys, revokeApiKey } from "@open-wallet-standard/core";
+import { deleteWallet } from "@open-wallet-standard/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
@@ -18,8 +18,6 @@ describe("tap init", () => {
 
 	// Track OWS artifacts for cleanup
 	const createdWallets: string[] = [];
-	const createdPolicies: string[] = [];
-	const createdApiKeyIds: string[] = [];
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-init-test-"));
@@ -43,20 +41,6 @@ describe("tap init", () => {
 		process.stderr.write = origStderrWrite;
 
 		// Clean up OWS artifacts
-		for (const keyId of createdApiKeyIds) {
-			try {
-				revokeApiKey(keyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		for (const policyId of createdPolicies) {
-			try {
-				deletePolicy(policyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
 		for (const walletName of createdWallets) {
 			try {
 				deleteWallet(walletName);
@@ -64,8 +48,6 @@ describe("tap init", () => {
 				/* ignore */
 			}
 		}
-		createdApiKeyIds.length = 0;
-		createdPolicies.length = 0;
 		createdWallets.length = 0;
 
 		await rm(tmpDir, { recursive: true, force: true });
@@ -76,17 +58,6 @@ describe("tap init", () => {
 		const ows = yaml.ows as { wallet?: string } | undefined;
 		if (ows?.wallet) {
 			createdWallets.push(ows.wallet);
-		}
-		// Find API keys and policies created during the test
-		try {
-			const keys = listApiKeys();
-			for (const k of keys) {
-				if (k.name && typeof k.name === "string" && k.name.startsWith("tap-")) {
-					createdApiKeyIds.push(k.id);
-				}
-			}
-		} catch (_) {
-			/* ignore */
 		}
 	}
 
@@ -112,7 +83,7 @@ describe("tap init", () => {
 		// OWS config present
 		expect(yaml.ows).toBeDefined();
 		expect(yaml.ows.wallet).toBeTruthy();
-		expect(yaml.ows.api_key).toMatch(/^ows_key_/);
+		expect(yaml.ows.passphrase).toBe("");
 
 		// XMTP encryption key present
 		expect(yaml.xmtp).toBeDefined();
@@ -207,7 +178,7 @@ describe("tap init", () => {
 		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
 		const yaml = YAML.parse(configContent);
 		expect(yaml.ows.wallet).toBe(walletName);
-		expect(yaml.ows.api_key).toMatch(/^ows_key_/);
+		expect(yaml.ows.passphrase).toBe("test-pass");
 
 		trackOwsArtifacts(yaml);
 	});

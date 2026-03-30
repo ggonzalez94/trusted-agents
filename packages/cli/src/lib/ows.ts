@@ -1,14 +1,11 @@
 import {
-	createApiKey,
-	createPolicy,
 	createWallet,
 	getWallet,
 	importWalletPrivateKey,
-	listPolicies,
 	listWallets,
 	signMessage,
 } from "@open-wallet-standard/core";
-import type { ApiKeyResult, WalletInfo } from "@open-wallet-standard/core";
+import type { WalletInfo } from "@open-wallet-standard/core";
 import { keccak256, toHex } from "viem";
 
 export interface OwsWalletEntry {
@@ -108,93 +105,19 @@ export function getOwsWalletAddress(nameOrId: string): string {
 	return address;
 }
 
-export interface CreatePolicyOptions {
-	id: string;
-	chains: string[];
-	expiresAt: string;
-}
-
-/**
- * Create an OWS policy with the given allowed chains and expiry.
- * Returns the policy ID.
- */
-export function createOwsPolicy(opts: CreatePolicyOptions): string {
-	const policyJson = JSON.stringify({
-		id: opts.id,
-		name: `tap-${opts.id}`,
-		version: 1,
-		created_at: new Date().toISOString(),
-		expires_at: opts.expiresAt,
-		rules: [{ type: "allowed_chains", chain_ids: opts.chains }],
-		action: "deny",
-	});
-	createPolicy(policyJson);
-	return opts.id;
-}
-
-export interface CompatiblePolicy {
-	id: string;
-	name: string;
-	chains: string[];
-	expiresAt?: string;
-}
-
-/**
- * Find policies that include the given chain in their allowed_chains rules.
- */
-export function findCompatiblePolicies(chain: string): CompatiblePolicy[] {
-	const policies = listPolicies();
-	const compatible: CompatiblePolicy[] = [];
-	for (const p of policies) {
-		const rules = p?.rules;
-		if (!Array.isArray(rules)) continue;
-		for (const rule of rules) {
-			if (
-				rule?.type === "allowed_chains" &&
-				Array.isArray(rule.chain_ids) &&
-				rule.chain_ids.includes(chain)
-			) {
-				compatible.push({
-					id: p.id ?? String(p.name),
-					name: p.name ?? p.id ?? "unknown",
-					chains: rule.chain_ids as string[],
-					expiresAt: p.expires_at,
-				});
-				break;
-			}
-		}
-	}
-	return compatible;
-}
-
-export interface CreateApiKeyOptions {
-	name: string;
-	walletName: string;
-	policyId: string;
-	passphrase: string;
-}
-
-/**
- * Create an OWS API key for the given wallet and policy.
- * Returns the raw token (ows_key_...) and key metadata.
- */
-export function createOwsApiKey(opts: CreateApiKeyOptions): ApiKeyResult {
-	return createApiKey(opts.name, [opts.walletName], [opts.policyId], opts.passphrase);
-}
-
 /**
  * Derive a deterministic XMTP DB encryption key by signing a fixed message
  * with the OWS wallet and hashing the signature.
  *
  * This produces a stable 32-byte key that survives restarts without storing
- * additional secrets — only the wallet + API key are needed.
+ * additional secrets — only the wallet + passphrase are needed.
  */
 export function deriveXmtpDbEncryptionKey(
 	walletName: string,
 	chain: string,
-	apiKey: string,
+	passphrase: string,
 ): `0x${string}` {
-	const result = signMessage(walletName, chain, "xmtp-db-encryption-key", apiKey);
+	const result = signMessage(walletName, chain, "xmtp-db-encryption-key", passphrase);
 	return keccak256(toHex(result.signature));
 }
 
