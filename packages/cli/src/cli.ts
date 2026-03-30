@@ -604,6 +604,36 @@ Examples:
 			await conversationsShowCommand(id, opts);
 		});
 
+	// app
+	const app = program.command("app").description("Manage TAP apps");
+
+	app
+		.command("install <name>")
+		.description("Install a TAP app package")
+		.action(async (name: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { appInstallCommand } = await import("./commands/app.js");
+			await appInstallCommand(name, opts);
+		});
+
+	app
+		.command("remove <name>")
+		.description("Remove an installed TAP app")
+		.action(async (name: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { appRemoveCommand } = await import("./commands/app.js");
+			await appRemoveCommand(name, opts);
+		});
+
+	app
+		.command("list")
+		.description("List installed TAP apps")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { appListCommand } = await import("./commands/app.js");
+			await appListCommand(opts);
+		});
+
 	// Error handling
 	program.exitOverride();
 	program.configureOutput({
