@@ -21,3 +21,8 @@ export {
 	removeAppFromManifest,
 	buildRoutingTable,
 } from "./manifest.js";
+export {
+	TapAppRegistry,
+	type TapAppRegistryOptions,
+	type RegisteredAppInfo,
+} from "./registry.js";
