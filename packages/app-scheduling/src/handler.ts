@@ -180,16 +180,16 @@ function validatePayload(payload: Record<string, unknown>): SchedulingProposal |
 		return null;
 	}
 
-	if (typeof payload.durationMinutes !== "number" || payload.durationMinutes <= 0) {
+	if (typeof payload.duration !== "number" || payload.duration <= 0) {
 		return null;
 	}
 
-	if (!Array.isArray(payload.proposedSlots) || payload.proposedSlots.length === 0) {
+	if (!Array.isArray(payload.slots) || payload.slots.length === 0) {
 		return null;
 	}
 
 	const slots: TimeSlot[] = [];
-	for (const slot of payload.proposedSlots) {
+	for (const slot of payload.slots) {
 		if (
 			typeof slot !== "object" ||
 			slot === null ||
@@ -215,16 +215,18 @@ function validatePayload(payload: Record<string, unknown>): SchedulingProposal |
 			? payload.schedulingId
 			: `sch_${Date.now()}`;
 
-	const timezone =
-		typeof payload.timezone === "string" && payload.timezone.length > 0 ? payload.timezone : "UTC";
+	const originTimezone =
+		typeof payload.originTimezone === "string" && payload.originTimezone.length > 0
+			? payload.originTimezone
+			: "UTC";
 
 	return {
 		type: payload.type as "scheduling/propose" | "scheduling/counter",
 		schedulingId,
 		title: payload.title,
-		duration: payload.durationMinutes,
+		duration: payload.duration as number,
 		slots,
-		originTimezone: timezone,
+		originTimezone,
 		...(typeof payload.note === "string" && payload.note.length > 0 ? { note: payload.note } : {}),
 	};
 }

@@ -54,9 +54,10 @@ function buildMockContext(
 		},
 		payload: overrides.payload ?? {
 			type: "scheduling/propose",
+			schedulingId: "sch_test_001",
 			title: "Team Standup",
-			durationMinutes: 30,
-			proposedSlots: [
+			duration: 30,
+			slots: [
 				{
 					start: "2026-04-01T10:00:00Z",
 					end: "2026-04-01T10:30:00Z",
@@ -66,7 +67,7 @@ function buildMockContext(
 					end: "2026-04-01T14:30:00Z",
 				},
 			],
-			timezone: "America/New_York",
+			originTimezone: "America/New_York",
 		},
 		messaging: {
 			reply: vi.fn().mockResolvedValue(undefined),
@@ -164,8 +165,8 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "",
-					durationMinutes: 30,
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
+					duration: 30,
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
 			});
 
@@ -180,8 +181,8 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Standup",
-					durationMinutes: 0,
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
+					duration: 0,
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
 			});
 
@@ -196,8 +197,8 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Standup",
-					durationMinutes: 30,
-					proposedSlots: [],
+					duration: 30,
+					slots: [],
 				},
 			});
 
@@ -212,8 +213,8 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Standup",
-					durationMinutes: 30,
-					proposedSlots: [{ start: "2026-04-01T10:30:00Z", end: "2026-04-01T10:00:00Z" }],
+					duration: 30,
+					slots: [{ start: "2026-04-01T10:30:00Z", end: "2026-04-01T10:00:00Z" }],
 				},
 			});
 
@@ -322,9 +323,9 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Long Meeting",
-					durationMinutes: 120,
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T12:00:00Z" }],
-					timezone: "UTC",
+					duration: 120,
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T12:00:00Z" }],
+					originTimezone: "UTC",
 				},
 				grantsToPeer: [
 					{
@@ -348,8 +349,8 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Quick Chat",
-					durationMinutes: 15,
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:15:00Z" }],
+					duration: 15,
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:15:00Z" }],
 				},
 				grantsToPeer: [
 					{
@@ -409,13 +410,13 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Team Standup",
-					durationMinutes: 30,
+					duration: 30,
 					schedulingId: "sch_test",
-					proposedSlots: [
+					slots: [
 						{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" },
 						{ start: "2026-04-01T14:00:00Z", end: "2026-04-01T14:30:00Z" },
 					],
-					timezone: "America/New_York",
+					originTimezone: "America/New_York",
 				},
 				extensions: {
 					schedulingHandler: handler,
@@ -462,10 +463,10 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Team Standup",
-					durationMinutes: 30,
+					duration: 30,
 					schedulingId: "sch_test",
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
-					timezone: "UTC",
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
+					originTimezone: "UTC",
 				},
 				extensions: {
 					schedulingHandler: handler,
@@ -492,9 +493,9 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Team Standup",
-					durationMinutes: 30,
+					duration: 30,
 					schedulingId: "sch_reject",
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
 				extensions: {
 					schedulingHandler: handler,
@@ -521,9 +522,9 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Team Standup",
-					durationMinutes: 30,
+					duration: 30,
 					schedulingId: "sch_defer",
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
 				extensions: {
 					schedulingHandler: handler,
@@ -558,9 +559,9 @@ describe("handleSchedulingRequest", () => {
 				payload: {
 					type: "scheduling/propose",
 					title: "Team Standup",
-					durationMinutes: 30,
+					duration: 30,
 					schedulingId: "sch_no_auto",
-					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
+					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
 				extensions: {
 					schedulingHandler: handler,
