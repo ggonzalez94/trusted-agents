@@ -13,6 +13,15 @@ import type {
 	SigningProvider,
 } from "./provider.js";
 
+/** EIP-712 domain field → Solidity type, in spec-canonical order. */
+const EIP712_DOMAIN_FIELDS: ReadonlyArray<readonly [string, string]> = [
+	["name", "string"],
+	["version", "string"],
+	["chainId", "uint256"],
+	["verifyingContract", "address"],
+	["salt", "bytes32"],
+];
+
 function ensureHexPrefix(value: string): Hex {
 	if (value.startsWith("0x")) {
 		return value as Hex;
@@ -81,33 +90,16 @@ export class OwsSigningProvider implements SigningProvider {
 	async signTypedData(params: SignTypedDataParameters): Promise<Hex> {
 		const { domain, types, primaryType, message } = params;
 
-		// Build EIP712Domain type dynamically from the domain fields present.
-		// EIP-712 domain fields in canonical order:
-		//   name (string), version (string), chainId (uint256),
-		//   verifyingContract (address), salt (bytes32)
-		const domainFields: Array<{ name: string; type: string }> = [];
-		if (domain.name !== undefined) domainFields.push({ name: "name", type: "string" });
-		if (domain.version !== undefined) domainFields.push({ name: "version", type: "string" });
-		if (domain.chainId !== undefined) domainFields.push({ name: "chainId", type: "uint256" });
-		if (domain.verifyingContract !== undefined)
-			domainFields.push({ name: "verifyingContract", type: "address" });
-		if (domain.salt !== undefined) domainFields.push({ name: "salt", type: "bytes32" });
+		// OWS requires EIP712Domain in the types object. Build it from whichever
+		// domain fields are present, then let it override any caller-provided one
+		// (callers should not pass EIP712Domain — OWS infers validation from it).
+		const domainFields = EIP712_DOMAIN_FIELDS.filter(([key]) => domain[key] !== undefined).map(
+			([name, type]) => ({ name, type }),
+		);
 
-		const fullTypes = {
-			...types,
-			EIP712Domain: domainFields,
-		};
-
-		const typedData = {
-			types: fullTypes,
-			primaryType,
-			domain,
-			message,
-		};
-
-		// Serialize with BigInt-safe JSON (OWS expects a JSON string)
-		const typedDataJson = JSON.stringify(typedData, (_key, value) =>
-			typeof value === "bigint" ? value.toString() : value,
+		const typedDataJson = JSON.stringify(
+			{ types: { ...types, EIP712Domain: domainFields }, primaryType, domain, message },
+			(_key, value) => (typeof value === "bigint" ? value.toString() : value),
 		);
 
 		const result = owsSignTypedData(this.walletName, this.chain, typedDataJson, this.apiKey);
