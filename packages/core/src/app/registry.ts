@@ -37,6 +37,14 @@ export class TapAppRegistry {
 				throw new Error(`Action type "${actionType}" is already registered by app "${existing}"`);
 			}
 		}
+		// Clear stale action mappings if re-registering an existing app
+		// (e.g., upgrade with changed action types)
+		const existing = this.apps.get(app.id);
+		if (existing) {
+			for (const actionType of Object.keys(existing.actions)) {
+				this.actionMap.delete(actionType);
+			}
+		}
 		this.apps.set(app.id, app);
 		for (const actionType of Object.keys(app.actions)) {
 			this.actionMap.set(actionType, app.id);

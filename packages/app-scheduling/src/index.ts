@@ -44,9 +44,18 @@ export function buildSchedulingPayload(params: {
 	durationMinutes: number;
 	proposedSlots: Array<{ start: string; end: string }>;
 	timezone?: string;
+	schedulingId?: string;
 	note?: string;
 }): Record<string, unknown> {
-	return { type: "scheduling/propose", ...params };
+	return {
+		type: "scheduling/propose",
+		schedulingId: params.schedulingId ?? `sch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+		title: params.title,
+		duration: params.durationMinutes,
+		slots: params.proposedSlots,
+		originTimezone: params.timezone ?? "UTC",
+		...(params.note ? { note: params.note } : {}),
+	};
 }
 
 export const schedulingApp = defineTapApp({
