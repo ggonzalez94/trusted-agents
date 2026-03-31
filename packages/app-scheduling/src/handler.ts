@@ -1,4 +1,10 @@
-import type { TapActionContext, TapActionResult } from "trusted-agents-core";
+import type {
+	Contact,
+	SchedulingDecision,
+	SchedulingHandler,
+	TapActionContext,
+	TapActionResult,
+} from "trusted-agents-core";
 import { findApplicableSchedulingGrants, findSchedulableSchedulingSlots } from "./grants.js";
 import type { SchedulingProposal, TimeSlot } from "./types.js";
 
@@ -15,6 +21,73 @@ export async function handleSchedulingRequest(ctx: TapActionContext): Promise<Ta
 		};
 	}
 
+	// Check if a SchedulingHandler is available via extensions
+	const schedulingHandler = ctx.extensions.schedulingHandler as SchedulingHandler | undefined;
+	const contact = ctx.extensions.contact as Contact | undefined;
+
+	if (schedulingHandler && contact) {
+		// Delegate to SchedulingHandler for calendar availability and approval checks
+		const decision = await schedulingHandler.evaluateProposal(
+			proposal.schedulingId,
+			contact,
+			proposal,
+		);
+
+		return mapDecisionToResult(proposal.schedulingId, decision);
+	}
+
+	// Fallback: grant-only evaluation when no SchedulingHandler is configured
+	return handleGrantOnlyEvaluation(ctx, proposal);
+}
+
+function mapDecisionToResult(schedulingId: string, decision: SchedulingDecision): TapActionResult {
+	switch (decision.action) {
+		case "confirm":
+			return {
+				success: true,
+				data: {
+					type: "scheduling/accept",
+					schedulingId,
+					acceptedSlot: decision.slot,
+				},
+			};
+		case "counter":
+			return {
+				success: true,
+				data: {
+					type: "scheduling/counter",
+					schedulingId,
+					counterSlots: decision.slots,
+				},
+			};
+		case "reject":
+			return {
+				success: false,
+				data: {
+					type: "scheduling/reject",
+					schedulingId,
+					reason: decision.reason,
+				},
+				error: {
+					code: "REJECTED",
+					message: decision.reason,
+				},
+			};
+		case "defer":
+			return {
+				success: false,
+				error: {
+					code: "DEFERRED",
+					message: "Scheduling request deferred for approval",
+				},
+			};
+	}
+}
+
+function handleGrantOnlyEvaluation(
+	ctx: TapActionContext,
+	proposal: SchedulingProposal,
+): TapActionResult {
 	// Check if grants cover this scheduling request
 	const matchingGrants = findApplicableSchedulingGrants(
 		{ version: "tap-grants/v1", updatedAt: "", grants: ctx.peer.grantsToPeer },
@@ -76,11 +149,6 @@ export async function handleSchedulingRequest(ctx: TapActionContext): Promise<Ta
 
 	// Accept the first available slot
 	const acceptedSlot = schedulableSlots[0] as TimeSlot;
-
-	await ctx.log.append({
-		text: `Accepted scheduling request: ${proposal.title} (${proposal.duration} min) at ${acceptedSlot.start}`,
-		direction: "outbound",
-	});
 
 	ctx.events.emit({
 		type: "scheduling/accepted",

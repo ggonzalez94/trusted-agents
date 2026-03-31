@@ -70,6 +70,7 @@ export interface TapActionContext {
 	log: {
 		append(entry: { text: string; direction: "inbound" | "outbound" }): Promise<void>;
 	};
+	extensions: Record<string, unknown>;
 }
 
 // ── Action result ──

@@ -34,6 +34,7 @@ export interface BuildActionContextDeps {
 	emitEvent: (event: { type: string; summary: string; data?: Record<string, unknown> }) => void;
 	conversationLogger: IConversationLogger;
 	conversationId: string;
+	extensions?: Record<string, unknown>;
 }
 
 function filterGrantsByScopes(grants: PermissionGrant[], scopes: string[]): PermissionGrant[] {
@@ -86,5 +87,6 @@ export function buildActionContext(deps: BuildActionContextDeps): TapActionConte
 				});
 			},
 		},
+		extensions: deps.extensions ?? {},
 	};
 }

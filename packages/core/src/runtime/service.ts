@@ -1,6 +1,6 @@
 import { parseEther, parseUnits } from "viem";
 import { buildActionContext } from "../app/context.js";
-import type { TapActionResult } from "../app/types.js";
+import type { TapActionContext, TapActionResult } from "../app/types.js";
 import { defineTapApp } from "../app/types.js";
 import {
 	AsyncMutex,
@@ -49,7 +49,10 @@ import {
 	parseSchedulingActionRequest,
 	parseSchedulingActionResponse,
 } from "../scheduling/actions.js";
-import { findApplicableSchedulingGrants } from "../scheduling/grants.js";
+import {
+	findApplicableSchedulingGrants,
+	findSchedulableSchedulingSlots,
+} from "../scheduling/grants.js";
 import type {
 	ConfirmedMeeting,
 	ProposedMeeting,
@@ -395,22 +398,23 @@ export class TapMessagingService {
 			}),
 		);
 
-		// Register scheduling action types as an inline app.
+		// Register scheduling action types as an inline app that delegates to
+		// SchedulingHandler for calendar availability and operator approval.
 		this.context.appRegistry.registerApp(
 			defineTapApp({
-				id: "tap-scheduling",
-				name: "TAP Scheduling",
-				version: "0.0.0",
+				id: "scheduling",
+				name: "Scheduling",
+				version: "1.0.0",
 				grantScopes: ["scheduling/request"],
 				actions: {
 					"scheduling/propose": {
-						handler: async (_ctx) => {
-							return { success: true };
+						handler: async (ctx) => {
+							return this.handleSchedulingAction(ctx);
 						},
 					},
 					"scheduling/counter": {
-						handler: async (_ctx) => {
-							return { success: true };
+						handler: async (ctx) => {
+							return this.handleSchedulingAction(ctx);
 						},
 					},
 				},
@@ -1774,9 +1778,10 @@ export class TapMessagingService {
 		}
 
 		// Delegate to built-in handlers that use the existing codepaths.
-		// The inline app registrations (tap-transfer, tap-scheduling, tap-permissions)
-		// exist to claim action types in the registry. Their actual processing
-		// is still done by the existing methods below.
+		// The inline app registrations (tap-transfer, tap-permissions) exist to
+		// claim action types in the registry. Their actual processing is still
+		// done by the existing methods below. The scheduling app delegates to
+		// SchedulingHandler via dispatchToApp.
 		if (resolved.app.id === "tap-permissions") {
 			const permissionRequest = parsePermissionGrantRequest(envelope.message);
 			if (permissionRequest) {
@@ -1795,7 +1800,7 @@ export class TapMessagingService {
 			}
 		}
 
-		if (resolved.app.id === "tap-scheduling") {
+		if (resolved.app.id === "scheduling") {
 			const schedulingRequest = parseSchedulingActionRequest(envelope.message);
 			if (schedulingRequest) {
 				await this.context.requestJournal.updateMetadata(
@@ -2292,6 +2297,204 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.logActionResultDeliveryFailure(contact, response.actionId, error);
 		}
+	}
+
+	private async handleSchedulingAction(ctx: TapActionContext): Promise<TapActionResult> {
+		const contact = ctx.extensions.contact as Contact | undefined;
+		const schedulingHandler = ctx.extensions.schedulingHandler as SchedulingHandler | undefined;
+
+		// Parse the proposal from the action context payload
+		const proposal = this.parseSchedulingProposalFromPayload(ctx.payload);
+		if (!proposal) {
+			return {
+				success: false,
+				error: {
+					code: "INVALID_PAYLOAD",
+					message: "Missing or invalid scheduling fields: title, durationMinutes, proposedSlots",
+				},
+			};
+		}
+
+		// If no SchedulingHandler is available, fall back to grant-only evaluation
+		if (!schedulingHandler || !contact) {
+			return this.handleSchedulingFallback(ctx, proposal);
+		}
+
+		// Generate a synthetic requestId from the payload schedulingId
+		const requestId = proposal.schedulingId;
+
+		const decision = await schedulingHandler.evaluateProposal(requestId, contact, proposal);
+
+		switch (decision.action) {
+			case "confirm":
+				return {
+					success: true,
+					data: {
+						type: "scheduling/accept",
+						schedulingId: proposal.schedulingId,
+						acceptedSlot: decision.slot,
+					},
+				};
+			case "counter":
+				return {
+					success: true,
+					data: {
+						type: "scheduling/counter",
+						schedulingId: proposal.schedulingId,
+						counterSlots: decision.slots,
+					},
+				};
+			case "reject":
+				return {
+					success: false,
+					data: {
+						type: "scheduling/reject",
+						schedulingId: proposal.schedulingId,
+						reason: decision.reason,
+					},
+					error: {
+						code: "REJECTED",
+						message: decision.reason,
+					},
+				};
+			case "defer":
+				return {
+					success: false,
+					error: {
+						code: "DEFERRED",
+						message: "Scheduling request deferred for approval",
+					},
+				};
+		}
+	}
+
+	private parseSchedulingProposalFromPayload(
+		payload: Record<string, unknown>,
+	): SchedulingProposal | null {
+		const type = payload.type;
+		if (type !== "scheduling/propose" && type !== "scheduling/counter") {
+			// Also accept "scheduling/request" as the wire format uses it
+			if (type !== "scheduling/request") {
+				return null;
+			}
+		}
+
+		if (typeof payload.title !== "string" || payload.title.length === 0) {
+			return null;
+		}
+
+		const durationMinutes =
+			typeof payload.durationMinutes === "number"
+				? payload.durationMinutes
+				: typeof payload.duration === "number"
+					? payload.duration
+					: undefined;
+		if (durationMinutes === undefined || durationMinutes <= 0) {
+			return null;
+		}
+
+		const rawSlots = Array.isArray(payload.proposedSlots)
+			? payload.proposedSlots
+			: Array.isArray(payload.slots)
+				? payload.slots
+				: undefined;
+		if (!rawSlots || rawSlots.length === 0) {
+			return null;
+		}
+
+		const slots: Array<{ start: string; end: string }> = [];
+		for (const slot of rawSlots) {
+			if (
+				typeof slot !== "object" ||
+				slot === null ||
+				typeof (slot as Record<string, unknown>).start !== "string" ||
+				typeof (slot as Record<string, unknown>).end !== "string"
+			) {
+				return null;
+			}
+			slots.push({ start: (slot as { start: string }).start, end: (slot as { end: string }).end });
+		}
+
+		const schedulingId =
+			typeof payload.schedulingId === "string" && payload.schedulingId.length > 0
+				? payload.schedulingId
+				: `sch_${Date.now()}`;
+
+		const timezone =
+			typeof payload.timezone === "string" && payload.timezone.length > 0
+				? payload.timezone
+				: typeof payload.originTimezone === "string" && payload.originTimezone.length > 0
+					? payload.originTimezone
+					: "UTC";
+
+		return {
+			type: (type === "scheduling/request" ? "scheduling/propose" : type) as
+				| "scheduling/propose"
+				| "scheduling/counter",
+			schedulingId,
+			title: payload.title,
+			duration: durationMinutes,
+			slots,
+			originTimezone: timezone,
+			...(typeof payload.note === "string" && payload.note.length > 0
+				? { note: payload.note }
+				: {}),
+		};
+	}
+
+	private handleSchedulingFallback(
+		ctx: TapActionContext,
+		proposal: SchedulingProposal,
+	): TapActionResult {
+		// Grant-only evaluation: check if grants cover this request, accept first slot
+		const matchingGrants = findApplicableSchedulingGrants(
+			{ version: "tap-grants/v1", updatedAt: "", grants: ctx.peer.grantsToPeer },
+			proposal,
+		);
+
+		if (matchingGrants.length === 0) {
+			return {
+				success: false,
+				data: {
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: "No active scheduling grant covers this request",
+				},
+				error: {
+					code: "NO_MATCHING_GRANT",
+					message: "No active scheduling grant covers this request",
+				},
+			};
+		}
+
+		const schedulableSlots = findSchedulableSchedulingSlots(matchingGrants, proposal);
+
+		if (schedulableSlots.length === 0) {
+			return {
+				success: false,
+				data: {
+					type: "scheduling/reject",
+					schedulingId: proposal.schedulingId,
+					reason: "No proposed time slots match grant constraints",
+				},
+				error: {
+					code: "NO_MATCHING_SLOTS",
+					message: "No proposed time slots match scheduling grant constraints",
+				},
+			};
+		}
+
+		const acceptedSlot = schedulableSlots[0] as { start: string; end: string };
+
+		return {
+			success: true,
+			data: {
+				type: "scheduling/accept",
+				schedulingId: proposal.schedulingId,
+				acceptedSlot,
+				note: `Confirmed: ${proposal.title}`,
+			},
+		};
 	}
 
 	private async processSchedulingRequest(
@@ -3111,6 +3314,10 @@ export class TapMessagingService {
 			},
 			conversationLogger: this.context.conversationLogger,
 			conversationId,
+			extensions: {
+				schedulingHandler: this.schedulingHandler,
+				contact,
+			},
 		});
 
 		let result: TapActionResult;
@@ -3124,6 +3331,16 @@ export class TapMessagingService {
 					message: error instanceof Error ? error.message : String(error),
 				},
 			};
+		}
+
+		// DEFERRED means the request should stay pending for later resolution.
+		// Do not send a result or complete the journal entry.
+		if (result.error?.code === "DEFERRED") {
+			this.log(
+				"info",
+				`Action ${actionType} deferred for approval; request ${requestId} stays pending`,
+			);
+			return;
 		}
 
 		const resultData: Record<string, unknown> = {
