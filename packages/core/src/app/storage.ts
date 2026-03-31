@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { AsyncMutex } from "../common/index.js";
 import type { TapAppStorage } from "./types.js";
 
 export class FileAppStorage implements TapAppStorage {
 	private readonly filePath: string;
+	private readonly writeMutex = new AsyncMutex();
 
 	constructor(dataDir: string, appId: string) {
 		this.filePath = join(dataDir, "apps", appId, "state.json");
@@ -16,15 +18,19 @@ export class FileAppStorage implements TapAppStorage {
 	}
 
 	async set(key: string, value: unknown): Promise<void> {
-		const data = await this.load();
-		data[key] = value;
-		await this.save(data);
+		await this.writeMutex.runExclusive(async () => {
+			const data = await this.load();
+			data[key] = value;
+			await this.save(data);
+		});
 	}
 
 	async delete(key: string): Promise<void> {
-		const data = await this.load();
-		delete data[key];
-		await this.save(data);
+		await this.writeMutex.runExclusive(async () => {
+			const data = await this.load();
+			delete data[key];
+			await this.save(data);
+		});
 	}
 
 	async list(prefix?: string): Promise<Record<string, unknown>> {
@@ -43,8 +49,11 @@ export class FileAppStorage implements TapAppStorage {
 		try {
 			const content = await readFile(this.filePath, "utf-8");
 			return JSON.parse(content) as Record<string, unknown>;
-		} catch {
-			return {};
+		} catch (err: unknown) {
+			if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "ENOENT") {
+				return {};
+			}
+			throw err;
 		}
 	}
 

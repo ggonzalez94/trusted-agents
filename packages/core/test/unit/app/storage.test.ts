@@ -67,4 +67,33 @@ describe("FileAppStorage", () => {
 		expect(await storage.get("key")).toBe("app1");
 		expect(await other.get("key")).toBe("app2");
 	});
+
+	it("handles concurrent writes without data loss", async () => {
+		const promises = [];
+		for (let i = 0; i < 10; i++) {
+			promises.push(storage.set(`key-${i}`, i));
+		}
+		await Promise.all(promises);
+
+		const all = await storage.list();
+		for (let i = 0; i < 10; i++) {
+			expect(all[`key-${i}`]).toBe(i);
+		}
+	});
+
+	it("throws on corrupted JSON instead of silently resetting", async () => {
+		await storage.set("important", "data");
+
+		const { writeFile } = await import("node:fs/promises");
+		const { join } = await import("node:path");
+		await writeFile(join(tmpDir, "apps", "test-app", "state.json"), "not valid json{{{");
+
+		await expect(storage.get("important")).rejects.toThrow();
+	});
+
+	it("returns empty state for missing file (ENOENT)", async () => {
+		const fresh = new FileAppStorage(tmpDir, "nonexistent-app");
+		expect(await fresh.get("anything")).toBeUndefined();
+		expect(await fresh.list()).toEqual({});
+	});
 });
