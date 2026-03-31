@@ -24,8 +24,13 @@ export function buildTransferPayload(params: {
 	chain: string;
 	toAddress: `0x${string}`;
 	note?: string;
+	actionId?: string;
 }): Record<string, unknown> {
-	return { type: "transfer/request", ...params };
+	return {
+		type: "transfer/request",
+		actionId: params.actionId ?? `txn_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+		...params,
+	};
 }
 
 export const transferApp = defineTapApp({
