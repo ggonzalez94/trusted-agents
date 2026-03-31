@@ -5,7 +5,7 @@ import {
 	signTypedData as owsSignTypedData,
 } from "@open-wallet-standard/core";
 import type { Hex, SignableMessage, TransactionSerializable } from "viem";
-import { concatHex, keccak256, numberToHex, serializeTransaction, toHex, toRlp } from "viem";
+import { concatHex, numberToHex, serializeTransaction, toHex, toRlp } from "viem";
 import type {
 	AuthorizationParameters,
 	SignTypedDataParameters,
@@ -97,9 +97,14 @@ export class OwsSigningProvider implements SigningProvider {
 			([name, type]) => ({ name, type }),
 		);
 
+		// OWS parses decimal uint with u128; hex avoids the overflow for large values like maxUint256.
 		const typedDataJson = JSON.stringify(
 			{ types: { ...types, EIP712Domain: domainFields }, primaryType, domain, message },
-			(_key, value) => (typeof value === "bigint" ? value.toString() : value),
+			(_key, value) => {
+				if (typeof value !== "bigint") return value;
+				const hex = value.toString(16);
+				return `0x${hex.length % 2 ? `0${hex}` : hex}`;
+			},
 		);
 
 		const result = owsSignTypedData(this.walletName, this.chain, typedDataJson, this.apiKey);
@@ -127,19 +132,20 @@ export class OwsSigningProvider implements SigningProvider {
 			throw new Error("nonce is required for signAuthorization");
 		}
 
-		// EIP-7702 authorization hash:
-		// keccak256(0x05 || rlp([chain_id, address, nonce]))
-		const encoded = toRlp([numberToHex(chainId), contractAddress, numberToHex(nonce)]);
-		const authHash = keccak256(concatHex(["0x05", encoded]));
-
-		// Sign the raw hash using signMessage with hex encoding
-		// Strip 0x prefix — OWS expects raw hex
-		const result = owsSignMessage(
+		// EIP-7702 authorization payload: 0x05 || rlp([chain_id, address, nonce])
+		// Use signTransaction which does keccak256(bytes) → secp256k1.sign() without
+		// any prefix — signMessage adds EIP-191 which corrupts the authorization signature.
+		// RLP integer encoding: 0 is the empty byte string ("0x"), not "0x0".
+		const rlpInt = (n: number): `0x${string}` => (n === 0 ? "0x" : numberToHex(n));
+		const authPayload = concatHex([
+			"0x05",
+			toRlp([rlpInt(chainId), contractAddress, rlpInt(nonce)]),
+		]);
+		const result = owsSignTransaction(
 			this.walletName,
 			this.chain,
-			authHash.slice(2),
+			authPayload.slice(2),
 			this.apiKey,
-			"hex",
 		);
 
 		const sig = ensureHexPrefix(result.signature);
