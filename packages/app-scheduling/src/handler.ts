@@ -16,7 +16,7 @@ export async function handleSchedulingRequest(ctx: TapActionContext): Promise<Ta
 			error: {
 				code: "INVALID_PAYLOAD",
 				message:
-					"Missing or invalid scheduling/request fields: title, durationMinutes, proposedSlots",
+					"Missing or invalid scheduling fields: title, duration, slots (with valid start/end dates)",
 			},
 		};
 	}
