@@ -107,14 +107,10 @@ describe("OwsSigningProvider", () => {
 				chainId: 8453,
 			},
 			types: {
-				EIP712Domain: [
-					{ name: "name", type: "string" },
-					{ name: "version", type: "string" },
-					{ name: "chainId", type: "uint256" },
-				],
+				TestMessage: [{ name: "value", type: "uint256" }],
 			},
-			primaryType: "EIP712Domain",
-			message: {},
+			primaryType: "TestMessage",
+			message: { value: 42 },
 		});
 		expect(sig).toMatch(/^0x[0-9a-fA-F]+$/);
 		expect(sig.length).toBe(132);

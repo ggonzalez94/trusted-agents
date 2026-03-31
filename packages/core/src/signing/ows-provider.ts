@@ -2,23 +2,25 @@ import {
 	getWallet as owsGetWallet,
 	signMessage as owsSignMessage,
 	signTransaction as owsSignTransaction,
+	signTypedData as owsSignTypedData,
 } from "@open-wallet-standard/core";
 import type { Hex, SignableMessage, TransactionSerializable } from "viem";
-import {
-	concatHex,
-	hashTypedData,
-	keccak256,
-	numberToHex,
-	serializeTransaction,
-	toHex,
-	toRlp,
-} from "viem";
+import { concatHex, keccak256, numberToHex, serializeTransaction, toHex, toRlp } from "viem";
 import type {
 	AuthorizationParameters,
 	SignTypedDataParameters,
 	SignedAuthorization,
 	SigningProvider,
 } from "./provider.js";
+
+/** EIP-712 domain field → Solidity type, in spec-canonical order. */
+const EIP712_DOMAIN_FIELDS: ReadonlyArray<readonly [string, string]> = [
+	["name", "string"],
+	["version", "string"],
+	["chainId", "uint256"],
+	["verifyingContract", "address"],
+	["salt", "bytes32"],
+];
 
 function ensureHexPrefix(value: string): Hex {
 	if (value.startsWith("0x")) {
@@ -88,17 +90,19 @@ export class OwsSigningProvider implements SigningProvider {
 	async signTypedData(params: SignTypedDataParameters): Promise<Hex> {
 		const { domain, types, primaryType, message } = params;
 
-		// OWS does not support signTypedData via API key auth, so we compute
-		// the EIP-712 hash ourselves and sign the raw hash with signMessage.
-		const hash = hashTypedData({
-			domain: domain as Record<string, unknown>,
-			types: types as Record<string, unknown>,
-			primaryType,
-			message: message as Record<string, unknown>,
-		});
+		// OWS requires EIP712Domain in the types object. Build it from whichever
+		// domain fields are present, then let it override any caller-provided one
+		// (callers should not pass EIP712Domain — OWS infers validation from it).
+		const domainFields = EIP712_DOMAIN_FIELDS.filter(([key]) => domain[key] !== undefined).map(
+			([name, type]) => ({ name, type }),
+		);
 
-		// Sign the raw 32-byte hash — strip 0x for OWS hex encoding
-		const result = owsSignMessage(this.walletName, this.chain, hash.slice(2), this.apiKey, "hex");
+		const typedDataJson = JSON.stringify(
+			{ types: { ...types, EIP712Domain: domainFields }, primaryType, domain, message },
+			(_key, value) => (typeof value === "bigint" ? value.toString() : value),
+		);
+
+		const result = owsSignTypedData(this.walletName, this.chain, typedDataJson, this.apiKey);
 
 		return ensureHexPrefix(result.signature);
 	}
