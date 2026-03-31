@@ -960,7 +960,7 @@ export class TapMessagingService {
 				contact = c;
 			}
 
-			const data = { type: actionType, ...payload };
+			const data = { ...payload, type: actionType };
 			const scope = actionType;
 			const request = buildOutgoingActionRequest(
 				contact,
@@ -1798,6 +1798,15 @@ export class TapMessagingService {
 				});
 				return { status };
 			}
+			// Malformed permissions payload — reject instead of falling through
+			await this.sendUnsupportedActionResult(
+				contact,
+				String(envelope.message.id),
+				actionType ?? "permissions/request-grants",
+				requestKey,
+			);
+			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		if (resolved.app.id === "scheduling") {
@@ -1838,6 +1847,15 @@ export class TapMessagingService {
 				});
 				return { status };
 			}
+			// Malformed scheduling payload — reject instead of falling through
+			await this.sendUnsupportedActionResult(
+				contact,
+				String(envelope.message.id),
+				actionType ?? "scheduling/propose",
+				requestKey,
+			);
+			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		if (resolved.app.id === "tap-transfer") {
@@ -1866,6 +1884,15 @@ export class TapMessagingService {
 				});
 				return { status };
 			}
+			// Malformed transfer payload — reject instead of falling through
+			await this.sendUnsupportedActionResult(
+				contact,
+				String(envelope.message.id),
+				actionType ?? "transfer/request",
+				requestKey,
+			);
+			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		// For dynamically loaded (non-builtin) apps, use the full app dispatch path

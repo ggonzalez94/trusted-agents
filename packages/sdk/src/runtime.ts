@@ -305,7 +305,11 @@ export class TapRuntime extends EventEmitter {
 			);
 		}
 
-		// Add to manifest
+		// Register in the live registry first — if this throws (e.g., action
+		// type conflict), we avoid leaving a ghost entry in the manifest.
+		ctx.appRegistry.registerApp(app);
+
+		// Persist to manifest only after successful registration
 		const entry: AppManifestEntry = {
 			package: packageName,
 			entryPoint,
@@ -313,9 +317,6 @@ export class TapRuntime extends EventEmitter {
 			status: "active",
 		};
 		await addAppToManifest(ctx.config.dataDir, app.id, entry);
-
-		// Register in the live registry
-		ctx.appRegistry.registerApp(app);
 	}
 
 	async removeApp(appId: string, options?: { removeState?: boolean }): Promise<void> {
