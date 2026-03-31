@@ -2965,4 +2965,234 @@ describe("TapMessagingService", () => {
 
 		await service.stop();
 	});
+
+	it("sendActionRequest persists to request journal", async () => {
+		const contact: Contact = {
+			connectionId: "conn-action-journal",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const { service, transport, requestJournal } = await createService(
+			{},
+			{
+				trustStore: createMemoryTrustStore([contact]),
+			},
+		);
+
+		await service.start();
+
+		await service.sendActionRequest(
+			{ connectionId: contact.connectionId },
+			"bet/propose",
+			{ odds: 1.5, amount: "100" },
+			"Proposing a bet",
+		);
+
+		// Verify the request was sent
+		expect(transport.sentMessages).toHaveLength(1);
+		expect(transport.sentMessages[0]!.message.method).toBe("action/request");
+
+		const requestId = String(transport.sentMessages[0]!.message.id);
+
+		// Verify journal entry was created and acked
+		const entry = await requestJournal.getByRequestId(requestId);
+		expect(entry).not.toBeNull();
+		expect(entry!.direction).toBe("outbound");
+		expect(entry!.kind).toBe("request");
+		expect(entry!.method).toBe("action/request");
+		expect(entry!.peerAgentId).toBe(PEER_AGENT.agentId);
+		expect(entry!.status).toBe("acked");
+		expect(entry!.metadata).toEqual({ actionType: "bet/propose" });
+
+		await service.stop();
+	});
+
+	it("sendActionRequest cleans up journal on non-timeout send failure", async () => {
+		const contact: Contact = {
+			connectionId: "conn-action-journal-fail",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const { service, requestJournal } = await createService(
+			{ sendError: new Error("network failure") },
+			{
+				trustStore: createMemoryTrustStore([contact]),
+			},
+		);
+
+		await service.start();
+
+		await expect(
+			service.sendActionRequest({ connectionId: contact.connectionId }, "bet/propose", {
+				odds: 1.5,
+			}),
+		).rejects.toThrow("network failure");
+
+		// Journal should be cleaned up after non-timeout failure
+		const entries = await requestJournal.list("outbound");
+		expect(entries).toHaveLength(0);
+
+		await service.stop();
+	});
+
+	it("emits structured event for generic (non-transfer, non-scheduling) action result", async () => {
+		const contact: Contact = {
+			connectionId: "conn-generic-result",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const emitEvent = vi.fn();
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { emitEvent },
+			},
+		);
+
+		await service.start();
+
+		// Simulate an outbound action request to create a journal entry
+		await service.sendActionRequest(
+			{ connectionId: contact.connectionId },
+			"bet/propose",
+			{ odds: 1.5, matchId: "match-42" },
+			"Proposing a bet",
+		);
+
+		const outboundRequestId = String(transport.sentMessages[0]!.message.id);
+
+		// Build a generic action result (not transfer, not scheduling)
+		const resultMessage = buildOutgoingActionResult(
+			contact,
+			outboundRequestId,
+			"Bet accepted",
+			{
+				type: "bet/accept",
+				betId: "bet-123",
+				accepted: true,
+			},
+			"bet/propose",
+			"completed",
+		);
+
+		// Deliver the result via onResult handler
+		const result = await transport.handlers.onResult?.({
+			from: contact.peerAgentId,
+			senderInboxId: "peer-inbox-generic",
+			message: resultMessage,
+		});
+
+		expect(result).toEqual({ status: "received" });
+
+		// Verify structured event was emitted for the generic result
+		expect(emitEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				event: "action_result_received",
+				method: "action/result",
+				actionType: "bet/accept",
+				peerAgentId: PEER_AGENT.agentId,
+				peerName: PEER_AGENT.registrationFile.name,
+				connectionId: contact.connectionId,
+				requestId: outboundRequestId,
+				data: expect.objectContaining({
+					type: "bet/accept",
+					betId: "bet-123",
+					accepted: true,
+				}),
+			}),
+		);
+
+		// Verify the outbound journal entry was completed
+		const entry = await requestJournal.getByRequestId(outboundRequestId);
+		expect(entry).not.toBeNull();
+		expect(entry!.status).toBe("completed");
+
+		await service.stop();
+	});
+
+	it("handles generic action result without a correlated outbound request", async () => {
+		const contact: Contact = {
+			connectionId: "conn-generic-no-journal",
+			peerAgentId: PEER_AGENT.agentId,
+			peerChain: PEER_AGENT.chain,
+			peerOwnerAddress: PEER_AGENT.ownerAddress,
+			peerDisplayName: PEER_AGENT.registrationFile.name,
+			peerAgentAddress: PEER_AGENT.agentAddress,
+			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+			establishedAt: "2026-03-08T00:00:00.000Z",
+			lastContactAt: "2026-03-08T00:00:00.000Z",
+			status: "active",
+		};
+		const emitEvent = vi.fn();
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				hooks: { emitEvent },
+			},
+		);
+
+		await service.start();
+
+		// Build a generic action result with no corresponding outbound request
+		const resultMessage = buildOutgoingActionResult(
+			contact,
+			"nonexistent-request-id",
+			"Unsolicited result",
+			{
+				type: "custom/notification",
+				payload: { status: "ok" },
+			},
+			"custom/notification",
+			"completed",
+		);
+
+		const result = await transport.handlers.onResult?.({
+			from: contact.peerAgentId,
+			senderInboxId: "peer-inbox-unsolicited",
+			message: resultMessage,
+		});
+
+		expect(result).toEqual({ status: "received" });
+
+		// Should still emit the event even without a journal entry
+		expect(emitEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				event: "action_result_received",
+				actionType: "custom/notification",
+				peerAgentId: PEER_AGENT.agentId,
+				data: expect.objectContaining({
+					type: "custom/notification",
+				}),
+			}),
+		);
+
+		await service.stop();
+	});
 });

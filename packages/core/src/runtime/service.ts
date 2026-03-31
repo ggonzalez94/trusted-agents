@@ -964,10 +964,36 @@ export class TapMessagingService {
 				data,
 				scope,
 			);
+			const requestId = String(request.id);
 			const timestamp = nowISO();
-			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
-				peerAddress: contact.peerAgentAddress,
+
+			await this.context.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${request.method}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: request.method,
+				peerAgentId: contact.peerAgentId,
+				status: "pending",
+				metadata: { actionType },
 			});
+
+			let receipt: TransportReceipt;
+			try {
+				receipt = await this.context.transport.send(contact.peerAgentId, request, {
+					peerAddress: contact.peerAgentAddress,
+				});
+			} catch (error: unknown) {
+				if (!isTransportReceiptTimeout(error)) {
+					await this.context.requestJournal.delete(requestId);
+				}
+				throw error;
+			}
+
+			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
+			if (journalEntry?.status !== "completed") {
+				await this.context.requestJournal.updateStatus(requestId, "acked");
+			}
 
 			await appendConversationLog(
 				this.context.conversationLogger,
@@ -2723,6 +2749,42 @@ export class TapMessagingService {
 				);
 			}
 			return contact?.peerDisplayName;
+		}
+
+		// Generic app action result fallback — handles any result type that
+		// is not a transfer or scheduling response (e.g. bet/propose, custom app actions).
+		const resultData = extractMessageData(message);
+		const requestId = (message.params as { requestId?: string } | undefined)?.requestId;
+		if (resultData) {
+			const actionType = (resultData.type as string | undefined) ?? "unknown";
+
+			this.emitEvent({
+				event: "action_result_received",
+				method: ACTION_RESULT,
+				actionType,
+				peerAgentId: from,
+				...(contact
+					? {
+							peerName: contact.peerDisplayName,
+							connectionId: contact.connectionId,
+						}
+					: {}),
+				data: resultData,
+				...(requestId ? { requestId } : {}),
+			});
+
+			if (requestId) {
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+				this.waiters.get(requestId)?.(resultData as TransferActionResponse);
+			}
+
+			this.log(
+				"info",
+				`Received ${actionType} action result from ${contact?.peerDisplayName ?? `agent #${from}`}`,
+			);
+		} else if (requestId) {
+			// No extractable data, but still correlate with journal
+			await this.context.requestJournal.updateStatus(requestId, "completed");
 		}
 
 		return contact?.peerDisplayName;
