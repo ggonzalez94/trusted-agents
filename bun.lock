@@ -12,12 +12,12 @@
     },
     "packages/cli": {
       "name": "trusted-agents-cli",
-      "version": "0.1.0",
+      "version": "0.1.3",
       "bin": {
         "tap": "./dist/bin.js",
       },
       "dependencies": {
-        "@open-wallet-standard/core": "^1.1.0",
+        "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.1",
         "@x402/evm": "^2.5.0",
         "@x402/fetch": "^2.5.0",
         "commander": "^13.0.0",
@@ -33,9 +33,9 @@
     },
     "packages/core": {
       "name": "trusted-agents-core",
-      "version": "0.1.0",
+      "version": "0.1.3",
       "dependencies": {
-        "@open-wallet-standard/core": "^1.1.0",
+        "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.1",
         "@xmtp/node-sdk": "^5.4.0",
         "uuid": "^11.0.0",
         "viem": "2.46.3",
@@ -71,7 +71,7 @@
     },
     "packages/openclaw-plugin": {
       "name": "trusted-agents-tap",
-      "version": "0.1.0",
+      "version": "0.1.3",
       "dependencies": {
         "@sinclair/typebox": "^0.34.48",
         "trusted-agents-core": "workspace:*",
@@ -538,15 +538,7 @@
 
     "@octokit/webhooks-methods": ["@octokit/webhooks-methods@6.0.0", "", {}, "sha512-MFlzzoDJVw/GcbfzVC1RLR36QqkTLUf79vLVO3D+xn7r0QgxnFoLZgtrzxiQErAjFUOdH6fas2KeQJ1yr/qaXQ=="],
 
-    "@open-wallet-standard/core": ["@open-wallet-standard/core@1.1.0", "", { "optionalDependencies": { "@open-wallet-standard/core-darwin-arm64": "1.1.0", "@open-wallet-standard/core-darwin-x64": "1.1.0", "@open-wallet-standard/core-linux-arm64-gnu": "1.1.0", "@open-wallet-standard/core-linux-x64-gnu": "1.1.0" }, "bin": { "ows": "bin/ows" } }, "sha512-tQOLBo9y5qHJTTMVFU8s85GRj2vzEH6UILHODxOYifsJlgNWwoU/h4pAVK0vugtR2uGfRsJjxE0VkGICT7b+7Q=="],
-
-    "@open-wallet-standard/core-darwin-arm64": ["@open-wallet-standard/core-darwin-arm64@1.1.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-2w3lttvTcfhYVzXi1HaRPqJOWTQ5we5H9tSGeVNzgj5Q7P5r18BtRMVSEqaf3Uw5MrOLrN6Lb9iVdnGUqcCGJA=="],
-
-    "@open-wallet-standard/core-darwin-x64": ["@open-wallet-standard/core-darwin-x64@1.1.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-HjRnZ9PwG/+NjdKDHAz6VByrb3RYKUx8kYSKclWzw5rgYkaNVDD9PvvCs0odNBOawS/iHbgVUe4dko2py23HDQ=="],
-
-    "@open-wallet-standard/core-linux-arm64-gnu": ["@open-wallet-standard/core-linux-arm64-gnu@1.1.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-q1RC4cbNZLfKbFacVwnudlMDxb0gFWnX+jztQYAFgvCplAO33QWADa+Ua6y2M+yFSJBgoJDkpGgGqmi9tIjbYg=="],
-
-    "@open-wallet-standard/core-linux-x64-gnu": ["@open-wallet-standard/core-linux-x64-gnu@1.1.0", "", { "os": "linux", "cpu": "x64" }, "sha512-FerlsHMBjkFS/oP0bp6SVeJo29lpcbp5qkaRlN2OTx6AlF+mfKRb+pB32M+EiudylaWC9yG88XzxCe9YPoaOig=="],
+    "@open-wallet-standard/core": ["@silicon-intern/ows-core@1.2.0-eip712.1", "", { "optionalDependencies": { "@silicon-intern/ows-core-darwin-arm64": "1.2.0-eip712.1", "@silicon-intern/ows-core-darwin-x64": "1.2.0-eip712.1", "@silicon-intern/ows-core-linux-arm64-gnu": "1.2.0-eip712.1", "@silicon-intern/ows-core-linux-x64-gnu": "1.2.0-eip712.1" }, "bin": { "ows": "bin/ows" } }, "sha512-hWz0HHk1n7s4KVYD1q4dG0NgQSsP5IEy5XK+RvpbkRost6TBrl36a/ew+M1T0OK8xC1I+/V0qaai0Nmt/T42eA=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
@@ -645,6 +637,14 @@
     "@scure/bip32": ["@scure/bip32@1.7.0", "", { "dependencies": { "@noble/curves": "~1.9.0", "@noble/hashes": "~1.8.0", "@scure/base": "~1.2.5" } }, "sha512-E4FFX/N3f4B80AKWp5dP6ow+flD1LQZo/w8UnLGYZO674jS6YnYeepycOOksv+vLPSpgN35wgKgy+ybfTb2SMw=="],
 
     "@scure/bip39": ["@scure/bip39@1.6.0", "", { "dependencies": { "@noble/hashes": "~1.8.0", "@scure/base": "~1.2.5" } }, "sha512-+lF0BbLiJNwVlev4eKelw1WWLaiKXw7sSl8T6FvBlWkdX+94aGJ4o8XjUdlyhTCjd8c+B3KT3JfS8P0bLRNU6A=="],
+
+    "@silicon-intern/ows-core-darwin-arm64": ["@silicon-intern/ows-core-darwin-arm64@1.2.0-eip712.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-kUkLSH5a//YEhzbedsXH2WV3xgbwO9WtQUV1dCeVP1nMycLqSbXRJEJs0l+szDmuoLnvWcIhIxgH6g1WsSHkEA=="],
+
+    "@silicon-intern/ows-core-darwin-x64": ["@silicon-intern/ows-core-darwin-x64@1.2.0-eip712.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-KIYTptf5g06/ZUQVVnD93jVcN/WloGc7gZ+2M9+VgN2ziMNGst3oTORsiJ54gMSn7XSA6sLkEBIuUEW2vGpKfw=="],
+
+    "@silicon-intern/ows-core-linux-arm64-gnu": ["@silicon-intern/ows-core-linux-arm64-gnu@1.2.0-eip712.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-K3hyEFVx7cBXigCg2Lho4dEToesWdXEMt9Mh7rYPL/aDO1eoLh7AZYbKLkbfB7IA4+JtE/UZUxvE9hE3dbpltw=="],
+
+    "@silicon-intern/ows-core-linux-x64-gnu": ["@silicon-intern/ows-core-linux-x64-gnu@1.2.0-eip712.1", "", { "os": "linux", "cpu": "x64" }, "sha512-tI8CD/zcCvREybtNJ3K2P4s90ar8YRK7zaKh/4MhZyMMW0SV1Ip80KyunVSUDRg4h0EkNJEOy7dUj5+Cfu184Q=="],
 
     "@silvia-odwyer/photon-node": ["@silvia-odwyer/photon-node@0.3.4", "", {}, "sha512-bnly4BKB3KDTFxrUIcgCLbaeVVS8lrAkri1pEzskpmxu9MdfGQTy8b8EgcD83ywD3RPMsIulY8xJH5Awa+t9fA=="],
 
