@@ -172,7 +172,7 @@ function handleGrantOnlyEvaluation(
 }
 
 function validatePayload(payload: Record<string, unknown>): SchedulingProposal | null {
-	if (payload.type !== "scheduling/request") {
+	if (payload.type !== "scheduling/propose" && payload.type !== "scheduling/counter") {
 		return null;
 	}
 

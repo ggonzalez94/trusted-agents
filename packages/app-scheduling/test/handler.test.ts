@@ -53,7 +53,7 @@ function buildMockContext(
 			grantsToPeer: overrides.grantsToPeer ?? [],
 		},
 		payload: overrides.payload ?? {
-			type: "scheduling/request",
+			type: "scheduling/propose",
 			title: "Team Standup",
 			durationMinutes: 30,
 			proposedSlots: [
@@ -162,7 +162,7 @@ describe("handleSchedulingRequest", () => {
 		it("should reject when title is empty", async () => {
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "",
 					durationMinutes: 30,
 					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
@@ -178,7 +178,7 @@ describe("handleSchedulingRequest", () => {
 		it("should reject when durationMinutes is not positive", async () => {
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Standup",
 					durationMinutes: 0,
 					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
@@ -194,7 +194,7 @@ describe("handleSchedulingRequest", () => {
 		it("should reject when proposedSlots is empty", async () => {
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Standup",
 					durationMinutes: 30,
 					proposedSlots: [],
@@ -210,7 +210,7 @@ describe("handleSchedulingRequest", () => {
 		it("should reject when proposedSlot has start >= end", async () => {
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Standup",
 					durationMinutes: 30,
 					proposedSlots: [{ start: "2026-04-01T10:30:00Z", end: "2026-04-01T10:00:00Z" }],
@@ -320,7 +320,7 @@ describe("handleSchedulingRequest", () => {
 		it("should reject when duration exceeds grant maxDurationMinutes", async () => {
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Long Meeting",
 					durationMinutes: 120,
 					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T12:00:00Z" }],
@@ -346,7 +346,7 @@ describe("handleSchedulingRequest", () => {
 		it("should use default timezone when not provided", async () => {
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Quick Chat",
 					durationMinutes: 15,
 					proposedSlots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:15:00Z" }],
@@ -407,7 +407,7 @@ describe("handleSchedulingRequest", () => {
 
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Team Standup",
 					durationMinutes: 30,
 					schedulingId: "sch_test",
@@ -460,7 +460,7 @@ describe("handleSchedulingRequest", () => {
 
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Team Standup",
 					durationMinutes: 30,
 					schedulingId: "sch_test",
@@ -490,7 +490,7 @@ describe("handleSchedulingRequest", () => {
 
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Team Standup",
 					durationMinutes: 30,
 					schedulingId: "sch_reject",
@@ -519,7 +519,7 @@ describe("handleSchedulingRequest", () => {
 
 			const ctx = buildMockContext({
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Team Standup",
 					durationMinutes: 30,
 					schedulingId: "sch_defer",
@@ -556,7 +556,7 @@ describe("handleSchedulingRequest", () => {
 					},
 				],
 				payload: {
-					type: "scheduling/request",
+					type: "scheduling/propose",
 					title: "Team Standup",
 					durationMinutes: 30,
 					schedulingId: "sch_no_auto",

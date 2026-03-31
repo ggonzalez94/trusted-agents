@@ -46,7 +46,7 @@ export function buildSchedulingPayload(params: {
 	timezone?: string;
 	note?: string;
 }): Record<string, unknown> {
-	return { type: "scheduling/request", ...params };
+	return { type: "scheduling/propose", ...params };
 }
 
 export const schedulingApp = defineTapApp({
