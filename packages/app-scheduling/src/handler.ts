@@ -219,7 +219,7 @@ function validatePayload(payload: Record<string, unknown>): SchedulingProposal |
 		typeof payload.timezone === "string" && payload.timezone.length > 0 ? payload.timezone : "UTC";
 
 	return {
-		type: "scheduling/propose",
+		type: payload.type as "scheduling/propose" | "scheduling/counter",
 		schedulingId,
 		title: payload.title,
 		duration: payload.durationMinutes,

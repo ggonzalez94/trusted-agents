@@ -54,6 +54,9 @@ export class TapAppRegistry {
 			this.actionMap.delete(actionType);
 		}
 		this.apps.delete(appId);
+		// Also remove from in-memory manifest to prevent re-registration
+		// via resolveHandler's lazy-load path
+		delete this.manifest.apps[appId];
 		this.log("info", `Unregistered app "${appId}"`);
 	}
 

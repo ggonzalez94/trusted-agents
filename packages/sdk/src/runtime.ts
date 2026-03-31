@@ -298,7 +298,7 @@ export class TapRuntime extends EventEmitter {
 
 		// Load the module to validate it's a valid TapApp
 		const mod = await import(entryPoint);
-		const app = mod.default ?? mod;
+		const app = mod.default ?? mod.app ?? mod;
 		if (!app.id || !app.actions || typeof app.actions !== "object") {
 			throw new Error(
 				`Package "${packageName}" does not export a valid TapApp (missing id or actions)`,
