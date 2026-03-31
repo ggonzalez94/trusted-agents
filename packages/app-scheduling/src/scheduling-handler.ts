@@ -112,6 +112,10 @@ export class SchedulingHandler {
 			? findSchedulableSchedulingSlots(activeSchedulingGrants, proposal)
 			: proposal.slots;
 
+		if (schedulableProposalSlots.length === 0) {
+			return { action: "reject", reason: "No proposed time slots match grant constraints" };
+		}
+
 		if (!hasGrants) {
 			if (this.hooks.approveScheduling) {
 				const approved = await this.hooks.approveScheduling({

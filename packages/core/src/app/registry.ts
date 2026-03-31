@@ -92,7 +92,7 @@ export class TapAppRegistry {
 
 		try {
 			const mod = await import(entry.entryPoint);
-			const app: TapApp = mod.default ?? mod;
+			const app: TapApp = mod.default ?? mod.app ?? mod;
 			if (!app.id || !app.actions || typeof app.actions !== "object") {
 				this.log("error", `App "${appId}" from "${entry.entryPoint}" has invalid TapApp shape`);
 				return undefined;

@@ -4,6 +4,18 @@ import type { Contact } from "../trust/types.js";
 import { FileAppStorage } from "./storage.js";
 import type { TapActionContext, TapApp } from "./types.js";
 
+const storageCache = new Map<string, FileAppStorage>();
+
+function getOrCreateAppStorage(dataDir: string, appId: string): FileAppStorage {
+	const key = `${dataDir}:${appId}`;
+	let storage = storageCache.get(key);
+	if (!storage) {
+		storage = new FileAppStorage(dataDir, appId);
+		storageCache.set(key, storage);
+	}
+	return storage;
+}
+
 export interface BuildActionContextDeps {
 	config: {
 		agentId: number;
@@ -70,7 +82,7 @@ export function buildActionContext(deps: BuildActionContextDeps): TapActionConte
 			request: deps.requestPayment,
 			execute: deps.executeTransfer,
 		},
-		storage: new FileAppStorage(deps.config.dataDir, deps.app.id),
+		storage: getOrCreateAppStorage(deps.config.dataDir, deps.app.id),
 		events: {
 			emit: deps.emitEvent,
 		},

@@ -54,7 +54,8 @@ export const schedulingApp = defineTapApp({
 	name: "Scheduling",
 	version: "1.0.0",
 	actions: {
-		"scheduling/request": { handler: handleSchedulingRequest },
+		"scheduling/propose": { handler: handleSchedulingRequest },
+		"scheduling/counter": { handler: handleSchedulingRequest },
 	},
 	grantScopes: ["scheduling/request"],
 });
