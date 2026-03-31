@@ -37,7 +37,7 @@ const transferWithAuthTypes = {
 const baseUsdcDomain = {
 	name: "USD Coin",
 	version: "2",
-	chainId: 8453,
+	chainId: 8453n,
 	verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`,
 } as const;
 
@@ -45,7 +45,7 @@ const baseUsdcDomain = {
 const taikoUsdcDomain = {
 	name: "USD Coin",
 	version: "2",
-	chainId: 167000,
+	chainId: 167000n,
 	verifyingContract: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b" as `0x${string}`,
 } as const;
 
