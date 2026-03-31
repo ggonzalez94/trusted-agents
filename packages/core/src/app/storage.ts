@@ -50,7 +50,12 @@ export class FileAppStorage implements TapAppStorage {
 			const content = await readFile(this.filePath, "utf-8");
 			return JSON.parse(content) as Record<string, unknown>;
 		} catch (err: unknown) {
-			if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "ENOENT") {
+			if (
+				err &&
+				typeof err === "object" &&
+				"code" in err &&
+				(err as { code: string }).code === "ENOENT"
+			) {
 				return {};
 			}
 			throw err;

@@ -39,10 +39,10 @@ export async function appInstallCommand(name: string, opts: GlobalOptions): Prom
 				return;
 			}
 			tapApp = exported as TapApp;
-		} catch (importErr) {
+		} catch (_importErr) {
 			error(
 				"NOT_FOUND",
-				`Failed to import package "${packageName}": ${importErr instanceof Error ? importErr.message : String(importErr)}`,
+				`Failed to import "${packageName}". Install the package first:\n  npm install ${packageName}\nThen retry: tap app install ${name}`,
 				opts,
 			);
 			process.exitCode = 1;
@@ -83,10 +83,35 @@ export async function appInstallCommand(name: string, opts: GlobalOptions): Prom
 
 export async function appRemoveCommand(name: string, opts: GlobalOptions): Promise<void> {
 	try {
-		const { removeAppFromManifest } = await import("trusted-agents-core");
+		const { loadAppManifest, removeAppFromManifest } = await import("trusted-agents-core");
 		const config = await loadConfig(opts, { requireAgentId: false });
-		await removeAppFromManifest(config.dataDir, name);
-		console.log(`Removed app "${name}"`);
+		const manifest = await loadAppManifest(config.dataDir);
+
+		// Try by app ID first
+		if (manifest.apps[name]) {
+			await removeAppFromManifest(config.dataDir, name);
+			console.log(`Removed app "${name}"`);
+			return;
+		}
+
+		// Fall back: search by package name
+		const resolvedPkg = resolvePackageName(name);
+		const matchingId = Object.entries(manifest.apps).find(
+			([_, entry]) => entry.package === resolvedPkg || entry.package === name,
+		)?.[0];
+
+		if (matchingId) {
+			await removeAppFromManifest(config.dataDir, matchingId);
+			console.log(`Removed app "${matchingId}" (package: ${resolvedPkg})`);
+			return;
+		}
+
+		error(
+			"NOT_FOUND",
+			`No installed app matches "${name}". Run 'tap app list' to see installed apps.`,
+			opts,
+		);
+		process.exitCode = 1;
 	} catch (err) {
 		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
 		process.exitCode = exitCodeForError(err);
