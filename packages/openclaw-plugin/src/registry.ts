@@ -1,22 +1,24 @@
-import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
-	AsyncMutex,
 	OwsSigningProvider,
 	type PermissionGrantSet,
 	SchedulingHandler,
 	type SchedulingProposal,
 	type SigningProvider,
-	TapMessagingService,
 	type TapPendingSchedulingDetails,
 	type TapRequestFundsInput,
+	type TapRuntime,
 	type TapServiceStatus,
 	type TrustedAgentsConfig,
-	buildDefaultTapRuntimeContext,
-	executeOnchainTransfer,
-	generateSchedulingId,
+	createTapRuntime,
 	loadTrustedAgentConfigFromDataDir,
+} from "@trustedagents/sdk";
+import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
+import {
+	AsyncMutex,
+	executeOnchainTransfer,
+	generateInvite,
+	generateSchedulingId,
 } from "trusted-agents-core";
-import { generateInvite } from "trusted-agents-core";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
@@ -35,7 +37,7 @@ interface ManagedTapRuntime {
 	definition: TapOpenClawIdentityConfig;
 	config: TrustedAgentsConfig;
 	signingProvider: SigningProvider;
-	service: TapMessagingService;
+	runtime: TapRuntime;
 	mutex: AsyncMutex;
 	interval: NodeJS.Timeout | null;
 	lastError?: string;
@@ -95,7 +97,7 @@ export class OpenClawTapRegistry {
 				runtime.interval = null;
 			}
 			await runtime.mutex.runExclusive(async () => {
-				await runtime.service.stop().catch((error: unknown) => {
+				await runtime.runtime.stop().catch((error: unknown) => {
 					this.logger.warn(
 						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${formatError(error)}`,
 					);
@@ -127,7 +129,7 @@ export class OpenClawTapRegistry {
 				try {
 					const runtime = await this.ensureRuntime(name);
 					const status = await runtime.mutex.runExclusive(
-						async () => await runtime.service.getStatus(),
+						async () => await runtime.runtime.getStatus(),
 					);
 					return {
 						identity: name,
@@ -173,7 +175,7 @@ export class OpenClawTapRegistry {
 			names.map(async (name) => {
 				const runtime = await this.ensureRuntimeStarted(name);
 				const report = await runtime.mutex.runExclusive(
-					async () => await runtime.service.syncOnce(),
+					async () => await runtime.runtime.syncOnce(),
 				);
 				runtime.lastError = undefined;
 				return {
@@ -233,7 +235,7 @@ export class OpenClawTapRegistry {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		return await runtime.mutex.runExclusive(
 			async () =>
-				await runtime.service.connect({
+				await runtime.runtime.connect({
 					inviteUrl: params.inviteUrl,
 				}),
 		);
@@ -249,7 +251,7 @@ export class OpenClawTapRegistry {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		return await runtime.mutex.runExclusive(
 			async () =>
-				await runtime.service.sendMessage(
+				await runtime.runtime.service.sendMessage(
 					params.peer,
 					params.text,
 					params.scope,
@@ -266,7 +268,8 @@ export class OpenClawTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		return await runtime.mutex.runExclusive(
-			async () => await runtime.service.publishGrantSet(params.peer, params.grantSet, params.note),
+			async () =>
+				await runtime.runtime.service.publishGrantSet(params.peer, params.grantSet, params.note),
 		);
 	}
 
@@ -278,7 +281,8 @@ export class OpenClawTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		return await runtime.mutex.runExclusive(
-			async () => await runtime.service.requestGrantSet(params.peer, params.grantSet, params.note),
+			async () =>
+				await runtime.runtime.service.requestGrantSet(params.peer, params.grantSet, params.note),
 		);
 	}
 
@@ -301,7 +305,7 @@ export class OpenClawTapRegistry {
 			toAddress: params.toAddress ?? ownAddress,
 			note: params.note,
 		};
-		return await runtime.mutex.runExclusive(async () => await runtime.service.requestFunds(input));
+		return await runtime.mutex.runExclusive(async () => await runtime.runtime.requestFunds(input));
 	}
 
 	async transfer(params: {
@@ -381,7 +385,7 @@ export class OpenClawTapRegistry {
 		};
 
 		return await runtime.mutex.runExclusive(
-			async () => await runtime.service.requestMeeting({ peer: params.peer, proposal }),
+			async () => await runtime.runtime.requestMeeting({ peer: params.peer, proposal }),
 		);
 	}
 
@@ -395,7 +399,7 @@ export class OpenClawTapRegistry {
 		const approve = params.action === "accept";
 
 		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.service.listPendingRequests(),
+			async () => await runtime.runtime.listPendingRequests(),
 		);
 		const matching = pending.find(
 			(r) =>
@@ -411,7 +415,7 @@ export class OpenClawTapRegistry {
 		}
 
 		const report = await runtime.mutex.runExclusive(
-			async () => await runtime.service.resolvePending(matching.requestId, approve, params.reason),
+			async () => await runtime.runtime.resolvePending(matching.requestId, approve, params.reason),
 		);
 
 		return {
@@ -433,7 +437,7 @@ export class OpenClawTapRegistry {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 
 		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.service.listPendingRequests(),
+			async () => await runtime.runtime.listPendingRequests(),
 		);
 		const matching = pending.find(
 			(r) =>
@@ -450,7 +454,7 @@ export class OpenClawTapRegistry {
 
 		const report = await runtime.mutex.runExclusive(
 			async () =>
-				await runtime.service.cancelPendingSchedulingRequest(matching.requestId, params.reason),
+				await runtime.runtime.cancelPendingSchedulingRequest(matching.requestId, params.reason),
 		);
 
 		return {
@@ -469,7 +473,7 @@ export class OpenClawTapRegistry {
 			names.map(async (name) => {
 				const runtime = await this.ensureRuntime(name);
 				const pending = await runtime.mutex.runExclusive(
-					async () => await runtime.service.listPendingRequests(),
+					async () => await runtime.runtime.listPendingRequests(),
 				);
 				return {
 					identity: name,
@@ -487,7 +491,7 @@ export class OpenClawTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const report = await runtime.mutex.runExclusive(
-			async () => await runtime.service.resolvePending(params.requestId, params.approve),
+			async () => await runtime.runtime.resolvePending(params.requestId, params.approve),
 		);
 		return {
 			identity: runtime.definition.name,
@@ -535,7 +539,7 @@ export class OpenClawTapRegistry {
 		const runtime = await this.ensureRuntime(name);
 		await runtime.mutex.runExclusive(async () => {
 			try {
-				await runtime.service.start();
+				await runtime.runtime.start();
 				runtime.lastError = undefined;
 			} catch (error: unknown) {
 				runtime.lastError = formatError(error);
@@ -565,57 +569,38 @@ export class OpenClawTapRegistry {
 			config.chain,
 			config.ows.apiKey,
 		);
-		const context = await buildDefaultTapRuntimeContext(config, { signingProvider });
+
 		const notificationQueue = new TapNotificationQueue();
 		this.notificationQueues.set(name, notificationQueue);
-		const schedulingHandler = new SchedulingHandler({
-			hooks: {
-				approveScheduling: async () => {
-					return null; // Defer for operator approval
-				},
-			},
-		});
-		const runtime: ManagedTapRuntime = {
-			definition,
-			config,
-			signingProvider,
-			service: new TapMessagingService(context, {
-				ownerLabel: `openclaw:${definition.name}`,
-				schedulingHandler,
+
+		const tapRuntime = await createTapRuntime({
+			dataDir: definition.dataDir,
+			configOptions: { requireAgentId: true },
+			ownerLabel: `openclaw:${definition.name}`,
+			createSigningProvider: async () => signingProvider,
+			schedulingHandler: new SchedulingHandler({
 				hooks: {
-					executeTransfer: async (serviceConfig, request) =>
-						await executeOnchainTransfer(serviceConfig, signingProvider, request),
-					log: (level, message) => {
-						logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
+					approveScheduling: async () => {
+						return null; // Defer for operator approval
 					},
-					emitEvent: (payload) => {
-						this.handleEmitEvent(name, notificationQueue, payload);
-					},
-					approveTransfer: async ({ requestId, contact, request, activeTransferGrants }) => {
-						// The hook fires BEFORE emitEvent in the core runtime's async task
-						// flow, so we push new notifications here instead of upgrading —
-						// the classifier returns null for transfer requests to avoid duplicates.
-						if (activeTransferGrants.length > 0) {
-							const grantEnqueued = notificationQueue.push({
-								type: "summary",
-								identity: name,
-								timestamp: new Date().toISOString(),
-								method: "action/request",
-								from: contact.peerAgentId,
-								fromName: contact.peerDisplayName,
-								messageId: requestId,
-								detail: { asset: request.asset, amount: request.amount },
-								oneLiner: `Approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName} (covered by grant)`,
-							});
-							if (grantEnqueued) {
-								void this.triggerEscalation(
-									`Auto-approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName}`,
-								);
-							}
-							return true;
-						}
-						const enqueued = notificationQueue.push({
-							type: "escalation",
+				},
+			}),
+			hooks: {
+				executeTransfer: async (serviceConfig, request) =>
+					await executeOnchainTransfer(serviceConfig, signingProvider, request),
+				log: (level, message) => {
+					logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
+				},
+				emitEvent: (payload) => {
+					this.handleEmitEvent(name, notificationQueue, payload);
+				},
+				approveTransfer: async ({ requestId, contact, request, activeTransferGrants }) => {
+					// The hook fires BEFORE emitEvent in the core runtime's async task
+					// flow, so we push new notifications here instead of upgrading —
+					// the classifier returns null for transfer requests to avoid duplicates.
+					if (activeTransferGrants.length > 0) {
+						const grantEnqueued = notificationQueue.push({
+							type: "summary",
 							identity: name,
 							timestamp: new Date().toISOString(),
 							method: "action/request",
@@ -623,47 +608,71 @@ export class OpenClawTapRegistry {
 							fromName: contact.peerDisplayName,
 							messageId: requestId,
 							detail: { asset: request.asset, amount: request.amount },
-							oneLiner: `Transfer request from ${contact.peerDisplayName}: ${request.amount} ${request.asset} — needs approval`,
+							oneLiner: `Approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName} (covered by grant)`,
 						});
-						if (enqueued) {
+						if (grantEnqueued) {
 							void this.triggerEscalation(
-								`Transfer request from ${contact.peerDisplayName} (${request.amount} ${request.asset}) requires approval`,
+								`Auto-approved ${request.amount} ${request.asset} transfer to ${contact.peerDisplayName}`,
 							);
 						}
-						return null;
-					},
-					approveConnection: async () => {
-						return null; // Always escalate to user
-					},
-					confirmMeeting: async () => {
-						// Return false to prevent auto-confirmation; operator resolves via tap_gateway
-						return false;
-					},
-					onMeetingConfirmed: async (meeting) => {
-						const enqueued = notificationQueue.push({
-							type: "summary",
-							identity: name,
-							timestamp: new Date().toISOString(),
-							method: "scheduling/accept",
-							from: meeting.peerAgentId,
-							fromName: meeting.peerName,
-							messageId: meeting.schedulingId,
-							detail: {
-								schedulingId: meeting.schedulingId,
-								title: meeting.title,
-								slot: meeting.slot,
-								eventId: meeting.eventId,
-							},
-							oneLiner: `Meeting confirmed with ${meeting.peerName}: "${meeting.title}"`,
-						});
-						if (enqueued) {
-							void this.triggerEscalation(
-								`Meeting confirmed with ${meeting.peerName}: "${meeting.title}"`,
-							);
-						}
-					},
+						return true;
+					}
+					const enqueued = notificationQueue.push({
+						type: "escalation",
+						identity: name,
+						timestamp: new Date().toISOString(),
+						method: "action/request",
+						from: contact.peerAgentId,
+						fromName: contact.peerDisplayName,
+						messageId: requestId,
+						detail: { asset: request.asset, amount: request.amount },
+						oneLiner: `Transfer request from ${contact.peerDisplayName}: ${request.amount} ${request.asset} — needs approval`,
+					});
+					if (enqueued) {
+						void this.triggerEscalation(
+							`Transfer request from ${contact.peerDisplayName} (${request.amount} ${request.asset}) requires approval`,
+						);
+					}
+					return null;
 				},
-			}),
+				approveConnection: async () => {
+					return null; // Always escalate to user
+				},
+				confirmMeeting: async () => {
+					// Return false to prevent auto-confirmation; operator resolves via tap_gateway
+					return false;
+				},
+				onMeetingConfirmed: async (meeting) => {
+					const enqueued = notificationQueue.push({
+						type: "summary",
+						identity: name,
+						timestamp: new Date().toISOString(),
+						method: "scheduling/accept",
+						from: meeting.peerAgentId,
+						fromName: meeting.peerName,
+						messageId: meeting.schedulingId,
+						detail: {
+							schedulingId: meeting.schedulingId,
+							title: meeting.title,
+							slot: meeting.slot,
+							eventId: meeting.eventId,
+						},
+						oneLiner: `Meeting confirmed with ${meeting.peerName}: "${meeting.title}"`,
+					});
+					if (enqueued) {
+						void this.triggerEscalation(
+							`Meeting confirmed with ${meeting.peerName}: "${meeting.title}"`,
+						);
+					}
+				},
+			},
+		});
+
+		const runtime: ManagedTapRuntime = {
+			definition,
+			config,
+			signingProvider,
+			runtime: tapRuntime,
 			mutex: new AsyncMutex(),
 			interval: null,
 		};
@@ -674,7 +683,7 @@ export class OpenClawTapRegistry {
 	private async startRuntime(runtime: ManagedTapRuntime): Promise<void> {
 		await runtime.mutex.runExclusive(async () => {
 			try {
-				await runtime.service.start();
+				await runtime.runtime.start();
 				runtime.lastError = undefined;
 			} catch (error: unknown) {
 				runtime.lastError = formatError(error);
@@ -691,7 +700,7 @@ export class OpenClawTapRegistry {
 				clearInterval(existing.interval);
 			}
 			await existing.mutex.runExclusive(async () => {
-				await existing.service.stop().catch(() => {});
+				await existing.runtime.stop().catch(() => {});
 			});
 			this.runtimes.delete(name);
 			this.notificationQueues.delete(name);
@@ -709,7 +718,7 @@ export class OpenClawTapRegistry {
 		runtime.interval = setInterval(() => {
 			void runtime.mutex.runExclusive(async () => {
 				try {
-					await runtime.service.syncOnce();
+					await runtime.runtime.syncOnce();
 					runtime.lastError = undefined;
 				} catch (error: unknown) {
 					runtime.lastError = formatError(error);
