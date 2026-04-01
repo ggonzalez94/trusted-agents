@@ -503,13 +503,14 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			});
 		});
 
-		it(SCENARIOS.VERIFY_BALANCE_INCREASED.name, { timeout: 30_000 }, async () => {
+		it(SCENARIOS.VERIFY_BALANCE_INCREASED.name, { timeout: 90_000 }, async () => {
+			// AA-sponsored USDC transfer can take 30-60s to confirm on-chain
 			balanceAfterTransfer = await waitForBalanceChange({
 				address: agentBAddress,
 				chainKey: CHAIN_KEY,
 				previousBalance: balanceBeforeTransfer,
 				description: "Agent B USDC balance increase after approved transfer",
-				timeoutMs: 30_000,
+				timeoutMs: 90_000,
 			});
 
 			const delta = balanceAfterTransfer - balanceBeforeTransfer;
@@ -601,11 +602,16 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.VERIFY_BALANCE_UNCHANGED.name, { timeout: 15_000 }, async () => {
+			expect(
+				balanceAfterTransfer,
+				"balanceAfterTransfer must be set by the VERIFY_BALANCE_INCREASED test",
+			).toBeDefined();
+
 			const currentBalance = await getUsdcBalance(agentBAddress, CHAIN_KEY);
 
 			expect(
 				currentBalance,
-				`Agent B balance should remain unchanged at ${formatUsdc(balanceAfterTransfer, CHAIN_KEY)} USDC after rejected transfer. ` +
+				`Agent B balance should remain at ${formatUsdc(balanceAfterTransfer, CHAIN_KEY)} USDC after rejected transfer. ` +
 					`Current: ${formatUsdc(currentBalance, CHAIN_KEY)} USDC`,
 			).toBe(balanceAfterTransfer);
 		});

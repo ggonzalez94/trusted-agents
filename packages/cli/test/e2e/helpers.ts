@@ -188,6 +188,58 @@ export async function assertContactActive(dataDir: string, peerName: string): Pr
 	}
 }
 
+/**
+ * Poll sync + contacts until a peer appears as an active contact.
+ * Combines message sync (to process pending XMTP messages) with contact checks.
+ */
+export async function waitForContact(opts: {
+	dataDir: string;
+	peerName: string;
+	timeoutMs?: number;
+	intervalMs?: number;
+}): Promise<void> {
+	const { dataDir, peerName, timeoutMs = 60_000, intervalMs = 2_000 } = opts;
+	const deadline = Date.now() + timeoutMs;
+
+	while (Date.now() < deadline) {
+		// Sync to process any pending messages
+		await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+
+		// Check contacts
+		const result = await runCli(["--json", "--data-dir", dataDir, "contacts", "list"]);
+		if (result.exitCode === 0) {
+			try {
+				const parsed = parseJsonOutput(result.stdout);
+				const data = parsed.data as {
+					contacts: Array<{ name: string; status: string }>;
+				};
+				const contact = data.contacts.find((c) => c.name === peerName);
+				if (contact?.status === "active") return;
+			} catch {
+				// parse error, keep polling
+			}
+		}
+
+		await new Promise((r) => setTimeout(r, intervalMs));
+	}
+
+	// Final check with detailed error
+	const result = await runCli(["--json", "--data-dir", dataDir, "contacts", "list"]);
+	let found = "[]";
+	try {
+		const parsed = parseJsonOutput(result.stdout);
+		const data = parsed.data as { contacts: Array<{ name: string; status: string }> };
+		found = data.contacts.map((c) => `${c.name}(${c.status})`).join(", ");
+	} catch {
+		// ignore
+	}
+
+	throw new Error(
+		`Timed out waiting for contact "${peerName}" to become active (${timeoutMs}ms). ` +
+			`DataDir: ${dataDir}. Found: [${found}]`,
+	);
+}
+
 // ── Grant File Helpers ───────────────────────────────────────────────────────
 
 export async function writeGrantFile(
