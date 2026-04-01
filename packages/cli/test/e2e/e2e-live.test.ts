@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runCli } from "../helpers/run-cli.js";
 import {
 	CHAIN_CONFIGS,
+	type PermissionSnapshot,
 	assertContactActive,
 	formatUsdc,
 	getUsdcBalance,
@@ -16,7 +17,6 @@ import {
 	waitForPermissions,
 	waitForSync,
 	writeGrantFile,
-	type PermissionSnapshot,
 } from "./helpers.js";
 import { SCENARIOS } from "./scenarios.js";
 
@@ -178,13 +178,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.RESOLVE_AGENT_A.name, { timeout: 30_000 }, async () => {
-			const result = await runCli([
-				"--json",
-				"--data-dir",
-				agentADir,
-				"identity",
-				"resolve-self",
-			]);
+			const result = await runCli(["--json", "--data-dir", agentADir, "identity", "resolve-self"]);
 
 			expect(result.exitCode, `Agent A resolve-self failed:\n${result.stderr}`).toBe(0);
 
@@ -195,13 +189,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.RESOLVE_AGENT_B.name, { timeout: 30_000 }, async () => {
-			const result = await runCli([
-				"--json",
-				"--data-dir",
-				agentBDir,
-				"identity",
-				"resolve-self",
-			]);
+			const result = await runCli(["--json", "--data-dir", agentBDir, "identity", "resolve-self"]);
 
 			expect(result.exitCode, `Agent B resolve-self failed:\n${result.stderr}`).toBe(0);
 
@@ -333,9 +321,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				agentBDir,
 				AGENT_A_NAME,
 				(data) =>
-					data.granted_by_peer.grants.some(
-						(g) => g.grantId === GRANT_ID && g.status === "active",
-					),
+					data.granted_by_peer.grants.some((g) => g.grantId === GRANT_ID && g.status === "active"),
 				60_000,
 			);
 
@@ -408,9 +394,15 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			]);
 			expect(aResult.exitCode, `Agent A conversations list failed:\n${aResult.stderr}`).toBe(0);
 
-			const aConvos = (JSON.parse(aResult.stdout) as { data: { conversations: Array<{ id: string; messages: number }> } })
-				.data.conversations;
-			expect(aConvos.length, "Agent A should have at least one conversation with Agent B").toBeGreaterThan(0);
+			const aConvos = (
+				JSON.parse(aResult.stdout) as {
+					data: { conversations: Array<{ id: string; messages: number }> };
+				}
+			).data.conversations;
+			expect(
+				aConvos.length,
+				"Agent A should have at least one conversation with Agent B",
+			).toBeGreaterThan(0);
 			expect(
 				aConvos[0]!.messages,
 				"Agent A conversation should contain at least one message",
@@ -427,9 +419,15 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			]);
 			expect(bResult.exitCode, `Agent B conversations list failed:\n${bResult.stderr}`).toBe(0);
 
-			const bConvos = (JSON.parse(bResult.stdout) as { data: { conversations: Array<{ id: string; messages: number }> } })
-				.data.conversations;
-			expect(bConvos.length, "Agent B should have at least one conversation with Agent A").toBeGreaterThan(0);
+			const bConvos = (
+				JSON.parse(bResult.stdout) as {
+					data: { conversations: Array<{ id: string; messages: number }> };
+				}
+			).data.conversations;
+			expect(
+				bConvos.length,
+				"Agent B should have at least one conversation with Agent A",
+			).toBeGreaterThan(0);
 			expect(
 				bConvos[0]!.messages,
 				"Agent B conversation should contain at least one message",
@@ -522,9 +520,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				agentBDir,
 				AGENT_A_NAME,
 				(data) =>
-					data.granted_by_peer.grants.some(
-						(g) => g.grantId === GRANT_ID && g.status === "revoked",
-					),
+					data.granted_by_peer.grants.some((g) => g.grantId === GRANT_ID && g.status === "revoked"),
 				60_000,
 			);
 

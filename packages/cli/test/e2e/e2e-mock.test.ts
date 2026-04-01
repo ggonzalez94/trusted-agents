@@ -8,7 +8,6 @@ import {
 	type MessageListenerSession,
 	createMessageListenerSession,
 } from "../../src/commands/message-listen.js";
-import { runCli } from "../helpers/run-cli.js";
 import {
 	LoopbackTransportNetwork,
 	StaticAgentResolver,
@@ -16,8 +15,9 @@ import {
 	createResolvedAgentFixture,
 	installLoopbackRuntime,
 } from "../helpers/loopback-runtime.js";
+import { runCli } from "../helpers/run-cli.js";
+import { type PermissionSnapshot, parseJsonOutput, writeGrantFile } from "./helpers.js";
 import { SCENARIOS } from "./scenarios.js";
-import { parseJsonOutput, writeGrantFile, type PermissionSnapshot } from "./helpers.js";
 
 // ── Keys & addresses ─────────────────────────────────────────────────────────
 
@@ -63,8 +63,7 @@ vi.mock("trusted-agents-core", async () => {
 		OwsSigningProvider: class MockOwsSigningProvider {
 			private provider: SigningProvider;
 			constructor(wallet: string) {
-				this.provider =
-					wallet === "agent-b-wallet" ? agentBSigningProvider : agentASigningProvider;
+				this.provider = wallet === "agent-b-wallet" ? agentBSigningProvider : agentASigningProvider;
 			}
 			getAddress() {
 				return this.provider.getAddress();
@@ -194,39 +193,19 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 
 	describe("Phase 1: Onboarding", () => {
 		it(SCENARIOS.INIT_AGENT_A.name, async () => {
-			const result = await runCli([
-				"--plain",
-				"--data-dir",
-				agentADir,
-				"init",
-				"--chain",
-				"base",
-			]);
+			const result = await runCli(["--plain", "--data-dir", agentADir, "init", "--chain", "base"]);
 			expect(result.exitCode, `Agent A init failed:\n${result.stderr}`).toBe(0);
 		});
 
 		it(SCENARIOS.INIT_AGENT_B.name, async () => {
-			const result = await runCli([
-				"--plain",
-				"--data-dir",
-				agentBDir,
-				"init",
-				"--chain",
-				"base",
-			]);
+			const result = await runCli(["--plain", "--data-dir", agentBDir, "init", "--chain", "base"]);
 			expect(result.exitCode, `Agent B init failed:\n${result.stderr}`).toBe(0);
 		});
 
 		it(SCENARIOS.RESOLVE_AGENT_A.name, async () => {
 			await setOwsConfig(agentADir, "agent-a-wallet", "agent-a-key", 7001);
 
-			const result = await runCli([
-				"--json",
-				"--data-dir",
-				agentADir,
-				"identity",
-				"resolve-self",
-			]);
+			const result = await runCli(["--json", "--data-dir", agentADir, "identity", "resolve-self"]);
 			expect(result.exitCode, `Agent A resolve-self failed:\n${result.stderr}`).toBe(0);
 
 			const parsed = parseJsonOutput(result.stdout);
@@ -237,13 +216,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 		it(SCENARIOS.RESOLVE_AGENT_B.name, async () => {
 			await setOwsConfig(agentBDir, "agent-b-wallet", "agent-b-key", 7002);
 
-			const result = await runCli([
-				"--json",
-				"--data-dir",
-				agentBDir,
-				"identity",
-				"resolve-self",
-			]);
+			const result = await runCli(["--json", "--data-dir", agentBDir, "identity", "resolve-self"]);
 			expect(result.exitCode, `Agent B resolve-self failed:\n${result.stderr}`).toBe(0);
 
 			const parsed = parseJsonOutput(result.stdout);
@@ -293,8 +266,9 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 		it(SCENARIOS.VERIFY_CONTACTS_A.name, async () => {
 			const result = await runCli(["--json", "--data-dir", agentADir, "contacts", "list"]);
 			expect(result.exitCode).toBe(0);
-			const contacts = (JSON.parse(result.stdout) as { data: { contacts: Array<{ name: string; status: string }> } })
-				.data.contacts;
+			const contacts = (
+				JSON.parse(result.stdout) as { data: { contacts: Array<{ name: string; status: string }> } }
+			).data.contacts;
 			const contact = contacts.find((c) => c.name === AGENT_B_NAME);
 			expect(contact, `Agent B contact should exist in Agent A's contacts`).toBeDefined();
 			expect(contact?.status, "Agent A should have active contact with Agent B").toBe("active");
@@ -303,8 +277,9 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 		it(SCENARIOS.VERIFY_CONTACTS_B.name, async () => {
 			const result = await runCli(["--json", "--data-dir", agentBDir, "contacts", "list"]);
 			expect(result.exitCode).toBe(0);
-			const contacts = (JSON.parse(result.stdout) as { data: { contacts: Array<{ name: string; status: string }> } })
-				.data.contacts;
+			const contacts = (
+				JSON.parse(result.stdout) as { data: { contacts: Array<{ name: string; status: string }> } }
+			).data.contacts;
 			const contact = contacts.find((c) => c.name === AGENT_A_NAME);
 			expect(contact, `Agent A contact should exist in Agent B's contacts`).toBeDefined();
 			expect(contact?.status, "Agent B should have active contact with Agent A").toBe("active");
@@ -340,10 +315,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 					approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
 				},
 			);
-			agentBListener = await createMessageListenerSession(
-				{ plain: true, dataDir: agentBDir },
-				{},
-			);
+			agentBListener = await createMessageListenerSession({ plain: true, dataDir: agentBDir }, {});
 
 			const grantFilePath = await writeGrantFile(agentADir, "transfer-grant.json", [
 				{
@@ -378,9 +350,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				agentBDir,
 				AGENT_A_NAME,
 				(data) =>
-					data.granted_by_peer.grants.some(
-						(g) => g.grantId === GRANT_ID && g.status === "active",
-					),
+					data.granted_by_peer.grants.some((g) => g.grantId === GRANT_ID && g.status === "active"),
 				2_000,
 			);
 
@@ -530,9 +500,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				agentBDir,
 				AGENT_A_NAME,
 				(data) =>
-					data.granted_by_peer.grants.some(
-						(g) => g.grantId === GRANT_ID && g.status === "revoked",
-					),
+					data.granted_by_peer.grants.some((g) => g.grantId === GRANT_ID && g.status === "revoked"),
 				2_000,
 			);
 

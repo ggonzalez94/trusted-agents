@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createPublicClient, formatUnits, http, parseAbi } from "viem";
+import { http, createPublicClient, formatUnits, parseAbi } from "viem";
 import { runCli } from "../helpers/run-cli.js";
 
 // ── Chain & USDC Config ──────────────────────────────────────────────────────
@@ -39,7 +39,9 @@ const ERC20_ABI = parseAbi(["function balanceOf(address owner) view returns (uin
 export async function getUsdcBalance(address: `0x${string}`, chainKey: string): Promise<bigint> {
 	const config = CHAIN_CONFIGS[chainKey];
 	if (!config) {
-		throw new Error(`Unknown chain key: ${chainKey}. Valid keys: ${Object.keys(CHAIN_CONFIGS).join(", ")}`);
+		throw new Error(
+			`Unknown chain key: ${chainKey}. Valid keys: ${Object.keys(CHAIN_CONFIGS).join(", ")}`,
+		);
 	}
 
 	const client = createPublicClient({
@@ -57,7 +59,9 @@ export async function getUsdcBalance(address: `0x${string}`, chainKey: string): 
 export function formatUsdc(balance: bigint, chainKey: string): string {
 	const config = CHAIN_CONFIGS[chainKey];
 	if (!config) {
-		throw new Error(`Unknown chain key: ${chainKey}. Valid keys: ${Object.keys(CHAIN_CONFIGS).join(", ")}`);
+		throw new Error(
+			`Unknown chain key: ${chainKey}. Valid keys: ${Object.keys(CHAIN_CONFIGS).join(", ")}`,
+		);
 	}
 	return formatUnits(balance, config.usdcDecimals);
 }
@@ -70,7 +74,14 @@ export async function waitForBalanceChange(opts: {
 	timeoutMs?: number;
 	intervalMs?: number;
 }): Promise<bigint> {
-	const { address, chainKey, previousBalance, description, timeoutMs = 30_000, intervalMs = 3_000 } = opts;
+	const {
+		address,
+		chainKey,
+		previousBalance,
+		description,
+		timeoutMs = 30_000,
+		intervalMs = 3_000,
+	} = opts;
 	const deadline = Date.now() + timeoutMs;
 
 	while (Date.now() < deadline) {
@@ -83,7 +94,7 @@ export async function waitForBalanceChange(opts: {
 
 	throw new Error(
 		`Timed out waiting for balance change (${description}). ` +
-		`Address: ${address}, chain: ${chainKey}, previous balance: ${previousBalance}`,
+			`Address: ${address}, chain: ${chainKey}, previous balance: ${previousBalance}`,
 	);
 }
 
@@ -139,8 +150,8 @@ export async function waitForSync(opts: {
 
 	throw new Error(
 		`Timed out waiting for sync (${description}).\n` +
-		`Last stdout: ${lastStdout}\n` +
-		`Last stderr: ${lastStderr}`,
+			`Last stdout: ${lastStdout}\n` +
+			`Last stderr: ${lastStderr}`,
 	);
 }
 
@@ -151,8 +162,8 @@ export async function assertContactActive(dataDir: string, peerName: string): Pr
 	if (result.exitCode !== 0) {
 		throw new Error(
 			`contacts list failed (exit ${result.exitCode}).\n` +
-			`stdout: ${result.stdout}\n` +
-			`stderr: ${result.stderr}`,
+				`stdout: ${result.stdout}\n` +
+				`stderr: ${result.stderr}`,
 		);
 	}
 
@@ -197,8 +208,8 @@ export async function readAgentAddress(dataDir: string): Promise<`0x${string}`> 
 	if (result.exitCode !== 0) {
 		throw new Error(
 			`identity show failed (exit ${result.exitCode}).\n` +
-			`stdout: ${result.stdout}\n` +
-			`stderr: ${result.stderr}`,
+				`stdout: ${result.stdout}\n` +
+				`stderr: ${result.stderr}`,
 		);
 	}
 
@@ -250,9 +261,9 @@ export async function waitForPermissions(
 
 	throw new Error(
 		`Timed out waiting for permissions for peer "${peer}" (dataDir=${dataDir}).\n` +
-		`Last snapshot: ${JSON.stringify(lastSnapshot ?? null)}\n` +
-		`Last stdout: ${lastStdout}\n` +
-		`Last stderr: ${lastStderr}`,
+			`Last snapshot: ${JSON.stringify(lastSnapshot ?? null)}\n` +
+			`Last stdout: ${lastStdout}\n` +
+			`Last stderr: ${lastStderr}`,
 	);
 }
 
