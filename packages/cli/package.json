@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.1",
+    "@trustedagents/sdk": "workspace:*",
     "@x402/evm": "^2.5.0",
     "@x402/fetch": "^2.5.0",
     "commander": "^13.0.0",

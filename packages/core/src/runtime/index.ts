@@ -55,6 +55,7 @@ export {
 	buildPermissionGrantRequestText,
 	buildTransferRequestText,
 	buildTransferResponseText,
+	extractMessageData,
 	parsePermissionGrantRequest,
 	parseTransferActionRequest,
 	parseTransferActionResponse,
@@ -74,6 +75,7 @@ export {
 } from "./grants.js";
 export {
 	TapMessagingService,
+	type TapCancelMeetingResult,
 	type TapConnectResult,
 	type TapConnectionApprovalContext,
 	type TapPendingRequest,

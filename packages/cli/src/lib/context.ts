@@ -3,6 +3,7 @@ import {
 	FileConversationLogger,
 	FileRequestJournal,
 	FileTrustStore,
+	TapAppRegistry,
 	XmtpTransport,
 } from "trusted-agents-core";
 import type {
@@ -28,6 +29,7 @@ export interface CliContext {
 	resolver: IAgentResolver;
 	conversationLogger: IConversationLogger;
 	requestJournal: IRequestJournal;
+	appRegistry: TapAppRegistry;
 	calendarProvider?: ICalendarProvider;
 }
 
@@ -56,7 +58,13 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 	const override = getCliRuntimeOverride(config.dataDir);
 	const signingProvider = createLazySigningProvider(config);
 	if (override?.createContext) {
-		return { config, signingProvider, ...override.createContext(config) };
+		const overrideContext = override.createContext(config);
+		return {
+			config,
+			signingProvider,
+			appRegistry: new TapAppRegistry(config.dataDir),
+			...overrideContext,
+		};
 	}
 
 	const trustStore = new FileTrustStore(config.dataDir);
@@ -65,6 +73,7 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 	});
 	const conversationLogger = new FileConversationLogger(config.dataDir);
 	const requestJournal = new FileRequestJournal(config.dataDir);
+	const appRegistry = new TapAppRegistry(config.dataDir);
 
 	const calendarProvider = resolveCalendarProvider(config.dataDir);
 
@@ -75,6 +84,7 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 		resolver,
 		conversationLogger,
 		requestJournal,
+		appRegistry,
 		calendarProvider,
 	};
 }

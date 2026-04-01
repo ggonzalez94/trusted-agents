@@ -341,7 +341,7 @@ describe("OpenClawTapRegistry", () => {
 		const runtime = {
 			definition: { name: "alpha" },
 			mutex: { runExclusive: async (work: () => Promise<unknown>) => await work() },
-			service: {
+			runtime: {
 				listPendingRequests: async () => [
 					{
 						requestId: "outbound-ignore",
@@ -388,7 +388,7 @@ describe("OpenClawTapRegistry", () => {
 		const runtime = {
 			definition: { name: "alpha" },
 			mutex: { runExclusive: async (work: () => Promise<unknown>) => await work() },
-			service: {
+			runtime: {
 				listPendingRequests: async () => [
 					{
 						requestId: "inbound-ignore",
