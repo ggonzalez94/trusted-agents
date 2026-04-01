@@ -353,6 +353,7 @@ export class TapMessagingService {
 	private outboxPoller: ReturnType<typeof setInterval> | null = null;
 	private outboxPollInFlight = false;
 	private transportSessionReentryDepth = 0;
+	private manifestLoaded = false;
 
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
 		this.context = context;
@@ -371,6 +372,13 @@ export class TapMessagingService {
 			onResult: async (envelope) => await this.onResult(envelope),
 		};
 		this.registerBuiltinApps();
+	}
+
+	/** Load the installed app manifest once so the registry can lazy-load custom apps. */
+	private async ensureManifestLoaded(): Promise<void> {
+		if (this.manifestLoaded) return;
+		await this.context.appRegistry.loadManifest();
+		this.manifestLoaded = true;
 	}
 
 	private registerBuiltinApps(): void {
@@ -454,6 +462,8 @@ export class TapMessagingService {
 		if (this.running) {
 			return;
 		}
+
+		await this.ensureManifestLoaded();
 
 		await this.ownerLock.acquire();
 		try {
@@ -1440,6 +1450,7 @@ export class TapMessagingService {
 			return await task();
 		}
 
+		await this.ensureManifestLoaded();
 		await this.ownerLock.acquire();
 		this.transportSessionReentryDepth += 1;
 		try {
@@ -3388,21 +3399,52 @@ export class TapMessagingService {
 			resultStatus,
 		);
 
-		try {
-			await this.context.transport.send(contact.peerAgentId, outgoing, {
-				peerAddress: contact.peerAgentAddress,
-				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-			});
-			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-			await this.touchContactSafe(contact.connectionId);
-		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`Failed to deliver app result for "${actionType}": ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-
+		// Mark the inbound request completed before delivery — the handler has
+		// already executed and its side effects are committed.
 		await this.context.requestJournal.updateStatus(requestId, "completed");
+
+		// Persist an outbound journal entry so reconciliation can retry delivery
+		// if the transport send fails (follows the same pattern as transfer results).
+		try {
+			await this.context.requestJournal.putOutbound({
+				requestId: String(outgoing.id),
+				requestKey: `outbound:${outgoing.method}:${String(outgoing.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: outgoing.method,
+				peerAgentId: contact.peerAgentId,
+				correlationId: requestId,
+				status: "pending",
+				metadata: {
+					type: "action-result-delivery",
+					actionId: typeof resultData.actionId === "string" ? resultData.actionId : requestId,
+					connectionId: contact.connectionId,
+					peerAgentId: contact.peerAgentId,
+					peerName: contact.peerDisplayName,
+					peerAddress: contact.peerAgentAddress,
+					request: outgoing,
+				} as unknown as Record<string, unknown>,
+			});
+		} catch (journalError: unknown) {
+			this.log(
+				"error",
+				`Failed to persist retry metadata for app result "${actionType}": ${journalError instanceof Error ? journalError.message : String(journalError)}`,
+			);
+			// Best-effort delivery without retry
+			try {
+				await this.context.transport.send(contact.peerAgentId, outgoing, {
+					peerAddress: contact.peerAgentAddress,
+					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+				});
+				await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+				await this.touchContactSafe(contact.connectionId);
+			} catch (deliveryError: unknown) {
+				this.log(
+					"warn",
+					`Failed to deliver app result for "${actionType}": ${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`,
+				);
+			}
+		}
 	}
 
 	private async requireContact(peer: string): Promise<Contact> {

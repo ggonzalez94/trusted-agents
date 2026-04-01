@@ -319,7 +319,16 @@ export class TapRuntime extends EventEmitter {
 		await addAppToManifest(ctx.config.dataDir, app.id, entry);
 	}
 
+	private static readonly BUILTIN_APP_IDS = new Set([
+		"tap-transfer",
+		"scheduling",
+		"tap-permissions",
+	]);
+
 	async removeApp(appId: string, options?: { removeState?: boolean }): Promise<void> {
+		if (TapRuntime.BUILTIN_APP_IDS.has(appId)) {
+			throw new Error(`Cannot remove built-in app "${appId}"`);
+		}
 		const ctx = this.requireContext();
 
 		// Unregister from live registry

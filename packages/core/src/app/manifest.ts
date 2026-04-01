@@ -1,6 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { AsyncMutex } from "../common/index.js";
+
+// Per-dataDir mutex to protect read-modify-write sequences in manifest operations
+const manifestMutexes = new Map<string, AsyncMutex>();
+function getManifestMutex(dataDir: string): AsyncMutex {
+	let mutex = manifestMutexes.get(dataDir);
+	if (!mutex) {
+		mutex = new AsyncMutex();
+		manifestMutexes.set(dataDir, mutex);
+	}
+	return mutex;
+}
 
 export interface AppManifestEntry {
 	package: string;
@@ -45,15 +57,21 @@ export async function addAppToManifest(
 	appId: string,
 	entry: AppManifestEntry,
 ): Promise<void> {
-	const manifest = await loadAppManifest(dataDir);
-	manifest.apps[appId] = entry;
-	await saveAppManifest(dataDir, manifest);
+	const mutex = getManifestMutex(dataDir);
+	await mutex.runExclusive(async () => {
+		const manifest = await loadAppManifest(dataDir);
+		manifest.apps[appId] = entry;
+		await saveAppManifest(dataDir, manifest);
+	});
 }
 
 export async function removeAppFromManifest(dataDir: string, appId: string): Promise<void> {
-	const manifest = await loadAppManifest(dataDir);
-	delete manifest.apps[appId];
-	await saveAppManifest(dataDir, manifest);
+	const mutex = getManifestMutex(dataDir);
+	await mutex.runExclusive(async () => {
+		const manifest = await loadAppManifest(dataDir);
+		delete manifest.apps[appId];
+		await saveAppManifest(dataDir, manifest);
+	});
 }
 
 export function buildRoutingTable(manifest: AppManifest): Map<string, RoutingEntry> {
