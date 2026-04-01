@@ -6,6 +6,8 @@ import {
 	deleteWallet,
 	revokeApiKey,
 } from "@open-wallet-standard/core";
+import { recoverAddress } from "viem";
+import { hashAuthorization } from "viem/experimental";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { OwsSigningProvider } from "../../src/signing/ows-provider.js";
 
@@ -107,14 +109,10 @@ describe("OwsSigningProvider", () => {
 				chainId: 8453,
 			},
 			types: {
-				EIP712Domain: [
-					{ name: "name", type: "string" },
-					{ name: "version", type: "string" },
-					{ name: "chainId", type: "uint256" },
-				],
+				TestMessage: [{ name: "value", type: "uint256" }],
 			},
-			primaryType: "EIP712Domain",
-			message: {},
+			primaryType: "TestMessage",
+			message: { value: 42 },
 		});
 		expect(sig).toMatch(/^0x[0-9a-fA-F]+$/);
 		expect(sig.length).toBe(132);
@@ -148,6 +146,29 @@ describe("OwsSigningProvider", () => {
 		expect(auth.r).toMatch(/^0x[0-9a-fA-F]{64}$/);
 		expect(auth.s).toMatch(/^0x[0-9a-fA-F]{64}$/);
 		expect(auth.v === 27n || auth.v === 28n).toBe(true);
+	});
+
+	it("signAuthorization signature recovers to the correct address", async () => {
+		const provider = new OwsSigningProvider(WALLET_NAME, CHAIN, apiKey);
+		const address = await provider.getAddress();
+
+		const authParams = {
+			contractAddress: "0x0000000000000000000000000000000000000001" as `0x${string}`,
+			chainId: 8453,
+			nonce: 0,
+		};
+		const auth = await provider.signAuthorization(authParams);
+
+		// Compute the EIP-7702 authorization hash the same way viem does
+		const authHash = hashAuthorization(authParams);
+
+		// Recover the signer from the signature + hash
+		const recovered = await recoverAddress({
+			hash: authHash,
+			signature: { r: auth.r, s: auth.s, v: auth.v },
+		});
+
+		expect(recovered.toLowerCase()).toBe(address.toLowerCase());
 	});
 
 	it("signAuthorization throws if chainId is missing", async () => {
