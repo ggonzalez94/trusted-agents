@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUnits } from "viem";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+	type MessageListenerSession,
+	createMessageListenerSession,
+} from "../../src/commands/message-listen.js";
 import { runCli } from "../helpers/run-cli.js";
 import {
 	CHAIN_CONFIGS,
@@ -82,6 +86,7 @@ let agentBAddress: `0x${string}`;
 let inviteUrl: string;
 let balanceBeforeTransfer: bigint;
 let balanceAfterTransfer: bigint;
+let agentAListener: MessageListenerSession | undefined;
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -95,6 +100,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 	});
 
 	afterAll(async () => {
+		await agentAListener?.stop();
 		if (tempRoot) {
 			await rm(tempRoot, { recursive: true, force: true });
 		}
@@ -461,6 +467,19 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			balanceBeforeTransfer = await getUsdcBalance(agentBAddress, CHAIN_KEY);
 		});
 
+		// Start Agent A's listener with auto-approve hook.
+		// In non-TTY mode, `message sync` defers transfer approval (returns null).
+		// A listener with an explicit approveTransfer hook is needed to auto-approve
+		// when grants match — this mirrors the production plugin/listener pattern.
+		it("Start Agent A listener for transfer approval", { timeout: 60_000 }, async () => {
+			agentAListener = await createMessageListenerSession(
+				{ plain: true, dataDir: agentADir },
+				{
+					approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
+				},
+			);
+		});
+
 		it(SCENARIOS.REQUEST_FUNDS_APPROVED.name, { timeout: 60_000 }, async () => {
 			const result = await runCli([
 				"--plain",
@@ -486,16 +505,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			).toBe(true);
 		});
 
-		it(SCENARIOS.SYNC_TRANSFER_A.name, { timeout: 60_000 }, async () => {
-			// Agent A syncs: decideTransfer auto-approves because grant matches (no approveTransfer hook in CLI)
-			await waitForSync({
-				dataDir: agentADir,
-				description: "Agent A processing transfer request and auto-approving via grant",
-				timeoutMs: 60_000,
-			});
-		});
-
 		it(SCENARIOS.SYNC_TRANSFER_RESULT_B.name, { timeout: 60_000 }, async () => {
+			// Agent A's listener auto-approves and executes the transfer.
+			// Agent B syncs to receive the action/result.
 			await waitForSync({
 				dataDir: agentBDir,
 				description: "Agent B receiving transfer action/result",
@@ -519,6 +531,13 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				`Agent B balance should have increased by ${TRANSFER_AMOUNT} USDC (${TRANSFER_AMOUNT_UNITS} units). ` +
 					`Before: ${formatUsdc(balanceBeforeTransfer, CHAIN_KEY)}, After: ${formatUsdc(balanceAfterTransfer, CHAIN_KEY)}`,
 			).toBe(TRANSFER_AMOUNT_UNITS);
+		});
+
+		// Stop Agent A's listener to release the transport lock before revoke.
+		// The rejection test uses sync (no approval hook needed — no-grant = auto-reject).
+		it("Stop Agent A listener", { timeout: 15_000 }, async () => {
+			await agentAListener?.stop();
+			agentAListener = undefined;
 		});
 
 		it(SCENARIOS.REVOKE_GRANT.name, { timeout: 60_000 }, async () => {
