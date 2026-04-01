@@ -361,23 +361,35 @@ XMTP_INTEGRATION=true bun run test:xmtp
 ```
 Note: OWS (Open Wallet Service) must be installed and accessible for tests that exercise signing or wallet operations. Tests that mock `SigningProvider` do not require a live OWS instance.
 
-## Deterministic E2E Maintenance
-- The GH-safe two-agent CLI flow test lives at `packages/cli/test/e2e-two-agent-flow.test.ts`.
-- Update this test whenever there is a meaningful behavioral change to the two-agent flow.
-- A change counts as meaningful if it changes any of:
-	- protocol method names or payload fields
-	- CLI command names, flags, or required sequencing for `invite`, `connect`, `permissions`, `message`, `contacts`, or `conversations`
-	- trust/contact persistence shape
-	- directional grant schema or ledger schema
-	- listener approval behavior or action request/response semantics
-	- transfer execution semantics or fake-transfer expectations
-	- multi-agent `dataDir` isolation behavior
-- A change does **not** count as meaningful if it is only:
-	- formatting
-	- comments
-	- copy-only docs with no behavioral change
-	- internal refactors that preserve observable CLI/protocol behavior
-- The live XMTP/mainnet smoke runbook is `LIVE_SMOKE_RUNBOOK.md`. Update it when the real-world setup, required secrets, or operational flow changes.
+## E2E Test Maintenance
+
+Two E2E test files cover the same scenarios:
+
+- **`packages/cli/test/e2e/e2e-live.test.ts`** — Real E2E against mainnet (XMTP, OWS, on-chain). Runs as a release gate.
+- **`packages/cli/test/e2e/e2e-mock.test.ts`** — Mocked E2E with loopback transport. Runs on every PR.
+- **`packages/cli/test/e2e/scenarios.ts`** — Canonical scenario list shared by both.
+- **`packages/cli/test/e2e/helpers.ts`** — Shared assertion and polling utilities.
+
+Update both test files whenever there is a meaningful behavioral change. A change counts as meaningful if it changes any of:
+- protocol method names or payload fields
+- CLI command names, flags, or required sequencing for `invite`, `connect`, `permissions`, `message`, `contacts`, or `conversations`
+- trust/contact persistence shape
+- directional grant schema or ledger schema
+- listener approval behavior or action request/response semantics
+- transfer execution semantics
+- multi-agent `dataDir` isolation behavior
+
+A change does **not** count as meaningful if it is only:
+- formatting, comments, or copy-only docs with no behavioral change
+- internal refactors that preserve observable CLI/protocol behavior
+
+### Live E2E secrets
+The real E2E uses 4 GitHub Actions secrets:
+- `E2E_AGENT_A_OWS_WALLET` / `E2E_AGENT_A_OWS_API_KEY` — Agent A OWS wallet
+- `E2E_AGENT_B_OWS_WALLET` / `E2E_AGENT_B_OWS_API_KEY` — Agent B OWS wallet
+
+Both wallets have policies for Base (`eip155:8453`) and Taiko (`eip155:167000`).
+Fund the wallet addresses with USDC on both chains. The tests fail-fast if balance < 0.50 USDC.
 
 ## Repository Conventions Worth Respecting
 - ESM only; TypeScript imports use `.js` extension in source.
