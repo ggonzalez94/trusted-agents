@@ -385,9 +385,10 @@ A change does **not** count as meaningful if it is only:
 
 ### Live E2E secrets
 The real E2E uses 4 GitHub Actions secrets:
-- `E2E_AGENT_A_OWS_WALLET` / `E2E_AGENT_A_OWS_API_KEY` — Agent A OWS wallet
-- `E2E_AGENT_B_OWS_WALLET` / `E2E_AGENT_B_OWS_API_KEY` — Agent B OWS wallet
+- `E2E_AGENT_A_OWS_WALLET` / `E2E_AGENT_A_OWS_MNEMONIC` — Agent A wallet name + mnemonic for CI import
+- `E2E_AGENT_B_OWS_WALLET` / `E2E_AGENT_B_OWS_MNEMONIC` — Agent B wallet name + mnemonic for CI import
 
+The CI workflow imports the wallets from mnemonics into the OWS vault on each ephemeral runner.
 Both wallets have policies for Base (`eip155:8453`) and Taiko (`eip155:167000`).
 Fund the wallet addresses with USDC on both chains. The tests fail-fast if balance < 0.50 USDC.
 
