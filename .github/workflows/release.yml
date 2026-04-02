@@ -58,6 +58,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         chain: [base, taiko]
     steps:

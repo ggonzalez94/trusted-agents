@@ -1788,17 +1788,13 @@ If OWS is installed locally and wallets are funded:
 ```bash
 E2E_CHAIN=base \
 E2E_AGENT_A_OWS_WALLET=e2e-agent-a \
-E2E_AGENT_A_OWS_API_KEY=ows_key_407df1bbabd8457594d31af56ae0d08f826cacf196219e544aff2545d282e7ae \
 E2E_AGENT_B_OWS_WALLET=e2e-agent-b \
-E2E_AGENT_B_OWS_API_KEY=ows_key_53a70998e55cd3d969bced61da0bf5b9beb2367916496d6c9e4a6e61358aa21e \
 bun vitest run packages/cli/test/e2e/e2e-live.test.ts --reporter=verbose
 ```
 
 Expected: Full flow runs (3-5 minutes). All phases pass.
 
-Note: This will fail if wallets haven't been funded with USDC yet. The user needs to fund:
-- `0xE71C72376B02b548A7067873dDe226F76E5418A6` (Agent A) with USDC on Base and Taiko
-- `0x8885932753B29E2888ab7F04e1812eD88F2C45Bf` (Agent B) with USDC on Base and Taiko
+Note: This will fail if wallets haven't been funded with USDC yet or OWS wallets are not in the local vault.
 
 - [ ] **Step 6: Commit any remaining fixes**
 
