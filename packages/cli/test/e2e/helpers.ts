@@ -118,13 +118,15 @@ export async function waitForSync(opts: {
 	description: string;
 	timeoutMs?: number;
 	intervalMs?: number;
-	expectPattern?: RegExp | string;
+	/** Require at least this many messages processed. Defaults to 1. Set to 0 to accept empty syncs. */
+	minProcessed?: number;
 }): Promise<void> {
-	const { dataDir, description, timeoutMs = 30_000, intervalMs = 2_000, expectPattern } = opts;
+	const { dataDir, description, timeoutMs = 30_000, intervalMs = 2_000, minProcessed = 1 } = opts;
 	const deadline = Date.now() + timeoutMs;
 
 	let lastStdout = "";
 	let lastStderr = "";
+	let lastProcessed = 0;
 
 	while (Date.now() < deadline) {
 		const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
@@ -132,16 +134,16 @@ export async function waitForSync(opts: {
 		lastStderr = result.stderr;
 
 		if (result.exitCode === 0) {
-			if (expectPattern === undefined) {
-				return;
-			}
-			const combined = result.stdout + result.stderr;
-			const matches =
-				typeof expectPattern === "string"
-					? combined.includes(expectPattern)
-					: expectPattern.test(combined);
-			if (matches) {
-				return;
+			// Parse the sync report to check processed count
+			try {
+				const parsed = parseJsonOutput(result.stdout);
+				const data = parsed.data as { processed?: number };
+				lastProcessed = data.processed ?? 0;
+				if (lastProcessed >= minProcessed) {
+					return;
+				}
+			} catch {
+				// If we can't parse, keep polling
 			}
 		}
 
@@ -150,6 +152,7 @@ export async function waitForSync(opts: {
 
 	throw new Error(
 		`Timed out waiting for sync (${description}).\n` +
+			`Expected at least ${minProcessed} processed, last saw ${lastProcessed}.\n` +
 			`Last stdout: ${lastStdout}\n` +
 			`Last stderr: ${lastStderr}`,
 	);

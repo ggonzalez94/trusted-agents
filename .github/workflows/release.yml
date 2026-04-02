@@ -69,6 +69,17 @@ jobs:
 
       - run: bun run build
 
+      - name: Validate E2E secrets
+        run: |
+          missing=0
+          for var in E2E_AGENT_A_OWS_WALLET E2E_AGENT_B_OWS_WALLET; do
+            if [ -z "${!var}" ]; then
+              echo "::error::Required E2E secret $var is not set or empty"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+
       - name: Install OWS
         run: curl -fsSL https://docs.openwallet.sh/install.sh | bash
 
