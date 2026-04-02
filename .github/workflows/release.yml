@@ -72,25 +72,35 @@ jobs:
       - name: Validate E2E secrets
         run: |
           missing=0
-          for var in E2E_AGENT_A_OWS_WALLET E2E_AGENT_B_OWS_WALLET; do
+          for var in E2E_AGENT_A_OWS_WALLET E2E_AGENT_A_OWS_MNEMONIC E2E_AGENT_B_OWS_WALLET E2E_AGENT_B_OWS_MNEMONIC; do
             if [ -z "${!var}" ]; then
               echo "::error::Required E2E secret $var is not set or empty"
               missing=1
             fi
           done
           if [ "$missing" = "1" ]; then exit 1; fi
+        env:
+          E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
+          E2E_AGENT_A_OWS_MNEMONIC: ${{ secrets.E2E_AGENT_A_OWS_MNEMONIC }}
+          E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
+          E2E_AGENT_B_OWS_MNEMONIC: ${{ secrets.E2E_AGENT_B_OWS_MNEMONIC }}
 
       - name: Install OWS
         run: curl -fsSL https://docs.openwallet.sh/install.sh | bash
 
-      - name: Run E2E
+      - name: Import E2E wallets into OWS vault
+        run: |
+          OWS_MNEMONIC="${{ secrets.E2E_AGENT_A_OWS_MNEMONIC }}" ows wallet import --name "${{ secrets.E2E_AGENT_A_OWS_WALLET }}" --mnemonic
+          OWS_MNEMONIC="${{ secrets.E2E_AGENT_B_OWS_MNEMONIC }}" ows wallet import --name "${{ secrets.E2E_AGENT_B_OWS_WALLET }}" --mnemonic
+          echo "Imported wallets:"
+          ows wallet list | grep -E "Name:|eip155:1"
+
+      - name: Run E2E tests (${{ matrix.chain }})
         run: bun vitest run packages/cli/test/e2e/e2e-live.test.ts --reporter=verbose
         env:
           E2E_CHAIN: ${{ matrix.chain }}
           E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
-          E2E_AGENT_A_OWS_API_KEY: ${{ secrets.E2E_AGENT_A_OWS_API_KEY }}
           E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
-          E2E_AGENT_B_OWS_API_KEY: ${{ secrets.E2E_AGENT_B_OWS_API_KEY }}
 
   publish:
     name: Publish
