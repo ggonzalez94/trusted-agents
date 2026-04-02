@@ -3,6 +3,9 @@
 # Example: ./scripts/bump-version.sh 0.2.0
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
 VERSION="${1:?Usage: bump-version.sh <version>}"
 
 # Validate version format (semver without leading v)
@@ -35,6 +38,9 @@ done
 
 echo ""
 echo "All packages bumped to $VERSION. Next steps:"
-echo "  git add -A && git commit -m \"chore: bump version to $VERSION\""
-echo "  git tag v$VERSION"
-echo "  git push && git push --tags"
+echo "  bun run release:check"
+echo "  git add -A && git commit -m \"chore(release): prepare $VERSION\""
+echo "  open a PR, merge it to main, then tag the release merge commit:"
+echo "    git tag v$VERSION <merge-sha>"
+echo "    git push origin v$VERSION"
+echo "  See docs/release.md for the full flow"
