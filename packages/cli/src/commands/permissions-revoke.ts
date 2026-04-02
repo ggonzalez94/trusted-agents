@@ -1,6 +1,6 @@
 import { ValidationError, nowISO } from "trusted-agents-core";
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
@@ -9,7 +9,6 @@ import {
 	queuedTapCommandResultFields,
 	runOrQueueTapCommand,
 } from "../lib/queued-commands.js";
-import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function permissionsRevokeCommand(
@@ -22,8 +21,8 @@ export async function permissionsRevokeCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const ctx = buildContextWithTransport(config);
-		const contacts = await ctx.trustStore.getContacts();
+		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:permissions-revoke" });
+		const contacts = await runtime.trustStore.getContacts();
 		const contact = contacts.find(
 			(entry) =>
 				entry.peerDisplayName.toLowerCase() === peer.toLowerCase() ||
@@ -74,9 +73,6 @@ export async function permissionsRevokeCommand(
 		}
 
 		verbose(`Revoking grant ${grantId} for ${contact.peerDisplayName}...`, opts);
-		const service = createCliTapMessagingService(ctx, opts, {
-			ownerLabel: "tap:permissions-revoke",
-		});
 		const note = cmdOpts?.note ?? `Revoked ${grantId}`;
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
@@ -88,7 +84,7 @@ export async function permissionsRevokeCommand(
 					note,
 				},
 			},
-			async () => await service.publishGrantSet(peer, grantSet, note),
+			async () => await runtime.service.publishGrantSet(peer, grantSet, note),
 			{
 				requestedBy: "tap:permissions-revoke",
 			},

@@ -5,8 +5,8 @@ import {
 	parseInviteUrl,
 	verifyInvite,
 } from "trusted-agents-core";
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
@@ -16,7 +16,6 @@ import {
 	queuedTapCommandResultFields,
 	runOrQueueTapCommand,
 } from "../lib/queued-commands.js";
-import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function connectCommand(
@@ -37,7 +36,7 @@ export async function connectCommand(
 			return;
 		}
 
-		const ctx = buildContextWithTransport(config);
+		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
 		const invite = parseInviteUrl(inviteUrl);
 		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
 			throw new ValidationError(
@@ -45,7 +44,7 @@ export async function connectCommand(
 			);
 		}
 
-		const peerAgent = await ctx.resolver.resolve(invite.agentId, invite.chain);
+		const peerAgent = await runtime.resolver.resolve(invite.agentId, invite.chain);
 		const verification = await verifyInvite(invite, {
 			expectedSignerAddress: peerAgent.agentAddress,
 		});
@@ -103,9 +102,7 @@ export async function connectCommand(
 			}
 		}
 
-		const service = createCliTapMessagingService(ctx, opts, {
-			ownerLabel: "tap:connect",
-		});
+		const { service } = runtime;
 		const connectInput = { inviteUrl };
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
@@ -131,7 +128,7 @@ export async function connectCommand(
 
 				while (Date.now() < deadline) {
 					await new Promise((r) => setTimeout(r, pollIntervalMs));
-					const contacts = await ctx.trustStore.getContacts();
+					const contacts = await runtime.trustStore.getContacts();
 					const match = contacts.find(
 						(c) => c.peerAgentId === peerAgent.agentId && c.status === "active",
 					);
@@ -185,7 +182,7 @@ export async function connectCommand(
 					// Transport may be owned by another process
 				}
 
-				const contacts = await ctx.trustStore.getContacts();
+				const contacts = await runtime.trustStore.getContacts();
 				const match = contacts.find(
 					(c) => c.peerAgentId === peerAgent.agentId && c.status === "active",
 				);
