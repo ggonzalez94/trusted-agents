@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.1",
+    "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
     "@x402/evm": "^2.5.0",
     "@x402/fetch": "^2.5.0",
     "commander": "^13.0.0",

@@ -24,7 +24,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.1",
+    "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
     "@xmtp/node-sdk": "^5.4.0",
     "uuid": "^11.0.0",
     "viem": "2.46.3",
