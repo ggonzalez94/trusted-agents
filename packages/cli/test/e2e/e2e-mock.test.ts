@@ -1,13 +1,20 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SigningProvider } from "trusted-agents-core";
+import {
+	FileConversationLogger,
+	FileRequestJournal,
+	FileTrustStore,
+	generateInvite,
+} from "trusted-agents-core";
+import type { SigningProvider, TransportProvider, TransportReceipt } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	type MessageListenerSession,
 	createMessageListenerSession,
 } from "../../src/commands/message-listen.js";
+import { clearCliRuntimeOverride, setCliRuntimeOverride } from "../../src/lib/runtime-overrides.js";
 import {
 	LoopbackTransportNetwork,
 	StaticAgentResolver,
@@ -26,6 +33,8 @@ const AGENT_A_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf
 const AGENT_B_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
 const AGENT_A_ADDRESS = privateKeyToAccount(AGENT_A_KEY).address;
 const AGENT_B_ADDRESS = privateKeyToAccount(AGENT_B_KEY).address;
+const AGENT_A_ID = 7001;
+const AGENT_B_ID = 7002;
 const AGENT_A_NAME = "E2E-Agent-A-mock";
 const AGENT_B_NAME = "E2E-Agent-B-mock";
 const GRANT_ID = "e2e-usdc-transfer";
@@ -148,7 +157,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 
 		const resolver = new StaticAgentResolver([
 			createResolvedAgentFixture({
-				agentId: 7001,
+				agentId: AGENT_A_ID,
 				chain: CHAIN,
 				address: AGENT_A_ADDRESS,
 				name: AGENT_A_NAME,
@@ -156,7 +165,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				capabilities: ["general-chat", "payments"],
 			}),
 			createResolvedAgentFixture({
-				agentId: 7002,
+				agentId: AGENT_B_ID,
 				chain: CHAIN,
 				address: AGENT_B_ADDRESS,
 				name: AGENT_B_NAME,
@@ -203,7 +212,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 		});
 
 		it(SCENARIOS.RESOLVE_AGENT_A.name, async () => {
-			await setOwsConfig(agentADir, "agent-a-wallet", "agent-a-key", 7001);
+			await setOwsConfig(agentADir, "agent-a-wallet", "agent-a-key", AGENT_A_ID);
 
 			const result = await runCli(["--json", "--data-dir", agentADir, "identity", "resolve-self"]);
 			expect(result.exitCode, `Agent A resolve-self failed:\n${result.stderr}`).toBe(0);
@@ -214,7 +223,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 		});
 
 		it(SCENARIOS.RESOLVE_AGENT_B.name, async () => {
-			await setOwsConfig(agentBDir, "agent-b-wallet", "agent-b-key", 7002);
+			await setOwsConfig(agentBDir, "agent-b-wallet", "agent-b-key", AGENT_B_ID);
 
 			const result = await runCli(["--json", "--data-dir", agentBDir, "identity", "resolve-self"]);
 			expect(result.exitCode, `Agent B resolve-self failed:\n${result.stderr}`).toBe(0);
@@ -531,5 +540,222 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				`Expected exit code 0 or 3, got ${result.exitCode}:\n${result.stderr}`,
 			).toBe(true);
 		});
+	});
+
+	// ═══════════════════════════════════════════════════════
+	// Edge case: pending outbound connect without contact
+	// ═══════════════════════════════════════════════════════
+
+	it("persists pending outbound connects without creating a contact", async () => {
+		const pendingRoot = await mkdtemp(join(tmpdir(), "tap-e2e-pending-"));
+		const pendingDir = join(pendingRoot, "connector");
+		await mkdir(pendingDir, { recursive: true });
+
+		const pendingAgentId = 7010;
+		const pendingAgent = createResolvedAgentFixture({
+			agentId: pendingAgentId,
+			chain: CHAIN,
+			address: AGENT_A_ADDRESS,
+			name: "PendingPeer",
+			description: "Pending peer agent",
+			capabilities: ["general-chat"],
+		});
+
+		class PendingTransport implements TransportProvider {
+			setHandlers(): void {}
+			async start(): Promise<void> {}
+			async stop(): Promise<void> {}
+			async isReachable(): Promise<boolean> {
+				return true;
+			}
+			async send(): Promise<TransportReceipt> {
+				return {
+					received: true,
+					requestId: "pending-response",
+					status: "queued",
+					receivedAt: "2026-03-06T00:00:00.000Z",
+				};
+			}
+		}
+
+		try {
+			setCliRuntimeOverride(pendingDir, {
+				createContext: () => ({
+					trustStore: new FileTrustStore(pendingDir),
+					resolver: new StaticAgentResolver([pendingAgent]),
+					conversationLogger: new FileConversationLogger(pendingDir),
+					requestJournal: new FileRequestJournal(pendingDir),
+				}),
+				createTransport: () => new PendingTransport(),
+			});
+
+			expect(
+				await runCli(["--plain", "--data-dir", pendingDir, "init", "--chain", "base"]),
+			).toMatchObject({ exitCode: 0 });
+			await setOwsConfig(pendingDir, "agent-b-wallet", "agent-b-key", AGENT_B_ID);
+
+			const invite = await generateInvite({
+				agentId: pendingAgentId,
+				chain: CHAIN,
+				signingProvider: agentASigningProvider,
+				expirySeconds: 3600,
+			});
+
+			const connect = await runCli([
+				"--json",
+				"--data-dir",
+				pendingDir,
+				"connect",
+				invite.url,
+				"--yes",
+			]);
+			expect(connect.exitCode).toBe(0);
+
+			const output = parseJsonOutput(connect.stdout).data as {
+				connection_id?: string;
+				status: string;
+			};
+			expect(output.status).toBe("pending");
+			expect(output.connection_id).toBeUndefined();
+
+			const trustStore = new FileTrustStore(pendingDir);
+			expect(await trustStore.getContacts()).toEqual([]);
+
+			const pendingConnects = JSON.parse(
+				await readFile(join(pendingDir, "pending-connects.json"), "utf-8"),
+			) as { pendingConnects?: Array<{ peerAgentId: number }> };
+			expect(pendingConnects.pendingConnects).toEqual([
+				expect.objectContaining({ peerAgentId: pendingAgentId }),
+			]);
+		} finally {
+			clearCliRuntimeOverride(pendingDir);
+			await rm(pendingRoot, { recursive: true, force: true });
+		}
+	});
+
+	// ═══════════════════════════════════════════════════════
+	// Edge case: connect queued behind live listener
+	// ═══════════════════════════════════════════════════════
+
+	it("queues connect behind a live listener and still converges to active", async () => {
+		const queueRoot = await mkdtemp(join(tmpdir(), "tap-e2e-queue-"));
+		const queueADir = join(queueRoot, "agent-a");
+		const queueBDir = join(queueRoot, "agent-b");
+		await mkdir(queueADir, { recursive: true });
+		await mkdir(queueBDir, { recursive: true });
+
+		const queueNetwork = new LoopbackTransportNetwork();
+		const queueResolver = new StaticAgentResolver([
+			createResolvedAgentFixture({
+				agentId: AGENT_A_ID,
+				chain: CHAIN,
+				address: AGENT_A_ADDRESS,
+				name: AGENT_A_NAME,
+				description: "Queue test Agent A",
+				capabilities: ["general-chat"],
+			}),
+			createResolvedAgentFixture({
+				agentId: AGENT_B_ID,
+				chain: CHAIN,
+				address: AGENT_B_ADDRESS,
+				name: AGENT_B_NAME,
+				description: "Queue test Agent B",
+				capabilities: ["general-chat"],
+			}),
+		]);
+
+		installLoopbackRuntime({
+			dataDir: queueADir,
+			network: queueNetwork,
+			resolver: queueResolver,
+			txHashPrefix: "c1",
+		});
+		installLoopbackRuntime({
+			dataDir: queueBDir,
+			network: queueNetwork,
+			resolver: queueResolver,
+			txHashPrefix: "d2",
+		});
+
+		let listenerA: MessageListenerSession | undefined;
+		let listenerB: MessageListenerSession | undefined;
+
+		try {
+			expect(
+				await runCli(["--plain", "--data-dir", queueADir, "init", "--chain", "base"]),
+			).toMatchObject({ exitCode: 0 });
+			expect(
+				await runCli(["--plain", "--data-dir", queueBDir, "init", "--chain", "base"]),
+			).toMatchObject({ exitCode: 0 });
+			await setOwsConfig(queueADir, "agent-a-wallet", "agent-a-key", AGENT_A_ID);
+			await setOwsConfig(queueBDir, "agent-b-wallet", "agent-b-key", AGENT_B_ID);
+
+			const invite = await runCli(["--json", "--data-dir", queueADir, "invite", "create"]);
+			const inviteUrl = parseJsonOutput(invite.stdout).data as { url: string };
+
+			// Start listeners BEFORE connect — connect must queue behind them
+			listenerA = await createMessageListenerSession({ plain: true, dataDir: queueADir }, {});
+			listenerB = await createMessageListenerSession({ plain: true, dataDir: queueBDir }, {});
+
+			const connect = await runCli([
+				"--json",
+				"--data-dir",
+				queueBDir,
+				"connect",
+				inviteUrl.url,
+				"--yes",
+			]);
+			expect(connect.exitCode).toBe(0);
+			const connectData = parseJsonOutput(connect.stdout).data as {
+				status: string;
+				queued?: boolean;
+			};
+			expect(connectData.queued).toBe(true);
+			expect(["pending", "active"]).toContain(connectData.status);
+
+			// Poll until both sides converge to active
+			const deadline = Date.now() + 3_000;
+			while (Date.now() < deadline) {
+				const aContacts = await runCli(["--json", "--data-dir", queueADir, "contacts", "list"]);
+				const bContacts = await runCli(["--json", "--data-dir", queueBDir, "contacts", "list"]);
+				const aList = (
+					parseJsonOutput(aContacts.stdout).data as {
+						contacts: Array<{ status: string }>;
+					}
+				).contacts;
+				const bList = (
+					parseJsonOutput(bContacts.stdout).data as {
+						contacts: Array<{ status: string }>;
+					}
+				).contacts;
+
+				if (aList.some((c) => c.status === "active") && bList.some((c) => c.status === "active")) {
+					break;
+				}
+				await new Promise((r) => setTimeout(r, 25));
+			}
+
+			// Final assertions
+			const finalA = await runCli(["--json", "--data-dir", queueADir, "contacts", "list"]);
+			const finalB = await runCli(["--json", "--data-dir", queueBDir, "contacts", "list"]);
+			const contactsA = (
+				parseJsonOutput(finalA.stdout).data as {
+					contacts: Array<{ status: string }>;
+				}
+			).contacts;
+			const contactsB = (
+				parseJsonOutput(finalB.stdout).data as {
+					contacts: Array<{ status: string }>;
+				}
+			).contacts;
+			expect(contactsA[0]?.status).toBe("active");
+			expect(contactsB[0]?.status).toBe("active");
+		} finally {
+			await listenerB?.stop();
+			await listenerA?.stop();
+			clearLoopbackRuntime(queueBDir);
+			clearLoopbackRuntime(queueADir);
+			await rm(queueRoot, { recursive: true, force: true });
+		}
 	});
 });
