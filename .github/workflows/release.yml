@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      skip_publish:
+        description: "Run E2E only, skip npm publish"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -13,8 +19,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build & Publish
+  validate:
+    name: Lint, Typecheck, Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -31,8 +37,9 @@ jobs:
 
       - run: bun run test
 
-      # Validate tag version matches package.json versions
+      # Validate tag version matches package.json versions (only on tag push)
       - name: Validate version
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           for pkg in packages/core/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
@@ -43,6 +50,72 @@ jobs:
             fi
           done
           echo "All packages at version $TAG_VERSION"
+
+  e2e:
+    name: E2E (${{ matrix.chain }})
+    needs: [validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        chain: [base, taiko]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
+
+      - name: Validate E2E secrets
+        run: |
+          missing=0
+          for var in E2E_AGENT_A_OWS_WALLET E2E_AGENT_A_OWS_MNEMONIC E2E_AGENT_B_OWS_WALLET E2E_AGENT_B_OWS_MNEMONIC; do
+            if [ -z "${!var}" ]; then
+              echo "::error::Required E2E secret $var is not set or empty"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then exit 1; fi
+        env:
+          E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
+          E2E_AGENT_A_OWS_MNEMONIC: ${{ secrets.E2E_AGENT_A_OWS_MNEMONIC }}
+          E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
+          E2E_AGENT_B_OWS_MNEMONIC: ${{ secrets.E2E_AGENT_B_OWS_MNEMONIC }}
+
+      - name: Install OWS
+        run: curl -fsSL https://docs.openwallet.sh/install.sh | bash
+
+      - name: Import E2E wallets into OWS vault
+        run: |
+          OWS_MNEMONIC="${{ secrets.E2E_AGENT_A_OWS_MNEMONIC }}" ows wallet import --name "${{ secrets.E2E_AGENT_A_OWS_WALLET }}" --mnemonic
+          OWS_MNEMONIC="${{ secrets.E2E_AGENT_B_OWS_MNEMONIC }}" ows wallet import --name "${{ secrets.E2E_AGENT_B_OWS_WALLET }}" --mnemonic
+          echo "Imported wallets:"
+          ows wallet list | grep -E "Name:|eip155:1"
+
+      - name: Run E2E tests (${{ matrix.chain }})
+        run: bun vitest run packages/cli/test/e2e/e2e-live.test.ts --reporter=verbose
+        env:
+          E2E_CHAIN: ${{ matrix.chain }}
+          E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
+          E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
+
+  publish:
+    name: Publish
+    needs: [e2e]
+    if: startsWith(github.ref, 'refs/tags/v') && (inputs.skip_publish != true)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build
 
       # Copy skills into OpenClaw plugin for npm tarball
       - name: Bundle skills into OpenClaw plugin
