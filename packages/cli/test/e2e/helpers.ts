@@ -111,6 +111,90 @@ export function parseJsonOutput(stdout: string): { ok: boolean; data: unknown } 
 	throw new Error(`No JSON envelope found in output:\n${stdout}`);
 }
 
+export interface AgentBalanceSnapshot {
+	messagingAddress: `0x${string}`;
+	executionAddress: `0x${string}`;
+	fundingAddress: `0x${string}`;
+	messagingUsdcBalance: bigint;
+	executionUsdcBalance: bigint;
+	fundingUsdcBalance: bigint;
+}
+
+function parseRequiredAddress(value: unknown, label: string): `0x${string}` {
+	if (typeof value !== "string" || !value.startsWith("0x")) {
+		throw new Error(`Invalid ${label} in balance output`);
+	}
+	return value as `0x${string}`;
+}
+
+function parseRequiredBigInt(value: unknown, label: string): bigint {
+	if (typeof value !== "string" || !/^\d+$/u.test(value)) {
+		throw new Error(`Invalid ${label} in balance output`);
+	}
+	return BigInt(value);
+}
+
+function parseAgentBalanceSnapshotData(data: unknown): AgentBalanceSnapshot {
+	if (typeof data !== "object" || data === null) {
+		throw new Error("Invalid balance output payload");
+	}
+
+	const payload = data as Record<string, unknown>;
+	const messagingAddress = parseRequiredAddress(payload.messaging_address, "messaging_address");
+	const executionAddress = parseRequiredAddress(payload.execution_address, "execution_address");
+	const fundingAddress = parseRequiredAddress(payload.funding_address, "funding_address");
+	const messagingUsdcBalance = parseRequiredBigInt(
+		payload.messaging_usdc_balance_raw,
+		"messaging_usdc_balance_raw",
+	);
+	const executionUsdcBalance = parseRequiredBigInt(
+		payload.execution_usdc_balance_raw,
+		"execution_usdc_balance_raw",
+	);
+
+	let fundingUsdcBalance: bigint;
+	if (fundingAddress.toLowerCase() === messagingAddress.toLowerCase()) {
+		fundingUsdcBalance = messagingUsdcBalance;
+	} else if (fundingAddress.toLowerCase() === executionAddress.toLowerCase()) {
+		fundingUsdcBalance = executionUsdcBalance;
+	} else {
+		throw new Error(
+			`Funding address ${fundingAddress} did not match messaging/execution addresses in balance output`,
+		);
+	}
+
+	return {
+		messagingAddress,
+		executionAddress,
+		fundingAddress,
+		messagingUsdcBalance,
+		executionUsdcBalance,
+		fundingUsdcBalance,
+	};
+}
+
+export async function readAgentBalanceSnapshot(
+	dataDir: string,
+	chain?: string,
+): Promise<AgentBalanceSnapshot> {
+	const args = ["--json", "--data-dir", dataDir, "balance"];
+	if (chain) {
+		args.push(chain);
+	}
+
+	const result = await runCli(args);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`balance failed (exit ${result.exitCode}).\n` +
+				`stdout: ${result.stdout}\n` +
+				`stderr: ${result.stderr}`,
+		);
+	}
+
+	const parsed = parseJsonOutput(result.stdout);
+	return parseAgentBalanceSnapshotData(parsed.data);
+}
+
 // ── Sync Polling ─────────────────────────────────────────────────────────────
 
 export async function waitForSync(opts: {

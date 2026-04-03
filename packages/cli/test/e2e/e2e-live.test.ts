@@ -14,7 +14,7 @@ import {
 	formatUsdc,
 	getUsdcBalance,
 	parseJsonOutput,
-	readAgentAddress,
+	readAgentBalanceSnapshot,
 	requireEnv,
 	waitForBalanceChange,
 	waitForContact,
@@ -81,7 +81,6 @@ async function retryResolve(
 let tempRoot: string;
 let agentADir: string;
 let agentBDir: string;
-let agentAAddress: `0x${string}`;
 let agentBAddress: `0x${string}`;
 let inviteUrl: string;
 let balanceBeforeTransfer: bigint;
@@ -146,22 +145,21 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.BALANCE_CHECK_A.name, { timeout: 15_000 }, async () => {
-			agentAAddress = await readAgentAddress(agentADir);
-			const balance = await getUsdcBalance(agentAAddress, CHAIN_KEY);
+			const balance = await readAgentBalanceSnapshot(agentADir, CHAIN.alias);
 
 			expect(
-				balance >= MIN_BALANCE_UNITS,
-				`Agent A (${agentAAddress}) has insufficient USDC balance on ${CHAIN.alias}. Found: ${formatUsdc(balance, CHAIN_KEY)} USDC. Required: at least 0.50 USDC. Please fund this address before running the live E2E test.`,
+				balance.fundingUsdcBalance >= MIN_BALANCE_UNITS,
+				`Agent A funding account (${balance.fundingAddress}) has insufficient USDC balance on ${CHAIN.alias}. Found: ${formatUsdc(balance.fundingUsdcBalance, CHAIN_KEY)} USDC. Required: at least 0.50 USDC. Messaging: ${balance.messagingAddress}. Execution: ${balance.executionAddress}. Please fund the actual funding account before running the live E2E test.`,
 			).toBe(true);
 		});
 
 		it(SCENARIOS.BALANCE_CHECK_B.name, { timeout: 15_000 }, async () => {
-			agentBAddress = await readAgentAddress(agentBDir);
-			const balance = await getUsdcBalance(agentBAddress, CHAIN_KEY);
+			const balance = await readAgentBalanceSnapshot(agentBDir, CHAIN.alias);
+			agentBAddress = balance.messagingAddress;
 
 			expect(
-				balance >= MIN_BALANCE_UNITS,
-				`Agent B (${agentBAddress}) has insufficient USDC balance on ${CHAIN.alias}. Found: ${formatUsdc(balance, CHAIN_KEY)} USDC. Required: at least 0.50 USDC. Please fund this address before running the live E2E test.`,
+				balance.fundingUsdcBalance >= MIN_BALANCE_UNITS,
+				`Agent B funding account (${balance.fundingAddress}) has insufficient USDC balance on ${CHAIN.alias}. Found: ${formatUsdc(balance.fundingUsdcBalance, CHAIN_KEY)} USDC. Required: at least 0.50 USDC. Messaging: ${balance.messagingAddress}. Execution: ${balance.executionAddress}. Please fund the actual funding account before running the live E2E test.`,
 			).toBe(true);
 		});
 
