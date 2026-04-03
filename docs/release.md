@@ -8,7 +8,7 @@ This repository publishes packages from the `Release` GitHub Actions workflow in
 - `trusted-agents-cli`
 - `trusted-agents-tap`
 
-The workflow validates that all three package versions exactly match the pushed tag, runs lint/typecheck/build/test, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
+The workflow validates that all three package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base and Taiko, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
 
 ## Prepare the release PR
 
@@ -63,3 +63,6 @@ That tag push starts the publish workflow automatically.
 - `NPM_TOKEN` must be configured in GitHub Actions secrets.
 - The repository must allow the workflow to create releases and publish with provenance.
 - The tag must match the package versions exactly, without a leading `v` in the manifest version fields.
+- The fixed live E2E wallets must have spendable USDC on the workflow's actual funding account for each chain.
+  On Base, the funding account is the messaging wallet used for x402 uploads.
+  On Taiko, the funding account is the derived Servo execution address reported by `tap balance`, not the public messaging address.

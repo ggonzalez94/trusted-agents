@@ -14,8 +14,8 @@ export const SCENARIOS = {
 	// Phase 1: Onboarding & Identity
 	INIT_AGENT_A: { name: "Init Agent A from OWS wallet", phase: PHASES.ONBOARDING },
 	INIT_AGENT_B: { name: "Init Agent B from OWS wallet", phase: PHASES.ONBOARDING },
-	BALANCE_CHECK_A: { name: "Check Agent A USDC balance", phase: PHASES.ONBOARDING },
-	BALANCE_CHECK_B: { name: "Check Agent B USDC balance", phase: PHASES.ONBOARDING },
+	BALANCE_CHECK_A: { name: "Check Agent A funding USDC balance", phase: PHASES.ONBOARDING },
+	BALANCE_CHECK_B: { name: "Check Agent B funding USDC balance", phase: PHASES.ONBOARDING },
 	REGISTER_AGENT_A: { name: "Register Agent A (IPFS + on-chain)", phase: PHASES.ONBOARDING },
 	REGISTER_AGENT_B: { name: "Register Agent B (IPFS + on-chain)", phase: PHASES.ONBOARDING },
 	RESOLVE_AGENT_A: { name: "Resolve Agent A identity", phase: PHASES.ONBOARDING },
