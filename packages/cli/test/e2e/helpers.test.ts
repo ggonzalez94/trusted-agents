@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../helpers/run-cli.js";
-import { readAgentBalanceSnapshot } from "./helpers.js";
+import { readAgentBalanceSnapshot, waitForContact } from "./helpers.js";
 
 vi.mock("../helpers/run-cli.js", () => ({
 	runCli: vi.fn(),
@@ -65,5 +65,71 @@ describe("live E2E balance helpers", () => {
 		expect(runCliMock).toHaveBeenCalledWith(["--json", "--data-dir", "/tmp/agent-b", "balance"]);
 		expect(snapshot.fundingAddress).toBe("0x3333333333333333333333333333333333333333");
 		expect(snapshot.fundingUsdcBalance).toBe(7654321n);
+	});
+});
+
+describe("live E2E sync helpers", () => {
+	beforeEach(() => {
+		runCliMock.mockReset();
+	});
+
+	it("requires a successful sync before treating a contact as active", async () => {
+		runCliMock
+			.mockResolvedValueOnce({
+				exitCode: 1,
+				stdout: '{"status":"error"}',
+				stderr: "sync failed",
+			})
+			.mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: JSON.stringify({
+					status: "ok",
+					data: {
+						contacts: [{ name: "Peer", status: "active" }],
+					},
+				}),
+				stderr: "",
+			})
+			.mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: JSON.stringify({
+					status: "ok",
+					data: { processed: 1 },
+				}),
+				stderr: "",
+			})
+			.mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: JSON.stringify({
+					status: "ok",
+					data: {
+						contacts: [{ name: "Peer", status: "active" }],
+					},
+				}),
+				stderr: "",
+			});
+
+		await waitForContact({
+			dataDir: "/tmp/agent-a",
+			peerName: "Peer",
+			timeoutMs: 50,
+			intervalMs: 0,
+		});
+
+		expect(runCliMock).toHaveBeenNthCalledWith(1, [
+			"--json",
+			"--data-dir",
+			"/tmp/agent-a",
+			"message",
+			"sync",
+		]);
+		expect(runCliMock).toHaveBeenNthCalledWith(3, [
+			"--json",
+			"--data-dir",
+			"/tmp/agent-a",
+			"message",
+			"sync",
+		]);
+		expect(runCliMock).toHaveBeenCalledTimes(4);
 	});
 });

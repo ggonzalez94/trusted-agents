@@ -287,10 +287,16 @@ export async function waitForContact(opts: {
 }): Promise<void> {
 	const { dataDir, peerName, timeoutMs = 60_000, intervalMs = 2_000 } = opts;
 	const deadline = Date.now() + timeoutMs;
+	let lastSyncExitCode = 0;
+	let lastSyncStdout = "";
+	let lastSyncStderr = "";
 
 	while (Date.now() < deadline) {
 		// Sync to process any pending messages
-		await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		const syncResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		lastSyncExitCode = syncResult.exitCode;
+		lastSyncStdout = syncResult.stdout;
+		lastSyncStderr = syncResult.stderr;
 
 		// Check contacts
 		const result = await runCli(["--json", "--data-dir", dataDir, "contacts", "list"]);
@@ -301,7 +307,7 @@ export async function waitForContact(opts: {
 					contacts: Array<{ name: string; status: string }>;
 				};
 				const contact = data.contacts.find((c) => c.name === peerName);
-				if (contact?.status === "active") return;
+				if (syncResult.exitCode === 0 && contact?.status === "active") return;
 			} catch {
 				// parse error, keep polling
 			}
@@ -323,7 +329,10 @@ export async function waitForContact(opts: {
 
 	throw new Error(
 		`Timed out waiting for contact "${peerName}" to become active (${timeoutMs}ms). ` +
-			`DataDir: ${dataDir}. Found: [${found}]`,
+			`DataDir: ${dataDir}. Found: [${found}]. ` +
+			`Last sync exit: ${lastSyncExitCode}. ` +
+			`Last sync stdout: ${lastSyncStdout}. ` +
+			`Last sync stderr: ${lastSyncStderr}`,
 	);
 }
 
