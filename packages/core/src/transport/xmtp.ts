@@ -5,7 +5,12 @@ import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
 import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
-import { CONNECTION_REQUEST, CONNECTION_RESULT, isResultMethod } from "../protocol/index.js";
+import {
+	CONNECTION_REQUEST,
+	CONNECTION_RESULT,
+	PERMISSIONS_UPDATE,
+	isResultMethod,
+} from "../protocol/index.js";
 import type { AgentIdentifier } from "../protocol/types.js";
 import type { ITrustStore } from "../trust/trust-store.js";
 import type { Contact } from "../trust/types.js";
@@ -497,12 +502,21 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const senderAddresses = await this.resolveInboxAddresses(rawMessage.senderInboxId);
-		const senderContact = await this.findContactByAddresses(senderAddresses);
 		const resultMethod = isResultMethod(message.method);
+		const resolvedSenderContact = await this.findSenderContactFromMessage(senderAddresses, message);
 
 		let senderId: number;
-		if (senderContact && this.isContactAllowedForMethod(senderContact, message.method)) {
-			senderId = senderContact.peerAgentId;
+		if (resolvedSenderContact) {
+			if (!this.isContactAllowedForMethod(resolvedSenderContact, message.method)) {
+				await this.sendJsonRpcError(
+					rawMessage.senderInboxId,
+					message.id,
+					-32003,
+					"Sender connection is not active for this method",
+				);
+				return false;
+			}
+			senderId = resolvedSenderContact.peerAgentId;
 		} else if (this.isBootstrapMethod(message.method)) {
 			try {
 				senderId = await this.verifyBootstrapSender(
@@ -519,17 +533,22 @@ export class XmtpTransport implements TransportProvider {
 				);
 				return false;
 			}
-		} else if (senderContact) {
-			await this.sendJsonRpcError(
-				rawMessage.senderInboxId,
-				message.id,
-				-32003,
-				"Sender connection is not active for this method",
-			);
-			return false;
 		} else {
-			await this.sendJsonRpcError(rawMessage.senderInboxId, message.id, -32001, "Unknown sender");
-			return false;
+			const senderContact = await this.findContactByAddresses(senderAddresses);
+			if (senderContact && this.isContactAllowedForMethod(senderContact, message.method)) {
+				senderId = senderContact.peerAgentId;
+			} else if (senderContact) {
+				await this.sendJsonRpcError(
+					rawMessage.senderInboxId,
+					message.id,
+					-32003,
+					"Sender connection is not active for this method",
+				);
+				return false;
+			} else {
+				await this.sendJsonRpcError(rawMessage.senderInboxId, message.id, -32001, "Unknown sender");
+				return false;
+			}
 		}
 
 		const handler = resultMethod ? this.handlers.onResult : this.handlers.onRequest;
@@ -673,6 +692,97 @@ export class XmtpTransport implements TransportProvider {
 			}
 		}
 		return null;
+	}
+
+	private async findSenderContactFromMessage(
+		senderAddresses: `0x${string}`[],
+		message: ProtocolMessage,
+	): Promise<Contact | null> {
+		const metadataContact = await this.findContactByConnectionId(senderAddresses, message);
+		if (metadataContact) {
+			return metadataContact;
+		}
+
+		if (message.method !== PERMISSIONS_UPDATE) {
+			return null;
+		}
+
+		const grantor = this.extractGrantor(message.params);
+		if (!grantor) {
+			return null;
+		}
+
+		const contact = await this.trustStore.findByAgentId(grantor.agentId, grantor.chain);
+		if (!contact || !this.senderMatchesContact(senderAddresses, contact)) {
+			return null;
+		}
+
+		return contact;
+	}
+
+	private async findContactByConnectionId(
+		senderAddresses: `0x${string}`[],
+		message: ProtocolMessage,
+	): Promise<Contact | null> {
+		const connectionId = this.extractConnectionId(message.params);
+		if (!connectionId) {
+			return null;
+		}
+
+		const contact = await this.trustStore.getContact(connectionId);
+		if (!contact || !this.senderMatchesContact(senderAddresses, contact)) {
+			return null;
+		}
+
+		return contact;
+	}
+
+	private senderMatchesContact(senderAddresses: `0x${string}`[], contact: Contact): boolean {
+		const expectedAddress = contact.peerAgentAddress.toLowerCase();
+		return senderAddresses.some((address) => address.toLowerCase() === expectedAddress);
+	}
+
+	private extractGrantor(params: unknown): AgentIdentifier | null {
+		if (typeof params !== "object" || params === null) {
+			return null;
+		}
+
+		const grantor = (params as { grantor?: unknown }).grantor;
+		if (typeof grantor !== "object" || grantor === null) {
+			return null;
+		}
+
+		const agentId = (grantor as { agentId?: unknown }).agentId;
+		const chain = (grantor as { chain?: unknown }).chain;
+		if (
+			typeof agentId !== "number" ||
+			agentId < 0 ||
+			typeof chain !== "string" ||
+			chain.length === 0
+		) {
+			return null;
+		}
+
+		return { agentId, chain };
+	}
+
+	private extractConnectionId(params: unknown): string | null {
+		if (typeof params !== "object" || params === null) {
+			return null;
+		}
+
+		const payload = params as {
+			message?: {
+				metadata?: {
+					trustedAgent?: {
+						connectionId?: unknown;
+					};
+				};
+			};
+		};
+
+		const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
+		return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
 	}
 
 	private async sendJsonRpcReceipt(

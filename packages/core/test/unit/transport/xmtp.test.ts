@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConnectionError } from "../../../src/common/errors.js";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
 import type {
 	InboundRequestEnvelope,
@@ -245,6 +246,12 @@ const BOB_CONTACT: Contact = {
 	establishedAt: new Date().toISOString(),
 	lastContactAt: new Date().toISOString(),
 	status: "active",
+};
+
+const BOB_CONTACT_LEGACY: Contact = {
+	...BOB_CONTACT,
+	connectionId: "conn-bob-legacy",
+	peerAgentId: 7,
 };
 
 describe("XmtpTransport", () => {
@@ -735,6 +742,224 @@ describe("XmtpTransport", () => {
 			expect(callback).toHaveBeenCalledWith({
 				from: 99,
 				senderInboxId: "unknown-inbox",
+				message: request,
+			});
+		});
+
+		it("should bootstrap-verify connection/request senders when address lookup is ambiguous", async () => {
+			const bootstrapTrustStore: ITrustStore = {
+				getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
+				getContact: vi.fn(async () => null),
+				findByAgentAddress: vi
+					.fn<ITrustStore["findByAgentAddress"]>()
+					.mockRejectedValue(
+						new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
+					),
+				findByAgentId: vi.fn(async () => null),
+				addContact: vi.fn(async () => {}),
+				updateContact: vi.fn(async () => {}),
+				removeContact: vi.fn(async () => {}),
+				touchContact: vi.fn(async () => {}),
+			};
+			const resolver = {
+				resolve: vi.fn(),
+				resolveWithCache: vi.fn(async () => ({
+					agentId: 99,
+					chain: "eip155:1",
+					ownerAddress: BOB.address,
+					agentAddress: BOB.address,
+					xmtpEndpoint: BOB.address,
+					endpoint: undefined,
+					capabilities: ["message/send"],
+					registrationFile: {
+						type: "eip-8004-registration-v1" as const,
+						name: "Bob",
+						description: "Test",
+						services: [{ name: "xmtp", endpoint: BOB.address }],
+						trustedAgentProtocol: {
+							version: "1.0",
+							agentAddress: BOB.address,
+							capabilities: ["message/send"],
+						},
+					},
+					resolvedAt: new Date().toISOString(),
+				})),
+			};
+			const transportWithResolver = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					agentResolver: resolver,
+				},
+				bootstrapTrustStore,
+			);
+			injectMockClient(transportWithResolver);
+
+			mockSetup.setInboxIdentifiers("ambiguous-bootstrap-inbox", [
+				{ identifier: BOB.address, identifierKind: 0 },
+			]);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "queued",
+				}),
+			);
+			transportWithResolver.setHandlers({ onRequest: callback });
+
+			const request: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "connection/request",
+				id: "conn-ambiguous-bootstrap",
+				params: {
+					from: { agentId: 99, chain: "eip155:1" },
+					timestamp: new Date().toISOString(),
+					invite: {
+						agentId: 1,
+						chain: "eip155:1",
+						expires: Math.floor(Date.now() / 1000) + 300,
+						signature: "0xdeadbeef",
+					},
+				},
+			};
+
+			await expect(
+				internals(transportWithResolver).processMessage({
+					senderInboxId: "ambiguous-bootstrap-inbox",
+					content: JSON.stringify(request),
+				}),
+			).resolves.toBe(true);
+
+			expect(callback).toHaveBeenCalledWith({
+				from: 99,
+				senderInboxId: "ambiguous-bootstrap-inbox",
+				message: request,
+			});
+		});
+
+		it("should route message/send by connection id when address lookup is ambiguous", async () => {
+			const ambiguousTrustStore: ITrustStore = {
+				getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
+				getContact: vi.fn(
+					async (connectionId: string) =>
+						[BOB_CONTACT, BOB_CONTACT_LEGACY].find(
+							(contact) => contact.connectionId === connectionId,
+						) ?? null,
+				),
+				findByAgentAddress: vi
+					.fn<ITrustStore["findByAgentAddress"]>()
+					.mockRejectedValue(
+						new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
+					),
+				findByAgentId: vi.fn(async () => null),
+				addContact: vi.fn(async () => {}),
+				updateContact: vi.fn(async () => {}),
+				removeContact: vi.fn(async () => {}),
+				touchContact: vi.fn(async () => {}),
+			};
+			const exactTransport = new XmtpTransport(TEST_CONFIG, ambiguousTrustStore);
+			injectMockClient(exactTransport);
+
+			mockSetup.setInboxIdentifiers("ambiguous-message-inbox", [
+				{ identifier: BOB.address, identifierKind: 0 },
+			]);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			exactTransport.setHandlers({ onRequest: callback });
+
+			const request: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "message/send",
+				id: "msg-ambiguous-address",
+				params: {
+					message: {
+						messageId: "message-1",
+						role: "user",
+						parts: [{ kind: "text", text: "hello" }],
+						metadata: {
+							trustedAgent: {
+								connectionId: BOB_CONTACT.connectionId,
+								conversationId: "conv-1",
+								scope: "general-chat",
+								requiresHumanApproval: false,
+							},
+						},
+					},
+				},
+			};
+
+			await expect(
+				internals(exactTransport).processMessage({
+					senderInboxId: "ambiguous-message-inbox",
+					content: JSON.stringify(request),
+				}),
+			).resolves.toBe(true);
+
+			expect(callback).toHaveBeenCalledWith({
+				from: BOB_CONTACT.peerAgentId,
+				senderInboxId: "ambiguous-message-inbox",
+				message: request,
+			});
+		});
+
+		it("should route permissions/update by grantor identity when address lookup is ambiguous", async () => {
+			const ambiguousTrustStore: ITrustStore = {
+				getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
+				getContact: vi.fn(async () => null),
+				findByAgentAddress: vi
+					.fn<ITrustStore["findByAgentAddress"]>()
+					.mockRejectedValue(
+						new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
+					),
+				findByAgentId: vi.fn(
+					async (agentId: number, chain: string) =>
+						[BOB_CONTACT, BOB_CONTACT_LEGACY].find(
+							(contact) => contact.peerAgentId === agentId && contact.peerChain === chain,
+						) ?? null,
+				),
+				addContact: vi.fn(async () => {}),
+				updateContact: vi.fn(async () => {}),
+				removeContact: vi.fn(async () => {}),
+				touchContact: vi.fn(async () => {}),
+			};
+			const exactTransport = new XmtpTransport(TEST_CONFIG, ambiguousTrustStore);
+			injectMockClient(exactTransport);
+
+			mockSetup.setInboxIdentifiers("ambiguous-permissions-inbox", [
+				{ identifier: BOB.address, identifierKind: 0 },
+			]);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			exactTransport.setHandlers({ onRequest: callback });
+
+			const request: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "permissions/update",
+				id: "grant-ambiguous-address",
+				params: {
+					grantSet: { grants: [] },
+					grantor: { agentId: BOB_CONTACT.peerAgentId, chain: BOB_CONTACT.peerChain },
+					grantee: { agentId: 1, chain: "eip155:1" },
+					timestamp: new Date().toISOString(),
+				},
+			};
+
+			await expect(
+				internals(exactTransport).processMessage({
+					senderInboxId: "ambiguous-permissions-inbox",
+					content: JSON.stringify(request),
+				}),
+			).resolves.toBe(true);
+
+			expect(callback).toHaveBeenCalledWith({
+				from: BOB_CONTACT.peerAgentId,
+				senderInboxId: "ambiguous-permissions-inbox",
 				message: request,
 			});
 		});
