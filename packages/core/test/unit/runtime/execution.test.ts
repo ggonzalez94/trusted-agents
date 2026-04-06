@@ -1011,7 +1011,6 @@ describe("execution", () => {
 				if (functionName === "nonces") return 7n;
 				if (functionName === "name") return "USD Coin";
 				if (functionName === "version") return "2";
-				if (functionName === "balanceOf") return 1_000_000_000n;
 				throw new Error(`unexpected function ${functionName}`);
 			},
 		);
