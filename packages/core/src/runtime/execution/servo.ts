@@ -210,7 +210,9 @@ export async function assertServoTokenSpendFitsBalance(
 	}
 
 	const outgoingAmount = sumOutgoingErc20TransferAmount(calls, stubQuote.tokenAddress);
-	if (outgoingAmount === 0n) {
+	const reservedFee = BigInt(stubQuote.maxTokenCostMicros);
+	const totalNeeded = outgoingAmount + reservedFee;
+	if (totalNeeded === 0n) {
 		return;
 	}
 
@@ -220,9 +222,17 @@ export async function assertServoTokenSpendFitsBalance(
 		functionName: "balanceOf",
 		args: [context.executionAddress],
 	})) as bigint;
-	const reservedFee = BigInt(stubQuote.maxTokenCostMicros);
-	if (balance >= outgoingAmount + reservedFee) {
+	if (balance >= totalNeeded) {
 		return;
+	}
+
+	if (outgoingAmount === 0n) {
+		throw new ValidationError(
+			`Insufficient USDC to pay the Servo paymaster fee on ${chainConfig.name}: ` +
+				`estimated fee ${formatUnits(reservedFee, usdc.decimals)} USDC, ` +
+				`current balance ${formatUnits(balance, usdc.decimals)} USDC. ` +
+				`Fund ${context.executionAddress} with at least ${formatUnits(reservedFee, usdc.decimals)} USDC on ${chainConfig.name}.`,
+		);
 	}
 
 	const maxTransferable = balance > reservedFee ? balance - reservedFee : 0n;
