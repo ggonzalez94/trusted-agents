@@ -9,6 +9,10 @@ on:
         description: "Run E2E only, skip npm publish"
         type: boolean
         default: true
+      skip_e2e:
+        description: "Skip E2E tests (use when XMTP infra is down)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -54,6 +58,7 @@ jobs:
   e2e:
     name: E2E (${{ matrix.chain }})
     needs: [validate]
+    if: inputs.skip_e2e != true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -105,8 +110,8 @@ jobs:
 
   publish:
     name: Publish
-    needs: [e2e]
-    if: startsWith(github.ref, 'refs/tags/v') && (inputs.skip_publish != true)
+    needs: [validate, e2e]
+    if: always() && needs.validate.result == 'success' && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped') && startsWith(github.ref, 'refs/tags/v') && (inputs.skip_publish != true)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
