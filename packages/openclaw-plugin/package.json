@@ -1,6 +1,6 @@
 {
   "name": "trusted-agents-tap",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "OpenClaw plugin for running TAP as a Gateway background service",
   "type": "module",
   "main": "./dist/index.js",
