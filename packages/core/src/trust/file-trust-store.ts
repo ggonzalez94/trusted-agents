@@ -67,6 +67,25 @@ export class FileTrustStore implements ITrustStore {
 					`Contact with connectionId ${contact.connectionId} already exists`,
 				);
 			}
+
+			// Enforce at-most-one-active-contact per (peerAgentAddress, peerChain).
+			// Persistent XMTP identities across sessions can cause duplicate active
+			// contacts (e.g. an agent re-registers with a new agentId but the same
+			// wallet address). Deactivate stale duplicates before inserting.
+			if (contact.status === "active") {
+				const lowerAddress = contact.peerAgentAddress.toLowerCase();
+				for (const c of data.contacts) {
+					if (
+						c.connectionId !== contact.connectionId &&
+						c.status === "active" &&
+						c.peerAgentAddress.toLowerCase() === lowerAddress &&
+						c.peerChain === contact.peerChain
+					) {
+						c.status = "stale";
+					}
+				}
+			}
+
 			data.contacts.push(contact);
 			await this.save(data);
 		});

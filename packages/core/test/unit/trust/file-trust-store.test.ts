@@ -125,4 +125,50 @@ describe("FileTrustStore", () => {
 		expect(contacts).toHaveLength(1);
 		expect(contacts[0]!.peerDisplayName).toBe("Bob's Agent");
 	});
+
+	it("should deactivate stale active contact when adding a new one with the same address", async () => {
+		const oldContact = createTestContact({
+			connectionId: "old-connection",
+			peerAgentId: 100,
+			peerDisplayName: "Old Agent",
+		});
+		await store.addContact(oldContact);
+
+		const newContact = createTestContact({
+			connectionId: "new-connection",
+			peerAgentId: 200,
+			peerDisplayName: "New Agent",
+		});
+		await store.addContact(newContact);
+
+		const contacts = await store.getContacts();
+		expect(contacts).toHaveLength(2);
+
+		const old = contacts.find((c) => c.connectionId === "old-connection");
+		expect(old!.status).toBe("stale");
+
+		const fresh = contacts.find((c) => c.connectionId === "new-connection");
+		expect(fresh!.status).toBe("active");
+
+		// findByAgentAddress should now return the new active contact without throwing
+		const found = await store.findByAgentAddress(BOB.address, "eip155:1");
+		expect(found!.connectionId).toBe("new-connection");
+	});
+
+	it("should not deactivate contacts on a different chain", async () => {
+		const contactBase = createTestContact({
+			connectionId: "base-connection",
+			peerChain: "eip155:8453",
+		});
+		await store.addContact(contactBase);
+
+		const contactTaiko = createTestContact({
+			connectionId: "taiko-connection",
+			peerChain: "eip155:167000",
+		});
+		await store.addContact(contactTaiko);
+
+		const contacts = await store.getContacts();
+		expect(contacts.filter((c) => c.status === "active")).toHaveLength(2);
+	});
 });
