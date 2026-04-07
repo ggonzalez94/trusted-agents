@@ -2215,84 +2215,58 @@ export class TapMessagingService {
 			return;
 		}
 
+		const baseResponse = {
+			type: "transfer/response" as const,
+			actionId: request.actionId,
+			asset: request.asset,
+			amount: request.amount,
+			chain: request.chain,
+			toAddress: request.toAddress,
+		};
+		const baseLedger = {
+			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			direction: "granted-by-me" as const,
+			scope: "transfer/request",
+			asset: request.asset,
+			amount: request.amount,
+			action_id: request.actionId,
+		};
+
 		let response: TransferActionResponse;
 		if (!approved) {
-			response = {
-				type: "transfer/response",
-				actionId: request.actionId,
-				asset: request.asset,
-				amount: request.amount,
-				chain: request.chain,
-				toAddress: request.toAddress,
-				status: "rejected",
-				error: "Action rejected by agent",
-			};
+			response = { ...baseResponse, status: "rejected", error: "Action rejected by agent" };
 			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				direction: "granted-by-me",
+				...baseLedger,
 				event: "transfer-rejected",
-				scope: "transfer/request",
-				asset: request.asset,
-				amount: request.amount,
-				action_id: request.actionId,
 				decision: "rejected",
 				rationale: "Rejected at runtime by agent decision",
 			});
 		} else if (!this.hooks.executeTransfer) {
 			response = {
-				type: "transfer/response",
-				actionId: request.actionId,
-				asset: request.asset,
-				amount: request.amount,
-				chain: request.chain,
-				toAddress: request.toAddress,
+				...baseResponse,
 				status: "failed",
 				error: "No transfer executor configured for this TAP host",
 			};
 		} else {
 			try {
 				const transfer = await this.hooks.executeTransfer(this.context.config, request);
-				response = {
-					type: "transfer/response",
-					actionId: request.actionId,
-					asset: request.asset,
-					amount: request.amount,
-					chain: request.chain,
-					toAddress: request.toAddress,
-					status: "completed",
-					txHash: transfer.txHash,
-				};
+				response = { ...baseResponse, status: "completed", txHash: transfer.txHash };
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
+					...baseLedger,
 					event: "transfer-completed",
-					scope: "transfer/request",
-					asset: request.asset,
-					amount: request.amount,
-					action_id: request.actionId,
 					tx_hash: transfer.txHash,
 					decision: "approved",
 					rationale: "Approved at runtime by agent decision",
 				});
 			} catch (error: unknown) {
 				response = {
-					type: "transfer/response",
-					actionId: request.actionId,
-					asset: request.asset,
-					amount: request.amount,
-					chain: request.chain,
-					toAddress: request.toAddress,
+					...baseResponse,
 					status: "failed",
 					error: error instanceof Error ? error.message : String(error),
 				};
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
+					...baseLedger,
 					event: "transfer-failed",
-					scope: "transfer/request",
-					asset: request.asset,
-					amount: request.amount,
-					action_id: request.actionId,
 					decision: "approved",
 					rationale: response.error,
 				});

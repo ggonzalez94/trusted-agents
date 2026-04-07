@@ -901,9 +901,7 @@ export async function registerUpdateCommand(
 				preview: executionPreview,
 			},
 		);
-		for (const warning of executionResult.warnings) {
-			verbose(warning, opts);
-		}
+		emitExecutionWarnings(executionResult, opts);
 
 		const updateNextSteps: string[] = [];
 		if (await commandExists("openclaw")) {
