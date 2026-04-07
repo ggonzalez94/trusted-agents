@@ -2,20 +2,21 @@ import { randomUUID } from "node:crypto";
 import {
 	ERC20_TRANSFER_ABI,
 	ValidationError,
+	buildChainPublicClient,
 	executeOnchainTransfer,
+	getExecutionPreview,
+	getUsdcAsset,
 	isEthereumAddress,
 } from "trusted-agents-core";
-import type { ChainConfig } from "trusted-agents-core";
+import type { ChainConfig, ExecutionPreview } from "trusted-agents-core";
 import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
-import { getUsdcAsset, normalizeAsset } from "../lib/assets.js";
+import { normalizeAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { type ExecutionPreview, getExecutionPreview } from "../lib/execution.js";
 import { error, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
-import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 interface TransferCommandOptions {
@@ -234,7 +235,7 @@ async function estimateTransferGasAndFees(input: {
 	erc20Decimals?: number;
 }): Promise<TransferGasEstimate> {
 	try {
-		const publicClient = buildPublicClient(input.chainConfig);
+		const publicClient = buildChainPublicClient(input.chainConfig);
 		const [fees, gasUnits] = await Promise.all([
 			publicClient.estimateFeesPerGas(),
 			input.asset === "native"

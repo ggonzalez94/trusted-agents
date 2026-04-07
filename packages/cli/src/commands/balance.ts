@@ -1,12 +1,10 @@
+import { buildChainPublicClient, getExecutionPreview, getUsdcAsset } from "trusted-agents-core";
 import { formatUnits } from "viem";
-import { getUsdcAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { getExecutionPreview } from "../lib/execution.js";
 import { error, success } from "../lib/output.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
-import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 const ERC20_BALANCE_OF_ABI = [
@@ -40,7 +38,7 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 		const messagingAddress = await signingProvider.getAddress();
 		const execution = await getExecutionPreview(config, chainConfig, signingProvider);
 		const executionAddress = execution.executionAddress;
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const usdcAsset = getUsdcAsset(chain);
 
 		const messagingNativeBalancePromise = publicClient.getBalance({ address: messagingAddress });

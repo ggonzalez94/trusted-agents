@@ -3,9 +3,7 @@ import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
-import * as executionLib from "../src/lib/execution.js";
 import * as promptLib from "../src/lib/prompt.js";
-import * as walletLib from "../src/lib/wallet.js";
 
 const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
 	mockOwsProvider: vi.fn().mockImplementation(() => ({
@@ -85,7 +83,7 @@ describe("tap transfer", () => {
 		}) as typeof process.stderr.write;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
 			requestedMode: "eip7702",
 			mode: "eip7702",
 			messagingAddress: "0x0000000000000000000000000000000000000001",
@@ -95,7 +93,7 @@ describe("tap transfer", () => {
 			warnings: [],
 		});
 		vi.spyOn(promptLib, "promptYesNo").mockResolvedValue(true);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			estimateGas: vi.fn().mockResolvedValue(21000n),
 			estimateFeesPerGas: vi.fn().mockResolvedValue({
 				gasPrice: 1000000000n,
@@ -276,7 +274,7 @@ describe("tap transfer", () => {
 
 	it("passes the USDC contract address (not recipient) to gas estimation", async () => {
 		const estimateGas = vi.fn().mockResolvedValue(65000n);
-		vi.mocked(walletLib.buildPublicClient).mockReturnValue({
+		vi.mocked(core.buildChainPublicClient).mockReturnValue({
 			estimateGas,
 			estimateFeesPerGas: vi.fn().mockResolvedValue({
 				gasPrice: 1000000000n,

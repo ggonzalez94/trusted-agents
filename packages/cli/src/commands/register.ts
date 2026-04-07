@@ -5,27 +5,26 @@ import { dirname, resolve } from "node:path";
 import {
 	ERC8004Registry,
 	ERC8004_ABI,
+	buildChainPublicClient,
+	ensureExecutionReady,
+	executeContractCalls,
 	fetchRegistrationFile,
+	getExecutionPreview,
+	getUsdcAsset,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
+	ExecutionPreview,
 	IpfsUploadProvider,
 	RegistrationFile,
 	RegistrationFileExecution,
+	SigningProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
-import type { SigningProvider } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
-import { getUsdcAsset } from "../lib/assets.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import {
-	type ExecutionPreview,
-	ensureExecutionReady,
-	executeContractCalls,
-	getExecutionPreview,
-} from "../lib/execution.js";
 import {
 	resolveEffectiveIpfsProvider,
 	resolvePinataJwt,
@@ -37,7 +36,6 @@ import {
 import { error, info, success, verbose } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
-import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RegisterOptions {
@@ -286,7 +284,7 @@ async function ensureX402UploadFunding(
 		throw new Error("Base mainnet USDC asset config is missing");
 	}
 
-	const publicClient = buildPublicClient(baseChainConfig);
+	const publicClient = buildChainPublicClient(baseChainConfig);
 	const messagingAddress = await signingProvider.getAddress();
 	const messagingBalance = (await publicClient.readContract({
 		address: usdc.address,
@@ -553,7 +551,7 @@ export async function registerCommand(
 			requireProvider: true,
 		});
 		emitExecutionWarnings(executionPreview, opts);
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
@@ -708,7 +706,7 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();

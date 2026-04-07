@@ -2,9 +2,9 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as removeCommandModule from "../src/commands/remove.js";
-import * as walletLib from "../src/lib/wallet.js";
 import { runCli } from "./helpers/run-cli.js";
 
 const { TEST_ADDRESS, mockOwsProvider, mockCreateViemAccount } = vi.hoisted(() => {
@@ -348,7 +348,7 @@ describe("tap remove", () => {
 		process.env.TAP_OWS_API_KEY = "env-override-key";
 		process.env.TAP_CHAIN = "taiko";
 		const getBalance = vi.fn().mockResolvedValue(1n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance,
 		} as never);
 
@@ -368,13 +368,13 @@ describe("tap remove", () => {
 		const gasEstimate = 21_000n;
 		const gasPrice = 100n;
 		const sendTransaction = vi.fn().mockResolvedValue("0x1234");
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(freshBalanceWei),
 			estimateGas: vi.fn().mockResolvedValue(gasEstimate),
 			estimateFeesPerGas: vi.fn().mockResolvedValue({ gasPrice }),
 			waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success" }),
 		} as never);
-		vi.spyOn(walletLib, "buildWalletClient").mockReturnValue({
+		vi.spyOn(core, "buildChainWalletClient").mockReturnValue({
 			chain: { id: 8453 },
 			sendTransaction,
 		} as never);

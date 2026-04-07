@@ -7,11 +7,13 @@ import {
 	TransportOwnerLock,
 	type TrustedAgentsConfig,
 	ValidationError,
+	buildChainPublicClient,
+	buildChainWalletClient,
+	createSigningProviderViemAccount,
 	isProcessAlive,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
-import { createSigningProviderViemAccount } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
@@ -23,7 +25,6 @@ import {
 	createConfiguredSigningProvider,
 	getLegacyWalletMigrationWarning,
 } from "../lib/wallet-config.js";
-import { buildPublicClient, buildWalletClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RemoveOptions {
@@ -298,7 +299,7 @@ export async function probeRemoveNativeBalance(
 
 		const signingProvider = createConfiguredSigningProvider(config);
 		const address = await signingProvider.getAddress();
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const nativeBalanceWei = await publicClient.getBalance({ address });
 		const context: RemoveBalanceContext = {
 			config,
@@ -345,8 +346,8 @@ export async function transferRemainingNativeBalance(
 		balanceContext.chainConfig.caip2,
 	);
 	const account = await createSigningProviderViemAccount(signingProvider);
-	const publicClient = buildPublicClient(balanceContext.chainConfig);
-	const walletClient = buildWalletClient(account, balanceContext.chainConfig);
+	const publicClient = buildChainPublicClient(balanceContext.chainConfig);
+	const walletClient = buildChainWalletClient(account, balanceContext.chainConfig);
 	const currentBalanceWei = await publicClient.getBalance({ address: account.address });
 	const currentBalanceEth = formatUnits(currentBalanceWei, 18);
 	const gasEstimate = await publicClient.estimateGas({

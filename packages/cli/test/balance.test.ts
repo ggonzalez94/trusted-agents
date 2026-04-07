@@ -1,9 +1,8 @@
 import type { TrustedAgentsConfig } from "trusted-agents-core";
+import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
-import * as executionLib from "../src/lib/execution.js";
-import * as walletLib from "../src/lib/wallet.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -81,7 +80,7 @@ describe("tap balance", () => {
 			return true;
 		}) as typeof process.stderr.write;
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
 			requestedMode: "eip7702",
 			mode: "eip7702",
 			messagingAddress: ADDRESS,
@@ -102,7 +101,7 @@ describe("tap balance", () => {
 	it("uses the configured chain by default and returns native plus USDC balances", async () => {
 		const getBalance = vi.fn().mockResolvedValue(1234000000000000000n);
 		const readContract = vi.fn().mockResolvedValue(9876543n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance,
 			readContract,
 		} as never);
@@ -131,14 +130,14 @@ describe("tap balance", () => {
 	});
 
 	it("accepts a natural-language chain alias", async () => {
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(1n),
 			readContract: vi.fn().mockResolvedValue(2n),
 		} as never);
 
 		await balanceCommand({ json: true }, "base");
 
-		expect(walletLib.buildPublicClient).toHaveBeenCalledWith(
+		expect(core.buildChainPublicClient).toHaveBeenCalledWith(
 			expect.objectContaining({ caip2: "eip155:8453" }),
 		);
 		const output = JSON.parse(stdoutWrites.join("")) as {
@@ -148,14 +147,14 @@ describe("tap balance", () => {
 	});
 
 	it("accepts a CAIP-2 chain identifier", async () => {
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(1n),
 			readContract: vi.fn().mockResolvedValue(2n),
 		} as never);
 
 		await balanceCommand({ json: true }, "eip155:8453");
 
-		expect(walletLib.buildPublicClient).toHaveBeenCalledWith(
+		expect(core.buildChainPublicClient).toHaveBeenCalledWith(
 			expect.objectContaining({ caip2: "eip155:8453" }),
 		);
 		const output = JSON.parse(stdoutWrites.join("")) as {
@@ -166,7 +165,7 @@ describe("tap balance", () => {
 
 	it("returns native plus USDC balances on Taiko", async () => {
 		const readContract = vi.fn().mockResolvedValue(7654321n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(5n),
 			readContract,
 		} as never);
@@ -188,7 +187,7 @@ describe("tap balance", () => {
 	});
 
 	it("returns a validation error for an unknown chain", async () => {
-		const buildPublicClientSpy = vi.spyOn(walletLib, "buildPublicClient");
+		const buildPublicClientSpy = vi.spyOn(core, "buildChainPublicClient");
 
 		await balanceCommand({ json: true }, "not-a-chain");
 
