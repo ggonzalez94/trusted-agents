@@ -7,6 +7,7 @@ import {
 	getExecutionPreview,
 	getUsdcAsset,
 	isEthereumAddress,
+	toErrorMessage,
 } from "trusted-agents-core";
 import type { ChainConfig, ExecutionPreview } from "trusted-agents-core";
 import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
@@ -242,7 +243,7 @@ async function estimateTransferGasAndFees(input: {
 		};
 	} catch (error) {
 		return {
-			warning: `Gas estimate unavailable: ${error instanceof Error ? error.message : String(error)}`,
+			warning: `Gas estimate unavailable: ${toErrorMessage(error)}`,
 		};
 	}
 }

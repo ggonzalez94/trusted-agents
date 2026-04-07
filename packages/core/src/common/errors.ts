@@ -56,3 +56,7 @@ export class ValidationError extends TrustedAgentError {
 		this.name = "ValidationError";
 	}
 }
+
+export function toErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}

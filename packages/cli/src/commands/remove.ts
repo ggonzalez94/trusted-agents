@@ -13,6 +13,7 @@ import {
 	isProcessAlive,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
+	toErrorMessage,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
@@ -330,7 +331,7 @@ export async function probeRemoveNativeBalance(
 				address: null,
 				native_balance_wei: null,
 				native_balance_eth: null,
-				warning: `On-chain balance check skipped: ${err instanceof Error ? err.message : String(err)}`,
+				warning: `On-chain balance check skipped: ${toErrorMessage(err)}`,
 			},
 		};
 	}
@@ -562,10 +563,7 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 		if (code === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
-		return [
-			null,
-			`config.yaml could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
-		];
+		return [null, `config.yaml could not be parsed: ${toErrorMessage(error)}`];
 	}
 }
 
@@ -597,10 +595,7 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 		if (code === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
-		return [
-			null,
-			`Agent address could not be read: ${error instanceof Error ? error.message : String(error)}`,
-		];
+		return [null, `Agent address could not be read: ${toErrorMessage(error)}`];
 	}
 }
 

@@ -1,5 +1,5 @@
 import type { PublicClient, WalletClient } from "viem";
-import { IdentityError } from "../common/index.js";
+import { IdentityError, toErrorMessage } from "../common/index.js";
 import { ERC8004_ABI } from "./abi.js";
 
 export class ERC8004Registry {
@@ -29,7 +29,7 @@ export class ERC8004Registry {
 			return uri;
 		} catch (error) {
 			throw new IdentityError(
-				`Failed to get tokenURI for agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to get tokenURI for agent ${agentId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -44,9 +44,7 @@ export class ERC8004Registry {
 			});
 			return owner;
 		} catch (error) {
-			throw new IdentityError(
-				`Failed to get owner for agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			throw new IdentityError(`Failed to get owner for agent ${agentId}: ${toErrorMessage(error)}`);
 		}
 	}
 
@@ -83,9 +81,7 @@ export class ERC8004Registry {
 			return Number(BigInt(transferLog.topics[3]));
 		} catch (error) {
 			if (error instanceof IdentityError) throw error;
-			throw new IdentityError(
-				`Failed to register agent: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			throw new IdentityError(`Failed to register agent: ${toErrorMessage(error)}`);
 		}
 	}
 
@@ -108,7 +104,7 @@ export class ERC8004Registry {
 		} catch (error) {
 			if (error instanceof IdentityError) throw error;
 			throw new IdentityError(
-				`Failed to set agent URI for agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to set agent URI for agent ${agentId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}

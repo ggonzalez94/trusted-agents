@@ -12,6 +12,7 @@ import {
 	generateConnectionId,
 	generateNonce,
 	nowISO,
+	toErrorMessage,
 } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
 import {
@@ -610,7 +611,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to cancel local calendar event for scheduling request ${requestId} during ${contextLabel}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to cancel local calendar event for scheduling request ${requestId} during ${contextLabel}: ${toErrorMessage(error)}`,
 			);
 			return false;
 		}
@@ -1363,7 +1364,7 @@ export class TapMessagingService {
 				const result = await this.executeOutboxJob(job);
 				await this.commandOutbox.complete(job, result);
 			} catch (error: unknown) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = toErrorMessage(error);
 				await this.commandOutbox.fail(
 					job,
 					message,
@@ -1434,10 +1435,7 @@ export class TapMessagingService {
 		try {
 			await this.executionMutex.runExclusive(async () => await this.processOutboxInternal());
 		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`Queued TAP command polling failed: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.log("warn", `Queued TAP command polling failed: ${toErrorMessage(error)}`);
 		} finally {
 			this.outboxPollInFlight = false;
 		}
@@ -1500,10 +1498,7 @@ export class TapMessagingService {
 				...payload,
 			});
 		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`emitEvent hook threw: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.log("warn", `emitEvent hook threw: ${toErrorMessage(error)}`);
 		}
 	}
 
@@ -1535,7 +1530,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to record conversation log for ${contact.peerDisplayName} (#${contact.peerAgentId}): ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to record conversation log for ${contact.peerDisplayName} (#${contact.peerAgentId}): ${toErrorMessage(error)}`,
 			);
 		}
 		try {
@@ -1543,7 +1538,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to update contact activity for ${contact.connectionId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to update contact activity for ${contact.connectionId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -1556,7 +1551,7 @@ export class TapMessagingService {
 		this.inFlightKeys.add(key);
 		const promise = task()
 			.catch((error: unknown) => {
-				this.log("error", error instanceof Error ? error.message : String(error));
+				this.log("error", toErrorMessage(error));
 			})
 			.finally(() => {
 				this.inFlightKeys.delete(key);
@@ -2256,7 +2251,7 @@ export class TapMessagingService {
 				response = {
 					...baseResponse,
 					status: "failed",
-					error: error instanceof Error ? error.message : String(error),
+					error: toErrorMessage(error),
 				};
 				await this.appendLedger({
 					...baseLedger,
@@ -2286,7 +2281,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"error",
-				`Failed to persist retry metadata for action result ${response.actionId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to persist retry metadata for action result ${response.actionId}: ${toErrorMessage(error)}`,
 			);
 			try {
 				await this.context.transport.send(contact.peerAgentId, delivery.request, {
@@ -2751,7 +2746,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to deliver scheduling ${actionType} for ${schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to deliver scheduling ${actionType} for ${schedulingId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -2991,7 +2986,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"error",
-				`Failed to persist retry metadata for connection result ${result.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to persist retry metadata for connection result ${result.requestId}: ${toErrorMessage(error)}`,
 			);
 		}
 
@@ -3119,7 +3114,7 @@ export class TapMessagingService {
 			} catch (error: unknown) {
 				this.log(
 					"warn",
-					`Failed to retry connection request ${entry.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+					`Failed to retry connection request ${entry.requestId}: ${toErrorMessage(error)}`,
 				);
 			}
 		}
@@ -3166,7 +3161,7 @@ export class TapMessagingService {
 	}
 
 	private logResultDeliveryFailure(subject: string, peerLabel: string, error: unknown): void {
-		const errorMessage = error instanceof Error ? error.message : String(error);
+		const errorMessage = toErrorMessage(error);
 		if (isTransportReceiptTimeout(error)) {
 			this.log(
 				"warn",
@@ -3211,7 +3206,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to deliver UNSUPPORTED_ACTION result for "${actionType}": ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to deliver UNSUPPORTED_ACTION result for "${actionType}": ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -3295,7 +3290,7 @@ export class TapMessagingService {
 				success: false,
 				error: {
 					code: "HANDLER_ERROR",
-					message: error instanceof Error ? error.message : String(error),
+					message: toErrorMessage(error),
 				},
 			};
 		}
@@ -3357,7 +3352,7 @@ export class TapMessagingService {
 		} catch (journalError: unknown) {
 			this.log(
 				"error",
-				`Failed to persist retry metadata for app result "${actionType}": ${journalError instanceof Error ? journalError.message : String(journalError)}`,
+				`Failed to persist retry metadata for app result "${actionType}": ${toErrorMessage(journalError)}`,
 			);
 			// Best-effort delivery without retry
 			try {
@@ -3369,7 +3364,7 @@ export class TapMessagingService {
 			} catch (deliveryError: unknown) {
 				this.log(
 					"warn",
-					`Failed to deliver app result for "${actionType}": ${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`,
+					`Failed to deliver app result for "${actionType}": ${toErrorMessage(deliveryError)}`,
 				);
 			}
 		}

@@ -7,6 +7,7 @@ export {
 	TransportError,
 	ConfigError,
 	ValidationError,
+	toErrorMessage,
 } from "./errors.js";
 
 export { generateNonce, generateConnectionId } from "./crypto.js";

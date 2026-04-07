@@ -11,6 +11,7 @@ import {
 	fetchRegistrationFile,
 	getExecutionPreview,
 	getUsdcAsset,
+	toErrorMessage,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
@@ -431,7 +432,7 @@ async function resolveAgentURI(
 			pinataJwt: resolvePinataJwt(params.pinataJwt),
 		});
 	} catch (err) {
-		error("VALIDATION_ERROR", err instanceof Error ? err.message : String(err), opts);
+		error("VALIDATION_ERROR", toErrorMessage(err), opts);
 		return null;
 	}
 	const jwt = resolvePinataJwt(params.pinataJwt);
@@ -450,7 +451,7 @@ async function resolveAgentURI(
 			await saveIpfsCache(params.dataDir, cache);
 			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = toErrorMessage(err);
 			verbose(`x402 upload failed: ${msg}`, opts);
 			error(
 				"UPLOAD_ERROR",
@@ -490,7 +491,7 @@ Alternatives:
 			await saveIpfsCache(params.dataDir, cache);
 			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = toErrorMessage(err);
 			error(
 				"UPLOAD_ERROR",
 				`IPFS upload via Tack failed: ${msg}
@@ -743,7 +744,7 @@ export async function registerUpdateCommand(
 			try {
 				currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
+				const message = toErrorMessage(err);
 				verbose(
 					`Current registration could not be fetched; proceeding with replacement upload: ${message}`,
 					opts,

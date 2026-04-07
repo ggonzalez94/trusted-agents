@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { type PermissionGrantSet, ValidationError, normalizeGrantInput } from "trusted-agents-core";
+import {
+	type PermissionGrantSet,
+	ValidationError,
+	normalizeGrantInput,
+	toErrorMessage,
+} from "trusted-agents-core";
 
 export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
 	const raw = path === "-" ? await readGrantStdin() : await readFile(path, "utf-8");
@@ -7,9 +12,7 @@ export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
 	try {
 		parsed = JSON.parse(raw);
 	} catch (error) {
-		throw new ValidationError(
-			`Invalid grant file JSON at ${path}: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		throw new ValidationError(`Invalid grant file JSON at ${path}: ${toErrorMessage(error)}`);
 	}
 
 	return normalizeGrantInput(parsed);

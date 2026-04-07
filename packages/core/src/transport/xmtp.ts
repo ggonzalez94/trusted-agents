@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Client } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
+import { TransportError, isEthereumAddress, nowISO, toErrorMessage } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import {
 	CONNECTION_REQUEST,
@@ -171,9 +171,7 @@ export class XmtpTransport implements TransportProvider {
 			}
 			throw err instanceof TransportError
 				? err
-				: new TransportError(
-						`Failed to send message: ${err instanceof Error ? err.message : String(err)}`,
-					);
+				: new TransportError(`Failed to send message: ${toErrorMessage(err)}`);
 		}
 
 		const receipt = await receiptPromise;

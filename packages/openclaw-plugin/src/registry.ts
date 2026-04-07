@@ -18,6 +18,7 @@ import {
 	executeOnchainTransfer,
 	generateInvite,
 	generateSchedulingId,
+	toErrorMessage,
 } from "trusted-agents-core";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
@@ -99,7 +100,7 @@ export class OpenClawTapRegistry {
 			await runtime.mutex.runExclusive(async () => {
 				await runtime.runtime.stop().catch((error: unknown) => {
 					this.logger.warn(
-						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${formatError(error)}`,
+						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${toErrorMessage(error)}`,
 					);
 				});
 			});
@@ -148,7 +149,7 @@ export class OpenClawTapRegistry {
 						running: false,
 						lock: null,
 						pendingRequests: [],
-						lastError: formatError(error),
+						lastError: toErrorMessage(error),
 					};
 				}
 			}),
@@ -515,7 +516,7 @@ export class OpenClawTapRegistry {
 				const runtime = await this.ensureRuntime(identity.name);
 				await this.startRuntime(runtime);
 			} catch (error: unknown) {
-				const message = formatError(error);
+				const message = toErrorMessage(error);
 				failures.push(`${identity.name}: ${message}`);
 				this.logger.warn(
 					`[trusted-agents-tap:${identity.name}] Failed to start TAP runtime: ${message}`,
@@ -542,7 +543,7 @@ export class OpenClawTapRegistry {
 				await runtime.runtime.start();
 				runtime.lastError = undefined;
 			} catch (error: unknown) {
-				runtime.lastError = formatError(error);
+				runtime.lastError = toErrorMessage(error);
 				throw error;
 			}
 		});
@@ -686,7 +687,7 @@ export class OpenClawTapRegistry {
 				await runtime.runtime.start();
 				runtime.lastError = undefined;
 			} catch (error: unknown) {
-				runtime.lastError = formatError(error);
+				runtime.lastError = toErrorMessage(error);
 				throw error;
 			}
 		});
@@ -721,7 +722,7 @@ export class OpenClawTapRegistry {
 					await runtime.runtime.syncOnce();
 					runtime.lastError = undefined;
 				} catch (error: unknown) {
-					runtime.lastError = formatError(error);
+					runtime.lastError = toErrorMessage(error);
 					this.logger.warn(
 						`[trusted-agents-tap:${runtime.definition.name}] Periodic reconcile failed: ${runtime.lastError}`,
 					);
@@ -785,7 +786,7 @@ export class OpenClawTapRegistry {
 			});
 		} catch (error: unknown) {
 			this.logger.warn(
-				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${formatError(error)}`,
+				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -899,8 +900,4 @@ function logWithLevel(
 		return;
 	}
 	logger.info(message);
-}
-
-function formatError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }

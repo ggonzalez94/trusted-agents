@@ -7,6 +7,7 @@ import {
 	TransportError,
 	TrustedAgentError,
 	ValidationError,
+	toErrorMessage,
 } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import { error } from "./output.js";
@@ -39,6 +40,6 @@ export function errorCode(err: unknown): string {
 }
 
 export function handleCommandError(err: unknown, opts: GlobalOptions): void {
-	error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
+	error(errorCode(err), toErrorMessage(err), opts);
 	process.exitCode = exitCodeForError(err);
 }
