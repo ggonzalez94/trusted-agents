@@ -128,6 +128,35 @@ function cloneContact<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
 
+async function submitConnectionRequest(
+	transport: FakeTransport,
+	senderInboxId: string,
+	agentId = 1,
+): Promise<ProtocolMessage> {
+	const { invite } = await generateInvite({
+		agentId,
+		chain: "eip155:8453",
+		signingProvider: ALICE_SIGNING_PROVIDER,
+		expirySeconds: 3600,
+	});
+
+	const request = buildConnectionRequest({
+		from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+		invite,
+		timestamp: "2026-03-08T00:00:00.000Z",
+	});
+
+	await expect(
+		transport.handlers.onRequest?.({
+			from: PEER_AGENT.agentId,
+			senderInboxId,
+			message: request,
+		}),
+	).resolves.toEqual({ status: "queued" });
+
+	return request;
+}
+
 function makeActiveContact(connectionId: string): Contact {
 	return {
 		connectionId,
@@ -348,26 +377,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-manual-resolve",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-manual-resolve");
 
 		await sleep(50);
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
@@ -426,26 +436,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-connection-result-retry",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-connection-result-retry");
 
 		await sleep(50);
 
@@ -500,26 +491,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-retry-connection-request",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-retry-connection-request");
 
 		await sleep(50);
 
@@ -581,26 +553,7 @@ describe("TapMessagingService", () => {
 		});
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-connection-result-persist-fail",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		await submitConnectionRequest(transport, "peer-inbox-connection-result-persist-fail");
 
 		await sleep(50);
 
@@ -636,26 +589,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 2,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-connection-retry",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		await submitConnectionRequest(transport, "peer-inbox-connection-retry", 2);
 
 		await sleep(50);
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
@@ -1610,26 +1544,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-defer-connection",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-defer-connection");
 
 		await sleep(50);
 
@@ -1672,26 +1587,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-reject-connection",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-reject-connection");
 
 		await sleep(50);
 
@@ -1733,26 +1629,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-accept-connection",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-accept-connection");
 
 		await sleep(50);
 
@@ -1793,26 +1670,7 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-auto-accept-connection",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(transport, "peer-inbox-auto-accept-connection");
 
 		await sleep(50);
 
@@ -1846,26 +1704,10 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-resolve-approve-connection",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(
+			transport,
+			"peer-inbox-resolve-approve-connection",
+		);
 
 		await sleep(50);
 
@@ -1918,26 +1760,10 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-resolve-reject-connection",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		const request = await submitConnectionRequest(
+			transport,
+			"peer-inbox-resolve-reject-connection",
+		);
 
 		await sleep(50);
 
@@ -2649,27 +2475,8 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: ALICE_SIGNING_PROVIDER,
-			expirySeconds: 3600,
-		});
-
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
-
 		// Should not throw even though emitEvent hook throws
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-emit-crash",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+		await submitConnectionRequest(transport, "peer-inbox-emit-crash");
 
 		expect(emitEvent).toHaveBeenCalled();
 		expect(log).toHaveBeenCalledWith(
