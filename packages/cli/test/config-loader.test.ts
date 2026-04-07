@@ -83,24 +83,17 @@ describe("config-loader", () => {
 	});
 
 	describe("loadConfig", () => {
-		it("defaults Base networks to eip7702 with Circle", async () => {
+		it.each([
+			["Base", "base", "eip7702", "circle"],
+			["Taiko mainnet", "taiko", "eip4337", "servo"],
+		])("defaults %s to %s mode with %s paymaster", async (_, chain, mode, paymaster) => {
 			await mkdir(tmpDir, { recursive: true });
-			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: base\n", "utf-8");
+			await writeFile(join(tmpDir, "config.yaml"), `agent_id: 1\nchain: ${chain}\n`, "utf-8");
 
 			const config = await loadConfig({ dataDir: tmpDir });
 
-			expect(config.execution?.mode).toBe("eip7702");
-			expect(config.execution?.paymasterProvider).toBe("circle");
-		});
-
-		it("defaults Taiko mainnet to eip4337 with Servo", async () => {
-			await mkdir(tmpDir, { recursive: true });
-			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: taiko\n", "utf-8");
-
-			const config = await loadConfig({ dataDir: tmpDir });
-
-			expect(config.execution?.mode).toBe("eip4337");
-			expect(config.execution?.paymasterProvider).toBe("servo");
+			expect(config.execution?.mode).toBe(mode);
+			expect(config.execution?.paymasterProvider).toBe(paymaster);
 		});
 
 		it("loads optional IPFS provider settings from config", async () => {
