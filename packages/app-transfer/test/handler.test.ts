@@ -84,31 +84,12 @@ function buildMockContext(
 }
 
 describe("handleTransferRequest", () => {
-	it("should reject when payload is missing required fields", async () => {
-		const ctx = buildMockContext({
-			payload: { type: "transfer/request", actionId: "a1" },
-		});
-
-		const result = await handleTransferRequest(ctx);
-
-		expect(result.success).toBe(false);
-		expect(result.error?.code).toBe("INVALID_PAYLOAD");
-	});
-
-	it("should reject when payload type is wrong", async () => {
-		const ctx = buildMockContext({
-			payload: { type: "something-else", actionId: "a1" },
-		});
-
-		const result = await handleTransferRequest(ctx);
-
-		expect(result.success).toBe(false);
-		expect(result.error?.code).toBe("INVALID_PAYLOAD");
-	});
-
-	it("should reject when asset is invalid", async () => {
-		const ctx = buildMockContext({
-			payload: {
+	it.each<[string, Record<string, unknown>]>([
+		["missing required fields", { type: "transfer/request", actionId: "a1" }],
+		["wrong type", { type: "something-else", actionId: "a1" }],
+		[
+			"invalid asset",
+			{
 				type: "transfer/request",
 				actionId: "a1",
 				asset: "bitcoin",
@@ -116,17 +97,10 @@ describe("handleTransferRequest", () => {
 				chain: "eip155:8453",
 				toAddress: "0x3333333333333333333333333333333333333333",
 			},
-		});
-
-		const result = await handleTransferRequest(ctx);
-
-		expect(result.success).toBe(false);
-		expect(result.error?.code).toBe("INVALID_PAYLOAD");
-	});
-
-	it("should reject when toAddress is not a valid ethereum address", async () => {
-		const ctx = buildMockContext({
-			payload: {
+		],
+		[
+			"invalid toAddress",
+			{
 				type: "transfer/request",
 				actionId: "a1",
 				asset: "usdc",
@@ -134,10 +108,9 @@ describe("handleTransferRequest", () => {
 				chain: "eip155:8453",
 				toAddress: "not-an-address",
 			},
-		});
-
-		const result = await handleTransferRequest(ctx);
-
+		],
+	])("should reject with INVALID_PAYLOAD when %s", async (_, payload) => {
+		const result = await handleTransferRequest(buildMockContext({ payload }));
 		expect(result.success).toBe(false);
 		expect(result.error?.code).toBe("INVALID_PAYLOAD");
 	});
@@ -157,20 +130,49 @@ describe("handleTransferRequest", () => {
 		);
 	});
 
-	it("should reject when grant has wrong scope", async () => {
-		const ctx = buildMockContext({
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "message/send",
-					status: "active",
-					updatedAt: new Date().toISOString(),
-				},
-			],
-		});
-
-		const result = await handleTransferRequest(ctx);
-
+	it.each<[string, Parameters<typeof buildMockContext>[0]]>([
+		[
+			"wrong scope",
+			{
+				grantsToPeer: [
+					{
+						grantId: "g1",
+						scope: "message/send",
+						status: "active",
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			},
+		],
+		[
+			"constrained grant does not match asset",
+			{
+				grantsToPeer: [
+					{
+						grantId: "g1",
+						scope: "transfer/request",
+						constraints: { asset: "native" },
+						status: "active",
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			},
+		],
+		[
+			"revoked grant",
+			{
+				grantsToPeer: [
+					{
+						grantId: "g1",
+						scope: "transfer/request",
+						status: "revoked",
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			},
+		],
+	])("should reject with NO_MATCHING_GRANT when %s", async (_, overrides) => {
+		const result = await handleTransferRequest(buildMockContext(overrides));
 		expect(result.success).toBe(false);
 		expect(result.error?.code).toBe("NO_MATCHING_GRANT");
 	});
@@ -230,25 +232,6 @@ describe("handleTransferRequest", () => {
 		expect(result.data?.status).toBe("completed");
 	});
 
-	it("should reject when constrained grant does not match asset", async () => {
-		const ctx = buildMockContext({
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "transfer/request",
-					constraints: { asset: "native" },
-					status: "active",
-					updatedAt: new Date().toISOString(),
-				},
-			],
-		});
-
-		const result = await handleTransferRequest(ctx);
-
-		expect(result.success).toBe(false);
-		expect(result.error?.code).toBe("NO_MATCHING_GRANT");
-	});
-
 	it("should return failed when payments.execute throws", async () => {
 		const ctx = buildMockContext({
 			grantsToPeer: [
@@ -271,24 +254,6 @@ describe("handleTransferRequest", () => {
 		expect(ctx.events.emit).toHaveBeenCalledWith(
 			expect.objectContaining({ type: "transfer/failed" }),
 		);
-	});
-
-	it("should reject when grant is revoked", async () => {
-		const ctx = buildMockContext({
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "transfer/request",
-					status: "revoked",
-					updatedAt: new Date().toISOString(),
-				},
-			],
-		});
-
-		const result = await handleTransferRequest(ctx);
-
-		expect(result.success).toBe(false);
-		expect(result.error?.code).toBe("NO_MATCHING_GRANT");
 	});
 
 	it("should include note in payload when provided", async () => {

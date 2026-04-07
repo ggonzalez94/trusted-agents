@@ -138,88 +138,39 @@ function buildMockSchedulingHandler(decision: SchedulingDecision): {
 
 describe("handleSchedulingRequest", () => {
 	describe("payload validation", () => {
-		it("should reject when payload is missing required fields", async () => {
-			const ctx = buildMockContext({
-				payload: { type: "scheduling/request" },
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("INVALID_PAYLOAD");
-		});
-
-		it("should reject when payload type is wrong", async () => {
-			const ctx = buildMockContext({
-				payload: { type: "something-else" },
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("INVALID_PAYLOAD");
-		});
-
-		it("should reject when title is empty", async () => {
-			const ctx = buildMockContext({
-				payload: {
+		it.each<[string, Record<string, unknown>]>([
+			["missing required fields", { type: "scheduling/request" }],
+			["wrong type", { type: "something-else" }],
+			[
+				"empty title",
+				{
 					type: "scheduling/propose",
 					title: "",
 					duration: 30,
 					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("INVALID_PAYLOAD");
-		});
-
-		it("should reject when durationMinutes is not positive", async () => {
-			const ctx = buildMockContext({
-				payload: {
+			],
+			[
+				"zero duration",
+				{
 					type: "scheduling/propose",
 					title: "Standup",
 					duration: 0,
 					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:30:00Z" }],
 				},
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("INVALID_PAYLOAD");
-		});
-
-		it("should reject when proposedSlots is empty", async () => {
-			const ctx = buildMockContext({
-				payload: {
-					type: "scheduling/propose",
-					title: "Standup",
-					duration: 30,
-					slots: [],
-				},
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("INVALID_PAYLOAD");
-		});
-
-		it("should reject when proposedSlot has start >= end", async () => {
-			const ctx = buildMockContext({
-				payload: {
+			],
+			["empty slots", { type: "scheduling/propose", title: "Standup", duration: 30, slots: [] }],
+			[
+				"start >= end",
+				{
 					type: "scheduling/propose",
 					title: "Standup",
 					duration: 30,
 					slots: [{ start: "2026-04-01T10:30:00Z", end: "2026-04-01T10:00:00Z" }],
 				},
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
+			],
+		])("should reject with INVALID_PAYLOAD when %s", async (_, payload) => {
+			const result = await handleSchedulingRequest(buildMockContext({ payload }));
 			expect(result.success).toBe(false);
 			expect(result.error?.code).toBe("INVALID_PAYLOAD");
 		});
@@ -241,20 +192,56 @@ describe("handleSchedulingRequest", () => {
 			);
 		});
 
-		it("should reject when grant has wrong scope", async () => {
-			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "message/send",
-						status: "active",
-						updatedAt: new Date().toISOString(),
+		it.each<[string, Parameters<typeof buildMockContext>[0]]>([
+			[
+				"wrong scope",
+				{
+					grantsToPeer: [
+						{
+							grantId: "g1",
+							scope: "message/send",
+							status: "active",
+							updatedAt: new Date().toISOString(),
+						},
+					],
+				},
+			],
+			[
+				"revoked grant",
+				{
+					grantsToPeer: [
+						{
+							grantId: "g1",
+							scope: "scheduling/request",
+							status: "revoked",
+							updatedAt: new Date().toISOString(),
+						},
+					],
+				},
+			],
+			[
+				"duration exceeds maxDurationMinutes",
+				{
+					payload: {
+						type: "scheduling/propose",
+						title: "Long Meeting",
+						duration: 120,
+						slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T12:00:00Z" }],
+						originTimezone: "UTC",
 					},
-				],
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
+					grantsToPeer: [
+						{
+							grantId: "g1",
+							scope: "scheduling/request",
+							constraints: { maxDurationMinutes: 60 },
+							status: "active",
+							updatedAt: new Date().toISOString(),
+						},
+					],
+				},
+			],
+		])("should reject with NO_MATCHING_GRANT when %s", async (_, overrides) => {
+			const result = await handleSchedulingRequest(buildMockContext(overrides));
 			expect(result.success).toBe(false);
 			expect(result.error?.code).toBe("NO_MATCHING_GRANT");
 		});
@@ -298,50 +285,6 @@ describe("handleSchedulingRequest", () => {
 
 			expect(result.success).toBe(true);
 			expect(result.data?.type).toBe("scheduling/accept");
-		});
-
-		it("should reject when grant is revoked", async () => {
-			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "revoked",
-						updatedAt: new Date().toISOString(),
-					},
-				],
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("NO_MATCHING_GRANT");
-		});
-
-		it("should reject when duration exceeds grant maxDurationMinutes", async () => {
-			const ctx = buildMockContext({
-				payload: {
-					type: "scheduling/propose",
-					title: "Long Meeting",
-					duration: 120,
-					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T12:00:00Z" }],
-					originTimezone: "UTC",
-				},
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						constraints: { maxDurationMinutes: 60 },
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
-			});
-
-			const result = await handleSchedulingRequest(ctx);
-
-			expect(result.success).toBe(false);
-			expect(result.error?.code).toBe("NO_MATCHING_GRANT");
 		});
 
 		it("should use default timezone when not provided", async () => {
