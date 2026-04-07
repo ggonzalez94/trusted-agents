@@ -7,6 +7,23 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import { handleSchedulingRequest } from "../src/handler.js";
 
+function makeGrant(
+	overrides: Partial<{
+		grantId: string;
+		scope: string;
+		constraints: Record<string, unknown>;
+		status: "active" | "revoked";
+	}> = {},
+) {
+	return {
+		grantId: overrides.grantId ?? "g1",
+		scope: overrides.scope ?? "scheduling/request",
+		status: overrides.status ?? "active",
+		updatedAt: new Date().toISOString(),
+		...("constraints" in overrides ? { constraints: overrides.constraints } : {}),
+	};
+}
+
 function buildMockContext(
 	overrides: Partial<{
 		payload: Record<string, unknown>;
@@ -107,14 +124,7 @@ function buildMockContact(): Contact {
 			grantedByMe: {
 				version: "tap-grants/v1",
 				updatedAt: new Date().toISOString(),
-				grants: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grants: [makeGrant()],
 			},
 			grantedByPeer: {
 				version: "tap-grants/v1",
@@ -193,32 +203,8 @@ describe("handleSchedulingRequest", () => {
 		});
 
 		it.each<[string, Parameters<typeof buildMockContext>[0]]>([
-			[
-				"wrong scope",
-				{
-					grantsToPeer: [
-						{
-							grantId: "g1",
-							scope: "message/send",
-							status: "active",
-							updatedAt: new Date().toISOString(),
-						},
-					],
-				},
-			],
-			[
-				"revoked grant",
-				{
-					grantsToPeer: [
-						{
-							grantId: "g1",
-							scope: "scheduling/request",
-							status: "revoked",
-							updatedAt: new Date().toISOString(),
-						},
-					],
-				},
-			],
+			["wrong scope", { grantsToPeer: [makeGrant({ scope: "message/send" })] }],
+			["revoked grant", { grantsToPeer: [makeGrant({ status: "revoked" })] }],
 			[
 				"duration exceeds maxDurationMinutes",
 				{
@@ -229,15 +215,7 @@ describe("handleSchedulingRequest", () => {
 						slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T12:00:00Z" }],
 						originTimezone: "UTC",
 					},
-					grantsToPeer: [
-						{
-							grantId: "g1",
-							scope: "scheduling/request",
-							constraints: { maxDurationMinutes: 60 },
-							status: "active",
-							updatedAt: new Date().toISOString(),
-						},
-					],
+					grantsToPeer: [makeGrant({ constraints: { maxDurationMinutes: 60 } })],
 				},
 			],
 		])("should reject with NO_MATCHING_GRANT when %s", async (_, overrides) => {
@@ -248,14 +226,7 @@ describe("handleSchedulingRequest", () => {
 
 		it("should accept when a matching grant exists", async () => {
 			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant()],
 			});
 
 			const result = await handleSchedulingRequest(ctx);
@@ -270,15 +241,7 @@ describe("handleSchedulingRequest", () => {
 
 		it("should accept with constrained grant that matches", async () => {
 			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						constraints: { maxDurationMinutes: 60 },
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant({ constraints: { maxDurationMinutes: 60 } })],
 			});
 
 			const result = await handleSchedulingRequest(ctx);
@@ -295,14 +258,7 @@ describe("handleSchedulingRequest", () => {
 					duration: 15,
 					slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T10:15:00Z" }],
 				},
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant()],
 			});
 
 			const result = await handleSchedulingRequest(ctx);
@@ -313,14 +269,7 @@ describe("handleSchedulingRequest", () => {
 
 		it("should include note in accepted response", async () => {
 			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant()],
 			});
 
 			const result = await handleSchedulingRequest(ctx);
@@ -491,14 +440,7 @@ describe("handleSchedulingRequest", () => {
 			});
 
 			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant()],
 				payload: {
 					type: "scheduling/propose",
 					title: "Team Standup",
@@ -523,14 +465,7 @@ describe("handleSchedulingRequest", () => {
 		it("should fall back to grant-only evaluation when only contact is in extensions", async () => {
 			const contact = buildMockContact();
 			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant()],
 				extensions: {
 					contact,
 					// No schedulingHandler
@@ -547,14 +482,7 @@ describe("handleSchedulingRequest", () => {
 		it("should fall back to grant-only evaluation when only schedulingHandler is in extensions", async () => {
 			const { handler } = buildMockSchedulingHandler({ action: "defer" });
 			const ctx = buildMockContext({
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "scheduling/request",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
+				grantsToPeer: [makeGrant()],
 				extensions: {
 					schedulingHandler: handler,
 					// No contact

@@ -2,6 +2,23 @@ import type { TapActionContext } from "trusted-agents-core";
 import { describe, expect, it, vi } from "vitest";
 import { handleTransferRequest } from "../src/handler.js";
 
+function makeGrant(
+	overrides: Partial<{
+		grantId: string;
+		scope: string;
+		constraints: Record<string, unknown>;
+		status: "active" | "revoked";
+	}> = {},
+) {
+	return {
+		grantId: overrides.grantId ?? "g1",
+		scope: overrides.scope ?? "transfer/request",
+		status: overrides.status ?? "active",
+		updatedAt: new Date().toISOString(),
+		...("constraints" in overrides ? { constraints: overrides.constraints } : {}),
+	};
+}
+
 function buildMockContext(
 	overrides: Partial<{
 		payload: Record<string, unknown>;
@@ -131,46 +148,12 @@ describe("handleTransferRequest", () => {
 	});
 
 	it.each<[string, Parameters<typeof buildMockContext>[0]]>([
-		[
-			"wrong scope",
-			{
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "message/send",
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
-			},
-		],
+		["wrong scope", { grantsToPeer: [makeGrant({ scope: "message/send" })] }],
 		[
 			"constrained grant does not match asset",
-			{
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "transfer/request",
-						constraints: { asset: "native" },
-						status: "active",
-						updatedAt: new Date().toISOString(),
-					},
-				],
-			},
+			{ grantsToPeer: [makeGrant({ constraints: { asset: "native" } })] },
 		],
-		[
-			"revoked grant",
-			{
-				grantsToPeer: [
-					{
-						grantId: "g1",
-						scope: "transfer/request",
-						status: "revoked",
-						updatedAt: new Date().toISOString(),
-					},
-				],
-			},
-		],
+		["revoked grant", { grantsToPeer: [makeGrant({ status: "revoked" })] }],
 	])("should reject with NO_MATCHING_GRANT when %s", async (_, overrides) => {
 		const result = await handleTransferRequest(buildMockContext(overrides));
 		expect(result.success).toBe(false);
@@ -181,14 +164,7 @@ describe("handleTransferRequest", () => {
 		const txHash =
 			"0x0000000000000000000000000000000000000000000000000000000000000abc" as `0x${string}`;
 		const ctx = buildMockContext({
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "transfer/request",
-					status: "active",
-					updatedAt: new Date().toISOString(),
-				},
-			],
+			grantsToPeer: [makeGrant()],
 			executeResult: { txHash },
 		});
 
@@ -214,15 +190,7 @@ describe("handleTransferRequest", () => {
 		const txHash =
 			"0x0000000000000000000000000000000000000000000000000000000000000def" as `0x${string}`;
 		const ctx = buildMockContext({
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "transfer/request",
-					constraints: { asset: "usdc", chain: "eip155:8453" },
-					status: "active",
-					updatedAt: new Date().toISOString(),
-				},
-			],
+			grantsToPeer: [makeGrant({ constraints: { asset: "usdc", chain: "eip155:8453" } })],
 			executeResult: { txHash },
 		});
 
@@ -234,14 +202,7 @@ describe("handleTransferRequest", () => {
 
 	it("should return failed when payments.execute throws", async () => {
 		const ctx = buildMockContext({
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "transfer/request",
-					status: "active",
-					updatedAt: new Date().toISOString(),
-				},
-			],
+			grantsToPeer: [makeGrant()],
 			executeError: new Error("Insufficient balance"),
 		});
 
@@ -269,14 +230,7 @@ describe("handleTransferRequest", () => {
 				toAddress: "0x3333333333333333333333333333333333333333",
 				note: "For coffee",
 			},
-			grantsToPeer: [
-				{
-					grantId: "g1",
-					scope: "transfer/request",
-					status: "active",
-					updatedAt: new Date().toISOString(),
-				},
-			],
+			grantsToPeer: [makeGrant()],
 			executeResult: { txHash },
 		});
 
