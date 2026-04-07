@@ -738,48 +738,45 @@ export async function registerUpdateCommand(
 
 		const fullReplacement = isFullManifestReplacement(cmdOpts);
 		let currentRegistrationFile: RegistrationFile | null = null;
-		let pendingRegistrationFile: RegistrationFile;
 
 		if (fullReplacement) {
 			try {
 				currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
 			} catch (err) {
-				const message = toErrorMessage(err);
 				verbose(
-					`Current registration could not be fetched; proceeding with replacement upload: ${message}`,
+					`Current registration could not be fetched; proceeding with replacement upload: ${toErrorMessage(err)}`,
 					opts,
 				);
 			}
-
-			pendingRegistrationFile = buildRegistrationFile(
-				cmdOpts.name!,
-				cmdOpts.description!,
-				parseCapabilities(cmdOpts.capabilities!),
-				agentAddress,
-				currentRegistrationFile?.trustedAgentProtocol.execution,
-			);
-			validateRegistrationFile(pendingRegistrationFile);
-			verbose("Replacement registration file validated", opts);
 		} else {
 			info(`Fetching current registration for agent #${config.agentId}...`, opts);
 			currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
-
-			pendingRegistrationFile = buildUpdatedRegistrationFile(
-				currentRegistrationFile,
-				agentAddress,
-				currentRegistrationFile.trustedAgentProtocol.execution,
-				{
-					name: cmdOpts.name,
-					description: cmdOpts.description,
-					capabilities:
-						cmdOpts.capabilities !== undefined
-							? parseCapabilities(cmdOpts.capabilities)
-							: undefined,
-				},
-			);
-			validateRegistrationFile(pendingRegistrationFile);
-			verbose("Updated registration file validated", opts);
 		}
+
+		const buildRegFileForUpdate = (
+			execution: RegistrationFileExecution | undefined,
+		): RegistrationFile => {
+			if (fullReplacement) {
+				return buildRegistrationFile(
+					cmdOpts.name!,
+					cmdOpts.description!,
+					parseCapabilities(cmdOpts.capabilities!),
+					agentAddress,
+					execution,
+				);
+			}
+			return buildUpdatedRegistrationFile(currentRegistrationFile!, agentAddress, execution, {
+				name: cmdOpts.name,
+				description: cmdOpts.description,
+				capabilities:
+					cmdOpts.capabilities !== undefined ? parseCapabilities(cmdOpts.capabilities) : undefined,
+			});
+		};
+
+		const pendingRegistrationFile = buildRegFileForUpdate(
+			currentRegistrationFile?.trustedAgentProtocol.execution,
+		);
+		validateRegistrationFile(pendingRegistrationFile);
 
 		if (
 			currentRegistrationFile &&
@@ -804,27 +801,7 @@ export async function registerUpdateCommand(
 				}),
 		});
 
-		const registrationFile = fullReplacement
-			? buildRegistrationFile(
-					cmdOpts.name!,
-					cmdOpts.description!,
-					parseCapabilities(cmdOpts.capabilities!),
-					agentAddress,
-					buildExecutionMetadata(executionPreview),
-				)
-			: buildUpdatedRegistrationFile(
-					currentRegistrationFile!,
-					agentAddress,
-					buildExecutionMetadata(executionPreview),
-					{
-						name: cmdOpts.name,
-						description: cmdOpts.description,
-						capabilities:
-							cmdOpts.capabilities !== undefined
-								? parseCapabilities(cmdOpts.capabilities)
-								: undefined,
-					},
-				);
+		const registrationFile = buildRegFileForUpdate(buildExecutionMetadata(executionPreview));
 		validateRegistrationFile(registrationFile);
 
 		const result = await resolveAgentURI(
