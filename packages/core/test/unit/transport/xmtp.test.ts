@@ -253,6 +253,26 @@ const BOB_CONTACT_LEGACY: Contact = {
 	peerAgentId: 7,
 };
 
+const BOB_INBOX_ID = `inbox-for-${BOB.address.toLowerCase()}`;
+
+function makeDmMessage(
+	id: string,
+	opts?: { sentAtNs?: bigint; conversationId?: string; rpcId?: string },
+): StoredMockMessage & { content: string } {
+	return {
+		id,
+		sentAtNs: opts?.sentAtNs ?? 1_000n,
+		sentAt: new Date(Number((opts?.sentAtNs ?? 1_000n) / 1_000_000n)),
+		senderInboxId: BOB_INBOX_ID,
+		conversationId: opts?.conversationId ?? "dm-1",
+		content: JSON.stringify({
+			jsonrpc: "2.0",
+			method: "message/send",
+			id: opts?.rpcId ?? id,
+		}),
+	};
+}
+
 function createBobResolver(opts?: { agentId?: number; capabilities?: string[] }) {
 	const agentId = opts?.agentId ?? 99;
 	const capabilities = opts?.capabilities ?? ["message/send"];
@@ -441,67 +461,19 @@ describe("XmtpTransport", () => {
 	});
 
 	describe("incoming message processing", () => {
-		it("should skip self-messages", async () => {
+		it.each<[string, string | null, unknown]>([
+			["self-messages", null, JSON.stringify({ jsonrpc: "2.0", method: "test/method", id: "1" })],
+			["non-string content", "other-inbox", 12345],
+			["non-JSON content", "other-inbox", "not json at all"],
+			["non-JSON-RPC messages", "other-inbox", JSON.stringify({ hello: "world" })],
+		])("should skip %s", async (_desc, senderInboxId, content) => {
 			injectMockClient();
-
-			const callback = vi.fn(
-				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
-					status: "received",
-				}),
-			);
-			transport.setHandlers({ onRequest: callback });
-
-			await internals(transport).processMessage({
-				senderInboxId: mockSetup.client.inboxId,
-				content: JSON.stringify({
-					jsonrpc: "2.0",
-					method: "test/method",
-					id: "1",
-				}),
-			});
-
-			expect(callback).not.toHaveBeenCalled();
-		});
-
-		it("should skip non-string content", async () => {
-			injectMockClient();
-
 			const callback = vi.fn();
 			transport.setHandlers({ onRequest: callback });
-
 			await internals(transport).processMessage({
-				senderInboxId: "other-inbox",
-				content: 12345,
+				senderInboxId: senderInboxId ?? mockSetup.client.inboxId,
+				content,
 			});
-
-			expect(callback).not.toHaveBeenCalled();
-		});
-
-		it("should skip non-JSON content", async () => {
-			injectMockClient();
-
-			const callback = vi.fn();
-			transport.setHandlers({ onRequest: callback });
-
-			await internals(transport).processMessage({
-				senderInboxId: "other-inbox",
-				content: "not json at all",
-			});
-
-			expect(callback).not.toHaveBeenCalled();
-		});
-
-		it("should skip non-JSON-RPC messages", async () => {
-			injectMockClient();
-
-			const callback = vi.fn();
-			transport.setHandlers({ onRequest: callback });
-
-			await internals(transport).processMessage({
-				senderInboxId: "other-inbox",
-				content: JSON.stringify({ hello: "world" }),
-			});
-
 			expect(callback).not.toHaveBeenCalled();
 		});
 
@@ -592,8 +564,7 @@ describe("XmtpTransport", () => {
 			injectMockClient();
 
 			// Register BOB's inbox -> address mapping
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(transport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			const callback = vi.fn(
 				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
@@ -609,13 +580,13 @@ describe("XmtpTransport", () => {
 			};
 
 			await internals(transport).processMessage({
-				senderInboxId: bobInboxId,
+				senderInboxId: BOB_INBOX_ID,
 				content: JSON.stringify(request),
 			});
 
 			expect(callback).toHaveBeenCalledWith({
 				from: 42,
-				senderInboxId: bobInboxId,
+				senderInboxId: BOB_INBOX_ID,
 				message: request,
 			});
 		});
@@ -623,8 +594,7 @@ describe("XmtpTransport", () => {
 		it("should ignore duplicate inbound requests with the same sender and request id", async () => {
 			injectMockClient();
 
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(transport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			const callback = vi.fn(
 				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
@@ -640,11 +610,11 @@ describe("XmtpTransport", () => {
 			};
 
 			await internals(transport).processMessage({
-				senderInboxId: bobInboxId,
+				senderInboxId: BOB_INBOX_ID,
 				content: JSON.stringify(request),
 			});
 			await internals(transport).processMessage({
-				senderInboxId: bobInboxId,
+				senderInboxId: BOB_INBOX_ID,
 				content: JSON.stringify(request),
 			});
 
@@ -656,8 +626,7 @@ describe("XmtpTransport", () => {
 			const failingTrustStore = createMockTrustStore([BOB_CONTACT]);
 			const retryTransport = new XmtpTransport(TEST_CONFIG, failingTrustStore);
 			injectMockClient(retryTransport);
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(retryTransport).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(retryTransport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			failingTrustStore.findByAgentAddress = vi
 				.fn<ITrustStore["findByAgentAddress"]>()
@@ -679,14 +648,14 @@ describe("XmtpTransport", () => {
 
 			await expect(
 				internals(retryTransport).processMessage({
-					senderInboxId: bobInboxId,
+					senderInboxId: BOB_INBOX_ID,
 					content: JSON.stringify(request),
 				}),
 			).rejects.toThrow("temporary lookup failure");
 
 			await expect(
 				internals(retryTransport).processMessage({
-					senderInboxId: bobInboxId,
+					senderInboxId: BOB_INBOX_ID,
 					content: JSON.stringify(request),
 				}),
 			).resolves.toBe(true);
@@ -1037,8 +1006,7 @@ describe("XmtpTransport", () => {
 			const transportWithPendingContact = new XmtpTransport(TEST_CONFIG, pendingContactStore);
 			injectMockClient(transportWithPendingContact);
 
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(transportWithPendingContact).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(transportWithPendingContact).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			const callback = vi.fn(
 				async (): Promise<TransportAck> => ({
@@ -1054,7 +1022,7 @@ describe("XmtpTransport", () => {
 			};
 
 			await internals(transportWithPendingContact).processMessage({
-				senderInboxId: bobInboxId,
+				senderInboxId: BOB_INBOX_ID,
 				content: JSON.stringify(request),
 			});
 
@@ -1067,8 +1035,7 @@ describe("XmtpTransport", () => {
 		it("baselines existing DM history on first reconcile and only processes later messages", async () => {
 			injectMockClient();
 
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(transport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			const callback = vi.fn(
 				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
@@ -1077,19 +1044,8 @@ describe("XmtpTransport", () => {
 			);
 			transport.setHandlers({ onRequest: callback });
 
-			mockSetup.setConversationMessages("dm-1", [
-				{
-					id: "old-msg",
-					sentAtNs: 1_000n,
-					senderInboxId: bobInboxId,
-					conversationId: "dm-1",
-					content: JSON.stringify({
-						jsonrpc: "2.0",
-						method: "message/send",
-						id: "old-msg",
-					}),
-				},
-			]);
+			const oldMsg = makeDmMessage("old-msg");
+			mockSetup.setConversationMessages("dm-1", [oldMsg]);
 
 			await expect(transport.reconcile()).resolves.toEqual({
 				synced: true,
@@ -1098,28 +1054,8 @@ describe("XmtpTransport", () => {
 			expect(callback).not.toHaveBeenCalled();
 
 			mockSetup.setConversationMessages("dm-1", [
-				{
-					id: "old-msg",
-					sentAtNs: 1_000n,
-					senderInboxId: bobInboxId,
-					conversationId: "dm-1",
-					content: JSON.stringify({
-						jsonrpc: "2.0",
-						method: "message/send",
-						id: "old-msg",
-					}),
-				},
-				{
-					id: "new-msg",
-					sentAtNs: 2_000n,
-					senderInboxId: bobInboxId,
-					conversationId: "dm-1",
-					content: JSON.stringify({
-						jsonrpc: "2.0",
-						method: "message/send",
-						id: "new-msg",
-					}),
-				},
+				oldMsg,
+				makeDmMessage("new-msg", { sentAtNs: 2_000n }),
 			]);
 
 			await expect(transport.reconcile()).resolves.toEqual({
@@ -1129,20 +1065,15 @@ describe("XmtpTransport", () => {
 			expect(callback).toHaveBeenCalledTimes(1);
 			expect(callback).toHaveBeenCalledWith({
 				from: 42,
-				senderInboxId: bobInboxId,
-				message: {
-					jsonrpc: "2.0",
-					method: "message/send",
-					id: "new-msg",
-				},
+				senderInboxId: BOB_INBOX_ID,
+				message: { jsonrpc: "2.0", method: "message/send", id: "new-msg" },
 			});
 		});
 
 		it("processes the first message from conversations created after the baseline", async () => {
 			injectMockClient();
 
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(transport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			const callback = vi.fn(
 				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
@@ -1152,34 +1083,14 @@ describe("XmtpTransport", () => {
 			transport.setHandlers({ onRequest: callback });
 
 			mockSetup.setConversationMessages("dm-existing", [
-				{
-					id: "existing-msg",
-					sentAtNs: 1_000n,
-					senderInboxId: bobInboxId,
-					conversationId: "dm-existing",
-					content: JSON.stringify({
-						jsonrpc: "2.0",
-						method: "message/send",
-						id: "existing-msg",
-					}),
-				},
+				makeDmMessage("existing-msg", { conversationId: "dm-existing" }),
 			]);
 
 			await transport.reconcile();
 			expect(callback).not.toHaveBeenCalled();
 
 			mockSetup.setConversationMessages("dm-new", [
-				{
-					id: "first-msg",
-					sentAtNs: 2_000n,
-					senderInboxId: bobInboxId,
-					conversationId: "dm-new",
-					content: JSON.stringify({
-						jsonrpc: "2.0",
-						method: "message/send",
-						id: "first-msg",
-					}),
-				},
+				makeDmMessage("first-msg", { sentAtNs: 2_000n, conversationId: "dm-new" }),
 			]);
 
 			await expect(transport.reconcile()).resolves.toEqual({
@@ -1189,12 +1100,8 @@ describe("XmtpTransport", () => {
 			expect(callback).toHaveBeenCalledTimes(1);
 			expect(callback).toHaveBeenCalledWith({
 				from: 42,
-				senderInboxId: bobInboxId,
-				message: {
-					jsonrpc: "2.0",
-					method: "message/send",
-					id: "first-msg",
-				},
+				senderInboxId: BOB_INBOX_ID,
+				message: { jsonrpc: "2.0", method: "message/send", id: "first-msg" },
 			});
 		});
 	});
@@ -1260,8 +1167,7 @@ describe("XmtpTransport", () => {
 		it("processes streamed messages sequentially before advancing to the next one", async () => {
 			injectMockClient();
 
-			const bobInboxId = `inbox-for-${BOB.address.toLowerCase()}`;
-			internals(transport).inboxIdToAddress.set(bobInboxId, BOB.address);
+			internals(transport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
 
 			const firstRequestGate = createDeferred<void>();
 			const callback = vi.fn(async (envelope: InboundRequestEnvelope): Promise<TransportAck> => {
@@ -1275,28 +1181,16 @@ describe("XmtpTransport", () => {
 			const listenPromise = internals(transport).listenForMessages();
 			await sleep(10);
 
-			mockSetup.pushMessage({
-				senderInboxId: bobInboxId,
-				conversationId: "dm-sequential",
-				id: "stream-entry-1",
-				sentAtNs: 1_000n,
-				content: JSON.stringify({
-					jsonrpc: "2.0",
-					method: "message/send",
-					id: "stream-msg-1",
+			mockSetup.pushMessage(
+				makeDmMessage("stream-entry-1", { conversationId: "dm-sequential", rpcId: "stream-msg-1" }),
+			);
+			mockSetup.pushMessage(
+				makeDmMessage("stream-entry-2", {
+					sentAtNs: 2_000n,
+					conversationId: "dm-sequential",
+					rpcId: "stream-msg-2",
 				}),
-			});
-			mockSetup.pushMessage({
-				senderInboxId: bobInboxId,
-				conversationId: "dm-sequential",
-				id: "stream-entry-2",
-				sentAtNs: 2_000n,
-				content: JSON.stringify({
-					jsonrpc: "2.0",
-					method: "message/send",
-					id: "stream-msg-2",
-				}),
-			});
+			);
 
 			await sleep(25);
 			expect(callback).toHaveBeenCalledTimes(1);
