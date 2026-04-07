@@ -6,7 +6,7 @@ import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 export type RequestJournalDirection = "inbound" | "outbound";
 export type RequestJournalKind = "request" | "result";
 export type RequestJournalStatus = "pending" | "acked" | "completed";
-export type RequestJournalMetadata = Record<string, unknown>;
+type RequestJournalMetadata = Record<string, unknown>;
 
 export interface RequestJournalEntry {
 	requestId: string;

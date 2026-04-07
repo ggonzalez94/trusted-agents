@@ -77,7 +77,7 @@ function asNumber(value: unknown, label: string): number {
 	return value;
 }
 
-export function parseServoQuote(value: unknown): ServoQuoteResponse {
+function parseServoQuote(value: unknown): ServoQuoteResponse {
 	const payload = asRecord(value, "Servo paymaster quote");
 	return {
 		paymaster: asAddress(payload.paymaster, "paymaster"),
@@ -138,7 +138,7 @@ function parseServoCapabilities(value: unknown): ServoCapabilities {
 	};
 }
 
-export function buildServoFactoryData(owner: Address): Hex {
+function buildServoFactoryData(owner: Address): Hex {
 	return encodeFunctionData({
 		abi: SERVO_ACCOUNT_FACTORY_ABI,
 		functionName: "createAccount",
@@ -291,7 +291,7 @@ export async function getServoCapabilities(endpoint: string): Promise<ServoCapab
 	return parseServoCapabilities(await rpcRequest<unknown>(endpoint, "pm_getCapabilities", []));
 }
 
-export async function resolveServoEip1559Fees(
+async function resolveServoEip1559Fees(
 	context: Pick<Eip4337ExecutionContext, "publicClient">["publicClient"],
 	endpoint: string,
 ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {

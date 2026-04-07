@@ -30,7 +30,7 @@ interface TapCommandJobBase<TType extends TapCommandJobType, TPayload> {
 	payload: TPayload;
 }
 
-export interface TapConnectJob
+interface TapConnectJob
 	extends TapCommandJobBase<
 		"connect",
 		{
@@ -38,7 +38,7 @@ export interface TapConnectJob
 		}
 	> {}
 
-export interface TapSendMessageJob
+interface TapSendMessageJob
 	extends TapCommandJobBase<
 		"send-message",
 		{
@@ -49,7 +49,7 @@ export interface TapSendMessageJob
 		}
 	> {}
 
-export interface TapPublishGrantSetJob
+interface TapPublishGrantSetJob
 	extends TapCommandJobBase<
 		"publish-grant-set",
 		{
@@ -59,7 +59,7 @@ export interface TapPublishGrantSetJob
 		}
 	> {}
 
-export interface TapRequestGrantSetJob
+interface TapRequestGrantSetJob
 	extends TapCommandJobBase<
 		"request-grant-set",
 		{
@@ -69,7 +69,7 @@ export interface TapRequestGrantSetJob
 		}
 	> {}
 
-export interface TapRequestFundsJob
+interface TapRequestFundsJob
 	extends TapCommandJobBase<
 		"request-funds",
 		{
@@ -77,7 +77,7 @@ export interface TapRequestFundsJob
 		}
 	> {}
 
-export interface TapRequestMeetingJob
+interface TapRequestMeetingJob
 	extends TapCommandJobBase<
 		"request-meeting",
 		{
