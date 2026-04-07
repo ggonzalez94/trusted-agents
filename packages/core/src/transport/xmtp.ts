@@ -596,7 +596,7 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<number> {
-		const claimedSender = this.extractBootstrapSender(message.params);
+		const claimedSender = this.extractAgentIdentifier(message.params, "from");
 		const claimedAgentId = claimedSender?.agentId;
 		const claimedChain = claimedSender?.chain;
 
@@ -632,18 +632,18 @@ export class XmtpTransport implements TransportProvider {
 		return claimedAgentId;
 	}
 
-	private extractBootstrapSender(params: unknown): AgentIdentifier | null {
+	private extractAgentIdentifier(params: unknown, key: string): AgentIdentifier | null {
 		if (typeof params !== "object" || params === null) {
 			return null;
 		}
 
-		const from = (params as { from?: unknown }).from;
-		if (typeof from !== "object" || from === null) {
+		const nested = (params as Record<string, unknown>)[key];
+		if (typeof nested !== "object" || nested === null) {
 			return null;
 		}
 
-		const agentId = (from as { agentId?: unknown }).agentId;
-		const chain = (from as { chain?: unknown }).chain;
+		const agentId = (nested as { agentId?: unknown }).agentId;
+		const chain = (nested as { chain?: unknown }).chain;
 		if (
 			typeof agentId !== "number" ||
 			agentId < 0 ||
@@ -707,7 +707,7 @@ export class XmtpTransport implements TransportProvider {
 			return null;
 		}
 
-		const grantor = this.extractGrantor(message.params);
+		const grantor = this.extractAgentIdentifier(message.params, "grantor");
 		if (!grantor) {
 			return null;
 		}
@@ -740,30 +740,6 @@ export class XmtpTransport implements TransportProvider {
 	private senderMatchesContact(senderAddresses: `0x${string}`[], contact: Contact): boolean {
 		const expectedAddress = contact.peerAgentAddress.toLowerCase();
 		return senderAddresses.some((address) => address.toLowerCase() === expectedAddress);
-	}
-
-	private extractGrantor(params: unknown): AgentIdentifier | null {
-		if (typeof params !== "object" || params === null) {
-			return null;
-		}
-
-		const grantor = (params as { grantor?: unknown }).grantor;
-		if (typeof grantor !== "object" || grantor === null) {
-			return null;
-		}
-
-		const agentId = (grantor as { agentId?: unknown }).agentId;
-		const chain = (grantor as { chain?: unknown }).chain;
-		if (
-			typeof agentId !== "number" ||
-			agentId < 0 ||
-			typeof chain !== "string" ||
-			chain.length === 0
-		) {
-			return null;
-		}
-
-		return { agentId, chain };
 	}
 
 	private extractConnectionId(params: unknown): string | null {

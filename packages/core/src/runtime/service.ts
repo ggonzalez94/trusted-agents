@@ -1300,10 +1300,11 @@ export class TapMessagingService {
 				method: request.method,
 				peerAgentId: contact.peerAgentId,
 				status: "pending",
-				metadata: serializePendingSchedulingOutboundRequestDetails(
+				metadata: serializePendingSchedulingRequestDetails(
 					contact,
 					proposal,
 					this.context.config.dataDir,
+					"outbound",
 				),
 			});
 
@@ -1829,6 +1830,7 @@ export class TapMessagingService {
 						contact,
 						schedulingRequest,
 						this.context.config.dataDir,
+						"inbound",
 					),
 				);
 				if (schedulingRequest.type === "scheduling/counter") {
@@ -3675,8 +3677,12 @@ function serializePendingSchedulingRequestDetails(
 	contact: Contact,
 	request: SchedulingProposal,
 	dataDir: string,
+	direction: "inbound" | "outbound",
 ): Record<string, unknown> {
-	const grants = findApplicableSchedulingGrants(contact.permissions.grantedByMe, request);
+	const grants =
+		direction === "inbound"
+			? findApplicableSchedulingGrants(contact.permissions.grantedByMe, request)
+			: findActiveGrantsByScope(contact.permissions.grantedByPeer, "scheduling/request");
 	const details: TapPendingSchedulingDetails = {
 		type: "scheduling",
 		peerName: contact.peerDisplayName,
@@ -3688,36 +3694,6 @@ function serializePendingSchedulingRequestDetails(
 		originTimezone: request.originTimezone,
 		note: request.note,
 		activeGrantSummary: grants.map((g) => summarizeGrant(g)),
-		ledgerPath: getPermissionLedgerPath(dataDir),
-	};
-	return {
-		...serializePendingRequestDetails(details),
-		request: {
-			type: "scheduling-request",
-			payload: request,
-		},
-	};
-}
-
-function serializePendingSchedulingOutboundRequestDetails(
-	contact: Contact,
-	request: SchedulingProposal,
-	dataDir: string,
-): Record<string, unknown> {
-	const details: TapPendingSchedulingDetails = {
-		type: "scheduling",
-		peerName: contact.peerDisplayName,
-		peerChain: contact.peerChain,
-		schedulingId: request.schedulingId,
-		title: request.title,
-		duration: request.duration,
-		slots: request.slots,
-		originTimezone: request.originTimezone,
-		note: request.note,
-		activeGrantSummary: findActiveGrantsByScope(
-			contact.permissions.grantedByPeer,
-			"scheduling/request",
-		).map((grant) => summarizeGrant(grant)),
 		ledgerPath: getPermissionLedgerPath(dataDir),
 	};
 	return {
