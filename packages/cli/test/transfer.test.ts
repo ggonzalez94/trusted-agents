@@ -76,64 +76,24 @@ describe("tap transfer", () => {
 		vi.clearAllMocks();
 	});
 
-	it("returns validation error for invalid recipient address", async () => {
-		await transferCommand(
+	it.each([
+		[
+			"invalid recipient address",
 			{ to: "not-an-address", asset: "native", amount: "1", yes: true },
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Invalid recipient address");
-		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
-	});
-
-	it("returns validation error for non-positive amount", async () => {
-		await transferCommand(
-			{
-				to: "0x1111111111111111111111111111111111111111",
-				asset: "native",
-				amount: "0",
-				yes: true,
-			},
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Amount must be a positive number");
-	});
-
-	it("returns validation error for unsupported asset", async () => {
-		await transferCommand(
-			{
-				to: "0x1111111111111111111111111111111111111111",
-				asset: "dai",
-				amount: "1",
-				yes: true,
-			},
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Unsupported asset");
-	});
-
-	it("returns validation error for unknown chain", async () => {
-		await transferCommand(
+			"Invalid recipient address",
+		],
+		[
+			"non-positive amount",
+			{ to: "0x1111111111111111111111111111111111111111", asset: "native", amount: "0", yes: true },
+			"Amount must be a positive number",
+		],
+		[
+			"unsupported asset",
+			{ to: "0x1111111111111111111111111111111111111111", asset: "dai", amount: "1", yes: true },
+			"Unsupported asset",
+		],
+		[
+			"unknown chain",
 			{
 				to: "0x1111111111111111111111111111111111111111",
 				asset: "native",
@@ -141,21 +101,10 @@ describe("tap transfer", () => {
 				chain: "not-a-chain",
 				yes: true,
 			},
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Unknown chain");
-		expect(process.exitCode).toBe(2);
-	});
-
-	it("returns validation error when usdc is unsupported on the selected chain", async () => {
-		await transferCommand(
+			"Unknown chain",
+		],
+		[
+			"usdc unsupported on chain",
 			{
 				to: "0x1111111111111111111111111111111111111111",
 				asset: "usdc",
@@ -163,16 +112,17 @@ describe("tap transfer", () => {
 				chain: "eip155:1",
 				yes: true,
 			},
-			{ json: true },
-		);
-
+			"USDC is not supported",
+		],
+	])("returns validation error for %s", async (_, args, expectedMessage) => {
+		await transferCommand(args, { json: true });
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			error?: { code?: string; message?: string };
 		};
 		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("USDC is not supported");
+		expect(output.error?.message).toContain(expectedMessage);
 	});
 
 	it("executes a transfer using resolved chain aliases", async () => {
