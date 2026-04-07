@@ -128,6 +128,21 @@ function cloneContact<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function makeActiveContact(connectionId: string): Contact {
+	return {
+		connectionId,
+		peerAgentId: PEER_AGENT.agentId,
+		peerChain: PEER_AGENT.chain,
+		peerOwnerAddress: PEER_AGENT.ownerAddress,
+		peerDisplayName: PEER_AGENT.registrationFile.name,
+		peerAgentAddress: PEER_AGENT.agentAddress,
+		permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
+		establishedAt: "2026-03-08T00:00:00.000Z",
+		lastContactAt: "2026-03-08T00:00:00.000Z",
+		status: "active",
+	};
+}
+
 function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 	const contacts = new Map(
 		initialContacts.map((contact) => [contact.connectionId, cloneContact(contact)]),
@@ -870,18 +885,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("processes queued outbound commands during syncOnce", async () => {
-		const activeContact: Contact = {
-			connectionId: "conn-message-1",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const activeContact = makeActiveContact("conn-message-1");
 		const { service, transport, dataDir } = await createService(
 			{},
 			{
@@ -944,18 +948,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("polls queued outbound commands while the listener is running", async () => {
-		const activeContact: Contact = {
-			connectionId: "conn-grants-1",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const activeContact = makeActiveContact("conn-grants-1");
 		const { service, transport, dataDir } = await createService(
 			{},
 			{
@@ -995,18 +988,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("captures an action result that arrives before requestFunds finishes sending", async () => {
-		const activeContact: Contact = {
-			connectionId: "conn-request-funds-fast",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const activeContact = makeActiveContact("conn-request-funds-fast");
 
 		class ImmediateActionResultTransport extends FakeTransport {
 			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
@@ -1074,18 +1056,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("retries pending action result delivery during maintenance", async () => {
-		const contact: Contact = {
-			connectionId: "conn-transfer-retry",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-transfer-retry");
 
 		class FlakyActionResultTransport extends FakeTransport {
 			private failActionResultOnce = true;
@@ -1168,12 +1139,7 @@ describe("TapMessagingService", () => {
 
 	it("auto-approves grant-covered transfer when no approveTransfer hook is registered", async () => {
 		const contact: Contact = {
-			connectionId: "conn-manual-transfer-1",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
+			...makeActiveContact("conn-manual-transfer-1"),
 			permissions: {
 				...createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
 				grantedByMe: createGrantSet(
@@ -1192,9 +1158,6 @@ describe("TapMessagingService", () => {
 					"2026-03-08T00:00:00.000Z",
 				),
 			},
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
 		};
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" as const,
@@ -1250,18 +1213,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("marks executed transfer requests completed even if retry metadata persistence fails", async () => {
-		const contact: Contact = {
-			connectionId: "conn-transfer-journal-fail",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-transfer-journal-fail");
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" as const,
 		}));
@@ -1326,18 +1278,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("rejects transfer without matching grants when no approveTransfer hook is registered", async () => {
-		const contact: Contact = {
-			connectionId: "conn-transfer-no-hook",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-transfer-no-hook");
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
 		}));
@@ -1384,18 +1325,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("leaves transfer pending when approveTransfer hook returns null and no grants match", async () => {
-		const contact: Contact = {
-			connectionId: "conn-transfer-hook-null",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-transfer-hook-null");
 		const approveTransfer = vi.fn(async () => null);
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
@@ -1454,18 +1384,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("allows hook-based transfer approval without matching grants", async () => {
-		const contact: Contact = {
-			connectionId: "conn-transfer-2",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-transfer-2");
 		const executeTransfer = vi.fn(async () => ({
 			txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as const,
 		}));
@@ -1513,18 +1432,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("captures fast transfer results that arrive before the request call finishes", async () => {
-		const contact: Contact = {
-			connectionId: "conn-request-funds-fast",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-request-funds-fast");
 
 		class FastResultTransport extends FakeTransport {
 			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
@@ -1645,18 +1553,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("rejects permission updates that do not involve the local agent", async () => {
-		const contact: Contact = {
-			connectionId: "conn-grants-invalid",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-grants-invalid");
 		const trustStore = createMemoryTrustStore([contact]);
 		const transport = new FakeTransport();
 		const { service } = await createService(
@@ -2080,18 +1977,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("resolvePending scheduling approval applies override and bypasses confirm hook", async () => {
-		const contact: Contact = {
-			connectionId: "conn-deferred-scheduling",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-deferred-scheduling");
 		const transport = new FakeTransport();
 		const confirmMeeting = vi.fn(async () => false);
 		const schedulingHandler = {
@@ -2168,12 +2054,7 @@ describe("TapMessagingService", () => {
 
 	it("settles scheduling requests when confirmMeeting returns false", async () => {
 		const contact: Contact = {
-			connectionId: "conn-confirm-false-scheduling",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
+			...makeActiveContact("conn-confirm-false-scheduling"),
 			permissions: {
 				...createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
 				grantedByMe: createGrantSet(
@@ -2186,9 +2067,6 @@ describe("TapMessagingService", () => {
 					"2026-03-08T00:00:00.000Z",
 				),
 			},
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
 		};
 		const transport = new FakeTransport();
 		const confirmMeeting = vi.fn(async () => false);
@@ -2267,18 +2145,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("cancels outbound scheduling requests with a scheduling/cancel response", async () => {
-		const contact: Contact = {
-			connectionId: "conn-cancel-outbound-scheduling",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-cancel-outbound-scheduling");
 		const transport = new FakeTransport();
 		const { service, requestJournal } = await createService(
 			{},
@@ -2327,18 +2194,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("completes the superseded outbound request when a counter-proposal arrives", async () => {
-		const contact: Contact = {
-			connectionId: "conn-counter-cleanup",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-counter-cleanup");
 		const transport = new FakeTransport();
 		const { service, requestJournal } = await createService(
 			{},
@@ -2401,12 +2257,7 @@ describe("TapMessagingService", () => {
 
 	it("uses the responder's local timezone and stores the local event when accepting", async () => {
 		const contact: Contact = {
-			connectionId: "conn-responder-timezone",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
+			...makeActiveContact("conn-responder-timezone"),
 			permissions: {
 				...createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
 				grantedByMe: createGrantSet(
@@ -2419,9 +2270,6 @@ describe("TapMessagingService", () => {
 					"2026-03-08T00:00:00.000Z",
 				),
 			},
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
 		};
 		const transport = new FakeTransport();
 		const confirmMeeting = vi.fn(async () => true);
@@ -2507,18 +2355,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("deletes the requester's local calendar event when the peer cancels an accepted meeting", async () => {
-		const contact: Contact = {
-			connectionId: "conn-requester-cancel-cleanup",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-requester-cancel-cleanup");
 		const transport = new FakeTransport();
 		const schedulingHandler = {
 			evaluateProposal: vi.fn(async () => ({ action: "defer" as const })),
@@ -2614,12 +2451,7 @@ describe("TapMessagingService", () => {
 
 	it("deletes the responder's local calendar event when the requester cancels later", async () => {
 		const contact: Contact = {
-			connectionId: "conn-responder-cancel-cleanup",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
+			...makeActiveContact("conn-responder-cancel-cleanup"),
 			permissions: {
 				...createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
 				grantedByMe: createGrantSet(
@@ -2632,9 +2464,6 @@ describe("TapMessagingService", () => {
 					"2026-03-08T00:00:00.000Z",
 				),
 			},
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
 		};
 		const transport = new FakeTransport();
 		const confirmMeeting = vi.fn(async () => true);
@@ -2736,18 +2565,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("uses outbound scheduling metadata for accepted meeting title and timezone", async () => {
-		const contact: Contact = {
-			connectionId: "conn-scheduling-accept-metadata",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-scheduling-accept-metadata");
 		const transport = new FakeTransport();
 		const schedulingHandler = {
 			evaluateProposal: vi.fn(async () => ({ action: "defer" as const })),
@@ -2889,18 +2707,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("sends UNSUPPORTED_ACTION error for unrecognized action types", async () => {
-		const contact: Contact = {
-			connectionId: "conn-unsupported-action",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-unsupported-action");
 		const emitEvent = vi.fn();
 		const transport = new FakeTransport();
 		const { service } = await createService(
@@ -2967,18 +2774,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("sendActionRequest persists to request journal", async () => {
-		const contact: Contact = {
-			connectionId: "conn-action-journal",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-action-journal");
 		const { service, transport, requestJournal } = await createService(
 			{},
 			{
@@ -3015,18 +2811,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("sendActionRequest cleans up journal on non-timeout send failure", async () => {
-		const contact: Contact = {
-			connectionId: "conn-action-journal-fail",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-action-journal-fail");
 		const { service, requestJournal } = await createService(
 			{ sendError: new Error("network failure") },
 			{
@@ -3050,18 +2835,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("emits structured event for generic (non-transfer, non-scheduling) action result", async () => {
-		const contact: Contact = {
-			connectionId: "conn-generic-result",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-generic-result");
 		const emitEvent = vi.fn();
 		const transport = new FakeTransport();
 		const { service, requestJournal } = await createService(
@@ -3135,18 +2909,7 @@ describe("TapMessagingService", () => {
 	});
 
 	it("handles generic action result without a correlated outbound request", async () => {
-		const contact: Contact = {
-			connectionId: "conn-generic-no-journal",
-			peerAgentId: PEER_AGENT.agentId,
-			peerChain: PEER_AGENT.chain,
-			peerOwnerAddress: PEER_AGENT.ownerAddress,
-			peerDisplayName: PEER_AGENT.registrationFile.name,
-			peerAgentAddress: PEER_AGENT.agentAddress,
-			permissions: createEmptyPermissionState("2026-03-08T00:00:00.000Z"),
-			establishedAt: "2026-03-08T00:00:00.000Z",
-			lastContactAt: "2026-03-08T00:00:00.000Z",
-			status: "active",
-		};
+		const contact = makeActiveContact("conn-generic-no-journal");
 		const emitEvent = vi.fn();
 		const transport = new FakeTransport();
 		const { service } = await createService(
