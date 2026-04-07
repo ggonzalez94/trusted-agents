@@ -28,6 +28,37 @@ const CONTACT: Contact = {
 	status: "active",
 };
 
+function makeIncomingMessage(
+	id: string,
+	text: string,
+	overrides?: {
+		conversationId?: string;
+		scope?: string;
+		requiresHumanApproval?: boolean;
+	},
+): ProtocolMessage {
+	return {
+		jsonrpc: "2.0",
+		id: `msg-${id}`,
+		method: MESSAGE_SEND,
+		params: {
+			message: {
+				messageId: `message-${id}`,
+				role: "agent",
+				parts: [{ kind: "text", text }],
+				metadata: {
+					trustedAgent: {
+						connectionId: CONTACT.connectionId,
+						conversationId: overrides?.conversationId ?? CONTACT.connectionId,
+						scope: overrides?.scope ?? MESSAGE_SEND,
+						requiresHumanApproval: overrides?.requiresHumanApproval ?? false,
+					},
+				},
+			},
+		},
+	};
+}
+
 describe("message conversation helpers", () => {
 	let tmpDir: string;
 	let logger: FileConversationLogger;
@@ -126,26 +157,11 @@ describe("message conversation helpers", () => {
 	});
 
 	it("falls back to the connection id when incoming metadata uses an unsafe conversation id", () => {
-		const request: ProtocolMessage = {
-			jsonrpc: "2.0",
-			id: "msg-unsafe-001",
-			method: MESSAGE_SEND,
-			params: {
-				message: {
-					messageId: "message-unsafe-001",
-					role: "agent",
-					parts: [{ kind: "text", text: "Unsafe id fallback" }],
-					metadata: {
-						trustedAgent: {
-							connectionId: CONTACT.connectionId,
-							conversationId: "../escape",
-							scope: "general-chat",
-							requiresHumanApproval: true,
-						},
-					},
-				},
-			},
-		};
+		const request = makeIncomingMessage("unsafe-001", "Unsafe id fallback", {
+			conversationId: "../escape",
+			scope: "general-chat",
+			requiresHumanApproval: true,
+		});
 
 		const entry = buildConversationLogEntry(
 			CONTACT,
@@ -169,26 +185,9 @@ describe("message conversation helpers", () => {
 	});
 
 	it("ignores alternate inbound metadata conversation ids and stays on the contact conversation", () => {
-		const request: ProtocolMessage = {
-			jsonrpc: "2.0",
-			id: "msg-thread-001",
-			method: MESSAGE_SEND,
-			params: {
-				message: {
-					messageId: "message-thread-001",
-					role: "agent",
-					parts: [{ kind: "text", text: "Pinned thread" }],
-					metadata: {
-						trustedAgent: {
-							connectionId: CONTACT.connectionId,
-							conversationId: "peer-thread-123",
-							scope: MESSAGE_SEND,
-							requiresHumanApproval: false,
-						},
-					},
-				},
-			},
-		};
+		const request = makeIncomingMessage("thread-001", "Pinned thread", {
+			conversationId: "peer-thread-123",
+		});
 
 		const entry = buildConversationLogEntry(CONTACT, request, "incoming");
 		expect(entry?.conversationId).toBe(CONTACT.connectionId);
@@ -253,26 +252,7 @@ describe("message conversation helpers", () => {
 
 	it("persists a transcript from outgoing and incoming requests", async () => {
 		const outgoing = buildOutgoingMessageRequest(CONTACT, "Ping from CLI");
-		const incoming: ProtocolMessage = {
-			jsonrpc: "2.0",
-			id: "msg-in-001",
-			method: MESSAGE_SEND,
-			params: {
-				message: {
-					messageId: "message-in-001",
-					role: "agent",
-					parts: [{ kind: "text", text: "Pong from peer" }],
-					metadata: {
-						trustedAgent: {
-							connectionId: CONTACT.connectionId,
-							conversationId: CONTACT.connectionId,
-							scope: MESSAGE_SEND,
-							requiresHumanApproval: false,
-						},
-					},
-				},
-			},
-		};
+		const incoming = makeIncomingMessage("in-001", "Pong from peer");
 
 		await appendConversationLog(logger, CONTACT, outgoing, "outgoing", "2026-03-05T19:10:00.000Z");
 		await appendConversationLog(logger, CONTACT, incoming, "incoming", "2026-03-05T19:11:00.000Z");
@@ -289,26 +269,7 @@ describe("message conversation helpers", () => {
 	});
 
 	it("deduplicates repeated logs for the same incoming message id", async () => {
-		const incoming: ProtocolMessage = {
-			jsonrpc: "2.0",
-			id: "msg-duplicate-001",
-			method: MESSAGE_SEND,
-			params: {
-				message: {
-					messageId: "message-duplicate-001",
-					role: "agent",
-					parts: [{ kind: "text", text: "Only once" }],
-					metadata: {
-						trustedAgent: {
-							connectionId: CONTACT.connectionId,
-							conversationId: CONTACT.connectionId,
-							scope: MESSAGE_SEND,
-							requiresHumanApproval: false,
-						},
-					},
-				},
-			},
-		};
+		const incoming = makeIncomingMessage("duplicate-001", "Only once");
 
 		await appendConversationLog(logger, CONTACT, incoming, "incoming", "2026-03-05T19:15:00.000Z");
 		await appendConversationLog(logger, CONTACT, incoming, "incoming", "2026-03-05T19:15:01.000Z");
