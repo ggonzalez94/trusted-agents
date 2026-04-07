@@ -14,6 +14,5 @@ export {
 	getDefaultExecutionModeForChain,
 	getDefaultPaymasterProviderForMode,
 	loadTrustedAgentConfigFromDataDir,
-	resolveTrustedAgentConfigPath,
 	type LoadTrustedAgentConfigOptions,
 } from "./load.js";

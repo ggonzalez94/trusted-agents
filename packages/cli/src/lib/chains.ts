@@ -5,7 +5,7 @@ import { BASE_MAINNET } from "trusted-agents-core";
  * Additional chain configs beyond what core provides.
  * Core has Base; we add Taiko here.
  */
-export const TAIKO_MAINNET: ChainConfig = {
+const TAIKO_MAINNET: ChainConfig = {
 	chainId: 167000,
 	caip2: "eip155:167000",
 	name: "Taiko",
