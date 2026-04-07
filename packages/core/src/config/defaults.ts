@@ -10,13 +10,9 @@ export const BASE_MAINNET: ChainConfig = {
 	blockExplorerUrl: "https://basescan.org",
 };
 
-export const DEFAULT_CHAINS: Record<string, ChainConfig> = {
-	"eip155:8453": BASE_MAINNET,
-};
-
 export const DEFAULT_CONFIG: Omit<TrustedAgentsConfig, "agentId" | "chain" | "ows"> = {
 	dataDir: `${homedir()}/.trustedagents`,
-	chains: DEFAULT_CHAINS,
+	chains: { "eip155:8453": BASE_MAINNET },
 	inviteExpirySeconds: 86400, // 24 hours
 	resolveCacheTtlMs: 86400000, // 24 hours
 	resolveCacheMaxEntries: 1000,

@@ -1,12 +1,5 @@
 import { generateNonce } from "../common/index.js";
-import type {
-	JsonRpcErrorObject,
-	JsonRpcId,
-	JsonRpcRequest,
-	JsonRpcResponse,
-	Message,
-	TrustedAgentMetadata,
-} from "./types.js";
+import type { JsonRpcId, JsonRpcRequest } from "./types.js";
 
 export function createJsonRpcRequest(
 	method: string,
@@ -18,33 +11,5 @@ export function createJsonRpcRequest(
 		method,
 		id: id ?? generateNonce(),
 		...(params !== undefined && { params }),
-	};
-}
-
-export function createJsonRpcResponse(id: JsonRpcId, result: unknown): JsonRpcResponse {
-	return {
-		jsonrpc: "2.0",
-		id,
-		result,
-	};
-}
-
-export function createJsonRpcError(id: JsonRpcId, error: JsonRpcErrorObject): JsonRpcResponse {
-	return {
-		jsonrpc: "2.0",
-		id,
-		error,
-	};
-}
-
-export function createMessage(
-	text: string,
-	metadata?: { trustedAgent?: TrustedAgentMetadata },
-): Message {
-	return {
-		messageId: generateNonce(),
-		role: "user",
-		parts: [{ kind: "text", text }],
-		...(metadata !== undefined && { metadata }),
 	};
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentResolver, createAgentResolverFromConfig } from "../../../src/identity/resolver.js";
+import { AgentResolver } from "../../../src/identity/resolver.js";
 import {
 	VALID_MIXED_REGISTRATION_FILE,
 	VALID_REGISTRATION_FILE,
@@ -181,13 +181,9 @@ describe("AgentResolver", () => {
 			},
 		};
 
-		const resolver = createAgentResolverFromConfig(
-			{
-				chains: configChains,
-				resolveCacheMaxEntries: 200,
-			},
-			() => mockClient,
-		);
+		const resolver = new AgentResolver(configChains, () => mockClient, {
+			maxCacheEntries: 200,
+		});
 		const result = await resolver.resolve(5, "eip155:1");
 
 		expect(result.agentId).toBe(5);

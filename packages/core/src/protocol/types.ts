@@ -76,39 +76,10 @@ export interface MessageSendParams {
 	message: Message;
 }
 
-export interface ActionResultParams {
-	requestId: string;
-	status: "completed" | "rejected" | "failed";
-	message: Message;
-	timestamp: string;
-}
-
 export interface PermissionsUpdateParams {
 	grantSet: PermissionGrantSet;
 	grantor: AgentIdentifier;
 	grantee: AgentIdentifier;
 	note?: string;
 	timestamp: string;
-}
-
-export interface AgentCard {
-	name: string;
-	description: string;
-	url: string;
-	capabilities: string[];
-	protocols: string[];
-	version?: string;
-	defaultInputModes?: string[];
-	defaultOutputModes?: string[];
-	skills?: Array<{
-		id: string;
-		name: string;
-		description?: string;
-		tags?: string[];
-	}>;
-	trustedAgentProtocol?: {
-		version: string;
-		agentAddress: `0x${string}`;
-		capabilities: string[];
-	};
 }

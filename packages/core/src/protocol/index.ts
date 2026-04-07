@@ -12,28 +12,19 @@ export type {
 	ConnectionResultParams,
 	PermissionsUpdateParams,
 	MessageSendParams,
-	ActionResultParams,
-	AgentCard,
 } from "./types.js";
 
 export {
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
-	CONNECTION_REVOKE,
 	PERMISSIONS_UPDATE,
 	MESSAGE_SEND,
 	ACTION_REQUEST,
 	ACTION_RESULT,
 	BOOTSTRAP_METHODS,
-	RESULT_METHODS,
 	isResultMethod,
 } from "./methods.js";
 
 export type { ResultMethod } from "./methods.js";
 
-export {
-	createJsonRpcRequest,
-	createJsonRpcResponse,
-	createJsonRpcError,
-	createMessage,
-} from "./messages.js";
+export { createJsonRpcRequest } from "./messages.js";
