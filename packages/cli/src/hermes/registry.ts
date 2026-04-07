@@ -530,7 +530,7 @@ export class HermesTapRegistry {
 				throw error;
 			}
 		});
-		this.installInterval(runtime);
+		this.ensureIntervalInstalled(runtime);
 		return runtime;
 	}
 
@@ -652,7 +652,7 @@ export class HermesTapRegistry {
 				throw error;
 			}
 		});
-		this.installInterval(runtime);
+		this.ensureIntervalInstalled(runtime);
 	}
 
 	private async restartRuntime(name: string): Promise<void> {
@@ -671,9 +671,9 @@ export class HermesTapRegistry {
 		await this.startRuntime(runtime);
 	}
 
-	private installInterval(runtime: ManagedTapRuntime): void {
+	private ensureIntervalInstalled(runtime: ManagedTapRuntime): void {
 		if (runtime.interval) {
-			clearInterval(runtime.interval);
+			return;
 		}
 
 		runtime.interval = setInterval(() => {

@@ -37,7 +37,10 @@ export class FileTapHermesNotificationStore {
 	async push(notification: TapNotification): Promise<boolean> {
 		return await withFileLock(this.lockPath, async () => {
 			const current = await this.load();
-			const existingIndex = current.items.findIndex((item) => item.messageId === notification.messageId);
+			const existingIndex = current.items.findIndex(
+				(item) =>
+					item.identity === notification.identity && item.messageId === notification.messageId,
+			);
 			if (existingIndex !== -1) {
 				current.items[existingIndex] = notification;
 				await this.save(current);

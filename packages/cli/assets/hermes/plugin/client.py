@@ -19,6 +19,7 @@ RESPAWN_STATE_PATH = STATE_DIR / "respawn.json"
 RESPAWN_LOCK_PATH = STATE_DIR / "respawn.lock"
 DEFAULT_SOCKET_PATH = STATE_DIR / "tap-hermes.sock"
 DEFAULT_TIMEOUT_SECONDS = 10.0
+STARTUP_GRACE_SECONDS = 1.0
 RESPAWN_WAIT_SECONDS = 3.0
 RESPAWN_POLL_SECONDS = 0.05
 RESPAWN_COOLDOWN_SECONDS = 10.0
@@ -165,6 +166,9 @@ def _ensure_daemon_running() -> tuple[bool, str | None]:
         )
 
     try:
+        if _wait_for_socket(STARTUP_GRACE_SECONDS):
+            return True, None
+
         _record_respawn_attempt(current_gateway_pid)
         tap_bin = shutil.which("tap")
         if not tap_bin:
@@ -295,12 +299,17 @@ def format_notification_context(notifications: list[dict]) -> dict[str, str] | N
     }
 
     lines = ["[TAP Notifications]"]
+    rendered = 0
     for notification in notifications[:20]:
         label = labels.get(notification.get("type"), "INFO")
         one_liner = str(notification.get("oneLiner") or "").strip()
         if not one_liner:
             continue
         lines.append(f"- {label}: {one_liner}")
+        rendered += 1
+
+    if rendered == 0:
+        return None
 
     remaining = len(notifications) - 20
     if remaining > 0:

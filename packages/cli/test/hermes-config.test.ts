@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	DEFAULT_HERMES_RECONCILE_INTERVAL_MINUTES,
@@ -87,6 +87,27 @@ describe("Tap Hermes config", () => {
 		) as { identities: Array<{ name: string; dataDir: string; reconcileIntervalMinutes: number }> };
 		expect(raw.identities).toHaveLength(1);
 		expect(raw.identities[0]?.dataDir).toBe("/tmp/agent-a-renamed");
+	});
+
+	it("persists configured data dirs as absolute paths", async () => {
+		const tempRoot = await mkdtemp(join(tmpdir(), "tap-hermes-config-"));
+		const hermesHome = join(tempRoot, "hermes-home");
+		createdDirs.push(tempRoot);
+		const expectedDataDir = join(tempRoot, "relative-agent");
+		const relativeDataDir = relative(process.cwd(), expectedDataDir) || ".";
+
+		const configured = await upsertTapHermesIdentity({
+			hermesHome,
+			name: "alpha",
+			dataDir: relativeDataDir,
+		});
+
+		expect(configured.dataDir).toBe(resolve(expectedDataDir));
+
+		const raw = JSON.parse(
+			await readFile(getTapHermesPaths(hermesHome).configPath, "utf-8"),
+		) as { identities: Array<{ dataDir: string }> };
+		expect(raw.identities[0]?.dataDir).toBe(resolve(expectedDataDir));
 	});
 
 	it("builds stable Hermes TAP filesystem paths", () => {

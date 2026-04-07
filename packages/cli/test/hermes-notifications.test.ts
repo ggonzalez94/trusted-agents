@@ -52,6 +52,21 @@ describe("FileTapHermesNotificationStore", () => {
 		expect(await store.peek()).toEqual([]);
 	});
 
+	it("keeps notifications from different identities even when message ids match", async () => {
+		const stateDir = await mkdtemp(join(tmpdir(), "tap-hermes-notify-"));
+		createdDirs.push(stateDir);
+
+		const store = new FileTapHermesNotificationStore(stateDir, 10);
+		expect(await store.push(makeNotification({ identity: "default", messageId: "shared-1" }))).toBe(true);
+		expect(await store.push(makeNotification({ identity: "ops", messageId: "shared-1" }))).toBe(true);
+
+		const queued = await store.peek();
+		expect(queued.map((item) => `${item.identity}:${item.messageId}`)).toEqual([
+			"default:shared-1",
+			"ops:shared-1",
+		]);
+	});
+
 	it("evicts lower-priority entries before escalations", async () => {
 		const stateDir = await mkdtemp(join(tmpdir(), "tap-hermes-notify-"));
 		createdDirs.push(stateDir);

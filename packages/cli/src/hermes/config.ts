@@ -139,7 +139,7 @@ export async function upsertTapHermesIdentity(
 	const reconcileIntervalMinutes = normalizeReconcileInterval(options.reconcileIntervalMinutes);
 	const nextIdentity: TapHermesIdentityConfig = {
 		name,
-		dataDir: options.dataDir.trim(),
+		dataDir: resolve(options.dataDir.trim()),
 		reconcileIntervalMinutes,
 	};
 

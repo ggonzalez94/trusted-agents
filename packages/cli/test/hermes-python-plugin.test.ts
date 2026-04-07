@@ -115,6 +115,72 @@ describe("Hermes Python TAP bridge", () => {
 			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 		}
 	});
+
+	it("waits for the startup hook daemon before attempting a lazy respawn", async () => {
+		const tapLogPath = join(tempRoot, "tap.log");
+		await writeFakeTapLogger(binDir, tapLogPath);
+
+		const output = await runHermesPluginExpression(
+			hermesHome,
+			`
+import os
+import socket
+import threading
+import time
+from pathlib import Path
+
+socket_path = Path(os.environ["HERMES_HOME"]) / "plugins" / "trusted-agents-tap" / "state" / "tap-hermes.sock"
+state_path = Path(os.environ["HERMES_HOME"]) / "plugins" / "trusted-agents-tap" / "state" / "daemon.json"
+
+def delayed_startup():
+    time.sleep(0.25)
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+    state_path.write_text(json.dumps({
+        "pid": os.getpid(),
+        "gatewayPid": os.getpid(),
+        "socketPath": str(socket_path),
+        "startedAt": "2026-04-07T00:00:00.000Z",
+        "identities": ["default"],
+    }), encoding="utf-8")
+    connection, _ = server.accept()
+    raw = connection.recv(4096).decode("utf-8").strip()
+    request = json.loads(raw.splitlines()[0]) if raw else {}
+    connection.sendall((json.dumps({
+        "ok": True,
+        "result": {"status": request.get("method"), "source": "startup"},
+    }) + "\\n").encode("utf-8"))
+    connection.close()
+    server.close()
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+
+threading.Thread(target=delayed_startup, daemon=True).start()
+print(module.handle_tap_gateway({"action": "status"}))
+`,
+		);
+
+		const result = JSON.parse(output) as { status?: string; source?: string };
+		expect(result).toEqual({ status: "status", source: "startup" });
+		await expect(readCommandLog(tapLogPath)).resolves.toEqual([]);
+	});
+
+	it("skips notification context injection when no notifications render any lines", async () => {
+		const output = await runHermesPluginExpression(
+			hermesHome,
+			'print(json.dumps(module.format_notification_context([{"type": "summary", "oneLiner": "   "}])) )',
+		);
+
+		expect(JSON.parse(output)).toBeNull();
+	});
 });
 
 async function runHermesPluginExpression(hermesHome: string, expression: string): Promise<string> {

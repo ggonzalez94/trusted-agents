@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -56,9 +56,19 @@ async function acquireFileLock(lockPath: string, token: string): Promise<void> {
 async function cleanupStaleLock(lockPath: string): Promise<void> {
 	try {
 		const raw = await readFile(lockPath, "utf-8");
-		const parsed = JSON.parse(raw) as Partial<LockFileContents>;
-		const createdAt = typeof parsed.createdAt === "string" ? Date.parse(parsed.createdAt) : Number.NaN;
-		const pid = typeof parsed.pid === "number" ? parsed.pid : null;
+		let parsed: Partial<LockFileContents> | null = null;
+		try {
+			parsed = JSON.parse(raw) as Partial<LockFileContents>;
+		} catch {
+			parsed = null;
+		}
+
+		const fileStat = await stat(lockPath);
+		const createdAt =
+			parsed && typeof parsed.createdAt === "string"
+				? Date.parse(parsed.createdAt)
+				: fileStat.mtimeMs;
+		const pid = parsed && typeof parsed.pid === "number" ? parsed.pid : null;
 		const staleByTime = Number.isFinite(createdAt) && Date.now() - createdAt >= LOCK_STALE_MS;
 		const deadPid = pid !== null && !isProcessAlive(pid);
 		if (staleByTime || deadPid) {
