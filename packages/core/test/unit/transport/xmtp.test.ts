@@ -1,5 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +14,7 @@ import { XmtpTransport } from "../../../src/transport/xmtp.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
 import { ALICE, ALICE_SIGNING_PROVIDER, BOB } from "../../fixtures/test-keys.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
 
 // --- Test internals access ---
 // biome-ignore lint/suspicious/noExplicitAny: test helper to access private members
@@ -254,19 +253,65 @@ const BOB_CONTACT_LEGACY: Contact = {
 	peerAgentId: 7,
 };
 
+function createBobResolver(opts?: { agentId?: number; capabilities?: string[] }) {
+	const agentId = opts?.agentId ?? 99;
+	const capabilities = opts?.capabilities ?? ["message/send"];
+	return {
+		resolve: vi.fn(),
+		resolveWithCache: vi.fn(async () => ({
+			agentId,
+			chain: "eip155:1",
+			ownerAddress: BOB.address,
+			agentAddress: BOB.address,
+			xmtpEndpoint: BOB.address,
+			endpoint: undefined,
+			capabilities,
+			registrationFile: {
+				type: "eip-8004-registration-v1" as const,
+				name: agentId === BOB_CONTACT.peerAgentId ? BOB_CONTACT.peerDisplayName : "Bob",
+				description: "Test",
+				services: [{ name: "xmtp", endpoint: BOB.address }],
+				trustedAgentProtocol: {
+					version: "1.0",
+					agentAddress: BOB.address,
+					capabilities,
+				},
+			},
+			resolvedAt: new Date().toISOString(),
+		})),
+	};
+}
+
+function createAmbiguousTrustStore(overrides?: Partial<ITrustStore>): ITrustStore {
+	return {
+		getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
+		getContact: vi.fn(async () => null),
+		findByAgentAddress: vi
+			.fn<ITrustStore["findByAgentAddress"]>()
+			.mockRejectedValue(
+				new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
+			),
+		findByAgentId: vi.fn(async () => null),
+		addContact: vi.fn(async () => {}),
+		updateContact: vi.fn(async () => {}),
+		removeContact: vi.fn(async () => {}),
+		touchContact: vi.fn(async () => {}),
+		...overrides,
+	};
+}
+
 describe("XmtpTransport", () => {
+	const dir = useTempDir("xmtp-transport-unit");
 	let transport: XmtpTransport;
 	let trustStore: ITrustStore;
 	let mockSetup: ReturnType<typeof createMockClient>;
-	let testDir: string;
 
 	beforeEach(async () => {
-		testDir = await mkdtemp(join(tmpdir(), "xmtp-transport-unit-"));
 		trustStore = createMockTrustStore([BOB_CONTACT]);
 		transport = new XmtpTransport(
 			{
 				...TEST_CONFIG,
-				dbPath: join(testDir, "xmtp"),
+				dbPath: join(dir.path, "xmtp"),
 			},
 			trustStore,
 		);
@@ -279,7 +324,6 @@ describe("XmtpTransport", () => {
 		} catch {
 			// already stopped
 		}
-		await rm(testDir, { recursive: true, force: true });
 	});
 
 	function injectMockClient(t: XmtpTransport = transport) {
@@ -677,30 +721,7 @@ describe("XmtpTransport", () => {
 
 		it("should verify bootstrap connection/request sender using resolver + inbox state", async () => {
 			const bootstrapTrustStore = createMockTrustStore([]);
-			const resolver = {
-				resolve: vi.fn(),
-				resolveWithCache: vi.fn(async () => ({
-					agentId: 99,
-					chain: "eip155:1",
-					ownerAddress: BOB.address,
-					agentAddress: BOB.address,
-					xmtpEndpoint: BOB.address,
-					endpoint: undefined,
-					capabilities: ["message/send"],
-					registrationFile: {
-						type: "eip-8004-registration-v1" as const,
-						name: "Bob",
-						description: "Test",
-						services: [{ name: "xmtp", endpoint: BOB.address }],
-						trustedAgentProtocol: {
-							version: "1.0",
-							agentAddress: BOB.address,
-							capabilities: ["message/send"],
-						},
-					},
-					resolvedAt: new Date().toISOString(),
-				})),
-			};
+			const resolver = createBobResolver();
 			const transportWithResolver = new XmtpTransport(
 				{
 					...TEST_CONFIG,
@@ -747,44 +768,8 @@ describe("XmtpTransport", () => {
 		});
 
 		it("should bootstrap-verify connection/request senders when address lookup is ambiguous", async () => {
-			const bootstrapTrustStore: ITrustStore = {
-				getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
-				getContact: vi.fn(async () => null),
-				findByAgentAddress: vi
-					.fn<ITrustStore["findByAgentAddress"]>()
-					.mockRejectedValue(
-						new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
-					),
-				findByAgentId: vi.fn(async () => null),
-				addContact: vi.fn(async () => {}),
-				updateContact: vi.fn(async () => {}),
-				removeContact: vi.fn(async () => {}),
-				touchContact: vi.fn(async () => {}),
-			};
-			const resolver = {
-				resolve: vi.fn(),
-				resolveWithCache: vi.fn(async () => ({
-					agentId: 99,
-					chain: "eip155:1",
-					ownerAddress: BOB.address,
-					agentAddress: BOB.address,
-					xmtpEndpoint: BOB.address,
-					endpoint: undefined,
-					capabilities: ["message/send"],
-					registrationFile: {
-						type: "eip-8004-registration-v1" as const,
-						name: "Bob",
-						description: "Test",
-						services: [{ name: "xmtp", endpoint: BOB.address }],
-						trustedAgentProtocol: {
-							version: "1.0",
-							agentAddress: BOB.address,
-							capabilities: ["message/send"],
-						},
-					},
-					resolvedAt: new Date().toISOString(),
-				})),
-			};
+			const bootstrapTrustStore = createAmbiguousTrustStore();
+			const resolver = createBobResolver();
 			const transportWithResolver = new XmtpTransport(
 				{
 					...TEST_CONFIG,
@@ -836,25 +821,14 @@ describe("XmtpTransport", () => {
 		});
 
 		it("should route message/send by connection id when address lookup is ambiguous", async () => {
-			const ambiguousTrustStore: ITrustStore = {
-				getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
+			const ambiguousTrustStore = createAmbiguousTrustStore({
 				getContact: vi.fn(
 					async (connectionId: string) =>
 						[BOB_CONTACT, BOB_CONTACT_LEGACY].find(
 							(contact) => contact.connectionId === connectionId,
 						) ?? null,
 				),
-				findByAgentAddress: vi
-					.fn<ITrustStore["findByAgentAddress"]>()
-					.mockRejectedValue(
-						new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
-					),
-				findByAgentId: vi.fn(async () => null),
-				addContact: vi.fn(async () => {}),
-				updateContact: vi.fn(async () => {}),
-				removeContact: vi.fn(async () => {}),
-				touchContact: vi.fn(async () => {}),
-			};
+			});
 			const exactTransport = new XmtpTransport(TEST_CONFIG, ambiguousTrustStore);
 			injectMockClient(exactTransport);
 
@@ -905,25 +879,14 @@ describe("XmtpTransport", () => {
 		});
 
 		it("should route permissions/update by grantor identity when address lookup is ambiguous", async () => {
-			const ambiguousTrustStore: ITrustStore = {
-				getContacts: vi.fn(async () => [BOB_CONTACT, BOB_CONTACT_LEGACY]),
-				getContact: vi.fn(async () => null),
-				findByAgentAddress: vi
-					.fn<ITrustStore["findByAgentAddress"]>()
-					.mockRejectedValue(
-						new ConnectionError(`Multiple active contacts match address ${BOB.address}`),
-					),
+			const ambiguousTrustStore = createAmbiguousTrustStore({
 				findByAgentId: vi.fn(
 					async (agentId: number, chain: string) =>
 						[BOB_CONTACT, BOB_CONTACT_LEGACY].find(
 							(contact) => contact.peerAgentId === agentId && contact.peerChain === chain,
 						) ?? null,
 				),
-				addContact: vi.fn(async () => {}),
-				updateContact: vi.fn(async () => {}),
-				removeContact: vi.fn(async () => {}),
-				touchContact: vi.fn(async () => {}),
-			};
+			});
 			const exactTransport = new XmtpTransport(TEST_CONFIG, ambiguousTrustStore);
 			injectMockClient(exactTransport);
 
@@ -965,30 +928,7 @@ describe("XmtpTransport", () => {
 		});
 
 		it("should reject spoofed bootstrap connection/request sender", async () => {
-			const resolver = {
-				resolve: vi.fn(),
-				resolveWithCache: vi.fn(async () => ({
-					agentId: 42,
-					chain: "eip155:1",
-					ownerAddress: BOB.address,
-					agentAddress: BOB.address,
-					xmtpEndpoint: BOB.address,
-					endpoint: undefined,
-					capabilities: ["message/send"],
-					registrationFile: {
-						type: "eip-8004-registration-v1" as const,
-						name: "Bob",
-						description: "Test",
-						services: [{ name: "xmtp", endpoint: BOB.address }],
-						trustedAgentProtocol: {
-							version: "1.0",
-							agentAddress: BOB.address,
-							capabilities: ["message/send"],
-						},
-					},
-					resolvedAt: new Date().toISOString(),
-				})),
-			};
+			const resolver = createBobResolver({ agentId: 42 });
 			const transportWithResolver = new XmtpTransport(
 				{
 					...TEST_CONFIG,
@@ -1039,30 +979,10 @@ describe("XmtpTransport", () => {
 					status: "pending",
 				} as unknown as Contact,
 			]);
-			const resolver = {
-				resolve: vi.fn(),
-				resolveWithCache: vi.fn(async () => ({
-					agentId: BOB_CONTACT.peerAgentId,
-					chain: BOB_CONTACT.peerChain,
-					ownerAddress: BOB.address,
-					agentAddress: BOB.address,
-					xmtpEndpoint: BOB.address,
-					endpoint: undefined,
-					capabilities: ["connection/result"],
-					registrationFile: {
-						type: "eip-8004-registration-v1" as const,
-						name: BOB_CONTACT.peerDisplayName,
-						description: "Test",
-						services: [{ name: "xmtp", endpoint: BOB.address }],
-						trustedAgentProtocol: {
-							version: "1.0",
-							agentAddress: BOB.address,
-							capabilities: ["connection/result"],
-						},
-					},
-					resolvedAt: new Date().toISOString(),
-				})),
-			};
+			const resolver = createBobResolver({
+				agentId: BOB_CONTACT.peerAgentId,
+				capabilities: ["connection/result"],
+			});
 			const transportWithResolver = new XmtpTransport(
 				{
 					...TEST_CONFIG,
