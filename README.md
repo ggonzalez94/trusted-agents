@@ -71,10 +71,32 @@ curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scr
 
 From a local clone: `bash scripts/install.sh`
 
+Stable remains the default unless you explicitly opt into a prerelease.
+
+Install the latest beta:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --channel beta
+```
+
+Install an exact prerelease version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --version 0.2.0-beta.1
+```
+
 For OpenClaw, also run:
 
 ```bash
 tap install --runtime openclaw
+```
+
+For prerelease OpenClaw installs, pass the same selector through:
+
+```bash
+tap install --runtime openclaw --channel beta
+# or
+tap install --runtime openclaw --version 0.2.0-beta.1
 ```
 
 #### 2. Initialize

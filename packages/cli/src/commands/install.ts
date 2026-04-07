@@ -23,6 +23,8 @@ type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 
 export interface InstallOptions {
 	runtimes?: string[];
+	channel?: string;
+	version?: string;
 }
 
 interface RuntimeInstallResult {
@@ -44,6 +46,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 	const startTime = Date.now();
 
 	try {
+		const selectors = resolveInstallSelectors(cmdOpts);
 		const homeDir = resolveHomeDir();
 		const runtimes = resolveRequestedRuntimes(cmdOpts.runtimes);
 		const autoDetect = runtimes.length === 0;
@@ -84,7 +87,8 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			}
 
 			if (runtime === "openclaw") {
-				const pluginResult = await installOpenClawPlugin(autoDetect, notes);
+				const pluginPackageSpec = resolvePackageSpec(OPENCLAW_PLUGIN_NAME, selectors);
+				const pluginResult = await installOpenClawPlugin(autoDetect, notes, pluginPackageSpec);
 				result.plugin_installed = pluginResult.installed;
 			}
 
@@ -148,6 +152,40 @@ function parseRuntime(value: string): SupportedRuntime {
 	return match;
 }
 
+function resolveInstallSelectors(input: InstallOptions): { channel?: string; version?: string } {
+	return {
+		channel: normalizeSelector("channel", input.channel),
+		version: normalizeSelector("version", input.version),
+	};
+}
+
+function normalizeSelector(
+	name: "channel" | "version",
+	value: string | undefined,
+): string | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	const normalized = value.trim();
+	if (normalized.length === 0) {
+		throw new Error(`Install ${name} cannot be empty.`);
+	}
+	return normalized;
+}
+
+function resolvePackageSpec(
+	packageName: string,
+	selectors: { channel?: string; version?: string },
+): string {
+	if (selectors.version) {
+		return `${packageName}@${selectors.version}`;
+	}
+	if (selectors.channel) {
+		return `${packageName}@${selectors.channel}`;
+	}
+	return packageName;
+}
+
 async function installSkills(notes: string[]): Promise<void> {
 	try {
 		await execFileAsync("npx", ["-y", "skills", "add", "-g", SKILLS_REPO, "-y"], {
@@ -166,6 +204,7 @@ async function installSkills(notes: string[]): Promise<void> {
 async function installOpenClawPlugin(
 	autoDetect: boolean,
 	notes: string[],
+	pluginPackageSpec: string,
 ): Promise<{ installed: boolean }> {
 	const hasOpenClaw = await commandExists("openclaw");
 	if (!hasOpenClaw) {
@@ -179,8 +218,8 @@ async function installOpenClawPlugin(
 	const gatewayStatusBeforeInstall = await getOpenClawGatewayStatus();
 	const waitForGatewayReload = isHealthyOpenClawGatewayStatus(gatewayStatusBeforeInstall);
 
-	await execOpenClawCommand(["plugins", "install", OPENCLAW_PLUGIN_NAME]);
-	notes.push(`Installed the TAP OpenClaw plugin (${OPENCLAW_PLUGIN_NAME}) from npm.`);
+	await execOpenClawCommand(["plugins", "install", pluginPackageSpec]);
+	notes.push(`Installed the TAP OpenClaw plugin (${pluginPackageSpec}) from npm.`);
 	await validateOpenClawConfig(notes);
 
 	if (waitForGatewayReload) {

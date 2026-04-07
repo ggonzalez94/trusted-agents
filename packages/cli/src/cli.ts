@@ -64,10 +64,15 @@ export function createCli(): Command {
 			"Install for specific runtimes only (claude, codex, openclaw)",
 			[],
 		)
-		.action(async (cmdOpts: { runtime?: string[] }) => {
+		.option("--channel <name>", "Install prerelease packages from a named npm dist-tag")
+		.option("--version <version>", "Install an exact prerelease package version")
+		.action(async (cmdOpts: { runtime?: string[]; channel?: string; version?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { installCommand } = await import("./commands/install.js");
-			await installCommand({ runtimes: cmdOpts.runtime }, opts);
+			await installCommand(
+				{ runtimes: cmdOpts.runtime, channel: cmdOpts.channel, version: cmdOpts.version },
+				opts,
+			);
 		});
 
 	program

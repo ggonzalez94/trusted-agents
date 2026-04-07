@@ -71,12 +71,21 @@ Remote install (no clone needed):
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
+Stable is the default. To opt into prereleases:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --channel beta
+curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --version 0.2.0-beta.1
+```
+
 The installer builds, links `tap` to PATH, and sets up skills for your host. If running inside openclaw, make sure the plugin is installed.
 
 **OpenClaw plugin install:**
 
 ```bash
 tap install --runtime openclaw
+tap install --runtime openclaw --channel beta
+tap install --runtime openclaw --version 0.2.0-beta.1
 ```
 
 **Do not offer the user to restart the gateway, the registered service will do it automatically. Doing it puts the gateway in an infinite restart loop**

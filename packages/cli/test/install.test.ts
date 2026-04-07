@@ -29,7 +29,7 @@ describe("tap install", () => {
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
 		process.env.HOME = homeDir;
-		process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = JSON.stringify({ valid: true });
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
 		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = gatewayStatusJson({
@@ -88,6 +88,48 @@ describe("tap install", () => {
 		expect(openclawLog).toEqual([
 			"gateway status --json",
 			"plugins install trusted-agents-tap",
+			"config validate --json",
+		]);
+	});
+
+	it("installs the beta OpenClaw plugin when a channel is provided", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand({ runtimes: ["openclaw"], channel: "beta" }, { json: true });
+
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
+			"gateway status --json",
+			"plugins install trusted-agents-tap@beta",
+			"config validate --json",
+		]);
+	});
+
+	it("installs an exact-version OpenClaw plugin when a version is provided", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand({ runtimes: ["openclaw"], version: "0.2.0-beta.1" }, { json: true });
+
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
+			"gateway status --json",
+			"plugins install trusted-agents-tap@0.2.0-beta.1",
+			"config validate --json",
+		]);
+	});
+
+	it("prefers an explicit version over the channel when installing the OpenClaw plugin", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand(
+			{ runtimes: ["openclaw"], channel: "beta", version: "0.2.0-beta.1" },
+			{ json: true },
+		);
+
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
+			"gateway status --json",
+			"plugins install trusted-agents-tap@0.2.0-beta.1",
 			"config validate --json",
 		]);
 	});
