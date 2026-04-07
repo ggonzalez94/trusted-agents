@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
+import { AsyncMutex, fsErrorCode, nowISO, resolveDataDir } from "../common/index.js";
 import type { PermissionGrantSet } from "../permissions/types.js";
 import type {
 	TapConnectResult,
@@ -174,11 +174,7 @@ export class FileTapCommandOutbox {
 				try {
 					await rename(source, target);
 				} catch (error: unknown) {
-					const code =
-						error instanceof Error && "code" in error
-							? (error as NodeJS.ErrnoException).code
-							: undefined;
-					if (code === "ENOENT") {
+					if (fsErrorCode(error) === "ENOENT") {
 						continue;
 					}
 					throw error;
@@ -231,11 +227,7 @@ export class FileTapCommandOutbox {
 		try {
 			return (await this.readJson(this.resultPath(jobId))) as TapCommandJobResult;
 		} catch (error: unknown) {
-			const code =
-				error instanceof Error && "code" in error
-					? (error as NodeJS.ErrnoException).code
-					: undefined;
-			if (code === "ENOENT") {
+			if (fsErrorCode(error) === "ENOENT") {
 				return null;
 			}
 			throw error;
@@ -246,11 +238,7 @@ export class FileTapCommandOutbox {
 		try {
 			return (await this.readJson(this.queuedPath(jobId))) as TapCommandJob;
 		} catch (error: unknown) {
-			const code =
-				error instanceof Error && "code" in error
-					? (error as NodeJS.ErrnoException).code
-					: undefined;
-			if (code === "ENOENT") {
+			if (fsErrorCode(error) === "ENOENT") {
 				return null;
 			}
 			throw error;
@@ -343,11 +331,7 @@ export class FileTapCommandOutbox {
 		try {
 			return (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
 		} catch (error: unknown) {
-			const code =
-				error instanceof Error && "code" in error
-					? (error as NodeJS.ErrnoException).code
-					: undefined;
-			if (code === "ENOENT") {
+			if (fsErrorCode(error) === "ENOENT") {
 				return [];
 			}
 			throw error;
@@ -404,8 +388,6 @@ function isProcessLikelyAlive(pid: number): boolean {
 		process.kill(pid, 0);
 		return true;
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		return code === "EPERM";
+		return fsErrorCode(error) === "EPERM";
 	}
 }

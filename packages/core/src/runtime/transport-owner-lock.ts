@@ -1,6 +1,6 @@
 import { open, readFile, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveDataDir } from "../common/index.js";
+import { fsErrorCode, resolveDataDir } from "../common/index.js";
 
 export interface TransportOwnerInfo {
 	pid: number;
@@ -56,11 +56,7 @@ export class TransportOwnerLock {
 					await handle.close();
 				}
 			} catch (error: unknown) {
-				const code =
-					error instanceof Error && "code" in error
-						? (error as NodeJS.ErrnoException).code
-						: undefined;
-				if (code !== "EEXIST") {
+				if (fsErrorCode(error) !== "EEXIST") {
 					throw error;
 				}
 
@@ -127,11 +123,7 @@ export class TransportOwnerLock {
 			}
 			return null;
 		} catch (error: unknown) {
-			const code =
-				error instanceof Error && "code" in error
-					? (error as NodeJS.ErrnoException).code
-					: undefined;
-			if (code === "ENOENT") {
+			if (fsErrorCode(error) === "ENOENT") {
 				return null;
 			}
 			throw error;
@@ -148,11 +140,6 @@ export function isProcessAlive(pid: number): boolean {
 		process.kill(pid, 0);
 		return true;
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "EPERM") {
-			return true;
-		}
-		return false;
+		return fsErrorCode(error) === "EPERM";
 	}
 }

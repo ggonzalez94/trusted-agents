@@ -60,3 +60,9 @@ export class ValidationError extends TrustedAgentError {
 export function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
+
+export function fsErrorCode(error: unknown): string | undefined {
+	return error instanceof Error && "code" in error
+		? (error as NodeJS.ErrnoException).code
+		: undefined;
+}

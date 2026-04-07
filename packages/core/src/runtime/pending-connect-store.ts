@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AsyncMutex, resolveDataDir } from "../common/index.js";
+import { AsyncMutex, fsErrorCode, resolveDataDir } from "../common/index.js";
 
 interface PendingConnectsFile {
 	pendingConnects: PendingConnectRecord[];
@@ -64,11 +64,7 @@ export class FilePendingConnectStore {
 			const parsed = JSON.parse(raw) as PendingConnectsFile;
 			return Array.isArray(parsed.pendingConnects) ? parsed : { pendingConnects: [] };
 		} catch (error: unknown) {
-			if (
-				error instanceof Error &&
-				"code" in error &&
-				(error as NodeJS.ErrnoException).code === "ENOENT"
-			) {
+			if (fsErrorCode(error) === "ENOENT") {
 				return { pendingConnects: [] };
 			}
 			throw error;

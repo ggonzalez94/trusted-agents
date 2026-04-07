@@ -10,6 +10,7 @@ import {
 	buildChainPublicClient,
 	buildChainWalletClient,
 	createSigningProviderViemAccount,
+	fsErrorCode,
 	isProcessAlive,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
@@ -525,9 +526,7 @@ async function resolveRemoveDataDir(opts: GlobalOptions): Promise<string> {
 	try {
 		return await realpath(configuredPath);
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return configuredPath;
 		}
 		throw error;
@@ -558,9 +557,7 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 		}
 		return [null, "config.yaml is present but agent_id could not be read."];
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
 		return [null, `config.yaml could not be parsed: ${toErrorMessage(error)}`];
@@ -590,9 +587,7 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 		const address = await provider.getAddress();
 		return [address, null];
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
 		return [null, `Agent address could not be read: ${toErrorMessage(error)}`];
@@ -619,9 +614,7 @@ async function inspectDataDir(dataDir: string): Promise<DataDirInspection> {
 			unexpectedEntries,
 		};
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return { hasManagedEntries: false, managedEntries: [], unexpectedEntries: [] };
 		}
 		throw error;
@@ -663,9 +656,7 @@ async function collectRemovalPaths(targetPath: string): Promise<string[]> {
 		}
 		return paths;
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [];
 		}
 		throw error;

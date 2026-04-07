@@ -8,6 +8,7 @@ export {
 	ConfigError,
 	ValidationError,
 	toErrorMessage,
+	fsErrorCode,
 } from "./errors.js";
 
 export { generateNonce, generateConnectionId } from "./crypto.js";
