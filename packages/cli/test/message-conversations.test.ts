@@ -12,9 +12,8 @@ import {
 	findUniqueContactForAgentId,
 } from "trusted-agents-core";
 import type { Contact, ProtocolMessage } from "trusted-agents-core";
-import { DEFAULT_MESSAGE_SCOPE } from "trusted-agents-core";
+import { DEFAULT_MESSAGE_SCOPE, findContactForPeer } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findContactForPeer } from "../src/lib/message-conversations.js";
 
 const CONTACT: Contact = {
 	connectionId: "conn-alice-001",

@@ -1,10 +1,14 @@
-import { ValidationError, isEthereumAddress } from "trusted-agents-core";
+import {
+	ValidationError,
+	assertContactActive,
+	findContactForPeer,
+	isEthereumAddress,
+} from "trusted-agents-core";
 import { normalizeAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,

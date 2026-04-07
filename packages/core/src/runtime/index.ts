@@ -42,6 +42,7 @@ export {
 	type PermissionLedgerEntry,
 } from "./permission-ledger.js";
 export {
+	assertContactActive,
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
 	buildOutgoingMessageRequest,
@@ -67,7 +68,6 @@ export {
 export {
 	findActiveGrantsByScope,
 	normalizeGrantInput,
-	readGrantFile,
 	replaceGrantedByMe,
 	replaceGrantedByPeer,
 	summarizeGrant,

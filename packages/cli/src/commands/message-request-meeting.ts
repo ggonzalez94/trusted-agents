@@ -2,6 +2,8 @@ import {
 	type SchedulingProposal,
 	type TimeSlot,
 	ValidationError,
+	assertContactActive,
+	findContactForPeer,
 	generateSchedulingId,
 	validateSchedulingProposal,
 } from "trusted-agents-core";
@@ -9,7 +11,6 @@ import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
