@@ -1,8 +1,16 @@
-import type { PermissionGrant } from "trusted-agents-core";
-import type { Contact } from "trusted-agents-core";
-import type { AvailabilityWindow, ICalendarProvider } from "./calendar-provider.js";
-import { findApplicableSchedulingGrants, findSchedulableSchedulingSlots } from "./grants.js";
-import type { SchedulingAccept, SchedulingProposal, TimeSlot } from "./types.js";
+import type {
+	AvailabilityWindow,
+	Contact,
+	ICalendarProvider,
+	PermissionGrant,
+	SchedulingAccept,
+	SchedulingProposal,
+	TimeSlot,
+} from "trusted-agents-core";
+import {
+	findApplicableSchedulingGrants,
+	findSchedulableSchedulingSlots,
+} from "trusted-agents-core";
 
 // ── Public interfaces ─────────────────────────────────────────────────────────
 

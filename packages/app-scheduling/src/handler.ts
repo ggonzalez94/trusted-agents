@@ -2,11 +2,15 @@ import type {
 	Contact,
 	SchedulingDecision,
 	SchedulingHandler,
+	SchedulingProposal,
 	TapActionContext,
 	TapActionResult,
+	TimeSlot,
 } from "trusted-agents-core";
-import { findApplicableSchedulingGrants, findSchedulableSchedulingSlots } from "./grants.js";
-import type { SchedulingProposal, TimeSlot } from "./types.js";
+import {
+	findApplicableSchedulingGrants,
+	findSchedulableSchedulingSlots,
+} from "trusted-agents-core";
 
 export async function handleSchedulingRequest(ctx: TapActionContext): Promise<TapActionResult> {
 	const proposal = validatePayload(ctx.payload);

@@ -7,7 +7,12 @@ export {
 	buildSchedulingAcceptText,
 	buildSchedulingRejectText,
 } from "./actions.js";
-export { findApplicableSchedulingGrants, matchesSchedulingConstraints } from "./grants.js";
+export {
+	filterSchedulingProposalSlots,
+	findApplicableSchedulingGrants,
+	findSchedulableSchedulingSlots,
+	matchesSchedulingConstraints,
+} from "./grants.js";
 export { SchedulingHandler } from "./handler.js";
 export type {
 	SchedulingApprovalContext,
