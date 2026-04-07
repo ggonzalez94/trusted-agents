@@ -24,12 +24,8 @@ import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./confi
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
 
-function sanitizeOneLiner(text: string): string {
-	return text.replace(/[\n\r\t]+/g, " ").trim();
-}
-
 function truncateText(text: string, maxLen: number): string {
-	const sanitized = sanitizeOneLiner(text);
+	const sanitized = text.replace(/[\n\r\t]+/g, " ").trim();
 	if (sanitized.length <= maxLen) return sanitized;
 	return `${sanitized.slice(0, maxLen)}...`;
 }
@@ -539,16 +535,7 @@ export class OpenClawTapRegistry {
 
 	private async ensureRuntimeStarted(name: string): Promise<ManagedTapRuntime> {
 		const runtime = await this.ensureRuntime(name);
-		await runtime.mutex.runExclusive(async () => {
-			try {
-				await runtime.runtime.start();
-				runtime.lastError = undefined;
-			} catch (error: unknown) {
-				runtime.lastError = toErrorMessage(error);
-				throw error;
-			}
-		});
-		this.installInterval(runtime);
+		await this.startRuntime(runtime);
 		return runtime;
 	}
 
