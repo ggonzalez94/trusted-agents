@@ -9,6 +9,7 @@ import {
 	type TapTransferApprovalContext,
 	type TrustedAgentsConfig,
 	executeOnchainTransfer,
+	peerLabel,
 	summarizeGrant,
 } from "trusted-agents-core";
 import type { ProposedMeeting, SchedulingApprovalContext } from "trusted-agents-core";
@@ -175,7 +176,7 @@ function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalO
 	const assetLabel = request.asset === "native" ? "ETH" : "USDC";
 
 	info(
-		`Action request from ${contact.peerDisplayName} (#${contact.peerAgentId}): send ${request.amount} ${assetLabel} on ${request.chain} to ${request.toAddress}`,
+		`Action request from ${peerLabel(contact)}: send ${request.amount} ${assetLabel} on ${request.chain} to ${request.toAddress}`,
 		opts,
 	);
 	if (request.note) {
@@ -198,7 +199,7 @@ function printSchedulingRequest(context: SchedulingApprovalContext, opts: Global
 	const { contact, proposal, activeSchedulingGrants } = context;
 
 	info(
-		`Scheduling request from ${contact.peerDisplayName} (#${contact.peerAgentId}): "${proposal.title}" (${proposal.duration} min)`,
+		`Scheduling request from ${peerLabel(contact)}: "${proposal.title}" (${proposal.duration} min)`,
 		opts,
 	);
 	info(`  Slots offered: ${proposal.slots.length}`, opts);

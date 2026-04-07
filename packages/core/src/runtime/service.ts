@@ -70,6 +70,7 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "../transport/interface.js";
+import { peerLabel } from "../trust/types.js";
 import type { Contact } from "../trust/types.js";
 import {
 	type PermissionGrantRequestAction,
@@ -793,7 +794,7 @@ export class TapMessagingService {
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
-						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						peer: peerLabel(contact),
 						direction: "local",
 						event: "scheduling-cancel",
 						scope: "scheduling/request",
@@ -1027,7 +1028,7 @@ export class TapMessagingService {
 			});
 
 			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "granted-by-me",
 				event: "grant-published",
 				note,
@@ -1079,7 +1080,7 @@ export class TapMessagingService {
 			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "local",
 				event: "grant-request-sent",
 				action_id: action.actionId,
@@ -1135,7 +1136,7 @@ export class TapMessagingService {
 
 			await this.appendLedger({
 				timestamp,
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "local",
 				event: "transfer-request-sent",
 				scope: "transfer/request",
@@ -1223,7 +1224,7 @@ export class TapMessagingService {
 
 			await this.appendLedger({
 				timestamp,
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "local",
 				event: "scheduling-request-sent",
 				scope: "scheduling/request",
@@ -1506,7 +1507,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to record conversation log for ${contact.peerDisplayName} (#${contact.peerAgentId}): ${toErrorMessage(error)}`,
+				`Failed to record conversation log for ${peerLabel(contact)}: ${toErrorMessage(error)}`,
 			);
 		}
 		try {
@@ -1961,14 +1962,14 @@ export class TapMessagingService {
 			permissions: replaceGrantedByPeer(contact.permissions, update.grantSet),
 		});
 		await this.appendLedger({
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			direction: "granted-by-peer",
 			event: "grant-received",
 			note: update.note,
 		});
 		await this.context.trustStore.touchContact(contact.connectionId);
 
-		this.log("info", `Grant update from ${contact.peerDisplayName} (#${contact.peerAgentId})`);
+		this.log("info", `Grant update from ${peerLabel(contact)}`);
 		for (const line of summarizeGrantSet(update.grantSet)) {
 			this.log("info", `  - ${line}`);
 		}
@@ -1981,7 +1982,7 @@ export class TapMessagingService {
 		contact: Contact,
 		request: PermissionGrantRequestAction,
 	): Promise<void> {
-		this.log("info", `Grant request from ${contact.peerDisplayName} (#${contact.peerAgentId})`);
+		this.log("info", `Grant request from ${peerLabel(contact)}`);
 		for (const line of summarizeGrantSet(createGrantSet(request.grants))) {
 			this.log("info", `  - ${line}`);
 		}
@@ -1990,7 +1991,7 @@ export class TapMessagingService {
 		}
 
 		await this.appendLedger({
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			direction: "local",
 			event: "grant-request-received",
 			action_id: request.actionId,
@@ -2091,7 +2092,7 @@ export class TapMessagingService {
 			toAddress: request.toAddress,
 		};
 		const baseLedger = {
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			direction: "granted-by-me" as const,
 			scope: "transfer/request",
 			asset: request.asset,
@@ -2371,7 +2372,7 @@ export class TapMessagingService {
 					: evaluatedDecision;
 
 		const baseLedger = {
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			scope: "scheduling/request",
 			action_id: proposal.schedulingId,
 		};
@@ -2558,7 +2559,7 @@ export class TapMessagingService {
 
 		await this.context.requestJournal.updateStatus(requestId, "completed");
 		await this.appendLedger({
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			direction: "granted-by-me",
 			event: "scheduling-rejected",
 			scope: "scheduling/request",
@@ -2600,10 +2601,7 @@ export class TapMessagingService {
 
 		if (!pendingConnect) {
 			if (existingContact?.status === "active") {
-				this.log(
-					"info",
-					`Ignoring duplicate connection result from ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
-				);
+				this.log("info", `Ignoring duplicate connection result from ${peerLabel(existingContact)}`);
 				return "duplicate";
 			}
 			this.log(
@@ -2622,10 +2620,7 @@ export class TapMessagingService {
 
 		if (result.status === "rejected") {
 			await this.pendingConnectStore.delete(result.requestId);
-			this.log(
-				"info",
-				`Connection rejected by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
-			);
+			this.log("info", `Connection rejected by ${peerLabel(pendingConnect)}`);
 			return "received";
 		}
 
@@ -2649,10 +2644,7 @@ export class TapMessagingService {
 			await this.context.trustStore.addContact(nextContact);
 		}
 		await this.pendingConnectStore.delete(result.requestId);
-		this.log(
-			"info",
-			`Connection accepted by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
-		);
+		this.log("info", `Connection accepted by ${peerLabel(pendingConnect)}`);
 		return "received";
 	}
 
@@ -2669,7 +2661,7 @@ export class TapMessagingService {
 		if (response) {
 			if (contact) {
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					peer: peerLabel(contact),
 					direction: "local",
 					event: `transfer-${response.status}`,
 					scope: "transfer/request",
@@ -2690,10 +2682,7 @@ export class TapMessagingService {
 				this.waiters.get(response.requestId)?.(response);
 			}
 			if (contact) {
-				this.log(
-					"info",
-					`Received transfer ${response.status} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				);
+				this.log("info", `Received transfer ${response.status} result from ${peerLabel(contact)}`);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -2747,17 +2736,14 @@ export class TapMessagingService {
 			if (contact) {
 				const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					peer: peerLabel(contact),
 					direction: "local",
 					event: `scheduling-${eventType}`,
 					scope: "scheduling/request",
 					action_id: schedulingResponse.schedulingId,
 					decision: eventType,
 				});
-				this.log(
-					"info",
-					`Received scheduling ${eventType} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				);
+				this.log("info", `Received scheduling ${eventType} result from ${peerLabel(contact)}`);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -2874,7 +2860,7 @@ export class TapMessagingService {
 			}
 			this.log(
 				"warn",
-				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,
+				`Rejecting action request ${request.actionId} from ${peerLabel(contact)} because no matching active transfer grant exists`,
 			);
 			return false;
 		}
@@ -2991,11 +2977,7 @@ export class TapMessagingService {
 	}
 
 	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
-		this.logResultDeliveryFailure(
-			`Action result ${actionId}`,
-			`${contact.peerDisplayName} (#${contact.peerAgentId})`,
-			error,
-		);
+		this.logResultDeliveryFailure(`Action result ${actionId}`, peerLabel(contact), error);
 	}
 
 	private logResultDeliveryFailure(subject: string, peerLabel: string, error: unknown): void {
