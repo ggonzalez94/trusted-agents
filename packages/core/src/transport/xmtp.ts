@@ -751,29 +751,30 @@ export class XmtpTransport implements TransportProvider {
 		return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
 	}
 
+	private async sendJsonRpc(senderInboxId: string, payload: object): Promise<void> {
+		const dm = await this.findDmForSender(senderInboxId);
+		if (!dm) {
+			return;
+		}
+		await dm.sendText(JSON.stringify(payload));
+	}
+
 	private async sendJsonRpcReceipt(
 		senderInboxId: string,
 		id: ProtocolMessage["id"],
 		requestId: string,
 		ack: TransportAck,
 	): Promise<void> {
-		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) {
-			return;
-		}
-
-		await dm.sendText(
-			JSON.stringify({
-				jsonrpc: "2.0",
-				id,
-				result: {
-					received: true,
-					requestId,
-					status: ack.status,
-					receivedAt: nowISO(),
-				},
-			}),
-		);
+		await this.sendJsonRpc(senderInboxId, {
+			jsonrpc: "2.0",
+			id,
+			result: {
+				received: true,
+				requestId,
+				status: ack.status,
+				receivedAt: nowISO(),
+			},
+		});
 	}
 
 	private async sendJsonRpcError(
@@ -782,18 +783,11 @@ export class XmtpTransport implements TransportProvider {
 		code: number,
 		message: string,
 	): Promise<void> {
-		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) {
-			return;
-		}
-
-		await dm.sendText(
-			JSON.stringify({
-				jsonrpc: "2.0",
-				id,
-				error: { code, message },
-			}),
-		);
+		await this.sendJsonRpc(senderInboxId, {
+			jsonrpc: "2.0",
+			id,
+			error: { code, message },
+		});
 	}
 
 	private async resolveInboxId(address: `0x${string}`): Promise<string> {

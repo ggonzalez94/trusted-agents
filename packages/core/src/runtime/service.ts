@@ -1999,11 +1999,16 @@ export class TapMessagingService {
 		});
 	}
 
-	private async resolvePendingTransferRequest(entry: RequestJournalEntry): Promise<void> {
-		const request = parseStoredTransferRequest(entry.metadata);
+	private async resolvePendingRequestWithContact<T>(
+		entry: RequestJournalEntry,
+		parse: (metadata: Record<string, unknown> | undefined) => T | null,
+		label: string,
+		process: (contact: Contact, requestId: string, request: T) => Promise<void>,
+	): Promise<void> {
+		const request = parse(entry.metadata);
 		if (!request) {
 			throw new ValidationError(
-				`Pending action request ${entry.requestId} is missing the original request payload`,
+				`Pending ${label} ${entry.requestId} is missing the original request payload`,
 			);
 		}
 
@@ -2012,12 +2017,19 @@ export class TapMessagingService {
 			entry.peerAgentId,
 		);
 		if (!contact) {
-			throw new ValidationError(
-				`No active contact found for pending action request ${entry.requestId}`,
-			);
+			throw new ValidationError(`No active contact found for pending ${label} ${entry.requestId}`);
 		}
 
-		await this.processTransferRequest(contact, entry.requestId, request);
+		await process(contact, entry.requestId, request);
+	}
+
+	private async resolvePendingTransferRequest(entry: RequestJournalEntry): Promise<void> {
+		await this.resolvePendingRequestWithContact(
+			entry,
+			parseStoredTransferRequest,
+			"action request",
+			(contact, requestId, request) => this.processTransferRequest(contact, requestId, request),
+		);
 	}
 
 	private async resolvePendingConnectionRequest(
@@ -2049,24 +2061,12 @@ export class TapMessagingService {
 	}
 
 	private async resolvePendingSchedulingRequest(entry: RequestJournalEntry): Promise<void> {
-		const proposal = parseStoredSchedulingRequest(entry.metadata);
-		if (!proposal) {
-			throw new ValidationError(
-				`Pending scheduling request ${entry.requestId} is missing the original request payload`,
-			);
-		}
-
-		const contact = findUniqueContactForAgentId(
-			await this.context.trustStore.getContacts(),
-			entry.peerAgentId,
+		await this.resolvePendingRequestWithContact(
+			entry,
+			parseStoredSchedulingRequest,
+			"scheduling request",
+			(contact, requestId, proposal) => this.processSchedulingRequest(contact, requestId, proposal),
 		);
-		if (!contact) {
-			throw new ValidationError(
-				`No active contact found for pending scheduling request ${entry.requestId}`,
-			);
-		}
-
-		await this.processSchedulingRequest(contact, entry.requestId, proposal);
 	}
 
 	private async processTransferRequest(
