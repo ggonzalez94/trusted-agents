@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.48",
+    "@trustedagents/sdk": "workspace:*",
     "trusted-agents-core": "workspace:*",
     "viem": "2.46.3"
   },

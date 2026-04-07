@@ -21,7 +21,7 @@ export async function permissionsRevokeCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:permissions-revoke" });
+		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:permissions-revoke" });
 		const contacts = await runtime.trustStore.getContacts();
 		const contact = contacts.find(
 			(entry) =>

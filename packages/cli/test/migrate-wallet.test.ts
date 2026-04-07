@@ -35,6 +35,16 @@ describe("tap migrate-wallet", () => {
 		configPath = join(dataDir, "config.yaml");
 		keyPath = join(dataDir, "identity", "agent.key");
 
+		// Clean up stale OWS wallets from previous test runs that may have
+		// failed before afterEach cleanup (wallet names are deterministic)
+		for (const name of ["tap-agent-42", "tap-agent-99"]) {
+			try {
+				deleteWallet(name);
+			} catch (_) {
+				/* ignore — wallet may not exist */
+			}
+		}
+
 		stdoutWrites = [];
 		stderrWrites = [];
 		origStdoutWrite = process.stdout.write;

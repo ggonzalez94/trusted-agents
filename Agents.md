@@ -15,9 +15,15 @@ When this file conflicts with code, code wins.
 	- `packages/core`: protocol + storage + transport abstractions
 	- `packages/cli`: executable UX and config/bootstrap behavior
 	- `packages/openclaw-plugin`: OpenClaw Gateway plugin that owns TAP as a background service
+	- `packages/sdk`: Public SDK entry point for building on TAP. Owns `createTapRuntime`, app install/remove, and the public API surface.
+	- `packages/app-transfer`: Transfer request handling as a TAP app. Owns grant matching, payload parsing, transfer execution handler.
+	- `packages/app-scheduling`: Scheduling request handling as a TAP app. Owns scheduling types, grant matching, calendar integration, scheduling handler.
 - Dependency direction:
-	- `cli -> core`
-	- `openclaw-plugin -> core`
+	- `cli -> core` (and will migrate to `sdk -> core`)
+	- `openclaw-plugin -> core` (and will migrate to `sdk -> core`)
+	- `sdk -> core`
+	- `app-transfer -> core` (types only)
+	- `app-scheduling -> core` (types only)
 	- `core` has no internal workspace dependencies
 
 ## Package Responsibilities
@@ -43,6 +49,33 @@ When this file conflicts with code, code wins.
 	- CLI-specific prompting / approval UX
 	- onboarding commands
 	- local operator workflows
+
+### `packages/sdk`
+- Public entry point for building on TAP.
+- Owns:
+	- `createTapRuntime()` factory
+	- `TapRuntime` wrapper
+	- app install/remove lifecycle
+	- event subscription
+	- public type re-exports
+
+### `packages/app-transfer`
+- Transfer request handling as a TAP app.
+- Owns:
+	- transfer payload parsing
+	- transfer grant matching
+	- transfer handler
+	- `buildTransferPayload` helper
+
+### `packages/app-scheduling`
+- Scheduling request handling as a TAP app.
+- Owns:
+	- scheduling types
+	- scheduling payload parsing
+	- scheduling grant matching
+	- calendar provider interface
+	- scheduling handler
+	- `buildSchedulingPayload` helper
 
 ### `packages/openclaw-plugin`
 - OpenClaw-specific host adapter. **Thin plugin, fat CLI** — see rule below.
@@ -114,8 +147,11 @@ Installation expectations:
 3. `packages/core/src/transport/interface.ts` then `transport/xmtp.ts`
 4. `packages/core/src/trust/*` and `conversation/*` (state persistence)
 5. `packages/core/src/runtime/*` (`TapMessagingService`, request journal, transport owner lock)
-6. `packages/cli/src/lib/context.ts`, `lib/tap-service.ts`, and `commands/*` (CLI host adapter)
-7. `packages/openclaw-plugin/src/*` (Gateway host adapter)
+6. `packages/core/src/app/*` (app types, registry, manifest, storage)
+7. `packages/cli/src/lib/context.ts`, `lib/tap-service.ts`, and `commands/*` (CLI host adapter)
+8. `packages/openclaw-plugin/src/*` (Gateway host adapter)
+9. `packages/sdk/src/*` (public SDK API)
+10. `packages/app-transfer/src/*` and `packages/app-scheduling/src/*` (built-in apps)
 
 ## Core Abstractions To Preserve
 
@@ -151,6 +187,12 @@ Files: `packages/core/src/conversation/logger.ts`
 ### 5) `NotificationAdapter` + `ApprovalHandler` (SDK human-in-loop seam)
 Files: `packages/sdk/src/notification.ts`, `approval.ts`
 - SDK orchestration defers approvals/notifications to host runtime.
+
+### 6) `TapAppRegistry` (app routing seam)
+File: `packages/core/src/app/registry.ts`
+- Routes action types to app handlers.
+- Supports direct registration and lazy loading from manifest.
+- Apps define handlers via `defineTapApp()` from `packages/core/src/app/types.ts`.
 
 ## Protocol And Identity Standards Enforced In Code
 
@@ -249,6 +291,10 @@ File: `packages/sdk/src/orchestrator.ts`
 ├── request-journal.json     # Durable TAP action request state
 ├── pending-connects.json    # Minimal outbound connection state awaiting connection/result
 ├── ipfs-cache.json          # Content hash → CID (avoids re-upload)
+├── apps.json                # installed apps manifest
+├── apps/                    # app-scoped state
+│   ├── transfer/state.json
+│   └── scheduling/state.json
 ├── conversations/<id>.json  # Per-peer message transcripts
 └── xmtp/<inboxId>.db3       # XMTP client DB (encrypted)
 ```
@@ -345,6 +391,12 @@ File: `packages/sdk/src/orchestrator.ts`
 - The `SKILL.md` must have YAML frontmatter with `name` and `description`
 - Commands that perform signing should accept a `SigningProvider` from context, never raw keys
 
+### Adding/changing a TAP app or the app interface
+- Update `packages/core/src/app/types.ts` for interface changes
+- If changing `TapActionContext`, update `packages/core/src/app/context.ts` (`buildActionContext`)
+- Test with built-in apps (`app-transfer`, `app-scheduling`) as they validate the interface
+- Update the skill file if adding new CLI commands
+
 ### Changing TAP skill/reference semantics
 - The unified skill lives in `skills/trusted-agents/SKILL.md`. The OpenClaw plugin copies skills at build time. Edit only the canonical file at `skills/trusted-agents/`.
 - OpenClaw-specific content goes in the "OpenClaw Plugin Mode" section with clear gating ("Skip this section if not OpenClaw").
@@ -358,6 +410,10 @@ bun run typecheck
 bun run test
 # Optional integration:
 XMTP_INTEGRATION=true bun run test:xmtp
+# Test a specific app package:
+bun run test -- packages/app-transfer/test/
+bun run test -- packages/app-scheduling/test/
+bun run test -- packages/sdk/test/
 ```
 Note: OWS (Open Wallet Service) must be installed and accessible for tests that exercise signing or wallet operations. Tests that mock `SigningProvider` do not require a live OWS instance.
 

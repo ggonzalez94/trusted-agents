@@ -22,7 +22,7 @@ export async function permissionsRequestCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:permissions-request" });
+		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:permissions-request" });
 		const grantSet = await readGrantFile(file);
 		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
 		if (!contact) {

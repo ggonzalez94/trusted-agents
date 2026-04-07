@@ -52,7 +52,7 @@ export async function messageCancelMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const { service } = createCliRuntime({
+		const { service } = await createCliRuntime({
 			config,
 			opts,
 			ownerLabel: "tap:cancel-meeting",

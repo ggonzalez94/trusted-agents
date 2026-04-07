@@ -41,7 +41,7 @@ export async function messageRequestMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:request-meeting" });
+		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:request-meeting" });
 		const durationMinutes = Number.parseInt(cmdOpts.duration ?? "60", 10);
 
 		if (Number.isNaN(durationMinutes) || durationMinutes <= 0) {

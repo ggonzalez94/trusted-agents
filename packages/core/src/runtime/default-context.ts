@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { TapAppRegistry } from "../app/registry.js";
 import { buildChainPublicClient } from "../common/index.js";
 import type { ChainConfig, TrustedAgentsConfig } from "../config/types.js";
 import { FileConversationLogger, type IConversationLogger } from "../conversation/logger.js";
@@ -18,6 +19,7 @@ export interface TapRuntimeContext {
 	conversationLogger: IConversationLogger;
 	requestJournal: IRequestJournal;
 	transport: TransportProvider;
+	appRegistry: TapAppRegistry;
 }
 
 export interface BuildTapRuntimeContextOptions {
@@ -27,16 +29,17 @@ export interface BuildTapRuntimeContextOptions {
 	conversationLogger?: IConversationLogger;
 	requestJournal?: IRequestJournal;
 	transport?: TransportProvider;
+	appRegistry?: TapAppRegistry;
 }
 
 function createViemClient(chainConfig: ChainConfig) {
 	return buildChainPublicClient(chainConfig);
 }
 
-export function buildDefaultTapRuntimeContext(
+export async function buildDefaultTapRuntimeContext(
 	config: TrustedAgentsConfig,
 	options: BuildTapRuntimeContextOptions,
-): TapRuntimeContext {
+): Promise<TapRuntimeContext> {
 	const trustStore = options.trustStore ?? new FileTrustStore(config.dataDir);
 	const resolver =
 		options.resolver ??
@@ -59,6 +62,8 @@ export function buildDefaultTapRuntimeContext(
 			},
 			trustStore,
 		);
+	const appRegistry = options.appRegistry ?? new TapAppRegistry(config.dataDir);
+	await appRegistry.loadManifest();
 
 	return {
 		config,
@@ -68,5 +73,6 @@ export function buildDefaultTapRuntimeContext(
 		conversationLogger,
 		requestJournal,
 		transport,
+		appRegistry,
 	};
 }

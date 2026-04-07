@@ -21,7 +21,7 @@ export async function messageSendCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const { service } = createCliRuntime({ config, opts, ownerLabel: "tap:message-send" });
+		const { service } = await createCliRuntime({ config, opts, ownerLabel: "tap:message-send" });
 		const scope = cmdOpts?.scope?.trim() || DEFAULT_MESSAGE_SCOPE;
 		verbose(`Sending message to ${peer}...`, opts);
 		const outcome = await runOrQueueTapCommand(

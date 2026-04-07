@@ -28,7 +28,7 @@ export async function messageRespondMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const { service } = createCliRuntime({
+		const { service } = await createCliRuntime({
 			config,
 			opts,
 			ownerLabel: "tap:respond-meeting",
