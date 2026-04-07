@@ -4,11 +4,15 @@ import { join } from "node:path";
 import {
 	type AppManifestEntry,
 	type BuildTapRuntimeContextOptions,
+	type IAgentResolver,
+	type IRequestJournal,
+	type ITrustStore,
 	type LoadTrustedAgentConfigOptions,
 	OwsSigningProvider,
 	type PermissionGrantSet,
 	type RegisteredAppInfo,
 	type SchedulingHandler,
+	type SigningProvider,
 	type TapCancelMeetingResult,
 	type TapConnectResult,
 	TapMessagingService,
@@ -94,10 +98,13 @@ export class TapRuntime extends EventEmitter {
 	}
 
 	/**
-	 * Lazily initialize the runtime: load config, create signing provider,
+	 * Initialize the runtime: load config, create signing provider,
 	 * build runtime context, and create the messaging service.
+	 *
+	 * Called automatically by `createTapRuntime`. Can also be called
+	 * manually if constructing via `new TapRuntime()`.
 	 */
-	private async init(): Promise<void> {
+	async init(): Promise<void> {
 		if (this.initialized) return;
 
 		const dataDir = this.options.dataDir ?? DEFAULT_DATA_DIR;
@@ -161,6 +168,26 @@ export class TapRuntime extends EventEmitter {
 	 */
 	get service(): TapMessagingService {
 		return this.requireService();
+	}
+
+	/** Access the trust store for contact lookups. Requires start() first. */
+	get trustStore(): ITrustStore {
+		return this.requireContext().trustStore;
+	}
+
+	/** Access the agent resolver. Requires start() first. */
+	get resolver(): IAgentResolver {
+		return this.requireContext().resolver;
+	}
+
+	/** Access the signing provider. Requires start() first. */
+	get signingProvider(): SigningProvider {
+		return this.requireContext().signingProvider;
+	}
+
+	/** Access the request journal. Requires start() first. */
+	get requestJournal(): IRequestJournal {
+		return this.requireContext().requestJournal;
 	}
 
 	private requireService(): TapMessagingService {
@@ -356,7 +383,7 @@ export class TapRuntime extends EventEmitter {
  * Creates a new TapRuntime instance.
  *
  * The runtime is lazily initialized -- config is loaded and the signing provider
- * is created on the first call to `start()`.
+ * is created on the first call to `start()` or `init()`.
  */
 export async function createTapRuntime(options: CreateTapRuntimeOptions): Promise<TapRuntime> {
 	const runtime = new TapRuntime(options);

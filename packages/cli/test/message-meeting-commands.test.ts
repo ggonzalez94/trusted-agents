@@ -3,8 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const {
 	loadConfigMock,
 	buildContextMock,
-	buildContextWithTransportMock,
-	createCliTapMessagingServiceMock,
+	createCliRuntimeMock,
 	successMock,
 	errorMock,
 	verboseMock,
@@ -15,8 +14,7 @@ const {
 			list: vi.fn(async () => []),
 		},
 	})),
-	buildContextWithTransportMock: vi.fn(() => ({})),
-	createCliTapMessagingServiceMock: vi.fn(),
+	createCliRuntimeMock: vi.fn(),
 	successMock: vi.fn(),
 	errorMock: vi.fn(),
 	verboseMock: vi.fn(),
@@ -28,11 +26,10 @@ vi.mock("../src/lib/config-loader.js", () => ({
 
 vi.mock("../src/lib/context.js", () => ({
 	buildContext: buildContextMock,
-	buildContextWithTransport: buildContextWithTransportMock,
 }));
 
-vi.mock("../src/lib/tap-service.js", () => ({
-	createCliTapMessagingService: createCliTapMessagingServiceMock,
+vi.mock("../src/lib/cli-runtime.js", () => ({
+	createCliRuntime: createCliRuntimeMock,
 }));
 
 vi.mock("../src/lib/output.js", () => ({
@@ -52,28 +49,30 @@ describe("meeting CLI commands", () => {
 
 	it("respond-meeting resolves inbound scheduling requests and forwards reason", async () => {
 		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
-		createCliTapMessagingServiceMock.mockReturnValue({
-			listPendingRequests: vi.fn(async () => [
-				{
-					requestId: "outbound-should-ignore",
-					peerAgentId: 10,
-					direction: "outbound",
-					kind: "request",
-					method: "action/request",
-					status: "pending",
-					details: { type: "scheduling", schedulingId: "sch-1" },
-				},
-				{
-					requestId: "inbound-target",
-					peerAgentId: 10,
-					direction: "inbound",
-					kind: "request",
-					method: "action/request",
-					status: "pending",
-					details: { type: "scheduling", schedulingId: "sch-1" },
-				},
-			]),
-			resolvePending,
+		createCliRuntimeMock.mockResolvedValue({
+			service: {
+				listPendingRequests: vi.fn(async () => [
+					{
+						requestId: "outbound-should-ignore",
+						peerAgentId: 10,
+						direction: "outbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-1" },
+					},
+					{
+						requestId: "inbound-target",
+						peerAgentId: 10,
+						direction: "inbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-1" },
+					},
+				]),
+				resolvePending,
+			},
 		});
 
 		await messageRespondMeetingCommand(
@@ -94,8 +93,10 @@ describe("meeting CLI commands", () => {
 			schedulingId: "sch-2",
 			report: { pendingRequests: [] },
 		}));
-		createCliTapMessagingServiceMock.mockReturnValue({
-			cancelMeeting,
+		createCliRuntimeMock.mockResolvedValue({
+			service: {
+				cancelMeeting,
+			},
 		});
 
 		await messageCancelMeetingCommand("sch-2", { reason: "Conflict" }, { plain: true });
@@ -107,19 +108,21 @@ describe("meeting CLI commands", () => {
 
 	it("respond-meeting supports dry-run previews without resolving the request", async () => {
 		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
-		createCliTapMessagingServiceMock.mockReturnValue({
-			listPendingRequests: vi.fn(async () => [
-				{
-					requestId: "inbound-target",
-					peerAgentId: 10,
-					direction: "inbound",
-					kind: "request",
-					method: "action/request",
-					status: "pending",
-					details: { type: "scheduling", schedulingId: "sch-3" },
-				},
-			]),
-			resolvePending,
+		createCliRuntimeMock.mockResolvedValue({
+			service: {
+				listPendingRequests: vi.fn(async () => [
+					{
+						requestId: "inbound-target",
+						peerAgentId: 10,
+						direction: "inbound",
+						kind: "request",
+						method: "action/request",
+						status: "pending",
+						details: { type: "scheduling", schedulingId: "sch-3" },
+					},
+				]),
+				resolvePending,
+			},
 		});
 
 		await messageRespondMeetingCommand("sch-3", { accept: true, dryRun: true }, { plain: true });
@@ -145,8 +148,10 @@ describe("meeting CLI commands", () => {
 			schedulingId: "sch-4",
 			report: { pendingRequests: [] },
 		}));
-		createCliTapMessagingServiceMock.mockReturnValue({
-			cancelMeeting,
+		createCliRuntimeMock.mockResolvedValue({
+			service: {
+				cancelMeeting,
+			},
 		});
 		buildContextMock.mockReturnValue({
 			requestJournal: {

@@ -32,7 +32,7 @@ export async function messageRequestFundsCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:request-funds" });
+		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:request-funds" });
 		const asset = normalizeAsset(cmdOpts.asset);
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
 		const ownAddress = await runtime.signingProvider.getAddress();

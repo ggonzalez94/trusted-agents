@@ -19,12 +19,17 @@ import { promptYesNo } from "./prompt.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
 import { createConfiguredSigningProvider } from "./wallet-config.js";
 
+/** Hooks that CLI commands can pass through to the runtime. */
+export interface CliTapServiceHooks {
+	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null | undefined>;
+}
+
 export interface CliRuntimeOptions {
 	/** Pre-loaded config from the CLI config loader. */
 	config: TrustedAgentsConfig;
 
 	/** CLI global options (for output formatting). */
-	globalOpts: GlobalOptions;
+	opts: GlobalOptions;
 
 	/** Label identifying this runtime owner (for transport lock). */
 	ownerLabel?: string;
@@ -33,9 +38,7 @@ export interface CliRuntimeOptions {
 	emitEvents?: boolean;
 
 	/** Override hooks for transfer approval. */
-	hooks?: {
-		approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null | undefined>;
-	};
+	hooks?: CliTapServiceHooks;
 }
 
 /**
@@ -49,7 +52,7 @@ export interface CliRuntimeOptions {
  * - Delegates to the SDK's `createTapRuntime` for construction
  */
 export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapRuntime> {
-	const { config, globalOpts } = options;
+	const { config, opts } = options;
 	const dataDir = config.dataDir;
 	const override = getCliRuntimeOverride(dataDir);
 	const userHooks = options.hooks ?? {};
@@ -85,7 +88,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 		calendarProvider,
 		hooks: {
 			approveScheduling: async (approvalContext) => {
-				printSchedulingRequest(approvalContext, globalOpts);
+				printSchedulingRequest(approvalContext, opts);
 
 				if (!process.stdin.isTTY) {
 					return null;
@@ -94,7 +97,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 				return await promptYesNo("Approve scheduling request? [y/N] ");
 			},
 			log: (_level, message) => {
-				info(message, globalOpts);
+				info(message, opts);
 			},
 		},
 	});
@@ -103,7 +106,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 
 	const hooks: TapServiceHooks = {
 		approveTransfer: async (approvalContext) => {
-			printTransferRequest(approvalContext, globalOpts);
+			printTransferRequest(approvalContext, opts);
 
 			const decision = await userHooks.approveTransfer?.(approvalContext);
 			if (decision !== undefined) {
@@ -117,7 +120,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 			return await promptYesNo("Approve action? [y/N] ");
 		},
 		confirmMeeting: async (meeting) => {
-			printProposedMeeting(meeting, globalOpts);
+			printProposedMeeting(meeting, opts);
 
 			if (!process.stdin.isTTY) {
 				return true;
@@ -133,7 +136,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 				request,
 			)),
 		log: (_level, message) => {
-			info(message, globalOpts);
+			info(message, opts);
 		},
 		emitEvent: options.emitEvents
 			? (payload) => {
@@ -157,6 +160,10 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 		schedulingHandler,
 		createSigningProvider: async (cfg: TrustedAgentsConfig) => createConfiguredSigningProvider(cfg),
 	});
+
+	// Eagerly initialize so CLI commands can access trustStore, resolver,
+	// etc. without calling start() (which also starts the transport).
+	await runtime.init();
 
 	return runtime;
 }

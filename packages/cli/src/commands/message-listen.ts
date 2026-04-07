@@ -39,7 +39,7 @@ export async function createMessageListenerSession(
 	hooks?: MessageListenerHooks,
 ): Promise<MessageListenerSession> {
 	const config = await loadConfig(opts);
-	const { service } = createCliRuntime({
+	const { service } = await createCliRuntime({
 		config,
 		opts,
 		emitEvents: true,

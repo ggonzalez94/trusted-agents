@@ -36,7 +36,7 @@ export async function connectCommand(
 			return;
 		}
 
-		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
+		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
 		const invite = parseInviteUrl(inviteUrl);
 		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
 			throw new ValidationError(

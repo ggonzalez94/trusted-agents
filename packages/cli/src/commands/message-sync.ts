@@ -9,7 +9,7 @@ export async function messageSyncCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const config = await loadConfig(opts);
-		const { service } = createCliRuntime({
+		const { service } = await createCliRuntime({
 			config,
 			opts,
 			emitEvents: false,

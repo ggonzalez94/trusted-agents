@@ -23,6 +23,7 @@ export {
 // ── Seam interfaces (from core) ──
 export type {
 	TransportProvider,
+	IAgentResolver,
 	ITrustStore,
 	IConversationLogger,
 	IRequestJournal,
