@@ -15,7 +15,6 @@ export {
 	filterSchedulingProposalSlots,
 	findSchedulableSchedulingSlots,
 } from "trusted-agents-core";
-export { SchedulingHandler } from "./scheduling-handler.js";
 export type {
 	SchedulingApprovalContext,
 	ProposedMeeting,

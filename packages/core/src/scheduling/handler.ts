@@ -41,7 +41,7 @@ export type SchedulingDecision =
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-export function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string } {
+function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string } {
 	let minStart = slots[0]?.start ?? "";
 	let maxEnd = slots[0]?.end ?? "";
 	for (const slot of slots) {
@@ -51,7 +51,7 @@ export function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: s
 	return { start: minStart, end: maxEnd };
 }
 
-export function findOverlappingFreeSlots(
+function findOverlappingFreeSlots(
 	proposedSlots: TimeSlot[],
 	availability: AvailabilityWindow[],
 ): TimeSlot[] {
@@ -65,7 +65,7 @@ export function findOverlappingFreeSlots(
 	);
 }
 
-export function buildCounterSlots(
+function buildCounterSlots(
 	availability: AvailabilityWindow[],
 	durationMinutes: number,
 ): TimeSlot[] {
