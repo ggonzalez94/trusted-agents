@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TapAppRegistry } from "../../../src/app/registry.js";
 import { TransportError, ValidationError } from "../../../src/common/errors.js";
 import type { TrustedAgentsConfig } from "../../../src/config/types.js";
@@ -41,8 +41,9 @@ import {
 	BOB,
 	BOB_SIGNING_PROVIDER,
 } from "../../fixtures/test-keys.js";
+import { useTempDirs } from "../../helpers/temp-dir.js";
 
-const tempDirs: string[] = [];
+const { track: trackTempDir } = useTempDirs();
 
 class FakeTransport implements TransportProvider {
 	public startCalls = 0;
@@ -258,7 +259,7 @@ async function createService(
 	dataDir: string;
 }> {
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-service-"));
-	tempDirs.push(dataDir);
+	trackTempDir(dataDir);
 
 	const config: TrustedAgentsConfig = {
 		agentId: 1,
@@ -293,12 +294,6 @@ async function createService(
 
 	return { service, transport, requestJournal, dataDir };
 }
-
-afterEach(async () => {
-	await Promise.all(
-		tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true })),
-	);
-});
 
 describe("TapMessagingService", () => {
 	it("uses a scoped transport session for syncOnce", async () => {
