@@ -918,14 +918,7 @@ export class TapMessagingService {
 				peerAddress: contact.peerAgentAddress,
 			});
 
-			await appendConversationLog(
-				this.context.conversationLogger,
-				contact,
-				request,
-				"outgoing",
-				timestamp,
-			);
-			await this.context.trustStore.touchContact(contact.connectionId);
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 			return {
 				receipt,
@@ -1081,14 +1074,7 @@ export class TapMessagingService {
 			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
 				peerAddress: contact.peerAgentAddress,
 			});
-			await appendConversationLog(
-				this.context.conversationLogger,
-				contact,
-				request,
-				"outgoing",
-				timestamp,
-			);
-			await this.context.trustStore.touchContact(contact.connectionId);
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 			await this.appendLedger({
 				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
@@ -1673,13 +1659,7 @@ export class TapMessagingService {
 			return { status };
 		}
 
-		await appendConversationLog(
-			this.context.conversationLogger,
-			contact,
-			envelope.message,
-			"incoming",
-		);
-		await this.context.trustStore.touchContact(contact.connectionId);
+		await this.appendConversationLogSafe(contact, envelope.message, "incoming");
 
 		if (envelope.message.method === MESSAGE_SEND) {
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");

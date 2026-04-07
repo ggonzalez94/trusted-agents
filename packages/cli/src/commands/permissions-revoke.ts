@@ -1,4 +1,4 @@
-import { ValidationError, nowISO } from "trusted-agents-core";
+import { assertContactActive, findContactForPeer, nowISO } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
@@ -22,20 +22,13 @@ export async function permissionsRevokeCommand(
 	try {
 		const config = await loadConfig(opts);
 		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:permissions-revoke" });
-		const contacts = await runtime.trustStore.getContacts();
-		const contact = contacts.find(
-			(entry) =>
-				entry.peerDisplayName.toLowerCase() === peer.toLowerCase() ||
-				entry.peerAgentId === Number.parseInt(peer, 10),
-		);
+		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
 		if (!contact) {
 			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
 			process.exitCode = 4;
 			return;
 		}
-		if (contact.status !== "active") {
-			throw new ValidationError(`Cannot send to ${peer}: contact status is "${contact.status}"`);
-		}
+		assertContactActive(contact, peer);
 
 		const grantSet = {
 			...contact.permissions.grantedByMe,
