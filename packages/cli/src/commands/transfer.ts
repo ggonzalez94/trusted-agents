@@ -93,18 +93,7 @@ export async function transferCommand(
 					execution_address: execution.executionAddress,
 					funding_address: execution.fundingAddress,
 					paymaster_provider: execution.paymasterProvider,
-					estimated_gas_units:
-						gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
-					max_fee_per_gas_wei:
-						gasEstimate.maxFeePerGasWei !== undefined
-							? gasEstimate.maxFeePerGasWei.toString()
-							: undefined,
-					max_priority_fee_per_gas_wei:
-						gasEstimate.maxPriorityFeePerGasWei !== undefined
-							? gasEstimate.maxPriorityFeePerGasWei.toString()
-							: undefined,
-					gas_price_wei:
-						gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+					...serializeGasEstimate(gasEstimate),
 					warnings: warnings.length > 0 ? warnings : undefined,
 				},
 				opts,
@@ -169,18 +158,7 @@ export async function transferCommand(
 				execution_address: execution.executionAddress,
 				funding_address: execution.fundingAddress,
 				paymaster_provider: execution.paymasterProvider,
-				estimated_gas_units:
-					gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
-				max_fee_per_gas_wei:
-					gasEstimate.maxFeePerGasWei !== undefined
-						? gasEstimate.maxFeePerGasWei.toString()
-						: undefined,
-				max_priority_fee_per_gas_wei:
-					gasEstimate.maxPriorityFeePerGasWei !== undefined
-						? gasEstimate.maxPriorityFeePerGasWei.toString()
-						: undefined,
-				gas_price_wei:
-					gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+				...serializeGasEstimate(gasEstimate),
 				warnings: warnings.length > 0 ? warnings : undefined,
 			},
 			opts,
@@ -308,4 +286,21 @@ function buildTransferConfirmationPrompt(input: {
 		...(input.execution.warnings.map((warning) => `- Execution note: ${warning}`) ?? []),
 		"Proceed? [y/N] ",
 	].join("\n");
+}
+
+function serializeGasEstimate(gasEstimate: TransferGasEstimate) {
+	return {
+		estimated_gas_units:
+			gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
+		max_fee_per_gas_wei:
+			gasEstimate.maxFeePerGasWei !== undefined
+				? gasEstimate.maxFeePerGasWei.toString()
+				: undefined,
+		max_priority_fee_per_gas_wei:
+			gasEstimate.maxPriorityFeePerGasWei !== undefined
+				? gasEstimate.maxPriorityFeePerGasWei.toString()
+				: undefined,
+		gas_price_wei:
+			gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+	};
 }
