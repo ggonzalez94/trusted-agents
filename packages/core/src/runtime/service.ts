@@ -2997,7 +2997,7 @@ export class TapMessagingService {
 
 		try {
 			if (persisted) {
-				await this.deliverPendingConnectionResult(delivery);
+				await this.sendAndCompleteJournalEntry(delivery);
 			} else {
 				await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 					peerAddress: delivery.peerAddress,
@@ -3060,29 +3060,43 @@ export class TapMessagingService {
 		);
 	}
 
-	private async retryPendingActionResults(): Promise<number> {
+	private async retryPendingResults<T extends { peerAgentId: number; peerName: string }>(
+		method: string,
+		parse: (metadata: Record<string, unknown> | undefined) => T | null,
+		deliver: (delivery: T) => Promise<void>,
+		errorLabel: (delivery: T) => string,
+	): Promise<number> {
 		const pending = await this.context.requestJournal.listPending("outbound");
 		let processed = 0;
 		for (const entry of pending) {
-			if (entry.kind !== "result" || entry.method !== ACTION_RESULT) {
+			if (entry.kind !== "result" || entry.method !== method) {
 				continue;
 			}
-			const delivery = parsePendingActionResultDelivery(entry.metadata);
+			const delivery = parse(entry.metadata);
 			if (!delivery) {
 				continue;
 			}
 			try {
-				await this.deliverPendingActionResult(delivery);
+				await deliver(delivery);
 				processed += 1;
 			} catch (error: unknown) {
 				this.logResultDeliveryFailure(
-					`Action result ${delivery.actionId}`,
+					errorLabel(delivery),
 					`${delivery.peerName} (#${delivery.peerAgentId})`,
 					error,
 				);
 			}
 		}
 		return processed;
+	}
+
+	private retryPendingActionResults(): Promise<number> {
+		return this.retryPendingResults(
+			ACTION_RESULT,
+			parsePendingActionResultDelivery,
+			(d) => this.deliverPendingActionResult(d),
+			(d) => `Action result ${d.actionId}`,
+		);
 	}
 
 	private async retryPendingConnectionRequests(): Promise<number> {
@@ -3112,55 +3126,35 @@ export class TapMessagingService {
 		return processed;
 	}
 
-	private async retryPendingConnectionResults(): Promise<number> {
-		const pending = await this.context.requestJournal.listPending("outbound");
-		let processed = 0;
-		for (const entry of pending) {
-			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
-				continue;
-			}
-			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
-			if (!delivery) {
-				continue;
-			}
-			try {
-				await this.deliverPendingConnectionResult(delivery);
-				processed += 1;
-			} catch (error: unknown) {
-				this.logResultDeliveryFailure(
-					"Connection result",
-					`${delivery.peerName} (#${delivery.peerAgentId})`,
-					error,
-				);
-			}
-		}
-		return processed;
+	private retryPendingConnectionResults(): Promise<number> {
+		return this.retryPendingResults(
+			CONNECTION_RESULT,
+			parsePendingConnectionResultDelivery,
+			(d) => this.sendAndCompleteJournalEntry(d),
+			() => "Connection result",
+		);
 	}
 
-	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
+	private async sendAndCompleteJournalEntry(delivery: {
+		peerAgentId: number;
+		request: ProtocolMessage;
+		peerAddress: `0x${string}`;
+	}): Promise<void> {
 		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 			peerAddress: delivery.peerAddress,
 			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 		});
 		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
 		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
+	}
 
+	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
+		await this.sendAndCompleteJournalEntry(delivery);
 		const contact = await this.context.trustStore.getContact(delivery.connectionId);
 		if (!contact || contact.peerAgentId !== delivery.peerAgentId) {
 			return;
 		}
 		await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
-	}
-
-	private async deliverPendingConnectionResult(
-		delivery: PendingConnectionResultDelivery,
-	): Promise<void> {
-		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
-			peerAddress: delivery.peerAddress,
-			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-		});
-		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
-		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
 	}
 
 	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
