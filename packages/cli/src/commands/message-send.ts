@@ -1,3 +1,4 @@
+import { DEFAULT_MESSAGE_SCOPE } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
@@ -8,7 +9,6 @@ import {
 	queuedTapCommandResultFields,
 	runOrQueueTapCommand,
 } from "../lib/queued-commands.js";
-import { DEFAULT_MESSAGE_SCOPE } from "../lib/scopes.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function messageSendCommand(

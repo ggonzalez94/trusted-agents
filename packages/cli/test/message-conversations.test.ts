@@ -7,6 +7,7 @@ import {
 	createEmptyPermissionState,
 } from "trusted-agents-core";
 import type { Contact, ProtocolMessage } from "trusted-agents-core";
+import { DEFAULT_MESSAGE_SCOPE } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	appendConversationLog,
@@ -16,7 +17,6 @@ import {
 	findContactForPeer,
 	findUniqueContactForAgentId,
 } from "../src/lib/message-conversations.js";
-import { DEFAULT_MESSAGE_SCOPE } from "../src/lib/scopes.js";
 
 const CONTACT: Contact = {
 	connectionId: "conn-alice-001",
