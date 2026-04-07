@@ -578,7 +578,7 @@ export class OpenClawTapRegistry {
 				executeTransfer: async (serviceConfig, request) =>
 					await executeOnchainTransfer(serviceConfig, signingProvider, request),
 				log: (level, message) => {
-					logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
+					this.logger[level](`[trusted-agents-tap:${definition.name}] ${message}`);
 				},
 				emitEvent: (payload) => {
 					this.handleEmitEvent(name, notificationQueue, payload);
@@ -872,20 +872,4 @@ export class OpenClawTapRegistry {
 
 		return warnings;
 	}
-}
-
-function logWithLevel(
-	logger: PluginLogger,
-	level: "info" | "warn" | "error",
-	message: string,
-): void {
-	if (level === "error") {
-		logger.error(message);
-		return;
-	}
-	if (level === "warn") {
-		logger.warn(message);
-		return;
-	}
-	logger.info(message);
 }

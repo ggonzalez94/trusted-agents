@@ -2857,7 +2857,7 @@ export class TapMessagingService {
 				peerAgentId: peer.agentId,
 				correlationId: result.requestId,
 				status: "pending",
-				metadata: serializePendingConnectionResultDelivery(delivery),
+				metadata: delivery as unknown as Record<string, unknown>,
 			});
 			persisted = true;
 		} catch (error: unknown) {
@@ -3425,7 +3425,9 @@ function parseSchedulingTrackingMetadata(
 		return {};
 	}
 
-	const schedulingState = asSchedulingRequestState(metadata.schedulingState);
+	const ss = metadata.schedulingState;
+	const schedulingState: SchedulingRequestState | undefined =
+		ss === "accepted" || ss === "cancelled" || ss === "rejected" ? ss : undefined;
 	return {
 		...(typeof metadata.localEventId === "string" && metadata.localEventId.length > 0
 			? { localEventId: metadata.localEventId }
@@ -3436,10 +3438,6 @@ function parseSchedulingTrackingMetadata(
 
 function asString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
-}
-
-function asSchedulingRequestState(value: unknown): SchedulingRequestState | undefined {
-	return value === "accepted" || value === "cancelled" || value === "rejected" ? value : undefined;
 }
 
 function asStringArray(value: unknown): string[] {
@@ -3463,19 +3461,16 @@ function mergeMetadata(
 	return next;
 }
 
-function serializePendingRequestDetails(
-	details: TapPendingRequestDetails,
-): Record<string, unknown> {
-	return details as unknown as Record<string, unknown>;
-}
-
 function serializePendingTransferRequestDetails(
 	contact: Contact,
 	request: TransferActionRequest,
 	dataDir: string,
 ): Record<string, unknown> {
 	return {
-		...serializePendingRequestDetails(buildPendingTransferDetails(contact, request, dataDir)),
+		...(buildPendingTransferDetails(contact, request, dataDir) as unknown as Record<
+			string,
+			unknown
+		>),
 		request: {
 			type: "transfer-request",
 			payload: request,
@@ -3507,7 +3502,7 @@ function serializePendingSchedulingRequestDetails(
 		ledgerPath: getPermissionLedgerPath(dataDir),
 	};
 	return {
-		...serializePendingRequestDetails(details),
+		...(details as unknown as Record<string, unknown>),
 		request: {
 			type: "scheduling-request",
 			payload: request,
@@ -3588,12 +3583,6 @@ function buildPendingConnectionResultDelivery(
 		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
 		request,
 	};
-}
-
-function serializePendingConnectionResultDelivery(
-	delivery: PendingConnectionResultDelivery,
-): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
 }
 
 function parsePendingConnectionResultDelivery(
