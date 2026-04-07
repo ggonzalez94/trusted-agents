@@ -4,19 +4,17 @@ import { join } from "node:path";
 import {
 	FileConversationLogger,
 	MESSAGE_SEND,
-	createEmptyPermissionState,
-} from "trusted-agents-core";
-import type { Contact, ProtocolMessage } from "trusted-agents-core";
-import { DEFAULT_MESSAGE_SCOPE } from "trusted-agents-core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
 	appendConversationLog,
 	buildConversationLogEntry,
 	buildOutgoingActionRequest,
 	buildOutgoingMessageRequest,
-	findContactForPeer,
+	createEmptyPermissionState,
 	findUniqueContactForAgentId,
-} from "../src/lib/message-conversations.js";
+} from "trusted-agents-core";
+import type { Contact, ProtocolMessage } from "trusted-agents-core";
+import { DEFAULT_MESSAGE_SCOPE } from "trusted-agents-core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { findContactForPeer } from "../src/lib/message-conversations.js";
 
 const CONTACT: Contact = {
 	connectionId: "conn-alice-001",

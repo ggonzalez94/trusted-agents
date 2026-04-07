@@ -32,16 +32,6 @@ export {
 export type { ResultMethod } from "./methods.js";
 
 export {
-	parseError,
-	invalidRequest,
-	methodNotFound,
-	invalidParams,
-	internalError,
-	forbidden,
-	unauthorized,
-} from "./errors.js";
-
-export {
 	createJsonRpcRequest,
 	createJsonRpcResponse,
 	createJsonRpcError,

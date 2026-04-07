@@ -4,7 +4,6 @@ import {
 	FileRequestJournal,
 	FileTrustStore,
 	TapAppRegistry,
-	XmtpTransport,
 	buildChainPublicClient,
 } from "trusted-agents-core";
 import type {
@@ -14,7 +13,6 @@ import type {
 	IRequestJournal,
 	ITrustStore,
 	SigningProvider,
-	TransportProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { resolveConfiguredCalendarProvider } from "./calendar/setup.js";
@@ -30,10 +28,6 @@ export interface CliContext {
 	requestJournal: IRequestJournal;
 	appRegistry: TapAppRegistry;
 	calendarProvider?: ICalendarProvider;
-}
-
-export interface CliContextWithTransport extends CliContext {
-	transport: TransportProvider;
 }
 
 function createLazySigningProvider(config: TrustedAgentsConfig): SigningProvider {
@@ -82,27 +76,4 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 		appRegistry,
 		calendarProvider,
 	};
-}
-
-export function buildContextWithTransport(config: TrustedAgentsConfig): CliContextWithTransport {
-	const ctx = buildContext(config);
-	const override = getCliRuntimeOverride(config.dataDir);
-
-	if (override?.createTransport) {
-		return { ...ctx, transport: override.createTransport(config, ctx) };
-	}
-
-	const transport = new XmtpTransport(
-		{
-			signingProvider: ctx.signingProvider,
-			chain: config.chain,
-			dbPath: `${config.dataDir}/xmtp`,
-			dbEncryptionKey: config.xmtpDbEncryptionKey,
-			agentResolver: ctx.resolver,
-			resolveCacheTtlMs: config.resolveCacheTtlMs,
-		},
-		ctx.trustStore,
-	);
-
-	return { ...ctx, transport };
 }
