@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import {
-	type ContactPermissionState,
 	type PermissionGrant,
 	type PermissionGrantSet,
 	TAP_GRANTS_VERSION,
@@ -35,7 +34,7 @@ async function readGrantStdin(): Promise<string> {
 	return Buffer.concat(chunks).toString("utf-8");
 }
 
-export function normalizeGrantInput(input: unknown): PermissionGrantSet {
+function normalizeGrantInput(input: unknown): PermissionGrantSet {
 	if (Array.isArray(input)) {
 		return createGrantSet(input.map(normalizeGrantLike));
 	}
@@ -56,50 +55,6 @@ export function normalizeGrantInput(input: unknown): PermissionGrantSet {
 		);
 	}
 	return grantSet;
-}
-
-export function summarizeGrant(grant: PermissionGrant): string {
-	const status = grant.status === "revoked" ? "revoked" : "active";
-	const constraints =
-		grant.constraints && Object.keys(grant.constraints).length > 0
-			? ` ${JSON.stringify(grant.constraints)}`
-			: "";
-	return `${grant.grantId}: ${grant.scope} [${status}]${constraints}`;
-}
-
-export function summarizeGrantSet(grantSet: PermissionGrantSet | undefined): string[] {
-	if (!grantSet || grantSet.grants.length === 0) {
-		return ["(none)"];
-	}
-
-	return grantSet.grants.map(summarizeGrant);
-}
-
-export function replaceGrantedByMe(
-	state: ContactPermissionState,
-	grantSet: PermissionGrantSet,
-): ContactPermissionState {
-	return {
-		grantedByMe: grantSet,
-		grantedByPeer: state.grantedByPeer,
-	};
-}
-
-export function replaceGrantedByPeer(
-	state: ContactPermissionState,
-	grantSet: PermissionGrantSet,
-): ContactPermissionState {
-	return {
-		grantedByMe: state.grantedByMe,
-		grantedByPeer: grantSet,
-	};
-}
-
-export function findActiveGrantsByScope(
-	grantSet: PermissionGrantSet,
-	scope: string,
-): PermissionGrant[] {
-	return grantSet.grants.filter((grant) => grant.status === "active" && grant.scope === scope);
 }
 
 function normalizeGrantLike(input: unknown): PermissionGrant {

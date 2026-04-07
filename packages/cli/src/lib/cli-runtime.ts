@@ -168,7 +168,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 	return runtime;
 }
 
-// ── Print helpers (ported from tap-service.ts) ──
+// ── Print helpers ──
 
 function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalOptions): void {
 	const { contact, request, activeTransferGrants, ledgerPath } = context;

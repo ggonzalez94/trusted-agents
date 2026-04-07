@@ -1,14 +1,7 @@
-import {
-	type Erc20Asset,
-	ValidationError,
-	getUsdcAsset as getCoreUsdcAsset,
-} from "trusted-agents-core";
+import { ValidationError } from "trusted-agents-core";
 
 export type { Erc20Asset } from "trusted-agents-core";
-
-export function getUsdcAsset(chain: string): Erc20Asset | undefined {
-	return getCoreUsdcAsset(chain);
-}
+export { getUsdcAsset } from "trusted-agents-core";
 
 export function normalizeAsset(asset: string): "native" | "usdc" {
 	const normalized = asset.trim().toLowerCase();
