@@ -1,9 +1,8 @@
 import { ValidationError } from "trusted-agents-core";
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
-import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RespondMeetingOptions {
@@ -29,8 +28,9 @@ export async function messageRespondMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const ctx = buildContextWithTransport(config);
-		const service = createCliTapMessagingService(ctx, opts, {
+		const { service } = createCliRuntime({
+			config,
+			opts,
 			ownerLabel: "tap:respond-meeting",
 		});
 

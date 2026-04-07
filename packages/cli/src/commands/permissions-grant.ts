@@ -1,5 +1,5 @@
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
 import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
@@ -10,7 +10,6 @@ import {
 	queuedTapCommandResultFields,
 	runOrQueueTapCommand,
 } from "../lib/queued-commands.js";
-import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function permissionsGrantCommand(
@@ -23,9 +22,9 @@ export async function permissionsGrantCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const ctx = buildContextWithTransport(config);
+		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:permissions-grant" });
 		const grantSet = await readGrantFile(file);
-		const contact = findContactForPeer(await ctx.trustStore.getContacts(), peer);
+		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
 		if (!contact) {
 			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
 			process.exitCode = 4;
@@ -53,9 +52,6 @@ export async function permissionsGrantCommand(
 		}
 
 		verbose(`Publishing ${grantSet.grants.length} grants to ${peer}...`, opts);
-		const service = createCliTapMessagingService(ctx, opts, {
-			ownerLabel: "tap:permissions-grant",
-		});
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
 			{
@@ -66,7 +62,7 @@ export async function permissionsGrantCommand(
 					note: cmdOpts?.note,
 				},
 			},
-			async () => await service.publishGrantSet(peer, grantSet, cmdOpts?.note),
+			async () => await runtime.service.publishGrantSet(peer, grantSet, cmdOpts?.note),
 			{
 				requestedBy: "tap:permissions-grant",
 			},

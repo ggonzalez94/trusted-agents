@@ -6,8 +6,8 @@ import {
 	validateSchedulingProposal,
 } from "trusted-agents-core";
 import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { buildContextWithTransport } from "../lib/context.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
 import { error, success, verbose } from "../lib/output.js";
@@ -17,7 +17,6 @@ import {
 	queuedTapCommandResultFields,
 	runOrQueueTapCommand,
 } from "../lib/queued-commands.js";
-import { createCliTapMessagingService } from "../lib/tap-service.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RequestMeetingOptions {
@@ -42,7 +41,7 @@ export async function messageRequestMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const ctx = buildContextWithTransport(config);
+		const runtime = createCliRuntime({ config, opts, ownerLabel: "tap:request-meeting" });
 		const durationMinutes = Number.parseInt(cmdOpts.duration ?? "60", 10);
 
 		if (Number.isNaN(durationMinutes) || durationMinutes <= 0) {
@@ -65,7 +64,7 @@ export async function messageRequestMeetingCommand(
 		};
 
 		validateSchedulingProposal(proposal);
-		const contact = findContactForPeer(await ctx.trustStore.getContacts(), peer);
+		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
 		if (!contact) {
 			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
 			process.exitCode = 4;
@@ -98,10 +97,6 @@ export async function messageRequestMeetingCommand(
 
 		verbose(`Requesting meeting with ${peer}: "${cmdOpts.title}"...`, opts);
 
-		const service = createCliTapMessagingService(ctx, opts, {
-			ownerLabel: "tap:request-meeting",
-		});
-
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
 			{
@@ -110,7 +105,7 @@ export async function messageRequestMeetingCommand(
 					input: { peer, proposal },
 				},
 			},
-			async () => await service.requestMeeting({ peer, proposal }),
+			async () => await runtime.service.requestMeeting({ peer, proposal }),
 			{
 				requestedBy: "tap:request-meeting",
 			},
