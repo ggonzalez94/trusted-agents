@@ -4065,13 +4065,25 @@ async function findContactForMessage(
 
 	if (message.method === CONNECTION_RESULT) {
 		const params = parseConnectionResult(message);
-		return findUniqueContactForAgentId(contacts, params.from.agentId) ?? null;
+		return (
+			contacts.find(
+				(c) =>
+					c.peerAgentId === params.from.agentId &&
+					c.peerChain === params.from.chain &&
+					c.status === "active",
+			) ?? null
+		);
 	}
 
 	if (message.method === PERMISSIONS_UPDATE) {
 		const params = parsePermissionsUpdate(message);
 		const peer = resolvePermissionsUpdatePeer(context.config, params);
-		return findUniqueContactForAgentId(contacts, peer.agentId) ?? null;
+		return (
+			contacts.find(
+				(c) =>
+					c.peerAgentId === peer.agentId && c.peerChain === peer.chain && c.status === "active",
+			) ?? null
+		);
 	}
 
 	return findUniqueContactForAgentId(contacts, from) ?? null;
