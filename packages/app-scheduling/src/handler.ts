@@ -1,6 +1,5 @@
 import type {
 	Contact,
-	SchedulingDecision,
 	SchedulingHandler,
 	SchedulingProposal,
 	TapActionContext,
@@ -10,6 +9,7 @@ import type {
 import {
 	findApplicableSchedulingGrants,
 	findSchedulableSchedulingSlots,
+	mapSchedulingDecisionToResult,
 } from "trusted-agents-core";
 
 export async function handleSchedulingRequest(ctx: TapActionContext): Promise<TapActionResult> {
@@ -37,55 +37,11 @@ export async function handleSchedulingRequest(ctx: TapActionContext): Promise<Ta
 			proposal,
 		);
 
-		return mapDecisionToResult(proposal.schedulingId, decision);
+		return mapSchedulingDecisionToResult(proposal.schedulingId, decision);
 	}
 
 	// Fallback: grant-only evaluation when no SchedulingHandler is configured
 	return handleGrantOnlyEvaluation(ctx, proposal);
-}
-
-function mapDecisionToResult(schedulingId: string, decision: SchedulingDecision): TapActionResult {
-	switch (decision.action) {
-		case "confirm":
-			return {
-				success: true,
-				data: {
-					type: "scheduling/accept",
-					schedulingId,
-					acceptedSlot: decision.slot,
-				},
-			};
-		case "counter":
-			return {
-				success: true,
-				data: {
-					type: "scheduling/counter",
-					schedulingId,
-					counterSlots: decision.slots,
-				},
-			};
-		case "reject":
-			return {
-				success: false,
-				data: {
-					type: "scheduling/reject",
-					schedulingId,
-					reason: decision.reason,
-				},
-				error: {
-					code: "REJECTED",
-					message: decision.reason,
-				},
-			};
-		case "defer":
-			return {
-				success: false,
-				error: {
-					code: "DEFERRED",
-					message: "Scheduling request deferred for approval",
-				},
-			};
-	}
 }
 
 function handleGrantOnlyEvaluation(

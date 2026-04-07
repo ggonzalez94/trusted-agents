@@ -55,11 +55,12 @@ import {
 	findApplicableSchedulingGrants,
 	findSchedulableSchedulingSlots,
 } from "../scheduling/grants.js";
-import type {
-	ConfirmedMeeting,
-	ProposedMeeting,
-	SchedulingApprovalContext,
-	SchedulingHandler,
+import {
+	type ConfirmedMeeting,
+	type ProposedMeeting,
+	type SchedulingApprovalContext,
+	type SchedulingHandler,
+	mapSchedulingDecisionToResult,
 } from "../scheduling/handler.js";
 import type { SchedulingProposal } from "../scheduling/types.js";
 import type { SigningProvider } from "../signing/provider.js";
@@ -2204,47 +2205,7 @@ export class TapMessagingService {
 
 		const decision = await schedulingHandler.evaluateProposal(requestId, contact, proposal);
 
-		switch (decision.action) {
-			case "confirm":
-				return {
-					success: true,
-					data: {
-						type: "scheduling/accept",
-						schedulingId: proposal.schedulingId,
-						acceptedSlot: decision.slot,
-					},
-				};
-			case "counter":
-				return {
-					success: true,
-					data: {
-						type: "scheduling/counter",
-						schedulingId: proposal.schedulingId,
-						counterSlots: decision.slots,
-					},
-				};
-			case "reject":
-				return {
-					success: false,
-					data: {
-						type: "scheduling/reject",
-						schedulingId: proposal.schedulingId,
-						reason: decision.reason,
-					},
-					error: {
-						code: "REJECTED",
-						message: decision.reason,
-					},
-				};
-			case "defer":
-				return {
-					success: false,
-					error: {
-						code: "DEFERRED",
-						message: "Scheduling request deferred for approval",
-					},
-				};
-		}
+		return mapSchedulingDecisionToResult(proposal.schedulingId, decision);
 	}
 
 	private parseSchedulingProposalFromPayload(
