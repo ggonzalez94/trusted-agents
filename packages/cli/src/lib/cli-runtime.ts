@@ -15,6 +15,7 @@ import {
 import type { ProposedMeeting, SchedulingApprovalContext } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import { resolveConfiguredCalendarProvider } from "./calendar/setup.js";
+import { ALL_CHAINS } from "./chains.js";
 import { info } from "./output.js";
 import { promptYesNo } from "./prompt.js";
 import { getCliRuntimeOverride } from "./runtime-overrides.js";
@@ -151,9 +152,11 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 	const runtime = await createTapRuntime({
 		dataDir,
 		configOptions: {
-			// Pass the chain from the CLI-loaded config so the SDK
-			// resolves the same chain when it re-loads internally.
+			// Pass the chain and extra chain configs from the CLI so the SDK
+			// resolves the same chain map when it re-loads internally.
+			// Core defaults only include Base; the CLI adds Taiko.
 			chain: config.chain,
+			extraChains: ALL_CHAINS,
 		},
 		contextOptions,
 		hooks,
