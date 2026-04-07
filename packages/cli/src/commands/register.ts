@@ -424,6 +424,13 @@ async function resolveAgentURI(
 		verbose("Cached CID not reachable via gateway, re-uploading...", opts);
 	}
 
+	const cacheUploadResult = async (ipfs: { cid: string; uri: string }) => {
+		info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
+		cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
+		await saveIpfsCache(params.dataDir, cache);
+		return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+	};
+
 	let effectiveProvider: Exclude<IpfsUploadProvider, "auto">;
 	try {
 		effectiveProvider = resolveEffectiveIpfsProvider({
@@ -446,10 +453,7 @@ async function resolveAgentURI(
 		try {
 			await ensureX402UploadFunding(params.config, params.signingProvider, opts);
 			const ipfs = await uploadToIpfsX402(params.registrationFile, params.signingProvider);
-			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
-			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-			await saveIpfsCache(params.dataDir, cache);
-			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+			return cacheUploadResult(ipfs);
 		} catch (err) {
 			const msg = toErrorMessage(err);
 			verbose(`x402 upload failed: ${msg}`, opts);
@@ -486,10 +490,7 @@ Alternatives:
 					preview: params.executionPreview,
 				},
 			);
-			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
-			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-			await saveIpfsCache(params.dataDir, cache);
-			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+			return cacheUploadResult(ipfs);
 		} catch (err) {
 			const msg = toErrorMessage(err);
 			error(
@@ -520,10 +521,7 @@ Alternatives:
 
 	info("Uploading registration file to IPFS via Pinata...", opts);
 	const ipfs = await uploadToIpfsPinata(params.registrationFile, jwt, `tap-${params.nameHint}`);
-	info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
-	cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-	await saveIpfsCache(params.dataDir, cache);
-	return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+	return cacheUploadResult(ipfs);
 }
 
 export async function registerCommand(

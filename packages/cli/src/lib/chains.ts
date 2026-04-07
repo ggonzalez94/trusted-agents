@@ -1,5 +1,5 @@
-import type { ChainConfig } from "trusted-agents-core";
-import { BASE_MAINNET } from "trusted-agents-core";
+import type { ChainConfig, TrustedAgentsConfig } from "trusted-agents-core";
+import { BASE_MAINNET, ValidationError } from "trusted-agents-core";
 
 /**
  * Additional chain configs beyond what core provides.
@@ -69,4 +69,22 @@ export function chainAliasHelpText(): string {
 		"  taiko          Taiko mainnet",
 		"  eip155:<id>    Any chain by CAIP-2 ID",
 	].join("\n");
+}
+
+/**
+ * Resolve a chain from config and throw if the chain config is missing.
+ * The rawInput parameter is included in the error message when provided (e.g. the original user input before alias resolution).
+ */
+export function requireChainConfig(
+	config: TrustedAgentsConfig,
+	chain: string,
+	rawInput?: string,
+): ChainConfig {
+	const chainConfig = config.chains[chain];
+	if (!chainConfig) {
+		throw new ValidationError(
+			`Unknown chain: ${rawInput ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
+		);
+	}
+	return chainConfig;
 }

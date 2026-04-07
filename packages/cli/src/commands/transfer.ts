@@ -12,10 +12,10 @@ import {
 import type { ChainConfig, ExecutionPreview } from "trusted-agents-core";
 import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
 import { normalizeAsset } from "../lib/assets.js";
-import { resolveChainAlias } from "../lib/chains.js";
+import { requireChainConfig, resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
-import { error, success } from "../lib/output.js";
+import { success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
@@ -46,16 +46,7 @@ export async function transferCommand(
 	try {
 		const config = await loadConfig(opts, { requireAgentId: false });
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
-		const chainConfig = config.chains[chain];
-		if (!chainConfig) {
-			error(
-				"VALIDATION_ERROR",
-				`Unknown chain: ${cmdOpts.chain ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
-				opts,
-			);
-			process.exitCode = 2;
-			return;
-		}
+		const chainConfig = requireChainConfig(config, chain, cmdOpts.chain);
 
 		const asset = normalizeAsset(cmdOpts.asset);
 		const toAddress = normalizeRecipientAddress(cmdOpts.to);

@@ -1,9 +1,9 @@
 import { buildChainPublicClient, getExecutionPreview, getUsdcAsset } from "trusted-agents-core";
 import { formatUnits } from "viem";
-import { resolveChainAlias } from "../lib/chains.js";
+import { requireChainConfig, resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
-import { error, success } from "../lib/output.js";
+import { success } from "../lib/output.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -23,16 +23,7 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 	try {
 		const config = await loadConfig(opts, { requireAgentId: false });
 		const chain = chainInput ? resolveChainAlias(chainInput) : config.chain;
-		const chainConfig = config.chains[chain];
-		if (!chainConfig) {
-			error(
-				"VALIDATION_ERROR",
-				`Unknown chain: ${chainInput ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
-				opts,
-			);
-			process.exitCode = 2;
-			return;
-		}
+		const chainConfig = requireChainConfig(config, chain, chainInput);
 
 		const signingProvider = createConfiguredSigningProvider(config);
 		const messagingAddress = await signingProvider.getAddress();
