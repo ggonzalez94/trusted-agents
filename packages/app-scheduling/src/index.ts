@@ -8,36 +8,35 @@ export {
 	buildSchedulingProposalText,
 	buildSchedulingAcceptText,
 	buildSchedulingRejectText,
-} from "./parser.js";
+} from "trusted-agents-core";
 export {
 	findApplicableSchedulingGrants,
 	matchesSchedulingConstraints,
 	filterSchedulingProposalSlots,
 	findSchedulableSchedulingSlots,
-} from "./grants.js";
-export { SchedulingHandler } from "./scheduling-handler.js";
+} from "trusted-agents-core";
 export type {
 	SchedulingApprovalContext,
 	ProposedMeeting,
 	ConfirmedMeeting,
 	SchedulingHooks,
 	SchedulingDecision,
-} from "./scheduling-handler.js";
+} from "trusted-agents-core";
 export type {
 	TimeSlot,
 	SchedulingProposal,
 	SchedulingAccept,
 	SchedulingReject,
 	SchedulingPayload,
-} from "./types.js";
+} from "trusted-agents-core";
 export {
 	generateSchedulingId,
 	validateTimeSlot,
 	validateSchedulingProposal,
 	validateSchedulingAccept,
 	validateSchedulingReject,
-} from "./types.js";
-export type { AvailabilityWindow, CalendarEvent, ICalendarProvider } from "./calendar-provider.js";
+} from "trusted-agents-core";
+export type { AvailabilityWindow, CalendarEvent, ICalendarProvider } from "trusted-agents-core";
 
 export function buildSchedulingPayload(params: {
 	title: string;

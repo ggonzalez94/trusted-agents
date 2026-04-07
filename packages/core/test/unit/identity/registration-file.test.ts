@@ -32,26 +32,13 @@ describe("validateRegistrationFile", () => {
 		expect(() => validateRegistrationFile(42)).toThrow("must be a JSON object");
 	});
 
-	it("should throw when type field is missing", () => {
-		expect(() => validateRegistrationFile(REGISTRATION_MISSING_TYPE)).toThrow(
-			"Invalid registration file type",
-		);
-	});
-
-	it("should throw when type field has the wrong value", () => {
-		expect(() => validateRegistrationFile(REGISTRATION_WRONG_TYPE)).toThrow(
-			"Invalid registration file type",
-		);
-	});
-
-	it("should throw when services array is empty", () => {
-		expect(() => validateRegistrationFile(REGISTRATION_MISSING_SERVICES)).toThrow(
-			"at least one service",
-		);
-	});
-
-	it("should throw when no XMTP transport service is present", () => {
-		expect(() => validateRegistrationFile(REGISTRATION_NO_XMTP_SERVICE)).toThrow("xmtp");
+	it.each([
+		["type field is missing", REGISTRATION_MISSING_TYPE, "Invalid registration file type"],
+		["type field has the wrong value", REGISTRATION_WRONG_TYPE, "Invalid registration file type"],
+		["services array is empty", REGISTRATION_MISSING_SERVICES, "at least one service"],
+		["no XMTP transport service is present", REGISTRATION_NO_XMTP_SERVICE, "xmtp"],
+	])("should throw when %s", (_, input, expectedMessage) => {
+		expect(() => validateRegistrationFile(input)).toThrow(expectedMessage);
 	});
 
 	it("should accept a valid XMTP-only registration file", () => {

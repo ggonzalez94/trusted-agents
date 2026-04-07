@@ -20,7 +20,7 @@ const RPC_FALLBACK_URLS: Partial<Record<number, string[]>> = {
 	],
 };
 
-export function getViemChain(chainConfig: ChainConfig): Chain {
+function getViemChain(chainConfig: ChainConfig): Chain {
 	return (
 		VIEM_CHAINS[chainConfig.chainId] ??
 		defineChain({
@@ -32,7 +32,7 @@ export function getViemChain(chainConfig: ChainConfig): Chain {
 	);
 }
 
-export function buildChainTransport(chainConfig: ChainConfig) {
+function buildChainTransport(chainConfig: ChainConfig) {
 	const urls = [
 		chainConfig.rpcUrl,
 		...(RPC_FALLBACK_URLS[chainConfig.chainId] ?? []).filter((url) => url !== chainConfig.rpcUrl),

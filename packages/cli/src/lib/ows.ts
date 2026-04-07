@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
 	createApiKey,
 	createPolicy,
@@ -10,6 +11,9 @@ import {
 } from "@open-wallet-standard/core";
 import type { ApiKeyResult, WalletInfo } from "@open-wallet-standard/core";
 import { keccak256, toHex } from "viem";
+import type { GlobalOptions } from "../types.js";
+import { info } from "./output.js";
+import { promptInput } from "./prompt.js";
 
 export interface OwsWalletEntry {
 	id: string;
@@ -214,4 +218,58 @@ export function importOwsWalletPrivateKey(
 		throw new Error(`Wallet "${name}" was imported but has no EVM account.`);
 	}
 	return { id: wallet.id, name: wallet.name, address };
+}
+
+/**
+ * Interactive/non-interactive policy setup: find compatible policies,
+ * prompt to reuse, or create a new one.
+ *
+ * @param reuseInNonInteractive - If true and non-interactive, reuse first
+ *   compatible policy instead of always creating a new one.
+ */
+export async function setupOwsPolicy(
+	chain: string,
+	opts: GlobalOptions,
+	options?: { nonInteractive?: boolean; reuseInNonInteractive?: boolean },
+): Promise<string> {
+	const policyChains = [chain];
+	if (chain !== "eip155:8453") {
+		policyChains.push("eip155:8453");
+	}
+
+	const compatible = findCompatiblePolicies(chain);
+
+	if (compatible.length > 0 && !options?.nonInteractive) {
+		info("\nCompatible OWS policies:", opts);
+		for (let i = 0; i < compatible.length; i++) {
+			const p = compatible[i]!;
+			info(`  ${i + 1}. ${p.name} (chains: ${p.chains.join(", ")})`, opts);
+		}
+
+		const choice = await promptInput("\nReuse an existing policy? [1/2/.../no]: ");
+		if (choice && choice !== "no") {
+			const idx = Number.parseInt(choice, 10) - 1;
+			if (idx >= 0 && idx < compatible.length) {
+				const selected = compatible[idx]!;
+				info(`Using policy: ${selected.id}`, opts);
+				return selected.id;
+			}
+		}
+	} else if (compatible.length > 0 && options?.reuseInNonInteractive) {
+		info(`Using existing policy: ${compatible[0]!.id}`, opts);
+		return compatible[0]!.id;
+	}
+
+	const policyId = `tap-${randomBytes(4).toString("hex")}`;
+	const oneYearFromNow = new Date();
+	oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+
+	createOwsPolicy({
+		id: policyId,
+		chains: policyChains,
+		expiresAt: oneYearFromNow.toISOString(),
+	});
+
+	info(`Created policy: ${policyId} (chains: ${policyChains.join(", ")})`, opts);
+	return policyId;
 }

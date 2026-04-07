@@ -67,6 +67,32 @@ function makeMocks() {
 	return { resolver, trustStore };
 }
 
+function makeExistingContact(status: Contact["status"]): Contact {
+	return {
+		connectionId: "existing-conn",
+		peerAgentId: 10,
+		peerChain: "eip155:8453",
+		peerOwnerAddress: ALICE.address,
+		peerDisplayName: "Alice",
+		peerAgentAddress: ALICE.address,
+		permissions: {
+			grantedByMe: {
+				version: "tap-grants/v1",
+				updatedAt: "2025-01-01T00:00:00.000Z",
+				grants: [],
+			},
+			grantedByPeer: {
+				version: "tap-grants/v1",
+				updatedAt: "2025-01-01T00:00:00.000Z",
+				grants: [],
+			},
+		},
+		establishedAt: "2025-01-01T00:00:00.000Z",
+		lastContactAt: "2025-01-01T00:00:00.000Z",
+		status,
+	};
+}
+
 afterEach(() => {
 	vi.restoreAllMocks();
 });
@@ -98,29 +124,7 @@ describe("handleConnectionRequest", () => {
 
 	it("should reuse an existing non-active contact record", async () => {
 		const { resolver, trustStore } = makeMocks();
-		const existingContact: Contact = {
-			connectionId: "existing-conn",
-			peerAgentId: 10,
-			peerChain: "eip155:8453",
-			peerOwnerAddress: ALICE.address,
-			peerDisplayName: "Alice",
-			peerAgentAddress: ALICE.address,
-			permissions: {
-				grantedByMe: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-				grantedByPeer: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-			},
-			establishedAt: "2025-01-01T00:00:00.000Z",
-			lastContactAt: "2025-01-01T00:00:00.000Z",
-			status: "revoked",
-		};
+		const existingContact = makeExistingContact("revoked");
 		(trustStore.findByAgentId as ReturnType<typeof vi.fn>).mockResolvedValue(existingContact);
 
 		const response = await handleConnectionRequest({
@@ -167,29 +171,7 @@ describe("handleConnectionRequest", () => {
 
 	it("should return accept with existing connectionId for already-connected peers", async () => {
 		const { resolver, trustStore } = makeMocks();
-		const existingContact: Contact = {
-			connectionId: "existing-conn",
-			peerAgentId: 10,
-			peerChain: "eip155:8453",
-			peerOwnerAddress: ALICE.address,
-			peerDisplayName: "Alice",
-			peerAgentAddress: ALICE.address,
-			permissions: {
-				grantedByMe: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-				grantedByPeer: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-			},
-			establishedAt: "2025-01-01T00:00:00.000Z",
-			lastContactAt: "2025-01-01T00:00:00.000Z",
-			status: "active",
-		};
+		const existingContact = makeExistingContact("active");
 		(trustStore.findByAgentId as ReturnType<typeof vi.fn>).mockResolvedValue(existingContact);
 
 		const response = await handleConnectionRequest({

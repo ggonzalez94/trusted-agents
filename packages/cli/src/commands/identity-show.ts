@@ -1,7 +1,7 @@
+import { getExecutionPreview } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { getExecutionPreview } from "../lib/execution.js";
-import { error, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success } from "../lib/output.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -35,7 +35,6 @@ export async function identityShowCommand(opts: GlobalOptions): Promise<void> {
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

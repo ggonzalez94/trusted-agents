@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installCommand } from "../src/commands/install.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap install", () => {
 	let tempRoot: string;
 	let homeDir: string;
 	let binDir: string;
-	let stdoutWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 	let originalHome: string | undefined;
 	let originalPath: string | undefined;
 
@@ -19,12 +19,6 @@ describe("tap install", () => {
 		binDir = join(tempRoot, "bin");
 		await mkdir(homeDir, { recursive: true });
 		await mkdir(binDir, { recursive: true });
-		stdoutWrites = [];
-		origStdoutWrite = process.stdout.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
 
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
@@ -46,7 +40,6 @@ describe("tap install", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
 		process.env.HOME = originalHome;
 		process.env.PATH = originalPath;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = "";

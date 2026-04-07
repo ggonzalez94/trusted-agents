@@ -1,31 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 // We test the output module by capturing stdout/stderr writes
 describe("output", () => {
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
-
-	beforeEach(() => {
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
-	});
-
-	afterEach(() => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
-	});
+	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
 	it("should output JSON envelope on success with --json", async () => {
 		const { success } = await import("../src/lib/output.js");

@@ -1,5 +1,6 @@
 import type { Address, Hex } from "viem";
 import { encodePacked, maxUint256, parseErc6492Signature } from "viem";
+import { toErrorMessage } from "../../common/index.js";
 import type { ChainConfig } from "../../config/types.js";
 import { getUsdcAsset } from "../assets.js";
 import { ERC20_NAME_ABI, ERC20_NONCES_ABI, ERC20_VERSION_ABI } from "./abis.js";
@@ -70,7 +71,7 @@ async function loadCirclePermitMetadata(
 			}),
 		]);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
+		const message = toErrorMessage(error);
 		if (message.includes("429") || /rate limit/i.test(message)) {
 			throw new Error(
 				`${chainConfig.name} RPC rate-limited the Circle permit preflight. Retry shortly or set chains.${chainConfig.caip2}.rpc_url to a less rate-limited RPC endpoint.`,

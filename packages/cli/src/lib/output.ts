@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import type { GlobalOptions } from "../types.js";
 import type { OutputFormat } from "../types.js";
 
-export interface Envelope<T = unknown> {
+interface Envelope<T = unknown> {
 	status: "ok" | "error";
 	data?: T;
 	error?: { code: string; message: string };
@@ -24,7 +24,7 @@ export interface Envelope<T = unknown> {
 const require = createRequire(import.meta.url);
 const { version } = require("../../package.json") as { version: string };
 
-export function resolveOutputFormat(opts: GlobalOptions): OutputFormat {
+function resolveOutputFormat(opts: GlobalOptions): OutputFormat {
 	if (opts.output === "json" || opts.output === "text" || opts.output === "ndjson") {
 		return opts.output;
 	}

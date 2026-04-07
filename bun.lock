@@ -23,7 +23,6 @@
       "version": "0.1.0",
       "dependencies": {
         "trusted-agents-core": "workspace:*",
-        "viem": "2.46.3",
       },
     },
     "packages/cli": {

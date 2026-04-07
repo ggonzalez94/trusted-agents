@@ -18,17 +18,14 @@ import {
 	executeOnchainTransfer,
 	generateInvite,
 	generateSchedulingId,
+	toErrorMessage,
 } from "trusted-agents-core";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
 
-function sanitizeOneLiner(text: string): string {
-	return text.replace(/[\n\r\t]+/g, " ").trim();
-}
-
 function truncateText(text: string, maxLen: number): string {
-	const sanitized = sanitizeOneLiner(text);
+	const sanitized = text.replace(/[\n\r\t]+/g, " ").trim();
 	if (sanitized.length <= maxLen) return sanitized;
 	return `${sanitized.slice(0, maxLen)}...`;
 }
@@ -99,7 +96,7 @@ export class OpenClawTapRegistry {
 			await runtime.mutex.runExclusive(async () => {
 				await runtime.runtime.stop().catch((error: unknown) => {
 					this.logger.warn(
-						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${formatError(error)}`,
+						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${toErrorMessage(error)}`,
 					);
 				});
 			});
@@ -148,7 +145,7 @@ export class OpenClawTapRegistry {
 						running: false,
 						lock: null,
 						pendingRequests: [],
-						lastError: formatError(error),
+						lastError: toErrorMessage(error),
 					};
 				}
 			}),
@@ -397,22 +394,12 @@ export class OpenClawTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const approve = params.action === "accept";
-
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
+		const matching = await this.findPendingSchedulingEntry(
+			runtime,
+			params.schedulingId,
+			"inbound",
+			`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
 		);
-		const matching = pending.find(
-			(r) =>
-				r.direction === "inbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
-			);
-		}
 
 		const report = await runtime.mutex.runExclusive(
 			async () => await runtime.runtime.resolvePending(matching.requestId, approve, params.reason),
@@ -435,22 +422,12 @@ export class OpenClawTapRegistry {
 		reason?: string;
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
-
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
+		const matching = await this.findPendingSchedulingEntry(
+			runtime,
+			params.schedulingId,
+			"outbound",
+			`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
 		);
-		const matching = pending.find(
-			(r) =>
-				r.direction === "outbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
-			);
-		}
 
 		const report = await runtime.mutex.runExclusive(
 			async () =>
@@ -515,7 +492,7 @@ export class OpenClawTapRegistry {
 				const runtime = await this.ensureRuntime(identity.name);
 				await this.startRuntime(runtime);
 			} catch (error: unknown) {
-				const message = formatError(error);
+				const message = toErrorMessage(error);
 				failures.push(`${identity.name}: ${message}`);
 				this.logger.warn(
 					`[trusted-agents-tap:${identity.name}] Failed to start TAP runtime: ${message}`,
@@ -530,6 +507,27 @@ export class OpenClawTapRegistry {
 		}
 	}
 
+	private async findPendingSchedulingEntry(
+		runtime: ManagedTapRuntime,
+		schedulingId: string,
+		direction: "inbound" | "outbound",
+		notFoundMessage: string,
+	) {
+		const pending = await runtime.mutex.runExclusive(
+			async () => await runtime.runtime.listPendingRequests(),
+		);
+		const matching = pending.find(
+			(r) =>
+				r.direction === direction &&
+				r.details?.type === "scheduling" &&
+				(r.details as TapPendingSchedulingDetails).schedulingId === schedulingId,
+		);
+		if (!matching) {
+			throw new Error(notFoundMessage);
+		}
+		return matching;
+	}
+
 	private async ensureRuntimeForAction(identity?: string): Promise<ManagedTapRuntime> {
 		const name = this.resolveSingleIdentity(identity);
 		return await this.ensureRuntimeStarted(name);
@@ -537,16 +535,7 @@ export class OpenClawTapRegistry {
 
 	private async ensureRuntimeStarted(name: string): Promise<ManagedTapRuntime> {
 		const runtime = await this.ensureRuntime(name);
-		await runtime.mutex.runExclusive(async () => {
-			try {
-				await runtime.runtime.start();
-				runtime.lastError = undefined;
-			} catch (error: unknown) {
-				runtime.lastError = formatError(error);
-				throw error;
-			}
-		});
-		this.installInterval(runtime);
+		await this.startRuntime(runtime);
 		return runtime;
 	}
 
@@ -589,7 +578,7 @@ export class OpenClawTapRegistry {
 				executeTransfer: async (serviceConfig, request) =>
 					await executeOnchainTransfer(serviceConfig, signingProvider, request),
 				log: (level, message) => {
-					logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
+					this.logger[level](`[trusted-agents-tap:${definition.name}] ${message}`);
 				},
 				emitEvent: (payload) => {
 					this.handleEmitEvent(name, notificationQueue, payload);
@@ -686,7 +675,7 @@ export class OpenClawTapRegistry {
 				await runtime.runtime.start();
 				runtime.lastError = undefined;
 			} catch (error: unknown) {
-				runtime.lastError = formatError(error);
+				runtime.lastError = toErrorMessage(error);
 				throw error;
 			}
 		});
@@ -721,7 +710,7 @@ export class OpenClawTapRegistry {
 					await runtime.runtime.syncOnce();
 					runtime.lastError = undefined;
 				} catch (error: unknown) {
-					runtime.lastError = formatError(error);
+					runtime.lastError = toErrorMessage(error);
 					this.logger.warn(
 						`[trusted-agents-tap:${runtime.definition.name}] Periodic reconcile failed: ${runtime.lastError}`,
 					);
@@ -785,7 +774,7 @@ export class OpenClawTapRegistry {
 			});
 		} catch (error: unknown) {
 			this.logger.warn(
-				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${formatError(error)}`,
+				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -883,24 +872,4 @@ export class OpenClawTapRegistry {
 
 		return warnings;
 	}
-}
-
-function logWithLevel(
-	logger: PluginLogger,
-	level: "info" | "warn" | "error",
-	message: string,
-): void {
-	if (level === "error") {
-		logger.error(message);
-		return;
-	}
-	if (level === "warn") {
-		logger.warn(message);
-		return;
-	}
-	logger.info(message);
-}
-
-function formatError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }

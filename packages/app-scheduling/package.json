@@ -15,7 +15,9 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@types/node": "^25.3.3",
 		"trusted-agents-core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^25.3.3"
 	}
 }

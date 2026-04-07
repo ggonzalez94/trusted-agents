@@ -5,9 +5,10 @@ import {
 	parseInviteUrl,
 	verifyInvite,
 } from "trusted-agents-core";
+import type { ITrustStore } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import {
@@ -118,37 +119,21 @@ export async function connectCommand(
 
 		if (isQueuedTapCommandPending(outcome)) {
 			if (waitSeconds) {
-				const pollIntervalMs = 3000;
-				const deadline = Date.now() + waitSeconds * 1000;
-
 				info(
 					`Connect queued. Waiting up to ${waitSeconds}s for connection to become active...`,
 					opts,
 				);
-
-				while (Date.now() < deadline) {
-					await new Promise((r) => setTimeout(r, pollIntervalMs));
-					const contacts = await runtime.trustStore.getContacts();
-					const match = contacts.find(
-						(c) => c.peerAgentId === peerAgent.agentId && c.status === "active",
-					);
-					if (match) {
-						info(`Connection with ${match.peerDisplayName} is now active.`, opts);
-						success(
-							{
-								connection_id: match.connectionId,
-								peer_name: match.peerDisplayName,
-								peer_agent_id: match.peerAgentId,
-								status: "active",
-								waited: true,
-							},
-							opts,
-							startTime,
-						);
-						return;
-					}
+				if (
+					await pollForActiveContact(
+						runtime.trustStore,
+						peerAgent.agentId,
+						waitSeconds,
+						opts,
+						startTime,
+					)
+				) {
+					return;
 				}
-
 				info(`Timed out waiting. Run 'tap message sync' later to check.`, opts);
 			}
 
@@ -168,41 +153,21 @@ export async function connectCommand(
 		const result = outcome.result;
 
 		if (waitSeconds && result.status !== "active") {
-			const pollIntervalMs = 3000;
-			const deadline = Date.now() + waitSeconds * 1000;
-
 			info(`Waiting up to ${waitSeconds}s for connection to become active...`, opts);
-
-			while (Date.now() < deadline) {
-				await new Promise((r) => setTimeout(r, pollIntervalMs));
-
-				try {
-					await service.syncOnce();
-				} catch {
-					// Transport may be owned by another process
-				}
-
-				const contacts = await runtime.trustStore.getContacts();
-				const match = contacts.find(
-					(c) => c.peerAgentId === peerAgent.agentId && c.status === "active",
-				);
-				if (match) {
-					info(`Connection with ${match.peerDisplayName} is now active.`, opts);
-					success(
-						{
-							connection_id: match.connectionId,
-							peer_name: match.peerDisplayName,
-							peer_agent_id: match.peerAgentId,
-							status: "active",
-							waited: true,
-						},
-						opts,
-						startTime,
-					);
-					return;
-				}
+			if (
+				await pollForActiveContact(
+					runtime.trustStore,
+					peerAgent.agentId,
+					waitSeconds,
+					opts,
+					startTime,
+					async () => {
+						await service.syncOnce();
+					},
+				)
+			) {
+				return;
 			}
-
 			info(`Timed out waiting for connection. Run 'tap message sync' later to check.`, opts);
 		}
 
@@ -219,7 +184,47 @@ export async function connectCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
+}
+
+async function pollForActiveContact(
+	trustStore: ITrustStore,
+	peerAgentId: number,
+	waitSeconds: number,
+	opts: GlobalOptions,
+	startTime: number,
+	syncFn?: () => Promise<void>,
+): Promise<boolean> {
+	const pollIntervalMs = 3000;
+	const deadline = Date.now() + waitSeconds * 1000;
+
+	while (Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, pollIntervalMs));
+		if (syncFn) {
+			try {
+				await syncFn();
+			} catch {
+				// Transport may be owned by another process
+			}
+		}
+		const contacts = await trustStore.getContacts();
+		const match = contacts.find((c) => c.peerAgentId === peerAgentId && c.status === "active");
+		if (match) {
+			info(`Connection with ${match.peerDisplayName} is now active.`, opts);
+			success(
+				{
+					connection_id: match.connectionId,
+					peer_name: match.peerDisplayName,
+					peer_agent_id: match.peerAgentId,
+					status: "active",
+					waited: true,
+				},
+				opts,
+				startTime,
+			);
+			return true;
+		}
+	}
+	return false;
 }

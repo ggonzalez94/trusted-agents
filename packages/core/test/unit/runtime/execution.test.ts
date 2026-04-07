@@ -58,6 +58,34 @@ vi.mock("../../../src/signing/viem-account.js", () => ({
 	createSigningProviderViemAccount: vi.fn(async () => OWNER_ACCOUNT),
 }));
 
+function rpcOk(result: unknown): Response {
+	return new Response(JSON.stringify({ result }), {
+		status: 200,
+		headers: { "Content-Type": "application/json" },
+	});
+}
+
+function rpcFail(method: string): Response {
+	return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
+		status: 500,
+		headers: { "Content-Type": "application/json" },
+	});
+}
+
+const STANDARD_PAYMASTER_RESULT = {
+	paymaster: "0x9999999999999999999999999999999999999999",
+	paymasterData: "0x12",
+	paymasterAndData: "0x999999999999999999999999999999999999999912",
+	callGasLimit: "0x88d8",
+	verificationGasLimit: "0x1d4c8",
+	preVerificationGas: "0x5274",
+	paymasterVerificationGasLimit: "0xea60",
+	paymasterPostOpGasLimit: "0xafc8",
+	tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
+	maxTokenCostMicros: "1000000",
+	validUntil: 1900000000,
+};
+
 function mockRpcFetch(
 	handler: (request: { url: string; method: string; params: unknown[] }) =>
 		| Response
@@ -202,15 +230,9 @@ describe("execution", () => {
 	it("coerces Base eip4337 requests back to an eip7702-compatible paymaster", async () => {
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_08] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_08]);
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
@@ -235,33 +257,19 @@ describe("execution", () => {
 	it("switches Taiko requests to eip4337 with Servo", async () => {
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-							gasPriceGuidance: {
-								suggestedMaxFeePerGas: "0x11a5536",
-								suggestedMaxPriorityFeePerGas: "0xf4240",
-							},
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
+					gasPriceGuidance: {
+						suggestedMaxFeePerGas: "0x11a5536",
+						suggestedMaxPriorityFeePerGas: "0xf4240",
 					},
-				);
+				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
@@ -306,58 +314,21 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymaster: "0x9999999999999999999999999999999999999999",
-							paymasterData: "0x12",
-							paymasterAndData: "0x999999999999999999999999999999999999999912",
-							callGasLimit: "0x88d8",
-							verificationGasLimit: "0x1d4c8",
-							preVerificationGas: "0x5274",
-							paymasterVerificationGasLimit: "0xea60",
-							paymasterPostOpGasLimit: "0xafc8",
-							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
-							maxTokenCostMicros: "1000000",
-							validUntil: 1900000000,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			if (method === "eth_sendUserOperation") {
-				return new Response(JSON.stringify({ result: "0xservohash" }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
 				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return rpcOk(STANDARD_PAYMASTER_RESULT);
+			}
+			if (method === "eth_sendUserOperation") {
+				return rpcOk("0xservohash");
+			}
+			return rpcFail(method);
 		});
 		createBundlerClient.mockReturnValue({
 			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
@@ -417,58 +388,21 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymaster: "0x9999999999999999999999999999999999999999",
-							paymasterData: "0x12",
-							paymasterAndData: "0x999999999999999999999999999999999999999912",
-							callGasLimit: "0x88d8",
-							verificationGasLimit: "0x1d4c8",
-							preVerificationGas: "0x5274",
-							paymasterVerificationGasLimit: "0xea60",
-							paymasterPostOpGasLimit: "0xafc8",
-							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
-							maxTokenCostMicros: "1000000",
-							validUntil: 1900000000,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			if (method === "eth_sendUserOperation") {
-				return new Response(JSON.stringify({ result: "0xservohash" }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
 				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return rpcOk(STANDARD_PAYMASTER_RESULT);
+			}
+			if (method === "eth_sendUserOperation") {
+				return rpcOk("0xservohash");
+			}
+			return rpcFail(method);
 		});
 		createBundlerClient.mockReturnValue({
 			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
@@ -527,35 +461,18 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			if (method === "eth_sendUserOperation") {
-				return new Response(JSON.stringify({ result: "0xservohash" }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
 				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			if (method === "eth_sendUserOperation") {
+				return rpcOk("0xservohash");
+			}
+			return rpcFail(method);
 		});
 
 		const { ensureExecutionReady } = await import("../../../src/runtime/execution.js");
@@ -579,29 +496,15 @@ describe("execution", () => {
 	it("fails fast when Servo explicitly reports the chain as unsupported", async () => {
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 8453 }],
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 8453 }],
+				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
@@ -630,35 +533,21 @@ describe("execution", () => {
 				});
 			}
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_08] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_08]);
 			}
 			if (method === "pm_supportedERC20Tokens") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymasterMetadata: { address: CANDIDE_PAYMASTER_ADDRESS },
-							tokens: [
-								{
-									address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-									symbol: "USDC",
-									decimals: "6",
-								},
-							],
+				return rpcOk({
+					paymasterMetadata: { address: CANDIDE_PAYMASTER_ADDRESS },
+					tokens: [
+						{
+							address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+							symbol: "USDC",
+							decimals: "6",
 						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+					],
+				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 
 		const { getExecutionPreview } = await import("../../../src/runtime/execution.js");
@@ -687,35 +576,21 @@ describe("execution", () => {
 		});
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_08] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_08]);
 			}
 			if (method === "pm_supportedERC20Tokens") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymasterMetadata: { address: CANDIDE_PAYMASTER_ADDRESS },
-							tokens: [
-								{
-									address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-									symbol: "USDC",
-									decimals: "6",
-								},
-							],
+				return rpcOk({
+					paymasterMetadata: { address: CANDIDE_PAYMASTER_ADDRESS },
+					tokens: [
+						{
+							address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+							symbol: "USDC",
+							decimals: "6",
 						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+					],
+				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 		createPaymasterClient.mockReturnValue({
 			getPaymasterStubData: vi.fn().mockResolvedValue({
@@ -864,67 +739,25 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-							gasPriceGuidance: {
-								suggestedMaxFeePerGas: "0x11a5536",
-								suggestedMaxPriorityFeePerGas: "0xf4240",
-							},
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
+					gasPriceGuidance: {
+						suggestedMaxFeePerGas: "0x11a5536",
+						suggestedMaxPriorityFeePerGas: "0xf4240",
 					},
-				);
+				});
 			}
 			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymaster: "0x9999999999999999999999999999999999999999",
-							paymasterData: "0x12",
-							paymasterAndData: "0x999999999999999999999999999999999999999912",
-							callGasLimit: "0x88d8",
-							verificationGasLimit: "0x1d4c8",
-							preVerificationGas: "0x5274",
-							paymasterVerificationGasLimit: "0xea60",
-							paymasterPostOpGasLimit: "0xafc8",
-							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
-							maxTokenCostMicros: "1000000",
-							validUntil: 1900000000,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk(STANDARD_PAYMASTER_RESULT);
 			}
 			if (method === "eth_sendUserOperation") {
-				return new Response(
-					JSON.stringify({
-						result: "0xservohash",
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk("0xservohash");
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 
 		createBundlerClient.mockReturnValue({
@@ -1029,56 +862,26 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-							gasPriceGuidance: {
-								suggestedMaxFeePerGas: "0x11a5536",
-								suggestedMaxPriorityFeePerGas: "0xf4240",
-							},
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
+					gasPriceGuidance: {
+						suggestedMaxFeePerGas: "0x11a5536",
+						suggestedMaxPriorityFeePerGas: "0xf4240",
 					},
-				);
+				});
 			}
 			if (method === "pm_getPaymasterStubData") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymaster: "0x9999999999999999999999999999999999999999",
-							paymasterData: "0x12",
-							paymasterAndData: "0x999999999999999999999999999999999999999912",
-							callGasLimit: "0x88d8",
-							verificationGasLimit: "0x1d4c8",
-							preVerificationGas: "0x5274",
-							paymasterVerificationGasLimit: "0xea60",
-							paymasterPostOpGasLimit: "0xafc8",
-							tokenAddress,
-							maxTokenCostMicros: "50000",
-							validUntil: 1900000000,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk({
+					...STANDARD_PAYMASTER_RESULT,
+					tokenAddress,
+					maxTokenCostMicros: "50000",
+				});
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 		createBundlerClient.mockReturnValue({
 			waitForUserOperationReceipt: vi.fn(),
@@ -1133,67 +936,25 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-							gasPriceGuidance: {
-								suggestedMaxFeePerGas: "0x11a5536",
-								suggestedMaxPriorityFeePerGas: "0xf4240",
-							},
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
+					gasPriceGuidance: {
+						suggestedMaxFeePerGas: "0x11a5536",
+						suggestedMaxPriorityFeePerGas: "0xf4240",
 					},
-				);
+				});
 			}
 			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymaster: "0x9999999999999999999999999999999999999999",
-							paymasterData: "0x12",
-							paymasterAndData: "0x999999999999999999999999999999999999999912",
-							callGasLimit: "0x88d8",
-							verificationGasLimit: "0x1d4c8",
-							preVerificationGas: "0x5274",
-							paymasterVerificationGasLimit: "0xea60",
-							paymasterPostOpGasLimit: "0xafc8",
-							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
-							maxTokenCostMicros: "1000000",
-							validUntil: 1900000000,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk(STANDARD_PAYMASTER_RESULT);
 			}
 			if (method === "eth_sendUserOperation") {
-				return new Response(
-					JSON.stringify({
-						result: "0xservohash",
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk("0xservohash");
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 		createBundlerClient.mockReturnValue({
 			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
@@ -1260,63 +1021,21 @@ describe("execution", () => {
 		mockRpcFetch(({ method, params }) => {
 			requests.push({ method, params });
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_07] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_07]);
 			}
 			if (method === "pm_getCapabilities") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							accountFactoryAddress: SERVO_FACTORY_ADDRESS,
-							supportedChains: [{ chainId: 167000 }],
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
+				});
 			}
 			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
-				return new Response(
-					JSON.stringify({
-						result: {
-							paymaster: "0x9999999999999999999999999999999999999999",
-							paymasterData: "0x12",
-							paymasterAndData: "0x999999999999999999999999999999999999999912",
-							callGasLimit: "0x88d8",
-							verificationGasLimit: "0x1d4c8",
-							preVerificationGas: "0x5274",
-							paymasterVerificationGasLimit: "0xea60",
-							paymasterPostOpGasLimit: "0xafc8",
-							tokenAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
-							maxTokenCostMicros: "1000000",
-							validUntil: 1900000000,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk(STANDARD_PAYMASTER_RESULT);
 			}
 			if (method === "eth_sendUserOperation") {
-				return new Response(
-					JSON.stringify({
-						result: "0xservohash",
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
+				return rpcOk("0xservohash");
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 		createBundlerClient.mockReturnValue({
 			waitForUserOperationReceipt: vi.fn().mockResolvedValue({
@@ -1402,15 +1121,9 @@ describe("execution", () => {
 		});
 		mockRpcFetch(({ method }) => {
 			if (method === "eth_supportedEntryPoints") {
-				return new Response(JSON.stringify({ result: [ENTRY_POINT_08] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				});
+				return rpcOk([ENTRY_POINT_08]);
 			}
-			return new Response(JSON.stringify({ error: { message: `unexpected method ${method}` } }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
+			return rpcFail(method);
 		});
 
 		createBundlerClient.mockReturnValue({

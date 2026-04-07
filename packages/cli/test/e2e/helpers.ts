@@ -5,7 +5,7 @@ import { runCli } from "../helpers/run-cli.js";
 
 // ── Chain & USDC Config ──────────────────────────────────────────────────────
 
-export interface ChainE2EConfig {
+interface ChainE2EConfig {
 	caip2: string;
 	alias: string;
 	rpcUrl: string;
@@ -111,7 +111,7 @@ export function parseJsonOutput(stdout: string): { ok: boolean; data: unknown } 
 	throw new Error(`No JSON envelope found in output:\n${stdout}`);
 }
 
-export interface AgentBalanceSnapshot {
+interface AgentBalanceSnapshot {
 	messagingAddress: `0x${string}`;
 	executionAddress: `0x${string}`;
 	fundingAddress: `0x${string}`;
@@ -242,39 +242,6 @@ export async function waitForSync(opts: {
 	);
 }
 
-// ── Contact Assertions ───────────────────────────────────────────────────────
-
-export async function assertContactActive(dataDir: string, peerName: string): Promise<void> {
-	const result = await runCli(["--json", "--data-dir", dataDir, "contacts", "list"]);
-	if (result.exitCode !== 0) {
-		throw new Error(
-			`contacts list failed (exit ${result.exitCode}).\n` +
-				`stdout: ${result.stdout}\n` +
-				`stderr: ${result.stderr}`,
-		);
-	}
-
-	const parsed = JSON.parse(result.stdout) as {
-		data: {
-			contacts: Array<{ name: string; status: string }>;
-		};
-	};
-
-	const contact = parsed.data.contacts.find((c) => c.name === peerName);
-	if (!contact) {
-		const names = parsed.data.contacts.map((c) => c.name).join(", ");
-		throw new Error(
-			`Contact "${peerName}" not found in contacts for dataDir=${dataDir}. Found: [${names}]`,
-		);
-	}
-
-	if (contact.status !== "active") {
-		throw new Error(
-			`Contact "${peerName}" has status "${contact.status}", expected "active" (dataDir=${dataDir})`,
-		);
-	}
-}
-
 /**
  * Poll sync + contacts until a peer appears as an active contact.
  * Combines message sync (to process pending XMTP messages) with contact checks.
@@ -347,25 +314,6 @@ export async function writeGrantFile(
 	const content = { version: "tap-grants/v1", grants };
 	await writeFile(filePath, JSON.stringify(content, null, 2), "utf-8");
 	return filePath;
-}
-
-// ── Config Helpers ───────────────────────────────────────────────────────────
-
-export async function readAgentAddress(dataDir: string): Promise<`0x${string}`> {
-	const result = await runCli(["--json", "--data-dir", dataDir, "identity", "show"]);
-	if (result.exitCode !== 0) {
-		throw new Error(
-			`identity show failed (exit ${result.exitCode}).\n` +
-				`stdout: ${result.stdout}\n` +
-				`stderr: ${result.stderr}`,
-		);
-	}
-
-	const parsed = JSON.parse(result.stdout) as {
-		data: { address: string };
-	};
-
-	return parsed.data.address as `0x${string}`;
 }
 
 // ── Permissions Helpers ──────────────────────────────────────────────────────

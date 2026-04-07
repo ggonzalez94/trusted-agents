@@ -11,11 +11,11 @@ import type {
 } from "../../config/types.js";
 import type { ResolvedExecutionMode } from "./types.js";
 
-export function isBaseChain(chainConfig: ChainConfig): boolean {
+function isBaseChain(chainConfig: ChainConfig): boolean {
 	return chainConfig.chainId === 8453;
 }
 
-export function isTaikoMainnetChain(chainConfig: ChainConfig): boolean {
+function isTaikoMainnetChain(chainConfig: ChainConfig): boolean {
 	return chainConfig.chainId === 167000;
 }
 
@@ -70,7 +70,7 @@ export function resolveExecutionMode(
 	return "eoa";
 }
 
-export function isPaymasterProviderCompatible(
+function isPaymasterProviderCompatible(
 	mode: "eip4337" | "eip7702",
 	provider: ExecutionPaymasterProvider,
 ): boolean {

@@ -9,6 +9,7 @@ import {
 	type TapTransferApprovalContext,
 	type TrustedAgentsConfig,
 	executeOnchainTransfer,
+	peerLabel,
 	summarizeGrant,
 } from "trusted-agents-core";
 import type { ProposedMeeting, SchedulingApprovalContext } from "trusted-agents-core";
@@ -168,28 +169,21 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 	return runtime;
 }
 
-// ── Print helpers (ported from tap-service.ts) ──
+// ── Print helpers ──
 
 function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalOptions): void {
 	const { contact, request, activeTransferGrants, ledgerPath } = context;
 	const assetLabel = request.asset === "native" ? "ETH" : "USDC";
 
 	info(
-		`Action request from ${contact.peerDisplayName} (#${contact.peerAgentId}): send ${request.amount} ${assetLabel} on ${request.chain} to ${request.toAddress}`,
+		`Action request from ${peerLabel(contact)}: send ${request.amount} ${assetLabel} on ${request.chain} to ${request.toAddress}`,
 		opts,
 	);
 	if (request.note) {
 		info(`Note: ${request.note}`, opts);
 	}
 
-	info("Matching active transfer grants for this request:", opts);
-	if (activeTransferGrants.length === 0) {
-		info("  - (none)", opts);
-	} else {
-		for (const grant of activeTransferGrants) {
-			info(`  - ${summarizeGrant(grant)}`, opts);
-		}
-	}
+	printActiveGrants(activeTransferGrants, "transfer", opts);
 	info(`Ledger path: ${ledgerPath}`, opts);
 	info("The agent should use the grants and ledger as context for this decision.", opts);
 }
@@ -198,7 +192,7 @@ function printSchedulingRequest(context: SchedulingApprovalContext, opts: Global
 	const { contact, proposal, activeSchedulingGrants } = context;
 
 	info(
-		`Scheduling request from ${contact.peerDisplayName} (#${contact.peerAgentId}): "${proposal.title}" (${proposal.duration} min)`,
+		`Scheduling request from ${peerLabel(contact)}: "${proposal.title}" (${proposal.duration} min)`,
 		opts,
 	);
 	info(`  Slots offered: ${proposal.slots.length}`, opts);
@@ -212,11 +206,19 @@ function printSchedulingRequest(context: SchedulingApprovalContext, opts: Global
 		info(`  Note: ${proposal.note}`, opts);
 	}
 
-	info("Matching active scheduling grants:", opts);
-	if (activeSchedulingGrants.length === 0) {
+	printActiveGrants(activeSchedulingGrants, "scheduling", opts);
+}
+
+function printActiveGrants(
+	grants: Parameters<typeof summarizeGrant>[0][],
+	label: string,
+	opts: GlobalOptions,
+): void {
+	info(`Matching active ${label} grants:`, opts);
+	if (grants.length === 0) {
 		info("  - (none)", opts);
 	} else {
-		for (const grant of activeSchedulingGrants) {
+		for (const grant of grants) {
 			info(`  - ${summarizeGrant(grant)}`, opts);
 		}
 	}

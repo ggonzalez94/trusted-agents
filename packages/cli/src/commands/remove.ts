@@ -7,23 +7,26 @@ import {
 	TransportOwnerLock,
 	type TrustedAgentsConfig,
 	ValidationError,
+	buildChainPublicClient,
+	buildChainWalletClient,
+	createSigningProviderViemAccount,
+	fsErrorCode,
 	isProcessAlive,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
+	toErrorMessage,
 } from "trusted-agents-core";
-import { createSigningProviderViemAccount } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
 import {
 	createConfiguredSigningProvider,
 	getLegacyWalletMigrationWarning,
 } from "../lib/wallet-config.js";
-import { buildPublicClient, buildWalletClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RemoveOptions {
@@ -253,8 +256,7 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -298,7 +300,7 @@ export async function probeRemoveNativeBalance(
 
 		const signingProvider = createConfiguredSigningProvider(config);
 		const address = await signingProvider.getAddress();
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const nativeBalanceWei = await publicClient.getBalance({ address });
 		const context: RemoveBalanceContext = {
 			config,
@@ -330,7 +332,7 @@ export async function probeRemoveNativeBalance(
 				address: null,
 				native_balance_wei: null,
 				native_balance_eth: null,
-				warning: `On-chain balance check skipped: ${err instanceof Error ? err.message : String(err)}`,
+				warning: `On-chain balance check skipped: ${toErrorMessage(err)}`,
 			},
 		};
 	}
@@ -345,8 +347,8 @@ export async function transferRemainingNativeBalance(
 		balanceContext.chainConfig.caip2,
 	);
 	const account = await createSigningProviderViemAccount(signingProvider);
-	const publicClient = buildPublicClient(balanceContext.chainConfig);
-	const walletClient = buildWalletClient(account, balanceContext.chainConfig);
+	const publicClient = buildChainPublicClient(balanceContext.chainConfig);
+	const walletClient = buildChainWalletClient(account, balanceContext.chainConfig);
 	const currentBalanceWei = await publicClient.getBalance({ address: account.address });
 	const currentBalanceEth = formatUnits(currentBalanceWei, 18);
 	const gasEstimate = await publicClient.estimateGas({
@@ -524,9 +526,7 @@ async function resolveRemoveDataDir(opts: GlobalOptions): Promise<string> {
 	try {
 		return await realpath(configuredPath);
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return configuredPath;
 		}
 		throw error;
@@ -557,15 +557,10 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 		}
 		return [null, "config.yaml is present but agent_id could not be read."];
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
-		return [
-			null,
-			`config.yaml could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
-		];
+		return [null, `config.yaml could not be parsed: ${toErrorMessage(error)}`];
 	}
 }
 
@@ -592,15 +587,10 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 		const address = await provider.getAddress();
 		return [address, null];
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
-		return [
-			null,
-			`Agent address could not be read: ${error instanceof Error ? error.message : String(error)}`,
-		];
+		return [null, `Agent address could not be read: ${toErrorMessage(error)}`];
 	}
 }
 
@@ -624,9 +614,7 @@ async function inspectDataDir(dataDir: string): Promise<DataDirInspection> {
 			unexpectedEntries,
 		};
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return { hasManagedEntries: false, managedEntries: [], unexpectedEntries: [] };
 		}
 		throw error;
@@ -668,9 +656,7 @@ async function collectRemovalPaths(targetPath: string): Promise<string[]> {
 		}
 		return paths;
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [];
 		}
 		throw error;

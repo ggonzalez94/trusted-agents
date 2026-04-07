@@ -4,9 +4,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
+import { toErrorMessage } from "trusted-agents-core";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
 import { getLegacyWalletMigrationWarning } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
@@ -122,8 +123,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -158,7 +158,7 @@ async function installSkills(notes: string[]): Promise<void> {
 		notes.push(`Installed TAP skills via npx skills add ${SKILLS_REPO}.`);
 	} catch (err) {
 		throw new Error(
-			`Failed to install skills via npx skills add ${SKILLS_REPO}: ${err instanceof Error ? err.message : String(err)}`,
+			`Failed to install skills via npx skills add ${SKILLS_REPO}: ${toErrorMessage(err)}`,
 		);
 	}
 }

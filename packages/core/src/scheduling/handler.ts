@@ -1,3 +1,4 @@
+import type { TapActionResult } from "../app/types.js";
 import type { PermissionGrant } from "../permissions/types.js";
 import type { Contact } from "../trust/types.js";
 import type { AvailabilityWindow, ICalendarProvider } from "./calendar-provider.js";
@@ -39,7 +40,54 @@ export type SchedulingDecision =
 	| { action: "reject"; reason: string }
 	| { action: "defer" };
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+export function mapSchedulingDecisionToResult(
+	schedulingId: string,
+	decision: SchedulingDecision,
+): TapActionResult {
+	switch (decision.action) {
+		case "confirm":
+			return {
+				success: true,
+				data: {
+					type: "scheduling/accept",
+					schedulingId,
+					acceptedSlot: decision.slot,
+				},
+			};
+		case "counter":
+			return {
+				success: true,
+				data: {
+					type: "scheduling/counter",
+					schedulingId,
+					counterSlots: decision.slots,
+				},
+			};
+		case "reject":
+			return {
+				success: false,
+				data: {
+					type: "scheduling/reject",
+					schedulingId,
+					reason: decision.reason,
+				},
+				error: {
+					code: "REJECTED",
+					message: decision.reason,
+				},
+			};
+		case "defer":
+			return {
+				success: false,
+				error: {
+					code: "DEFERRED",
+					message: "Scheduling request deferred for approval",
+				},
+			};
+	}
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string } {
 	let minStart = slots[0]?.start ?? "";

@@ -1,6 +1,6 @@
 import type { TapApp } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 
@@ -76,8 +76,7 @@ export async function appInstallCommand(name: string, opts: GlobalOptions): Prom
 			`Installed app "${tapApp.name}" (id: ${tapApp.id}, version: ${tapApp.version}, actions: ${actionTypes.join(", ") || "none"})`,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -113,8 +112,7 @@ export async function appRemoveCommand(name: string, opts: GlobalOptions): Promi
 		);
 		process.exitCode = 1;
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -133,7 +131,6 @@ export async function appListCommand(opts: GlobalOptions): Promise<void> {
 			console.log(`  ${id}${statusSuffix} — ${entry.package}`);
 		}
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

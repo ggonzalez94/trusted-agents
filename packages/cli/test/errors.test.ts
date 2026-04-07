@@ -20,62 +20,31 @@ import {
 } from "../src/lib/errors.js";
 
 describe("exitCodeForError", () => {
-	it("should return 5 for TransportError", () => {
-		expect(exitCodeForError(new TransportError("fail"))).toBe(EXIT_TEMPORARY_ERROR);
-	});
-
-	it("should return 1 for generic IdentityError", () => {
-		expect(exitCodeForError(new IdentityError("fail"))).toBe(EXIT_GENERAL_ERROR);
-	});
-
-	it("should return 3 for AuthenticationError", () => {
-		expect(exitCodeForError(new AuthenticationError("fail"))).toBe(EXIT_AUTH_ERROR);
-	});
-
-	it("should return 3 for PermissionError", () => {
-		expect(exitCodeForError(new PermissionError("fail"))).toBe(EXIT_AUTH_ERROR);
-	});
-
-	it("should return 3 for ConnectionError", () => {
-		expect(exitCodeForError(new ConnectionError("fail"))).toBe(EXIT_AUTH_ERROR);
-	});
-
-	it("should return 2 for ConfigError", () => {
-		expect(exitCodeForError(new ConfigError("fail"))).toBe(EXIT_USAGE_ERROR);
-	});
-
-	it("should return 2 for ValidationError", () => {
-		expect(exitCodeForError(new ValidationError("fail"))).toBe(EXIT_USAGE_ERROR);
-	});
-
-	it("should return 4 for NOT_FOUND style errors", () => {
-		expect(exitCodeForError(new TrustedAgentError("missing peer", "NOT_FOUND"))).toBe(
-			EXIT_NOT_FOUND,
-		);
-	});
-
-	it("should return 1 for generic TrustedAgentError", () => {
-		expect(exitCodeForError(new TrustedAgentError("fail"))).toBe(EXIT_GENERAL_ERROR);
-	});
-
-	it("should return 1 for unknown errors", () => {
-		expect(exitCodeForError(new Error("fail"))).toBe(EXIT_GENERAL_ERROR);
-		expect(exitCodeForError("string error")).toBe(EXIT_GENERAL_ERROR);
+	it.each([
+		["TransportError", new TransportError("fail"), EXIT_TEMPORARY_ERROR],
+		["IdentityError", new IdentityError("fail"), EXIT_GENERAL_ERROR],
+		["AuthenticationError", new AuthenticationError("fail"), EXIT_AUTH_ERROR],
+		["PermissionError", new PermissionError("fail"), EXIT_AUTH_ERROR],
+		["ConnectionError", new ConnectionError("fail"), EXIT_AUTH_ERROR],
+		["ConfigError", new ConfigError("fail"), EXIT_USAGE_ERROR],
+		["ValidationError", new ValidationError("fail"), EXIT_USAGE_ERROR],
+		["NOT_FOUND error", new TrustedAgentError("missing peer", "NOT_FOUND"), EXIT_NOT_FOUND],
+		["generic TrustedAgentError", new TrustedAgentError("fail"), EXIT_GENERAL_ERROR],
+		["unknown Error", new Error("fail"), EXIT_GENERAL_ERROR],
+		["string error", "string error" as unknown as Error, EXIT_GENERAL_ERROR],
+	])("returns correct exit code for %s", (_, error, expected) => {
+		expect(exitCodeForError(error)).toBe(expected);
 	});
 });
 
 describe("errorCode", () => {
-	it("should return error code from TrustedAgentError", () => {
-		expect(errorCode(new ConfigError("fail"))).toBe("CONFIG_ERROR");
-		expect(errorCode(new TransportError("fail"))).toBe("TRANSPORT_ERROR");
-	});
-
-	it("should return class name for generic errors", () => {
-		expect(errorCode(new TypeError("fail"))).toBe("TYPEERROR");
-	});
-
-	it("should return UNKNOWN_ERROR for non-error values", () => {
-		expect(errorCode("string")).toBe("UNKNOWN_ERROR");
-		expect(errorCode(null)).toBe("UNKNOWN_ERROR");
+	it.each([
+		["ConfigError", new ConfigError("fail"), "CONFIG_ERROR"],
+		["TransportError", new TransportError("fail"), "TRANSPORT_ERROR"],
+		["TypeError", new TypeError("fail"), "TYPEERROR"],
+		["string value", "string" as unknown as Error, "UNKNOWN_ERROR"],
+		["null value", null as unknown as Error, "UNKNOWN_ERROR"],
+	])("returns correct error code for %s", (_, error, expected) => {
+		expect(errorCode(error)).toBe(expected);
 	});
 });

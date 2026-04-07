@@ -148,7 +148,7 @@ Installation expectations:
 4. `packages/core/src/trust/*` and `conversation/*` (state persistence)
 5. `packages/core/src/runtime/*` (`TapMessagingService`, request journal, transport owner lock)
 6. `packages/core/src/app/*` (app types, registry, manifest, storage)
-7. `packages/cli/src/lib/context.ts`, `lib/tap-service.ts`, and `commands/*` (CLI host adapter)
+7. `packages/cli/src/lib/context.ts`, `lib/cli-runtime.ts`, and `commands/*` (CLI host adapter)
 8. `packages/openclaw-plugin/src/*` (Gateway host adapter)
 9. `packages/sdk/src/*` (public SDK API)
 10. `packages/app-transfer/src/*` and `packages/app-scheduling/src/*` (built-in apps)

@@ -12,6 +12,7 @@ import {
 	generateConnectionId,
 	generateNonce,
 	nowISO,
+	toErrorMessage,
 } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
 import {
@@ -26,6 +27,7 @@ import {
 import type { ResolvedAgent } from "../identity/types.js";
 import { createEmptyPermissionState, createGrantSet } from "../permissions/index.js";
 import type { PermissionGrantSet } from "../permissions/types.js";
+import { extractConnectionIdFromParams } from "../protocol/messages.js";
 import {
 	ACTION_REQUEST,
 	ACTION_RESULT,
@@ -53,11 +55,12 @@ import {
 	findApplicableSchedulingGrants,
 	findSchedulableSchedulingSlots,
 } from "../scheduling/grants.js";
-import type {
-	ConfirmedMeeting,
-	ProposedMeeting,
-	SchedulingApprovalContext,
-	SchedulingHandler,
+import {
+	type ConfirmedMeeting,
+	type ProposedMeeting,
+	type SchedulingApprovalContext,
+	type SchedulingHandler,
+	mapSchedulingDecisionToResult,
 } from "../scheduling/handler.js";
 import type { SchedulingProposal } from "../scheduling/types.js";
 import type { SigningProvider } from "../signing/provider.js";
@@ -67,6 +70,7 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "../transport/interface.js";
+import { peerLabel } from "../trust/types.js";
 import type { Contact } from "../trust/types.js";
 import {
 	type PermissionGrantRequestAction,
@@ -610,7 +614,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to cancel local calendar event for scheduling request ${requestId} during ${contextLabel}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to cancel local calendar event for scheduling request ${requestId} during ${contextLabel}: ${toErrorMessage(error)}`,
 			);
 			return false;
 		}
@@ -777,7 +781,6 @@ export class TapMessagingService {
 						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 					});
 					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
 					const clearedLocalEvent = await this.cancelLocalSchedulingEvent(
 						latestEntry.requestId,
 						latestTracking.localEventId,
@@ -791,7 +794,7 @@ export class TapMessagingService {
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
-						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						peer: peerLabel(contact),
 						direction: "local",
 						event: "scheduling-cancel",
 						scope: "scheduling/request",
@@ -918,14 +921,7 @@ export class TapMessagingService {
 				peerAddress: contact.peerAgentAddress,
 			});
 
-			await appendConversationLog(
-				this.context.conversationLogger,
-				contact,
-				request,
-				"outgoing",
-				timestamp,
-			);
-			await this.context.trustStore.touchContact(contact.connectionId);
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 			return {
 				receipt,
@@ -981,42 +977,13 @@ export class TapMessagingService {
 			const requestId = String(request.id);
 			const timestamp = nowISO();
 
-			await this.context.requestJournal.putOutbound({
-				requestId,
-				requestKey: `outbound:${request.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: request.method,
-				peerAgentId: contact.peerAgentId,
-				status: "pending",
-				metadata: { actionType },
-			});
-
-			let receipt: TransportReceipt;
-			try {
-				receipt = await this.context.transport.send(contact.peerAgentId, request, {
-					peerAddress: contact.peerAgentAddress,
-				});
-			} catch (error: unknown) {
-				if (!isTransportReceiptTimeout(error)) {
-					await this.context.requestJournal.delete(requestId);
-				}
-				throw error;
-			}
-
-			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-			if (journalEntry?.status !== "completed") {
-				await this.context.requestJournal.updateStatus(requestId, "acked");
-			}
-
-			await appendConversationLog(
-				this.context.conversationLogger,
+			const receipt = await this.sendAndJournalOutboundRequest(
 				contact,
 				request,
-				"outgoing",
+				requestId,
 				timestamp,
+				{ actionType },
 			);
-			await this.context.trustStore.touchContact(contact.connectionId);
 
 			return {
 				receipt,
@@ -1061,7 +1028,7 @@ export class TapMessagingService {
 			});
 
 			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "granted-by-me",
 				event: "grant-published",
 				note,
@@ -1110,17 +1077,10 @@ export class TapMessagingService {
 			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
 				peerAddress: contact.peerAgentAddress,
 			});
-			await appendConversationLog(
-				this.context.conversationLogger,
-				contact,
-				request,
-				"outgoing",
-				timestamp,
-			);
-			await this.context.trustStore.touchContact(contact.connectionId);
+			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "local",
 				event: "grant-request-sent",
 				action_id: action.actionId,
@@ -1176,7 +1136,7 @@ export class TapMessagingService {
 
 			await this.appendLedger({
 				timestamp,
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "local",
 				event: "transfer-request-sent",
 				scope: "transfer/request",
@@ -1186,40 +1146,20 @@ export class TapMessagingService {
 				note: input.note,
 			});
 
-			await this.context.requestJournal.putOutbound({
-				requestId,
-				requestKey: `outbound:${request.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: request.method,
-				peerAgentId: contact.peerAgentId,
-				status: "pending",
-			});
 			const waiter = this.registerActionResultWaiter(
 				requestId,
 				requestPayload.actionId,
 				ACTION_RESULT_WAIT_TIMEOUT_MS,
 			);
 
-			let receipt: TransportReceipt;
-			try {
-				receipt = await this.context.transport.send(contact.peerAgentId, request, {
-					peerAddress: contact.peerAgentAddress,
-				});
-			} catch (error: unknown) {
-				waiter.cancel();
-				if (!isTransportReceiptTimeout(error)) {
-					await this.context.requestJournal.delete(requestId);
-				}
-				throw error;
-			}
-
-			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-			if (journalEntry?.status !== "completed") {
-				await this.context.requestJournal.updateStatus(requestId, "acked");
-			}
-			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
-			await this.touchContactSafe(contact.connectionId);
+			const receipt = await this.sendAndJournalOutboundRequest(
+				contact,
+				request,
+				requestId,
+				timestamp,
+				undefined,
+				() => waiter.cancel(),
+			);
 
 			const asyncResult = await waiter.promise;
 			if (!asyncResult) {
@@ -1284,7 +1224,7 @@ export class TapMessagingService {
 
 			await this.appendLedger({
 				timestamp,
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+				peer: peerLabel(contact),
 				direction: "local",
 				event: "scheduling-request-sent",
 				scope: "scheduling/request",
@@ -1292,39 +1232,18 @@ export class TapMessagingService {
 				note: proposal.note ?? `Meeting: ${proposal.title}`,
 			});
 
-			await this.context.requestJournal.putOutbound({
+			const receipt = await this.sendAndJournalOutboundRequest(
+				contact,
+				request,
 				requestId,
-				requestKey: `outbound:${request.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: request.method,
-				peerAgentId: contact.peerAgentId,
-				status: "pending",
-				metadata: serializePendingSchedulingOutboundRequestDetails(
+				timestamp,
+				serializePendingSchedulingRequestDetails(
 					contact,
 					proposal,
 					this.context.config.dataDir,
+					"outbound",
 				),
-			});
-
-			let receipt: TransportReceipt;
-			try {
-				receipt = await this.context.transport.send(contact.peerAgentId, request, {
-					peerAddress: contact.peerAgentAddress,
-				});
-			} catch (error: unknown) {
-				if (!isTransportReceiptTimeout(error)) {
-					await this.context.requestJournal.delete(requestId);
-				}
-				throw error;
-			}
-
-			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-			if (journalEntry?.status !== "completed") {
-				await this.context.requestJournal.updateStatus(requestId, "acked");
-			}
-			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
-			await this.touchContactSafe(contact.connectionId);
+			);
 
 			return {
 				receipt,
@@ -1365,7 +1284,7 @@ export class TapMessagingService {
 				const result = await this.executeOutboxJob(job);
 				await this.commandOutbox.complete(job, result);
 			} catch (error: unknown) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = toErrorMessage(error);
 				await this.commandOutbox.fail(
 					job,
 					message,
@@ -1436,10 +1355,7 @@ export class TapMessagingService {
 		try {
 			await this.executionMutex.runExclusive(async () => await this.processOutboxInternal());
 		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`Queued TAP command polling failed: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.log("warn", `Queued TAP command polling failed: ${toErrorMessage(error)}`);
 		} finally {
 			this.outboxPollInFlight = false;
 		}
@@ -1502,11 +1418,24 @@ export class TapMessagingService {
 				...payload,
 			});
 		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`emitEvent hook threw: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.log("warn", `emitEvent hook threw: ${toErrorMessage(error)}`);
 		}
+	}
+
+	private emitIncomingAndReturn<S extends string>(
+		envelope: { from: number; message: ProtocolMessage },
+		status: S,
+		extra?: Record<string, unknown>,
+	): { status: S } {
+		this.emitEvent({
+			direction: "incoming",
+			from: envelope.from,
+			method: envelope.message.method,
+			id: envelope.message.id,
+			receipt_status: status,
+			...extra,
+		});
+		return { status };
 	}
 
 	private log(level: "info" | "warn" | "error", message: string): void {
@@ -1518,6 +1447,47 @@ export class TapMessagingService {
 			return this.hooks.appendLedgerEntry(this.context.config.dataDir, entry);
 		}
 		return appendPermissionLedgerEntry(this.context.config.dataDir, entry);
+	}
+
+	private async sendAndJournalOutboundRequest(
+		contact: Contact,
+		request: ProtocolMessage,
+		requestId: string,
+		timestamp: string,
+		metadata?: Record<string, unknown>,
+		onSendError?: () => void,
+	): Promise<TransportReceipt> {
+		await this.context.requestJournal.putOutbound({
+			requestId,
+			requestKey: `outbound:${request.method}:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: request.method,
+			peerAgentId: contact.peerAgentId,
+			status: "pending",
+			...(metadata ? { metadata } : {}),
+		});
+
+		let receipt: TransportReceipt;
+		try {
+			receipt = await this.context.transport.send(contact.peerAgentId, request, {
+				peerAddress: contact.peerAgentAddress,
+			});
+		} catch (error: unknown) {
+			onSendError?.();
+			if (!isTransportReceiptTimeout(error)) {
+				await this.context.requestJournal.delete(requestId);
+			}
+			throw error;
+		}
+
+		const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
+		if (journalEntry?.status !== "completed") {
+			await this.context.requestJournal.updateStatus(requestId, "acked");
+		}
+		await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+
+		return receipt;
 	}
 
 	private async appendConversationLogSafe(
@@ -1537,18 +1507,15 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to record conversation log for ${contact.peerDisplayName} (#${contact.peerAgentId}): ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to record conversation log for ${peerLabel(contact)}: ${toErrorMessage(error)}`,
 			);
 		}
-	}
-
-	private async touchContactSafe(connectionId: string): Promise<void> {
 		try {
-			await this.context.trustStore.touchContact(connectionId);
+			await this.context.trustStore.touchContact(contact.connectionId);
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to update contact activity for ${connectionId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to update contact activity for ${contact.connectionId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -1561,7 +1528,7 @@ export class TapMessagingService {
 		this.inFlightKeys.add(key);
 		const promise = task()
 			.catch((error: unknown) => {
-				this.log("error", error instanceof Error ? error.message : String(error));
+				this.log("error", toErrorMessage(error));
 			})
 			.finally(() => {
 				this.inFlightKeys.delete(key);
@@ -1645,14 +1612,7 @@ export class TapMessagingService {
 			});
 
 			if (claimed.duplicate && claimed.entry.status === "completed") {
-				this.emitEvent({
-					direction: "incoming",
-					from: envelope.from,
-					method: envelope.message.method,
-					id: envelope.message.id,
-					receipt_status: "duplicate",
-				});
-				return { status: "duplicate" };
+				return this.emitIncomingAndReturn(envelope, "duplicate");
 			}
 
 			this.enqueue(requestKey, async () => {
@@ -1661,14 +1621,7 @@ export class TapMessagingService {
 					await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
 				}
 			});
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: claimed.duplicate ? "duplicate" : "queued",
-			});
-			return { status: claimed.duplicate ? "duplicate" : "queued" };
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "queued");
 		}
 
 		const claimed = await this.context.requestJournal.claimInbound({
@@ -1681,14 +1634,7 @@ export class TapMessagingService {
 		});
 
 		if (claimed.duplicate && claimed.entry.status === "completed") {
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: "duplicate",
-			});
-			return { status: "duplicate" };
+			return this.emitIncomingAndReturn(envelope, "duplicate");
 		}
 
 		const contact = await findContactForMessage(this.context, envelope.from, envelope.message);
@@ -1699,29 +1645,15 @@ export class TapMessagingService {
 		if (envelope.message.method === PERMISSIONS_UPDATE) {
 			await this.handlePermissionsUpdate(contact, envelope.message);
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			const status = claimed.duplicate ? "duplicate" : "received";
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
 				fromName: contact.peerDisplayName,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: status,
 			});
-			return { status };
 		}
 
-		await appendConversationLog(
-			this.context.conversationLogger,
-			contact,
-			envelope.message,
-			"incoming",
-		);
-		await this.context.trustStore.touchContact(contact.connectionId);
+		await this.appendConversationLogSafe(contact, envelope.message, "incoming");
 
 		if (envelope.message.method === MESSAGE_SEND) {
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			const status = claimed.duplicate ? "duplicate" : "received";
 
 			// Extract message text and autoGenerated flag for emitEvent
 			let messageText = "";
@@ -1739,17 +1671,11 @@ export class TapMessagingService {
 				// Defensive: don't fail message processing if extraction fails
 			}
 
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
 				fromName: contact.peerDisplayName,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: status,
 				messageText,
 				autoGenerated,
 			});
-			return { status };
 		}
 
 		if (envelope.message.method !== ACTION_REQUEST) {
@@ -1774,18 +1700,11 @@ export class TapMessagingService {
 				requestKey,
 			);
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			const status = claimed.duplicate ? "duplicate" : "received";
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
 				fromName: contact.peerDisplayName,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: status,
 				error: "UNSUPPORTED_ACTION",
 				actionType: actionType ?? "unknown",
 			});
-			return { status };
 		}
 
 		// Delegate to built-in handlers that use the existing codepaths.
@@ -1798,26 +1717,18 @@ export class TapMessagingService {
 			if (permissionRequest) {
 				await this.handlePermissionGrantRequest(contact, permissionRequest);
 				await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-				const status = claimed.duplicate ? "duplicate" : "received";
-				this.emitEvent({
-					direction: "incoming",
-					from: envelope.from,
+				return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
 					fromName: contact.peerDisplayName,
-					method: envelope.message.method,
-					id: envelope.message.id,
-					receipt_status: status,
 				});
-				return { status };
 			}
 			// Malformed permissions payload — reject instead of falling through
-			await this.sendUnsupportedActionResult(
+			return this.rejectMalformedPayload(
 				contact,
 				String(envelope.message.id),
 				actionType ?? "permissions/request-grants",
 				requestKey,
+				claimed.duplicate,
 			);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		if (resolved.app.id === "scheduling") {
@@ -1829,6 +1740,7 @@ export class TapMessagingService {
 						contact,
 						schedulingRequest,
 						this.context.config.dataDir,
+						"inbound",
 					),
 				);
 				if (schedulingRequest.type === "scheduling/counter") {
@@ -1846,27 +1758,19 @@ export class TapMessagingService {
 					);
 				});
 
-				const status = claimed.duplicate ? "duplicate" : "queued";
-				this.emitEvent({
-					direction: "incoming",
-					from: envelope.from,
+				return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "queued", {
 					fromName: contact.peerDisplayName,
-					method: envelope.message.method,
-					id: envelope.message.id,
-					receipt_status: status,
 					scope: "scheduling/request",
 				});
-				return { status };
 			}
 			// Malformed scheduling payload — reject instead of falling through
-			await this.sendUnsupportedActionResult(
+			return this.rejectMalformedPayload(
 				contact,
 				String(envelope.message.id),
 				actionType ?? "scheduling/propose",
 				requestKey,
+				claimed.duplicate,
 			);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		if (resolved.app.id === "tap-transfer") {
@@ -1884,26 +1788,18 @@ export class TapMessagingService {
 				this.enqueue(requestKey, async () => {
 					await this.processTransferRequest(contact, String(envelope.message.id), transferRequest);
 				});
-				const status = claimed.duplicate ? "duplicate" : "queued";
-				this.emitEvent({
-					direction: "incoming",
-					from: envelope.from,
+				return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "queued", {
 					fromName: contact.peerDisplayName,
-					method: envelope.message.method,
-					id: envelope.message.id,
-					receipt_status: status,
 				});
-				return { status };
 			}
 			// Malformed transfer payload — reject instead of falling through
-			await this.sendUnsupportedActionResult(
+			return this.rejectMalformedPayload(
 				contact,
 				String(envelope.message.id),
 				actionType ?? "transfer/request",
 				requestKey,
+				claimed.duplicate,
 			);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		// For dynamically loaded (non-builtin) apps, use the full app dispatch path
@@ -1916,17 +1812,10 @@ export class TapMessagingService {
 				requestKey,
 			);
 		});
-		const status = claimed.duplicate ? "duplicate" : "queued";
-		this.emitEvent({
-			direction: "incoming",
-			from: envelope.from,
+		return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "queued", {
 			fromName: contact.peerDisplayName,
-			method: envelope.message.method,
-			id: envelope.message.id,
-			receipt_status: status,
 			scope: actionType,
 		});
-		return { status };
 	}
 
 	private async onResult(envelope: {
@@ -1936,14 +1825,7 @@ export class TapMessagingService {
 	}): Promise<{ status: "received" | "duplicate" }> {
 		if (envelope.message.method === CONNECTION_RESULT) {
 			const status = await this.handleConnectionResult(envelope.message);
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: status,
-			});
-			return { status };
+			return this.emitIncomingAndReturn(envelope, status);
 		}
 
 		const requestKey = buildRequestKey(envelope.senderInboxId, envelope.message);
@@ -1957,14 +1839,7 @@ export class TapMessagingService {
 		});
 
 		if (claimed.duplicate && claimed.entry.status === "completed") {
-			this.emitEvent({
-				direction: "incoming",
-				from: envelope.from,
-				method: envelope.message.method,
-				id: envelope.message.id,
-				receipt_status: "duplicate",
-			});
-			return { status: "duplicate" };
+			return this.emitIncomingAndReturn(envelope, "duplicate");
 		}
 
 		let peerName: string | undefined;
@@ -1975,16 +1850,11 @@ export class TapMessagingService {
 		}
 
 		await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-		const status = claimed.duplicate ? "duplicate" : "received";
-		this.emitEvent({
-			direction: "incoming",
-			from: envelope.from,
-			...(peerName ? { fromName: peerName } : {}),
-			method: envelope.message.method,
-			id: envelope.message.id,
-			receipt_status: status,
-		});
-		return { status };
+		return this.emitIncomingAndReturn(
+			envelope,
+			claimed.duplicate ? "duplicate" : "received",
+			peerName ? { fromName: peerName } : undefined,
+		);
 	}
 
 	private async processConnectionRequest(
@@ -2092,14 +1962,14 @@ export class TapMessagingService {
 			permissions: replaceGrantedByPeer(contact.permissions, update.grantSet),
 		});
 		await this.appendLedger({
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			direction: "granted-by-peer",
 			event: "grant-received",
 			note: update.note,
 		});
 		await this.context.trustStore.touchContact(contact.connectionId);
 
-		this.log("info", `Grant update from ${contact.peerDisplayName} (#${contact.peerAgentId})`);
+		this.log("info", `Grant update from ${peerLabel(contact)}`);
 		for (const line of summarizeGrantSet(update.grantSet)) {
 			this.log("info", `  - ${line}`);
 		}
@@ -2112,7 +1982,7 @@ export class TapMessagingService {
 		contact: Contact,
 		request: PermissionGrantRequestAction,
 	): Promise<void> {
-		this.log("info", `Grant request from ${contact.peerDisplayName} (#${contact.peerAgentId})`);
+		this.log("info", `Grant request from ${peerLabel(contact)}`);
 		for (const line of summarizeGrantSet(createGrantSet(request.grants))) {
 			this.log("info", `  - ${line}`);
 		}
@@ -2121,7 +1991,7 @@ export class TapMessagingService {
 		}
 
 		await this.appendLedger({
-			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			peer: peerLabel(contact),
 			direction: "local",
 			event: "grant-request-received",
 			action_id: request.actionId,
@@ -2129,11 +1999,16 @@ export class TapMessagingService {
 		});
 	}
 
-	private async resolvePendingTransferRequest(entry: RequestJournalEntry): Promise<void> {
-		const request = parseStoredTransferRequest(entry.metadata);
+	private async resolvePendingRequestWithContact<T>(
+		entry: RequestJournalEntry,
+		parse: (metadata: Record<string, unknown> | undefined) => T | null,
+		label: string,
+		process: (contact: Contact, requestId: string, request: T) => Promise<void>,
+	): Promise<void> {
+		const request = parse(entry.metadata);
 		if (!request) {
 			throw new ValidationError(
-				`Pending action request ${entry.requestId} is missing the original request payload`,
+				`Pending ${label} ${entry.requestId} is missing the original request payload`,
 			);
 		}
 
@@ -2142,12 +2017,19 @@ export class TapMessagingService {
 			entry.peerAgentId,
 		);
 		if (!contact) {
-			throw new ValidationError(
-				`No active contact found for pending action request ${entry.requestId}`,
-			);
+			throw new ValidationError(`No active contact found for pending ${label} ${entry.requestId}`);
 		}
 
-		await this.processTransferRequest(contact, entry.requestId, request);
+		await process(contact, entry.requestId, request);
+	}
+
+	private async resolvePendingTransferRequest(entry: RequestJournalEntry): Promise<void> {
+		await this.resolvePendingRequestWithContact(
+			entry,
+			parseStoredTransferRequest,
+			"action request",
+			(contact, requestId, request) => this.processTransferRequest(contact, requestId, request),
+		);
 	}
 
 	private async resolvePendingConnectionRequest(
@@ -2179,24 +2061,12 @@ export class TapMessagingService {
 	}
 
 	private async resolvePendingSchedulingRequest(entry: RequestJournalEntry): Promise<void> {
-		const proposal = parseStoredSchedulingRequest(entry.metadata);
-		if (!proposal) {
-			throw new ValidationError(
-				`Pending scheduling request ${entry.requestId} is missing the original request payload`,
-			);
-		}
-
-		const contact = findUniqueContactForAgentId(
-			await this.context.trustStore.getContacts(),
-			entry.peerAgentId,
+		await this.resolvePendingRequestWithContact(
+			entry,
+			parseStoredSchedulingRequest,
+			"scheduling request",
+			(contact, requestId, proposal) => this.processSchedulingRequest(contact, requestId, proposal),
 		);
-		if (!contact) {
-			throw new ValidationError(
-				`No active contact found for pending scheduling request ${entry.requestId}`,
-			);
-		}
-
-		await this.processSchedulingRequest(contact, entry.requestId, proposal);
 	}
 
 	private async processTransferRequest(
@@ -2213,84 +2083,58 @@ export class TapMessagingService {
 			return;
 		}
 
+		const baseResponse = {
+			type: "transfer/response" as const,
+			actionId: request.actionId,
+			asset: request.asset,
+			amount: request.amount,
+			chain: request.chain,
+			toAddress: request.toAddress,
+		};
+		const baseLedger = {
+			peer: peerLabel(contact),
+			direction: "granted-by-me" as const,
+			scope: "transfer/request",
+			asset: request.asset,
+			amount: request.amount,
+			action_id: request.actionId,
+		};
+
 		let response: TransferActionResponse;
 		if (!approved) {
-			response = {
-				type: "transfer/response",
-				actionId: request.actionId,
-				asset: request.asset,
-				amount: request.amount,
-				chain: request.chain,
-				toAddress: request.toAddress,
-				status: "rejected",
-				error: "Action rejected by agent",
-			};
+			response = { ...baseResponse, status: "rejected", error: "Action rejected by agent" };
 			await this.appendLedger({
-				peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				direction: "granted-by-me",
+				...baseLedger,
 				event: "transfer-rejected",
-				scope: "transfer/request",
-				asset: request.asset,
-				amount: request.amount,
-				action_id: request.actionId,
 				decision: "rejected",
 				rationale: "Rejected at runtime by agent decision",
 			});
 		} else if (!this.hooks.executeTransfer) {
 			response = {
-				type: "transfer/response",
-				actionId: request.actionId,
-				asset: request.asset,
-				amount: request.amount,
-				chain: request.chain,
-				toAddress: request.toAddress,
+				...baseResponse,
 				status: "failed",
 				error: "No transfer executor configured for this TAP host",
 			};
 		} else {
 			try {
 				const transfer = await this.hooks.executeTransfer(this.context.config, request);
-				response = {
-					type: "transfer/response",
-					actionId: request.actionId,
-					asset: request.asset,
-					amount: request.amount,
-					chain: request.chain,
-					toAddress: request.toAddress,
-					status: "completed",
-					txHash: transfer.txHash,
-				};
+				response = { ...baseResponse, status: "completed", txHash: transfer.txHash };
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
+					...baseLedger,
 					event: "transfer-completed",
-					scope: "transfer/request",
-					asset: request.asset,
-					amount: request.amount,
-					action_id: request.actionId,
 					tx_hash: transfer.txHash,
 					decision: "approved",
 					rationale: "Approved at runtime by agent decision",
 				});
 			} catch (error: unknown) {
 				response = {
-					type: "transfer/response",
-					actionId: request.actionId,
-					asset: request.asset,
-					amount: request.amount,
-					chain: request.chain,
-					toAddress: request.toAddress,
+					...baseResponse,
 					status: "failed",
-					error: error instanceof Error ? error.message : String(error),
+					error: toErrorMessage(error),
 				};
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
+					...baseLedger,
 					event: "transfer-failed",
-					scope: "transfer/request",
-					asset: request.asset,
-					amount: request.amount,
-					action_id: request.actionId,
 					decision: "approved",
 					rationale: response.error,
 				});
@@ -2316,7 +2160,7 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log(
 				"error",
-				`Failed to persist retry metadata for action result ${response.actionId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to persist retry metadata for action result ${response.actionId}: ${toErrorMessage(error)}`,
 			);
 			try {
 				await this.context.transport.send(contact.peerAgentId, delivery.request, {
@@ -2324,7 +2168,6 @@ export class TapMessagingService {
 					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 				});
 				await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
-				await this.touchContactSafe(contact.connectionId);
 			} catch (deliveryError: unknown) {
 				this.logActionResultDeliveryFailure(contact, response.actionId, deliveryError);
 			}
@@ -2363,47 +2206,7 @@ export class TapMessagingService {
 
 		const decision = await schedulingHandler.evaluateProposal(requestId, contact, proposal);
 
-		switch (decision.action) {
-			case "confirm":
-				return {
-					success: true,
-					data: {
-						type: "scheduling/accept",
-						schedulingId: proposal.schedulingId,
-						acceptedSlot: decision.slot,
-					},
-				};
-			case "counter":
-				return {
-					success: true,
-					data: {
-						type: "scheduling/counter",
-						schedulingId: proposal.schedulingId,
-						counterSlots: decision.slots,
-					},
-				};
-			case "reject":
-				return {
-					success: false,
-					data: {
-						type: "scheduling/reject",
-						schedulingId: proposal.schedulingId,
-						reason: decision.reason,
-					},
-					error: {
-						code: "REJECTED",
-						message: decision.reason,
-					},
-				};
-			case "defer":
-				return {
-					success: false,
-					error: {
-						code: "DEFERRED",
-						message: "Scheduling request deferred for approval",
-					},
-				};
-		}
+		return mapSchedulingDecisionToResult(proposal.schedulingId, decision);
 	}
 
 	private parseSchedulingProposalFromPayload(
@@ -2568,6 +2371,12 @@ export class TapMessagingService {
 						} as const)
 					: evaluatedDecision;
 
+		const baseLedger = {
+			peer: peerLabel(contact),
+			scope: "scheduling/request",
+			action_id: proposal.schedulingId,
+		};
+
 		switch (decision.action) {
 			case "confirm": {
 				const selectedSlot = decision.slot ?? proposal.slots[0];
@@ -2626,27 +2435,19 @@ export class TapMessagingService {
 						"completed",
 					);
 
-					try {
-						await this.context.transport.send(contact.peerAgentId, outgoing, {
-							peerAddress: contact.peerAgentAddress,
-							timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-						});
-						await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-						await this.touchContactSafe(contact.connectionId);
-					} catch (error: unknown) {
-						this.log(
-							"warn",
-							`Failed to deliver scheduling accept for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-						);
-					}
+					await this.deliverSchedulingOutgoing(
+						contact,
+						outgoing,
+						"accept",
+						proposal.schedulingId,
+						OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					);
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
-						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						...baseLedger,
 						direction: "granted-by-me",
 						event: "scheduling-accepted",
-						scope: "scheduling/request",
-						action_id: proposal.schedulingId,
 						decision: "accepted",
 					});
 
@@ -2664,52 +2465,12 @@ export class TapMessagingService {
 					break;
 				}
 
-				await this.updateSchedulingTracking(requestId, {
-					schedulingState: "rejected",
-				});
-				const rejectData: Record<string, unknown> = {
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: "Scheduling request declined by operator",
-				};
-				const rejectText = buildSchedulingRejectText({
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: "Scheduling request declined by operator",
-				});
-				const outgoing = buildOutgoingActionResult(
+				await this.deliverSchedulingReject(
 					contact,
 					requestId,
-					rejectText,
-					rejectData,
-					"scheduling/request",
-					"rejected",
+					proposal,
+					"Scheduling request declined by operator",
 				);
-
-				try {
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
-				} catch (error: unknown) {
-					this.log(
-						"warn",
-						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
-
-				await this.context.requestJournal.updateStatus(requestId, "completed");
-				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
-					event: "scheduling-rejected",
-					scope: "scheduling/request",
-					action_id: proposal.schedulingId,
-					decision: "rejected",
-					rationale: "Scheduling request declined by operator",
-				});
 				break;
 			}
 			case "counter": {
@@ -2736,77 +2497,19 @@ export class TapMessagingService {
 					"scheduling/request",
 				);
 
-				try {
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
-				} catch (error: unknown) {
-					this.log(
-						"warn",
-						`Failed to deliver scheduling counter for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
+				await this.deliverSchedulingOutgoing(contact, outgoing, "counter", proposal.schedulingId);
 
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					...baseLedger,
 					direction: "local",
 					event: "scheduling-counter",
-					scope: "scheduling/request",
-					action_id: proposal.schedulingId,
 					decision: "counter",
 				});
 				break;
 			}
 			case "reject": {
-				await this.updateSchedulingTracking(requestId, {
-					schedulingState: "rejected",
-				});
-				const rejectData: Record<string, unknown> = {
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: decision.reason,
-				};
-				const rejectText = buildSchedulingRejectText({
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: decision.reason,
-				});
-				const outgoing = buildOutgoingActionResult(
-					contact,
-					requestId,
-					rejectText,
-					rejectData,
-					"scheduling/request",
-					"rejected",
-				);
-
-				try {
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
-				} catch (error: unknown) {
-					this.log(
-						"warn",
-						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
-
-				await this.context.requestJournal.updateStatus(requestId, "completed");
-				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
-					event: "scheduling-rejected",
-					scope: "scheduling/request",
-					action_id: proposal.schedulingId,
-					decision: "rejected",
-					rationale: decision.reason,
-				});
+				await this.deliverSchedulingReject(contact, requestId, proposal, decision.reason);
 				break;
 			}
 			case "defer":
@@ -2815,6 +2518,75 @@ export class TapMessagingService {
 					`Scheduling request ${proposal.schedulingId} deferred for manual decision`,
 				);
 				break;
+		}
+	}
+
+	private async deliverSchedulingReject(
+		contact: Contact,
+		requestId: string,
+		proposal: SchedulingProposal,
+		reason: string,
+	): Promise<void> {
+		await this.updateSchedulingTracking(requestId, {
+			schedulingState: "rejected",
+		});
+		const rejectData: Record<string, unknown> = {
+			type: "scheduling/reject",
+			schedulingId: proposal.schedulingId,
+			reason,
+		};
+		const rejectText = buildSchedulingRejectText({
+			type: "scheduling/reject",
+			schedulingId: proposal.schedulingId,
+			reason,
+		});
+		const outgoing = buildOutgoingActionResult(
+			contact,
+			requestId,
+			rejectText,
+			rejectData,
+			"scheduling/request",
+			"rejected",
+		);
+
+		await this.deliverSchedulingOutgoing(
+			contact,
+			outgoing,
+			"reject",
+			proposal.schedulingId,
+			OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+		);
+
+		await this.context.requestJournal.updateStatus(requestId, "completed");
+		await this.appendLedger({
+			peer: peerLabel(contact),
+			direction: "granted-by-me",
+			event: "scheduling-rejected",
+			scope: "scheduling/request",
+			action_id: proposal.schedulingId,
+			decision: "rejected",
+			rationale: reason,
+		});
+	}
+
+	private async deliverSchedulingOutgoing(
+		contact: Contact,
+		outgoing: ProtocolMessage,
+		actionType: string,
+		schedulingId: string,
+		timeoutMs?: number,
+	): Promise<void> {
+		try {
+			await this.context.transport.send(contact.peerAgentId, outgoing, {
+				peerAddress: contact.peerAgentAddress,
+				...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+			});
+			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to deliver scheduling ${actionType} for ${schedulingId}: ${toErrorMessage(error)}`,
+			);
 		}
 	}
 
@@ -2829,10 +2601,7 @@ export class TapMessagingService {
 
 		if (!pendingConnect) {
 			if (existingContact?.status === "active") {
-				this.log(
-					"info",
-					`Ignoring duplicate connection result from ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
-				);
+				this.log("info", `Ignoring duplicate connection result from ${peerLabel(existingContact)}`);
 				return "duplicate";
 			}
 			this.log(
@@ -2851,10 +2620,7 @@ export class TapMessagingService {
 
 		if (result.status === "rejected") {
 			await this.pendingConnectStore.delete(result.requestId);
-			this.log(
-				"info",
-				`Connection rejected by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
-			);
+			this.log("info", `Connection rejected by ${peerLabel(pendingConnect)}`);
 			return "received";
 		}
 
@@ -2878,10 +2644,7 @@ export class TapMessagingService {
 			await this.context.trustStore.addContact(nextContact);
 		}
 		await this.pendingConnectStore.delete(result.requestId);
-		this.log(
-			"info",
-			`Connection accepted by ${pendingConnect.peerDisplayName} (#${pendingConnect.peerAgentId})`,
-		);
+		this.log("info", `Connection accepted by ${peerLabel(pendingConnect)}`);
 		return "received";
 	}
 
@@ -2892,14 +2655,13 @@ export class TapMessagingService {
 		const contact = await findContactForMessage(this.context, from, message);
 		if (contact) {
 			await this.appendConversationLogSafe(contact, message, "incoming");
-			await this.touchContactSafe(contact.connectionId);
 		}
 
 		const response = parseTransferActionResponse(message);
 		if (response) {
 			if (contact) {
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					peer: peerLabel(contact),
 					direction: "local",
 					event: `transfer-${response.status}`,
 					scope: "transfer/request",
@@ -2920,10 +2682,7 @@ export class TapMessagingService {
 				this.waiters.get(response.requestId)?.(response);
 			}
 			if (contact) {
-				this.log(
-					"info",
-					`Received transfer ${response.status} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				);
+				this.log("info", `Received transfer ${response.status} result from ${peerLabel(contact)}`);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -2977,17 +2736,14 @@ export class TapMessagingService {
 			if (contact) {
 				const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					peer: peerLabel(contact),
 					direction: "local",
 					event: `scheduling-${eventType}`,
 					scope: "scheduling/request",
 					action_id: schedulingResponse.schedulingId,
 					decision: eventType,
 				});
-				this.log(
-					"info",
-					`Received scheduling ${eventType} result from ${contact.peerDisplayName} (#${contact.peerAgentId})`,
-				);
+				this.log("info", `Received scheduling ${eventType} result from ${peerLabel(contact)}`);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -3048,19 +2804,19 @@ export class TapMessagingService {
 				peerAgentId: peer.agentId,
 				correlationId: result.requestId,
 				status: "pending",
-				metadata: serializePendingConnectionResultDelivery(delivery),
+				metadata: delivery as unknown as Record<string, unknown>,
 			});
 			persisted = true;
 		} catch (error: unknown) {
 			this.log(
 				"error",
-				`Failed to persist retry metadata for connection result ${result.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to persist retry metadata for connection result ${result.requestId}: ${toErrorMessage(error)}`,
 			);
 		}
 
 		try {
 			if (persisted) {
-				await this.deliverPendingConnectionResult(delivery);
+				await this.sendAndCompleteJournalEntry(delivery);
 			} else {
 				await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 					peerAddress: delivery.peerAddress,
@@ -3104,7 +2860,7 @@ export class TapMessagingService {
 			}
 			this.log(
 				"warn",
-				`Rejecting action request ${request.actionId} from ${contact.peerDisplayName} (#${contact.peerAgentId}) because no matching active transfer grant exists`,
+				`Rejecting action request ${request.actionId} from ${peerLabel(contact)} because no matching active transfer grant exists`,
 			);
 			return false;
 		}
@@ -3123,29 +2879,43 @@ export class TapMessagingService {
 		);
 	}
 
-	private async retryPendingActionResults(): Promise<number> {
+	private async retryPendingResults<T extends { peerAgentId: number; peerName: string }>(
+		method: string,
+		parse: (metadata: Record<string, unknown> | undefined) => T | null,
+		deliver: (delivery: T) => Promise<void>,
+		errorLabel: (delivery: T) => string,
+	): Promise<number> {
 		const pending = await this.context.requestJournal.listPending("outbound");
 		let processed = 0;
 		for (const entry of pending) {
-			if (entry.kind !== "result" || entry.method !== ACTION_RESULT) {
+			if (entry.kind !== "result" || entry.method !== method) {
 				continue;
 			}
-			const delivery = parsePendingActionResultDelivery(entry.metadata);
+			const delivery = parse(entry.metadata);
 			if (!delivery) {
 				continue;
 			}
 			try {
-				await this.deliverPendingActionResult(delivery);
+				await deliver(delivery);
 				processed += 1;
 			} catch (error: unknown) {
 				this.logResultDeliveryFailure(
-					`Action result ${delivery.actionId}`,
+					errorLabel(delivery),
 					`${delivery.peerName} (#${delivery.peerAgentId})`,
 					error,
 				);
 			}
 		}
 		return processed;
+	}
+
+	private retryPendingActionResults(): Promise<number> {
+		return this.retryPendingResults(
+			ACTION_RESULT,
+			parsePendingActionResultDelivery,
+			(d) => this.deliverPendingActionResult(d),
+			(d) => `Action result ${d.actionId}`,
+		);
 	}
 
 	private async retryPendingConnectionRequests(): Promise<number> {
@@ -3168,75 +2938,50 @@ export class TapMessagingService {
 			} catch (error: unknown) {
 				this.log(
 					"warn",
-					`Failed to retry connection request ${entry.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+					`Failed to retry connection request ${entry.requestId}: ${toErrorMessage(error)}`,
 				);
 			}
 		}
 		return processed;
 	}
 
-	private async retryPendingConnectionResults(): Promise<number> {
-		const pending = await this.context.requestJournal.listPending("outbound");
-		let processed = 0;
-		for (const entry of pending) {
-			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
-				continue;
-			}
-			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
-			if (!delivery) {
-				continue;
-			}
-			try {
-				await this.deliverPendingConnectionResult(delivery);
-				processed += 1;
-			} catch (error: unknown) {
-				this.logResultDeliveryFailure(
-					"Connection result",
-					`${delivery.peerName} (#${delivery.peerAgentId})`,
-					error,
-				);
-			}
-		}
-		return processed;
+	private retryPendingConnectionResults(): Promise<number> {
+		return this.retryPendingResults(
+			CONNECTION_RESULT,
+			parsePendingConnectionResultDelivery,
+			(d) => this.sendAndCompleteJournalEntry(d),
+			() => "Connection result",
+		);
 	}
 
-	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
+	private async sendAndCompleteJournalEntry(delivery: {
+		peerAgentId: number;
+		request: ProtocolMessage;
+		peerAddress: `0x${string}`;
+	}): Promise<void> {
 		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 			peerAddress: delivery.peerAddress,
 			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 		});
 		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
 		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
+	}
 
+	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
+		await this.sendAndCompleteJournalEntry(delivery);
 		const contact = await this.context.trustStore.getContact(delivery.connectionId);
 		if (!contact || contact.peerAgentId !== delivery.peerAgentId) {
 			return;
 		}
 		await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
-		await this.touchContactSafe(contact.connectionId);
-	}
-
-	private async deliverPendingConnectionResult(
-		delivery: PendingConnectionResultDelivery,
-	): Promise<void> {
-		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
-			peerAddress: delivery.peerAddress,
-			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-		});
-		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
-		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
 	}
 
 	private logActionResultDeliveryFailure(contact: Contact, actionId: string, error: unknown): void {
-		this.logResultDeliveryFailure(
-			`Action result ${actionId}`,
-			`${contact.peerDisplayName} (#${contact.peerAgentId})`,
-			error,
-		);
+		this.logResultDeliveryFailure(`Action result ${actionId}`, peerLabel(contact), error);
 	}
 
 	private logResultDeliveryFailure(subject: string, peerLabel: string, error: unknown): void {
-		const errorMessage = error instanceof Error ? error.message : String(error);
+		const errorMessage = toErrorMessage(error);
 		if (isTransportReceiptTimeout(error)) {
 			this.log(
 				"warn",
@@ -3278,13 +3023,24 @@ export class TapMessagingService {
 				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 			});
 			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-			await this.touchContactSafe(contact.connectionId);
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to deliver UNSUPPORTED_ACTION result for "${actionType}": ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to deliver UNSUPPORTED_ACTION result for "${actionType}": ${toErrorMessage(error)}`,
 			);
 		}
+	}
+
+	private async rejectMalformedPayload(
+		contact: Contact,
+		messageId: string,
+		fallbackActionType: string,
+		requestKey: string,
+		isDuplicate: boolean,
+	): Promise<{ status: "duplicate" | "received" }> {
+		await this.sendUnsupportedActionResult(contact, messageId, fallbackActionType, requestKey);
+		await this.context.requestJournal.updateStatus(messageId, "completed");
+		return { status: isDuplicate ? "duplicate" : "received" };
 	}
 
 	private async dispatchToApp(
@@ -3366,7 +3122,7 @@ export class TapMessagingService {
 				success: false,
 				error: {
 					code: "HANDLER_ERROR",
-					message: error instanceof Error ? error.message : String(error),
+					message: toErrorMessage(error),
 				},
 			};
 		}
@@ -3428,7 +3184,7 @@ export class TapMessagingService {
 		} catch (journalError: unknown) {
 			this.log(
 				"error",
-				`Failed to persist retry metadata for app result "${actionType}": ${journalError instanceof Error ? journalError.message : String(journalError)}`,
+				`Failed to persist retry metadata for app result "${actionType}": ${toErrorMessage(journalError)}`,
 			);
 			// Best-effort delivery without retry
 			try {
@@ -3437,11 +3193,10 @@ export class TapMessagingService {
 					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 				});
 				await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-				await this.touchContactSafe(contact.connectionId);
 			} catch (deliveryError: unknown) {
 				this.log(
 					"warn",
-					`Failed to deliver app result for "${actionType}": ${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`,
+					`Failed to deliver app result for "${actionType}": ${toErrorMessage(deliveryError)}`,
 				);
 			}
 		}
@@ -3613,7 +3368,9 @@ function parseSchedulingTrackingMetadata(
 		return {};
 	}
 
-	const schedulingState = asSchedulingRequestState(metadata.schedulingState);
+	const ss = metadata.schedulingState;
+	const schedulingState: SchedulingRequestState | undefined =
+		ss === "accepted" || ss === "cancelled" || ss === "rejected" ? ss : undefined;
 	return {
 		...(typeof metadata.localEventId === "string" && metadata.localEventId.length > 0
 			? { localEventId: metadata.localEventId }
@@ -3624,10 +3381,6 @@ function parseSchedulingTrackingMetadata(
 
 function asString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
-}
-
-function asSchedulingRequestState(value: unknown): SchedulingRequestState | undefined {
-	return value === "accepted" || value === "cancelled" || value === "rejected" ? value : undefined;
 }
 
 function asStringArray(value: unknown): string[] {
@@ -3651,19 +3404,16 @@ function mergeMetadata(
 	return next;
 }
 
-function serializePendingRequestDetails(
-	details: TapPendingRequestDetails,
-): Record<string, unknown> {
-	return details as unknown as Record<string, unknown>;
-}
-
 function serializePendingTransferRequestDetails(
 	contact: Contact,
 	request: TransferActionRequest,
 	dataDir: string,
 ): Record<string, unknown> {
 	return {
-		...serializePendingRequestDetails(buildPendingTransferDetails(contact, request, dataDir)),
+		...(buildPendingTransferDetails(contact, request, dataDir) as unknown as Record<
+			string,
+			unknown
+		>),
 		request: {
 			type: "transfer-request",
 			payload: request,
@@ -3675,8 +3425,12 @@ function serializePendingSchedulingRequestDetails(
 	contact: Contact,
 	request: SchedulingProposal,
 	dataDir: string,
+	direction: "inbound" | "outbound",
 ): Record<string, unknown> {
-	const grants = findApplicableSchedulingGrants(contact.permissions.grantedByMe, request);
+	const grants =
+		direction === "inbound"
+			? findApplicableSchedulingGrants(contact.permissions.grantedByMe, request)
+			: findActiveGrantsByScope(contact.permissions.grantedByPeer, "scheduling/request");
 	const details: TapPendingSchedulingDetails = {
 		type: "scheduling",
 		peerName: contact.peerDisplayName,
@@ -3691,37 +3445,7 @@ function serializePendingSchedulingRequestDetails(
 		ledgerPath: getPermissionLedgerPath(dataDir),
 	};
 	return {
-		...serializePendingRequestDetails(details),
-		request: {
-			type: "scheduling-request",
-			payload: request,
-		},
-	};
-}
-
-function serializePendingSchedulingOutboundRequestDetails(
-	contact: Contact,
-	request: SchedulingProposal,
-	dataDir: string,
-): Record<string, unknown> {
-	const details: TapPendingSchedulingDetails = {
-		type: "scheduling",
-		peerName: contact.peerDisplayName,
-		peerChain: contact.peerChain,
-		schedulingId: request.schedulingId,
-		title: request.title,
-		duration: request.duration,
-		slots: request.slots,
-		originTimezone: request.originTimezone,
-		note: request.note,
-		activeGrantSummary: findActiveGrantsByScope(
-			contact.permissions.grantedByPeer,
-			"scheduling/request",
-		).map((grant) => summarizeGrant(grant)),
-		ledgerPath: getPermissionLedgerPath(dataDir),
-	};
-	return {
-		...serializePendingRequestDetails(details),
+		...(details as unknown as Record<string, unknown>),
 		request: {
 			type: "scheduling-request",
 			payload: request,
@@ -3802,12 +3526,6 @@ function buildPendingConnectionResultDelivery(
 		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
 		request,
 	};
-}
-
-function serializePendingConnectionResultDelivery(
-	delivery: PendingConnectionResultDelivery,
-): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
 }
 
 function parsePendingConnectionResultDelivery(
@@ -3988,7 +3706,7 @@ function isSameAgentIdentifier(
 	return left.agentId === right.agentId && left.chain === right.chain;
 }
 
-function findApplicableTransferGrants(
+export function findApplicableTransferGrants(
 	grantSet: PermissionGrantSet,
 	request: TransferActionRequest,
 ) {
@@ -3997,7 +3715,7 @@ function findApplicableTransferGrants(
 	);
 }
 
-function matchesTransferGrantRequest(
+export function matchesTransferGrantRequest(
 	grant: PermissionGrantSet["grants"][number],
 	request: TransferActionRequest,
 ): boolean {
@@ -4053,7 +3771,7 @@ async function findContactForMessage(
 	from: number,
 	message: ProtocolMessage,
 ): Promise<Contact | null> {
-	const metadataConnectionId = extractConnectionId(message);
+	const metadataConnectionId = extractConnectionIdFromParams(message.params);
 	if (metadataConnectionId) {
 		const contact = await context.trustStore.getContact(metadataConnectionId);
 		if (contact?.peerAgentId === from) {
@@ -4087,25 +3805,6 @@ async function findContactForMessage(
 	}
 
 	return findUniqueContactForAgentId(contacts, from) ?? null;
-}
-
-function extractConnectionId(message: ProtocolMessage): string | null {
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const payload = message.params as {
-		message?: {
-			metadata?: {
-				trustedAgent?: {
-					connectionId?: unknown;
-				};
-			};
-		};
-	};
-
-	const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
-	return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
 }
 
 function assertNever(value: never): never {

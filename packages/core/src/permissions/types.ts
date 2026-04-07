@@ -23,7 +23,7 @@ export interface ContactPermissionState {
 	grantedByPeer: PermissionGrantSet;
 }
 
-export function createGrant(
+function createGrant(
 	input: Omit<PermissionGrant, "updatedAt" | "status"> & {
 		status?: PermissionGrantStatus;
 		updatedAt?: string;
@@ -39,7 +39,7 @@ export function createGrant(
 	};
 }
 
-export function createEmptyGrantSet(timestamp: string = nowISO()): PermissionGrantSet {
+function createEmptyGrantSet(timestamp: string = nowISO()): PermissionGrantSet {
 	return {
 		version: TAP_GRANTS_VERSION,
 		updatedAt: timestamp,

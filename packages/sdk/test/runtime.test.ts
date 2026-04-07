@@ -21,86 +21,24 @@ describe("TapRuntime before start()", () => {
 		expect(runtime.listApps()).toEqual([]);
 	});
 
-	it("sendMessage throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.sendMessage(1, "hello")).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
+	const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
 
-	it("sendAction throws before start()", async () => {
+	it.each<[string, (r: TapRuntime) => Promise<unknown>]>([
+		["sendMessage", (r) => r.sendMessage(1, "hello")],
+		["sendAction", (r) => r.sendAction(1, "test/action", {})],
+		["connect", (r) => r.connect({ inviteUrl: "https://example.com" })],
+		["syncOnce", (r) => r.syncOnce()],
+		["stop", (r) => r.stop()],
+		["getStatus", (r) => r.getStatus()],
+		["listPendingRequests", (r) => r.listPendingRequests()],
+		["resolvePending", (r) => r.resolvePending("req-1", true)],
+		["publishGrants", (r) => r.publishGrants(1, grantSet)],
+		["requestGrants", (r) => r.requestGrants(1, grantSet)],
+		["installApp", (r) => r.installApp("nonexistent-package")],
+		["removeApp", (r) => r.removeApp("some-app")],
+	])("%s throws before start()", async (_name, callMethod) => {
 		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.sendAction(1, "test/action", {})).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("connect throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.connect({ inviteUrl: "https://example.com" })).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("syncOnce throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.syncOnce()).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("stop throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.stop()).rejects.toThrow("Runtime not initialized. Call start() first.");
-	});
-
-	it("getStatus throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.getStatus()).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("listPendingRequests throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.listPendingRequests()).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("resolvePending throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.resolvePending("req-1", true)).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("publishGrants throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
-		await expect(runtime.publishGrants(1, grantSet)).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("requestGrants throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
-		await expect(runtime.requestGrants(1, grantSet)).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("installApp throws before start() (no context)", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.installApp("nonexistent-package")).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("removeApp throws before start() (no context)", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.removeApp("some-app")).rejects.toThrow(
+		await expect(callMethod(runtime)).rejects.toThrow(
 			"Runtime not initialized. Call start() first.",
 		);
 	});

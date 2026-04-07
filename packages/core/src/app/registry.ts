@@ -1,3 +1,4 @@
+import { toErrorMessage } from "../common/index.js";
 import { type AppManifest, loadAppManifest } from "./manifest.js";
 import type { TapActionHandler, TapApp } from "./types.js";
 
@@ -113,7 +114,7 @@ export class TapAppRegistry {
 		} catch (err) {
 			this.log(
 				"error",
-				`Failed to load app "${appId}" from "${entry.entryPoint}": ${err instanceof Error ? err.message : String(err)}`,
+				`Failed to load app "${appId}" from "${entry.entryPoint}": ${toErrorMessage(err)}`,
 			);
 			return undefined;
 		}

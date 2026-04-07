@@ -3,12 +3,13 @@ import { join } from "node:path";
 import { Client } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
+import { TransportError, isEthereumAddress, nowISO, toErrorMessage } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import {
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
 	PERMISSIONS_UPDATE,
+	extractConnectionIdFromParams,
 	isResultMethod,
 } from "../protocol/index.js";
 import type { AgentIdentifier } from "../protocol/types.js";
@@ -171,9 +172,7 @@ export class XmtpTransport implements TransportProvider {
 			}
 			throw err instanceof TransportError
 				? err
-				: new TransportError(
-						`Failed to send message: ${err instanceof Error ? err.message : String(err)}`,
-					);
+				: new TransportError(`Failed to send message: ${toErrorMessage(err)}`);
 		}
 
 		const receipt = await receiptPromise;
@@ -286,6 +285,16 @@ export class XmtpTransport implements TransportProvider {
 		})();
 	}
 
+	private toIncomingMessage(message: DecodedMessage): IncomingTransportMessage {
+		return {
+			senderInboxId: message.senderInboxId,
+			content: message.content,
+			conversationId: message.conversationId,
+			messageId: message.id,
+			sentAtNs: message.sentAtNs,
+		};
+	}
+
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
@@ -297,13 +306,7 @@ export class XmtpTransport implements TransportProvider {
 		for await (const message of stream) {
 			if (!this.running) break;
 			try {
-				await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-					messageId: message.id,
-					sentAtNs: message.sentAtNs,
-				});
+				await this.processMessage(this.toIncomingMessage(message));
 				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
 			} catch {
 				// Leave the checkpoint unchanged so transient failures can be retried.
@@ -327,13 +330,7 @@ export class XmtpTransport implements TransportProvider {
 			const messages = await dm.messages();
 			messages.sort((left, right) => left.sentAt.getTime() - right.sentAt.getTime());
 			for (const message of messages) {
-				const didProcess = await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-					messageId: message.id,
-					sentAtNs: message.sentAtNs,
-				});
+				const didProcess = await this.processMessage(this.toIncomingMessage(message));
 				if (didProcess) {
 					processed += 1;
 				}
@@ -376,13 +373,7 @@ export class XmtpTransport implements TransportProvider {
 			if (isMessageAlreadyCheckpointed(checkpoint, message)) {
 				continue;
 			}
-			const didProcess = await this.processMessage({
-				senderInboxId: message.senderInboxId,
-				content: message.content,
-				conversationId: message.conversationId,
-				messageId: message.id,
-				sentAtNs: message.sentAtNs,
-			});
+			const didProcess = await this.processMessage(this.toIncomingMessage(message));
 			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
 			if (didProcess) {
 				processed += 1;
@@ -611,7 +602,7 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<number> {
-		const claimedSender = this.extractBootstrapSender(message.params);
+		const claimedSender = this.extractAgentIdentifier(message.params, "from");
 		const claimedAgentId = claimedSender?.agentId;
 		const claimedChain = claimedSender?.chain;
 
@@ -647,18 +638,18 @@ export class XmtpTransport implements TransportProvider {
 		return claimedAgentId;
 	}
 
-	private extractBootstrapSender(params: unknown): AgentIdentifier | null {
+	private extractAgentIdentifier(params: unknown, key: string): AgentIdentifier | null {
 		if (typeof params !== "object" || params === null) {
 			return null;
 		}
 
-		const from = (params as { from?: unknown }).from;
-		if (typeof from !== "object" || from === null) {
+		const nested = (params as Record<string, unknown>)[key];
+		if (typeof nested !== "object" || nested === null) {
 			return null;
 		}
 
-		const agentId = (from as { agentId?: unknown }).agentId;
-		const chain = (from as { chain?: unknown }).chain;
+		const agentId = (nested as { agentId?: unknown }).agentId;
+		const chain = (nested as { chain?: unknown }).chain;
 		if (
 			typeof agentId !== "number" ||
 			agentId < 0 ||
@@ -722,7 +713,7 @@ export class XmtpTransport implements TransportProvider {
 			return null;
 		}
 
-		const grantor = this.extractGrantor(message.params);
+		const grantor = this.extractAgentIdentifier(message.params, "grantor");
 		if (!grantor) {
 			return null;
 		}
@@ -739,7 +730,7 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<Contact | null> {
-		const connectionId = this.extractConnectionId(message.params);
+		const connectionId = extractConnectionIdFromParams(message.params);
 		if (!connectionId) {
 			return null;
 		}
@@ -757,47 +748,12 @@ export class XmtpTransport implements TransportProvider {
 		return senderAddresses.some((address) => address.toLowerCase() === expectedAddress);
 	}
 
-	private extractGrantor(params: unknown): AgentIdentifier | null {
-		if (typeof params !== "object" || params === null) {
-			return null;
+	private async sendJsonRpc(senderInboxId: string, payload: object): Promise<void> {
+		const dm = await this.findDmForSender(senderInboxId);
+		if (!dm) {
+			return;
 		}
-
-		const grantor = (params as { grantor?: unknown }).grantor;
-		if (typeof grantor !== "object" || grantor === null) {
-			return null;
-		}
-
-		const agentId = (grantor as { agentId?: unknown }).agentId;
-		const chain = (grantor as { chain?: unknown }).chain;
-		if (
-			typeof agentId !== "number" ||
-			agentId < 0 ||
-			typeof chain !== "string" ||
-			chain.length === 0
-		) {
-			return null;
-		}
-
-		return { agentId, chain };
-	}
-
-	private extractConnectionId(params: unknown): string | null {
-		if (typeof params !== "object" || params === null) {
-			return null;
-		}
-
-		const payload = params as {
-			message?: {
-				metadata?: {
-					trustedAgent?: {
-						connectionId?: unknown;
-					};
-				};
-			};
-		};
-
-		const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
-		return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
+		await dm.sendText(JSON.stringify(payload));
 	}
 
 	private async sendJsonRpcReceipt(
@@ -806,23 +762,16 @@ export class XmtpTransport implements TransportProvider {
 		requestId: string,
 		ack: TransportAck,
 	): Promise<void> {
-		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) {
-			return;
-		}
-
-		await dm.sendText(
-			JSON.stringify({
-				jsonrpc: "2.0",
-				id,
-				result: {
-					received: true,
-					requestId,
-					status: ack.status,
-					receivedAt: nowISO(),
-				},
-			}),
-		);
+		await this.sendJsonRpc(senderInboxId, {
+			jsonrpc: "2.0",
+			id,
+			result: {
+				received: true,
+				requestId,
+				status: ack.status,
+				receivedAt: nowISO(),
+			},
+		});
 	}
 
 	private async sendJsonRpcError(
@@ -831,18 +780,11 @@ export class XmtpTransport implements TransportProvider {
 		code: number,
 		message: string,
 	): Promise<void> {
-		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) {
-			return;
-		}
-
-		await dm.sendText(
-			JSON.stringify({
-				jsonrpc: "2.0",
-				id,
-				error: { code, message },
-			}),
-		);
+		await this.sendJsonRpc(senderInboxId, {
+			jsonrpc: "2.0",
+			id,
+			error: { code, message },
+		});
 	}
 
 	private async resolveInboxId(address: `0x${string}`): Promise<string> {

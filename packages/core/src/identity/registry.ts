@@ -1,15 +1,8 @@
 import type { PublicClient, WalletClient } from "viem";
-import { IdentityError } from "../common/index.js";
+import { IdentityError, toErrorMessage } from "../common/index.js";
 import { ERC8004_ABI } from "./abi.js";
 
-export interface IIdentityRegistry {
-	getTokenURI(agentId: number): Promise<string>;
-	getOwner(agentId: number): Promise<`0x${string}`>;
-	register(agentURI: string, walletClient: WalletClient): Promise<number>;
-	setAgentURI(agentId: number, newURI: string, walletClient: WalletClient): Promise<void>;
-}
-
-export class ERC8004Registry implements IIdentityRegistry {
+export class ERC8004Registry {
 	constructor(
 		private readonly publicClient: PublicClient,
 		private readonly registryAddress: `0x${string}`,
@@ -36,7 +29,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 			return uri;
 		} catch (error) {
 			throw new IdentityError(
-				`Failed to get tokenURI for agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to get tokenURI for agent ${agentId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -51,9 +44,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 			});
 			return owner;
 		} catch (error) {
-			throw new IdentityError(
-				`Failed to get owner for agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			throw new IdentityError(`Failed to get owner for agent ${agentId}: ${toErrorMessage(error)}`);
 		}
 	}
 
@@ -90,9 +81,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 			return Number(BigInt(transferLog.topics[3]));
 		} catch (error) {
 			if (error instanceof IdentityError) throw error;
-			throw new IdentityError(
-				`Failed to register agent: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			throw new IdentityError(`Failed to register agent: ${toErrorMessage(error)}`);
 		}
 	}
 
@@ -115,7 +104,7 @@ export class ERC8004Registry implements IIdentityRegistry {
 		} catch (error) {
 			if (error instanceof IdentityError) throw error;
 			throw new IdentityError(
-				`Failed to set agent URI for agent ${agentId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to set agent URI for agent ${agentId}: ${toErrorMessage(error)}`,
 			);
 		}
 	}

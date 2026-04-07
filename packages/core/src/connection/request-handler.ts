@@ -18,7 +18,7 @@ export interface ConnectionRequestContext {
 	ownAgent: AgentIdentifier;
 }
 
-export interface ConnectionRequestOutcome {
+interface ConnectionRequestOutcome {
 	peer: ResolvedAgent;
 	result: ConnectionResultParams;
 	contact: Contact | null;

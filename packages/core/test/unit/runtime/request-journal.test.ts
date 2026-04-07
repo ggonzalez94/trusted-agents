@@ -1,22 +1,17 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { FileRequestJournal } from "../../../src/runtime/request-journal.js";
+import { useTempDirs } from "../../helpers/temp-dir.js";
 
-const tempDirs: string[] = [];
+const { track: trackDir } = useTempDirs();
 
 async function createJournal() {
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-request-journal-"));
-	tempDirs.push(dataDir);
+	trackDir(dataDir);
 	return new FileRequestJournal(dataDir);
 }
-
-afterEach(async () => {
-	await Promise.all(
-		tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true })),
-	);
-});
 
 describe("FileRequestJournal", () => {
 	it("claims inbound requests idempotently by request key", async () => {

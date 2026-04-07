@@ -1,11 +1,14 @@
-import type { TrustedAgentsConfig } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
-import * as executionLib from "../src/lib/execution.js";
 import * as promptLib from "../src/lib/prompt.js";
-import * as walletLib from "../src/lib/wallet.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
+import {
+	TEST_BASE_CHAIN,
+	buildMockExecutionPreview,
+	buildTestConfig,
+} from "./helpers/config-fixtures.js";
 
 const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
 	mockOwsProvider: vi.fn().mockImplementation(() => ({
@@ -30,17 +33,11 @@ vi.mock("trusted-agents-core", async () => {
 });
 
 describe("tap transfer", () => {
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
-	function buildConfig(): TrustedAgentsConfig {
-		return {
+	function buildConfig() {
+		return buildTestConfig({
 			agentId: 42,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
-			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:1": {
 					name: "Ethereum Mainnet",
@@ -49,53 +46,23 @@ describe("tap transfer", () => {
 					rpcUrl: "https://example.test/mainnet",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
-					rpcUrl: "https://example.test/base",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
+				"eip155:8453": TEST_BASE_CHAIN,
 			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-			execution: {
-				mode: "eip7702",
-				paymasterProvider: "circle",
-			},
-		};
+		});
 	}
 
 	beforeEach(() => {
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
 
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
-
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
-			requestedMode: "eip7702",
-			mode: "eip7702",
-			messagingAddress: "0x0000000000000000000000000000000000000001",
-			executionAddress: "0x0000000000000000000000000000000000000002",
-			fundingAddress: "0x0000000000000000000000000000000000000003",
-			paymasterProvider: "circle",
-			warnings: [],
-		});
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(
+			buildMockExecutionPreview("0x0000000000000000000000000000000000000001", {
+				executionAddress: "0x0000000000000000000000000000000000000002",
+				fundingAddress: "0x0000000000000000000000000000000000000003",
+			}),
+		);
 		vi.spyOn(promptLib, "promptYesNo").mockResolvedValue(true);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			estimateGas: vi.fn().mockResolvedValue(21000n),
 			estimateFeesPerGas: vi.fn().mockResolvedValue({
 				gasPrice: 1000000000n,
@@ -106,70 +73,28 @@ describe("tap transfer", () => {
 	});
 
 	afterEach(() => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 	});
 
-	it("returns validation error for invalid recipient address", async () => {
-		await transferCommand(
+	it.each([
+		[
+			"invalid recipient address",
 			{ to: "not-an-address", asset: "native", amount: "1", yes: true },
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Invalid recipient address");
-		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
-	});
-
-	it("returns validation error for non-positive amount", async () => {
-		await transferCommand(
-			{
-				to: "0x1111111111111111111111111111111111111111",
-				asset: "native",
-				amount: "0",
-				yes: true,
-			},
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Amount must be a positive number");
-	});
-
-	it("returns validation error for unsupported asset", async () => {
-		await transferCommand(
-			{
-				to: "0x1111111111111111111111111111111111111111",
-				asset: "dai",
-				amount: "1",
-				yes: true,
-			},
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Unsupported asset");
-	});
-
-	it("returns validation error for unknown chain", async () => {
-		await transferCommand(
+			"Invalid recipient address",
+		],
+		[
+			"non-positive amount",
+			{ to: "0x1111111111111111111111111111111111111111", asset: "native", amount: "0", yes: true },
+			"Amount must be a positive number",
+		],
+		[
+			"unsupported asset",
+			{ to: "0x1111111111111111111111111111111111111111", asset: "dai", amount: "1", yes: true },
+			"Unsupported asset",
+		],
+		[
+			"unknown chain",
 			{
 				to: "0x1111111111111111111111111111111111111111",
 				asset: "native",
@@ -177,21 +102,10 @@ describe("tap transfer", () => {
 				chain: "not-a-chain",
 				yes: true,
 			},
-			{ json: true },
-		);
-
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			status: string;
-			error?: { code?: string; message?: string };
-		};
-		expect(output.status).toBe("error");
-		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("Unknown chain");
-		expect(process.exitCode).toBe(2);
-	});
-
-	it("returns validation error when usdc is unsupported on the selected chain", async () => {
-		await transferCommand(
+			"Unknown chain",
+		],
+		[
+			"usdc unsupported on chain",
 			{
 				to: "0x1111111111111111111111111111111111111111",
 				asset: "usdc",
@@ -199,16 +113,17 @@ describe("tap transfer", () => {
 				chain: "eip155:1",
 				yes: true,
 			},
-			{ json: true },
-		);
-
+			"USDC is not supported",
+		],
+	])("returns validation error for %s", async (_, args, expectedMessage) => {
+		await transferCommand(args, { json: true });
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			error?: { code?: string; message?: string };
 		};
 		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
-		expect(output.error?.message).toContain("USDC is not supported");
+		expect(output.error?.message).toContain(expectedMessage);
 	});
 
 	it("executes a transfer using resolved chain aliases", async () => {
@@ -276,7 +191,7 @@ describe("tap transfer", () => {
 
 	it("passes the USDC contract address (not recipient) to gas estimation", async () => {
 		const estimateGas = vi.fn().mockResolvedValue(65000n);
-		vi.mocked(walletLib.buildPublicClient).mockReturnValue({
+		vi.mocked(core.buildChainPublicClient).mockReturnValue({
 			estimateGas,
 			estimateFeesPerGas: vi.fn().mockResolvedValue({
 				gasPrice: 1000000000n,

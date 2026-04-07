@@ -2,9 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as removeCommandModule from "../src/commands/remove.js";
-import * as walletLib from "../src/lib/wallet.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 import { runCli } from "./helpers/run-cli.js";
 
 const { TEST_ADDRESS, mockOwsProvider, mockCreateViemAccount } = vi.hoisted(() => {
@@ -41,9 +42,7 @@ vi.mock("trusted-agents-core", async () => {
 describe("tap remove", () => {
 	let tmpDir: string;
 	let dataDir: string;
-	let stdoutWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 	let stdinIsTTY: boolean | undefined;
 	let origStdinOnce: typeof process.stdin.once;
 	let origStdinSetEncoding: typeof process.stdin.setEncoding;
@@ -55,9 +54,6 @@ describe("tap remove", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-remove-test-"));
 		dataDir = join(tmpDir, "agent");
-		stdoutWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
 		stdinIsTTY = process.stdin.isTTY;
 		origStdinOnce = process.stdin.once.bind(process.stdin);
 		origStdinSetEncoding = process.stdin.setEncoding.bind(process.stdin);
@@ -65,11 +61,6 @@ describe("tap remove", () => {
 		origTapOwsApiKey = process.env.TAP_OWS_API_KEY;
 		origTapChain = process.env.TAP_CHAIN;
 		origTapRpcUrl = process.env.TAP_RPC_URL;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = (() => true) as typeof process.stderr.write;
 		Object.defineProperty(process.stdin, "isTTY", {
 			value: false,
 			configurable: true,
@@ -90,8 +81,6 @@ describe("tap remove", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		Object.defineProperty(process.stdin, "isTTY", {
 			value: stdinIsTTY,
 			configurable: true,
@@ -230,7 +219,7 @@ describe("tap remove", () => {
 	it("reports can_remove false for an empty directory in dry-run mode", async () => {
 		const emptyDataDir = join(tmpDir, "empty-agent");
 		await mkdir(emptyDataDir, { recursive: true });
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 
 		await removeCommandModule.removeCommand(
 			{ dryRun: true },
@@ -268,7 +257,7 @@ describe("tap remove", () => {
 		expect(output.data.blocking_reasons[0]).toContain("non-TAP top-level entries");
 		expect(output.data.paths_to_remove).not.toContain(join(dataDir, "keep.txt"));
 
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
 			{ json: true, dataDir },
@@ -287,7 +276,7 @@ describe("tap remove", () => {
 		await seedAgentData(actualDataDir);
 		await symlink(actualDataDir, linkedDataDir);
 		const resolvedActualDataDir = await realpath(actualDataDir);
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -348,7 +337,7 @@ describe("tap remove", () => {
 		process.env.TAP_OWS_API_KEY = "env-override-key";
 		process.env.TAP_CHAIN = "taiko";
 		const getBalance = vi.fn().mockResolvedValue(1n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance,
 		} as never);
 
@@ -368,13 +357,13 @@ describe("tap remove", () => {
 		const gasEstimate = 21_000n;
 		const gasPrice = 100n;
 		const sendTransaction = vi.fn().mockResolvedValue("0x1234");
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(freshBalanceWei),
 			estimateGas: vi.fn().mockResolvedValue(gasEstimate),
 			estimateFeesPerGas: vi.fn().mockResolvedValue({ gasPrice }),
 			waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: "success" }),
 		} as never);
-		vi.spyOn(walletLib, "buildWalletClient").mockReturnValue({
+		vi.spyOn(core, "buildChainWalletClient").mockReturnValue({
 			chain: { id: 8453 },
 			sendTransaction,
 		} as never);

@@ -375,7 +375,7 @@ Examples:
 		.option("--dry-run", "Validate the grant set and preview the update without sending it")
 		.action(async (peer: string, cmdOpts: { file: string; note?: string; dryRun?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
-			const { permissionsGrantCommand } = await import("./commands/permissions-grant.js");
+			const { permissionsGrantCommand } = await import("./commands/permissions-update.js");
 			await permissionsGrantCommand(peer, cmdOpts.file, opts, {
 				note: cmdOpts.note,
 				dryRun: cmdOpts.dryRun,
@@ -390,7 +390,7 @@ Examples:
 		.option("--dry-run", "Validate the grant request and preview it without sending")
 		.action(async (peer: string, cmdOpts: { file: string; note?: string; dryRun?: boolean }) => {
 			const opts = program.opts<GlobalOptions>();
-			const { permissionsRequestCommand } = await import("./commands/permissions-request.js");
+			const { permissionsRequestCommand } = await import("./commands/permissions-update.js");
 			await permissionsRequestCommand(peer, cmdOpts.file, opts, {
 				note: cmdOpts.note,
 				dryRun: cmdOpts.dryRun,

@@ -1,4 +1,4 @@
-import { IdentityError, isEthereumAddress } from "../common/index.js";
+import { IdentityError, isEthereumAddress, toErrorMessage } from "../common/index.js";
 import type { RegistrationFile } from "./types.js";
 
 export function validateRegistrationFile(data: unknown): RegistrationFile {
@@ -152,7 +152,7 @@ export async function fetchRegistrationFile(uri: string): Promise<RegistrationFi
 	} catch (error) {
 		if (error instanceof IdentityError) throw error;
 		throw new IdentityError(
-			`Failed to fetch registration file from ${resolvedUri}: ${error instanceof Error ? error.message : String(error)}`,
+			`Failed to fetch registration file from ${resolvedUri}: ${toErrorMessage(error)}`,
 		);
 	} finally {
 		clearTimeout(timeout);

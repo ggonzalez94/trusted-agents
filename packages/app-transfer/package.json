@@ -15,7 +15,6 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"trusted-agents-core": "workspace:*",
-		"viem": "2.46.3"
+		"trusted-agents-core": "workspace:*"
 	}
 }

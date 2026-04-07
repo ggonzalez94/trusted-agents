@@ -10,16 +10,15 @@ import {
 	resolveConfigPath,
 	resolveDataDir,
 } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, info, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { info, success } from "../lib/output.js";
 import {
 	createOwsApiKey,
-	createOwsPolicy,
 	createOwsWallet,
 	deriveXmtpDbEncryptionKey,
 	ensureOwsInstalled,
-	findCompatiblePolicies,
 	listOwsWallets,
+	setupOwsPolicy,
 } from "../lib/ows.js";
 import { promptInput } from "../lib/prompt.js";
 import type { GlobalOptions } from "../types.js";
@@ -77,8 +76,9 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			const walletSetup = await setupWallet(opts, cmdOpts);
 			owsWallet = walletSetup.walletName;
 
-			const policySetup = await setupPolicy(chain, opts, cmdOpts);
-			const policyId = policySetup.policyId;
+			const policyId = await setupOwsPolicy(chain, opts, {
+				nonInteractive: cmdOpts?.nonInteractive,
+			});
 
 			const apiKeySetup = await setupApiKey(
 				walletSetup.walletId,
@@ -160,8 +160,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 
 		success(result, opts, startTime);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -228,59 +227,6 @@ async function setupWallet(opts: GlobalOptions, cmdOpts?: InitOptions): Promise<
 	info(`Created wallet: ${created.name} (${created.address})`, opts);
 
 	return { walletId: created.id, walletName: created.name, passphrase };
-}
-
-// ─── Policy Setup ───────────────────────────────────────────────────────
-
-interface PolicySetupResult {
-	policyId: string;
-}
-
-async function setupPolicy(
-	chain: string,
-	opts: GlobalOptions,
-	cmdOpts?: InitOptions,
-): Promise<PolicySetupResult> {
-	// Build chain list: selected chain + Base mainnet for x402 if different
-	const policyChains = [chain];
-	if (chain !== "eip155:8453") {
-		policyChains.push("eip155:8453");
-	}
-
-	// Check for compatible existing policies
-	const compatible = findCompatiblePolicies(chain);
-
-	if (compatible.length > 0 && !cmdOpts?.nonInteractive) {
-		info("\nCompatible OWS policies:", opts);
-		for (let i = 0; i < compatible.length; i++) {
-			const p = compatible[i]!;
-			info(`  ${i + 1}. ${p.name} (chains: ${p.chains.join(", ")})`, opts);
-		}
-
-		const choice = await promptInput("\nReuse an existing policy? [1/2/.../no]: ");
-		if (choice && choice !== "no") {
-			const idx = Number.parseInt(choice, 10) - 1;
-			if (idx >= 0 && idx < compatible.length) {
-				const selected = compatible[idx]!;
-				info(`Using policy: ${selected.id}`, opts);
-				return { policyId: selected.id };
-			}
-		}
-	}
-
-	// Create new policy
-	const policyId = `tap-${randomBytes(4).toString("hex")}`;
-	const oneYearFromNow = new Date();
-	oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-
-	createOwsPolicy({
-		id: policyId,
-		chains: policyChains,
-		expiresAt: oneYearFromNow.toISOString(),
-	});
-
-	info(`Created policy: ${policyId} (chains: ${policyChains.join(", ")})`, opts);
-	return { policyId };
 }
 
 // ─── API Key Setup ──────────────────────────────────────────────────────

@@ -8,8 +8,8 @@ import {
 	resolveDataDir,
 	validateConfigPathInDataDir,
 } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 
 const CONFIG_KEY_SEGMENT_ALIASES: Record<string, string> = {
@@ -85,7 +85,6 @@ export async function configSetCommand(
 
 		success({ key, value: target[leafKey], path: configPath }, opts, startTime);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

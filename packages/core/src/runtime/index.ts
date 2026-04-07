@@ -49,6 +49,7 @@ export {
 	buildConversationLogEntry,
 	findContactForPeer,
 	findUniqueContactForAgentId,
+	requireActiveContact,
 	DEFAULT_MESSAGE_SCOPE,
 } from "./message-conversations.js";
 export {
@@ -67,13 +68,14 @@ export {
 export {
 	findActiveGrantsByScope,
 	normalizeGrantInput,
-	readGrantFile,
 	replaceGrantedByMe,
 	replaceGrantedByPeer,
 	summarizeGrant,
 	summarizeGrantSet,
 } from "./grants.js";
 export {
+	findApplicableTransferGrants,
+	matchesTransferGrantRequest,
 	TapMessagingService,
 	type TapCancelMeetingResult,
 	type TapConnectResult,
@@ -102,4 +104,3 @@ export {
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
-export * from "../scheduling/index.js";

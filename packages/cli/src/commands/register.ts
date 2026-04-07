@@ -5,27 +5,28 @@ import { dirname, resolve } from "node:path";
 import {
 	ERC8004Registry,
 	ERC8004_ABI,
+	buildChainPublicClient,
+	ensureExecutionReady,
+	executeContractCalls,
 	fetchRegistrationFile,
+	getExecutionPreview,
+	getUsdcAsset,
+	toErrorMessage,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
+	ChainConfig,
+	ExecutionPreview,
 	IpfsUploadProvider,
 	RegistrationFile,
 	RegistrationFileExecution,
+	SigningProvider,
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
-import type { SigningProvider } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
-import { getUsdcAsset } from "../lib/assets.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import {
-	type ExecutionPreview,
-	ensureExecutionReady,
-	executeContractCalls,
-	getExecutionPreview,
-} from "../lib/execution.js";
+import { handleCommandError } from "../lib/errors.js";
 import {
 	resolveEffectiveIpfsProvider,
 	resolvePinataJwt,
@@ -37,7 +38,6 @@ import {
 import { error, info, success, verbose } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
-import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RegisterOptions {
@@ -286,7 +286,7 @@ async function ensureX402UploadFunding(
 		throw new Error("Base mainnet USDC asset config is missing");
 	}
 
-	const publicClient = buildPublicClient(baseChainConfig);
+	const publicClient = buildChainPublicClient(baseChainConfig);
 	const messagingAddress = await signingProvider.getAddress();
 	const messagingBalance = (await publicClient.readContract({
 		address: usdc.address,
@@ -302,9 +302,7 @@ async function ensureX402UploadFunding(
 	const baseExecution = await getExecutionPreview(config, baseChainConfig, signingProvider, {
 		requireProvider: true,
 	});
-	for (const warning of baseExecution.warnings) {
-		verbose(warning, opts);
-	}
+	emitExecutionWarnings(baseExecution, opts);
 
 	const shortfall = X402_UPLOAD_BUFFER_USDC - messagingBalance;
 	if (baseExecution.executionAddress.toLowerCase() === messagingAddress.toLowerCase()) {
@@ -348,9 +346,7 @@ async function ensureX402UploadFunding(
 			preview: baseExecution,
 		},
 	);
-	for (const warning of topUpResult.warnings) {
-		verbose(warning, opts);
-	}
+	emitExecutionWarnings(topUpResult, opts);
 	info(
 		`Funded messaging identity with ${formatUnits(shortfall, usdc.decimals)} ${usdc.symbol} on Base mainnet.`,
 		opts,
@@ -428,6 +424,13 @@ async function resolveAgentURI(
 		verbose("Cached CID not reachable via gateway, re-uploading...", opts);
 	}
 
+	const cacheUploadResult = async (ipfs: { cid: string; uri: string }) => {
+		info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
+		cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
+		await saveIpfsCache(params.dataDir, cache);
+		return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+	};
+
 	let effectiveProvider: Exclude<IpfsUploadProvider, "auto">;
 	try {
 		effectiveProvider = resolveEffectiveIpfsProvider({
@@ -436,7 +439,7 @@ async function resolveAgentURI(
 			pinataJwt: resolvePinataJwt(params.pinataJwt),
 		});
 	} catch (err) {
-		error("VALIDATION_ERROR", err instanceof Error ? err.message : String(err), opts);
+		error("VALIDATION_ERROR", toErrorMessage(err), opts);
 		return null;
 	}
 	const jwt = resolvePinataJwt(params.pinataJwt);
@@ -450,12 +453,9 @@ async function resolveAgentURI(
 		try {
 			await ensureX402UploadFunding(params.config, params.signingProvider, opts);
 			const ipfs = await uploadToIpfsX402(params.registrationFile, params.signingProvider);
-			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
-			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-			await saveIpfsCache(params.dataDir, cache);
-			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+			return cacheUploadResult(ipfs);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = toErrorMessage(err);
 			verbose(`x402 upload failed: ${msg}`, opts);
 			error(
 				"UPLOAD_ERROR",
@@ -490,12 +490,9 @@ Alternatives:
 					preview: params.executionPreview,
 				},
 			);
-			info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
-			cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-			await saveIpfsCache(params.dataDir, cache);
-			return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+			return cacheUploadResult(ipfs);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = toErrorMessage(err);
 			error(
 				"UPLOAD_ERROR",
 				`IPFS upload via Tack failed: ${msg}
@@ -524,10 +521,7 @@ Alternatives:
 
 	info("Uploading registration file to IPFS via Pinata...", opts);
 	const ipfs = await uploadToIpfsPinata(params.registrationFile, jwt, `tap-${params.nameHint}`);
-	info(`Uploaded to IPFS: ${ipfs.uri}`, opts);
-	cache[hash] = { cid: ipfs.cid, uri: ipfs.uri };
-	await saveIpfsCache(params.dataDir, cache);
-	return { agentURI: ipfs.uri, ipfsCid: ipfs.cid };
+	return cacheUploadResult(ipfs);
 }
 
 export async function registerCommand(
@@ -553,7 +547,7 @@ export async function registerCommand(
 			requireProvider: true,
 		});
 		emitExecutionWarnings(executionPreview, opts);
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
@@ -670,8 +664,7 @@ export async function registerCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -708,7 +701,7 @@ export async function registerUpdateCommand(
 			return;
 		}
 
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const registry = new ERC8004Registry(publicClient, chainConfig.registryAddress);
 
 		await registry.verifyDeployed();
@@ -728,43 +721,13 @@ export async function registerUpdateCommand(
 				preview: executionPreview,
 			});
 			info(`Updating agent #${config.agentId} URI on ${chainConfig.name}...`, opts);
-			const executionResult = await executeContractCalls(
+			await executeSetAgentURI(
 				config,
 				chainConfig,
 				signingProvider,
-				[
-					{
-						to: chainConfig.registryAddress,
-						data: encodeFunctionData({
-							abi: ERC8004_ABI,
-							functionName: "setAgentURI",
-							args: [BigInt(config.agentId), cmdOpts.uri],
-						}),
-					},
-				],
-				{
-					preview: executionPreview,
-				},
-			);
-			emitExecutionWarnings(executionResult, opts);
-
-			const uriNextSteps: string[] = [];
-			if (await commandExists("openclaw")) {
-				uriNextSteps.push(buildOpenClawConfigStep(config.dataDir));
-			}
-
-			success(
-				{
-					agent_id: config.agentId,
-					agent_uri: cmdOpts.uri,
-					execution_mode: executionResult.mode,
-					execution_address: executionResult.executionAddress,
-					gas_payment_mode: executionResult.gasPaymentMode,
-					transaction_hash: executionResult.transactionHash,
-					user_operation_hash: executionResult.userOperationHash,
-					updated: true,
-					...(uriNextSteps.length > 0 ? { next_steps: uriNextSteps } : {}),
-				},
+				executionPreview,
+				cmdOpts.uri,
+				{},
 				opts,
 				startTime,
 			);
@@ -773,48 +736,45 @@ export async function registerUpdateCommand(
 
 		const fullReplacement = isFullManifestReplacement(cmdOpts);
 		let currentRegistrationFile: RegistrationFile | null = null;
-		let pendingRegistrationFile: RegistrationFile;
 
 		if (fullReplacement) {
 			try {
 				currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
 				verbose(
-					`Current registration could not be fetched; proceeding with replacement upload: ${message}`,
+					`Current registration could not be fetched; proceeding with replacement upload: ${toErrorMessage(err)}`,
 					opts,
 				);
 			}
-
-			pendingRegistrationFile = buildRegistrationFile(
-				cmdOpts.name!,
-				cmdOpts.description!,
-				parseCapabilities(cmdOpts.capabilities!),
-				agentAddress,
-				currentRegistrationFile?.trustedAgentProtocol.execution,
-			);
-			validateRegistrationFile(pendingRegistrationFile);
-			verbose("Replacement registration file validated", opts);
 		} else {
 			info(`Fetching current registration for agent #${config.agentId}...`, opts);
 			currentRegistrationFile = await fetchRegistrationFile(existingAgentURI);
-
-			pendingRegistrationFile = buildUpdatedRegistrationFile(
-				currentRegistrationFile,
-				agentAddress,
-				currentRegistrationFile.trustedAgentProtocol.execution,
-				{
-					name: cmdOpts.name,
-					description: cmdOpts.description,
-					capabilities:
-						cmdOpts.capabilities !== undefined
-							? parseCapabilities(cmdOpts.capabilities)
-							: undefined,
-				},
-			);
-			validateRegistrationFile(pendingRegistrationFile);
-			verbose("Updated registration file validated", opts);
 		}
+
+		const buildRegFileForUpdate = (
+			execution: RegistrationFileExecution | undefined,
+		): RegistrationFile => {
+			if (fullReplacement) {
+				return buildRegistrationFile(
+					cmdOpts.name!,
+					cmdOpts.description!,
+					parseCapabilities(cmdOpts.capabilities!),
+					agentAddress,
+					execution,
+				);
+			}
+			return buildUpdatedRegistrationFile(currentRegistrationFile!, agentAddress, execution, {
+				name: cmdOpts.name,
+				description: cmdOpts.description,
+				capabilities:
+					cmdOpts.capabilities !== undefined ? parseCapabilities(cmdOpts.capabilities) : undefined,
+			});
+		};
+
+		const pendingRegistrationFile = buildRegFileForUpdate(
+			currentRegistrationFile?.trustedAgentProtocol.execution,
+		);
+		validateRegistrationFile(pendingRegistrationFile);
 
 		if (
 			currentRegistrationFile &&
@@ -839,27 +799,7 @@ export async function registerUpdateCommand(
 				}),
 		});
 
-		const registrationFile = fullReplacement
-			? buildRegistrationFile(
-					cmdOpts.name!,
-					cmdOpts.description!,
-					parseCapabilities(cmdOpts.capabilities!),
-					agentAddress,
-					buildExecutionMetadata(executionPreview),
-				)
-			: buildUpdatedRegistrationFile(
-					currentRegistrationFile!,
-					agentAddress,
-					buildExecutionMetadata(executionPreview),
-					{
-						name: cmdOpts.name,
-						description: cmdOpts.description,
-						capabilities:
-							cmdOpts.capabilities !== undefined
-								? parseCapabilities(cmdOpts.capabilities)
-								: undefined,
-					},
-				);
+		const registrationFile = buildRegFileForUpdate(buildExecutionMetadata(executionPreview));
 		validateRegistrationFile(registrationFile);
 
 		const result = await resolveAgentURI(
@@ -886,53 +826,72 @@ export async function registerUpdateCommand(
 			emitNoChangeResult(config.agentId, result.agentURI, opts, startTime);
 			return;
 		}
-		const executionResult = await executeContractCalls(
+		await executeSetAgentURI(
 			config,
 			chainConfig,
 			signingProvider,
-			[
-				{
-					to: chainConfig.registryAddress,
-					data: encodeFunctionData({
-						abi: ERC8004_ABI,
-						functionName: "setAgentURI",
-						args: [BigInt(config.agentId), result.agentURI],
-					}),
-				},
-			],
-			{
-				preview: executionPreview,
-			},
-		);
-		for (const warning of executionResult.warnings) {
-			verbose(warning, opts);
-		}
-
-		const updateNextSteps: string[] = [];
-		if (await commandExists("openclaw")) {
-			updateNextSteps.push(buildOpenClawConfigStep(config.dataDir));
-		}
-
-		success(
-			{
-				agent_id: config.agentId,
-				agent_uri: result.agentURI,
-				ipfs_cid: result.ipfsCid,
-				execution_mode: executionResult.mode,
-				execution_address: executionResult.executionAddress,
-				gas_payment_mode: executionResult.gasPaymentMode,
-				transaction_hash: executionResult.transactionHash,
-				user_operation_hash: executionResult.userOperationHash,
-				updated: true,
-				...(updateNextSteps.length > 0 ? { next_steps: updateNextSteps } : {}),
-			},
+			executionPreview,
+			result.agentURI,
+			{ ipfs_cid: result.ipfsCid },
 			opts,
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
+}
+
+async function executeSetAgentURI(
+	config: TrustedAgentsConfig,
+	chainConfig: ChainConfig,
+	signingProvider: SigningProvider,
+	executionPreview: ExecutionPreview,
+	uri: string,
+	extraSuccessFields: Record<string, unknown>,
+	opts: GlobalOptions,
+	startTime: number,
+): Promise<void> {
+	const executionResult = await executeContractCalls(
+		config,
+		chainConfig,
+		signingProvider,
+		[
+			{
+				to: chainConfig.registryAddress,
+				data: encodeFunctionData({
+					abi: ERC8004_ABI,
+					functionName: "setAgentURI",
+					args: [BigInt(config.agentId), uri],
+				}),
+			},
+		],
+		{
+			preview: executionPreview,
+		},
+	);
+	emitExecutionWarnings(executionResult, opts);
+
+	const nextSteps: string[] = [];
+	if (await commandExists("openclaw")) {
+		nextSteps.push(buildOpenClawConfigStep(config.dataDir));
+	}
+
+	success(
+		{
+			agent_id: config.agentId,
+			agent_uri: uri,
+			...extraSuccessFields,
+			execution_mode: executionResult.mode,
+			execution_address: executionResult.executionAddress,
+			gas_payment_mode: executionResult.gasPaymentMode,
+			transaction_hash: executionResult.transactionHash,
+			user_operation_hash: executionResult.userOperationHash,
+			updated: true,
+			...(nextSteps.length > 0 ? { next_steps: nextSteps } : {}),
+		},
+		opts,
+		startTime,
+	);
 }
 
 async function updateConfigAgentId(configPath: string, agentId: number): Promise<void> {

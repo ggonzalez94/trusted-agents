@@ -9,8 +9,8 @@ import type {
 import type { toSimple7702SmartAccount } from "viem/account-abstraction";
 import type { ExecutionMode, ExecutionPaymasterProvider } from "../../config/types.js";
 
-export type EntryPointVersion = "0.7" | "0.8";
-export type GasPaymentMode = "erc20-usdc" | "native";
+type EntryPointVersion = "0.7" | "0.8";
+type GasPaymentMode = "erc20-usdc" | "native";
 export type ResolvedExecutionMode = "eoa" | "eip4337" | "eip7702";
 
 export interface EntryPointConfig {
@@ -145,5 +145,5 @@ export interface Eip4337ExecutionContext extends BaseExecutionContext {
 	providerConfig?: AaProviderConfig;
 }
 
-export type AaExecutionContext = Eip7702ExecutionContext | Eip4337ExecutionContext;
+type AaExecutionContext = Eip7702ExecutionContext | Eip4337ExecutionContext;
 export type ResolvedExecutionContext = EoaExecutionContext | AaExecutionContext;

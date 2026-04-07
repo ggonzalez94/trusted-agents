@@ -173,17 +173,23 @@ describe("SchedulingHandler.evaluateProposal", () => {
 		expect(decision.action).toBe("reject");
 	});
 
-	it("no grant + no hook → reject with reason", async () => {
+	it.each<[string, boolean | null | undefined, string, string | undefined]>([
+		["no hook", undefined, "reject", "No matching scheduling grant"],
+		["hook returns false", false, "reject", "Scheduling request declined"],
+		["hook returns null", null, "defer", undefined],
+	])("no grant + %s", async (_, hookReturn, expectedAction, expectedReason) => {
 		const provider = new MockCalendarProvider(overlappingAvailability);
-		const handler = new SchedulingHandler({ calendarProvider: provider, hooks: {} });
-		const contact = makeContact([]); // no grants
+		const hooks: SchedulingHooks =
+			hookReturn !== undefined ? { approveScheduling: vi.fn().mockResolvedValue(hookReturn) } : {};
+		const handler = new SchedulingHandler({ calendarProvider: provider, hooks });
+		const contact = makeContact([]);
 		const proposal = makeProposal();
 
 		const decision = await handler.evaluateProposal("req-1", contact, proposal);
 
-		expect(decision.action).toBe("reject");
-		if (decision.action === "reject") {
-			expect(decision.reason).toBe("No matching scheduling grant");
+		expect(decision.action).toBe(expectedAction);
+		if (expectedReason && decision.action === "reject") {
+			expect(decision.reason).toBe(expectedReason);
 		}
 	});
 
@@ -200,37 +206,6 @@ describe("SchedulingHandler.evaluateProposal", () => {
 
 		expect(hooks.approveScheduling).toHaveBeenCalledOnce();
 		expect(decision.action).toBe("confirm");
-	});
-
-	it("no grant + hook returns false → reject", async () => {
-		const provider = new MockCalendarProvider(overlappingAvailability);
-		const hooks: SchedulingHooks = {
-			approveScheduling: vi.fn().mockResolvedValue(false),
-		};
-		const handler = new SchedulingHandler({ calendarProvider: provider, hooks });
-		const contact = makeContact([]);
-		const proposal = makeProposal();
-
-		const decision = await handler.evaluateProposal("req-1", contact, proposal);
-
-		expect(decision.action).toBe("reject");
-		if (decision.action === "reject") {
-			expect(decision.reason).toBe("Scheduling request declined");
-		}
-	});
-
-	it("no grant + hook returns null → defer", async () => {
-		const provider = new MockCalendarProvider(overlappingAvailability);
-		const hooks: SchedulingHooks = {
-			approveScheduling: vi.fn().mockResolvedValue(null),
-		};
-		const handler = new SchedulingHandler({ calendarProvider: provider, hooks });
-		const contact = makeContact([]);
-		const proposal = makeProposal();
-
-		const decision = await handler.evaluateProposal("req-1", contact, proposal);
-
-		expect(decision.action).toBe("defer");
 	});
 
 	it("grant exists + no calendar provider → defer", async () => {

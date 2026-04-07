@@ -1,14 +1,14 @@
+import { DEFAULT_MESSAGE_SCOPE } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, success, verbose } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
 	queuedTapCommandPendingFields,
 	queuedTapCommandResultFields,
 	runOrQueueTapCommand,
 } from "../lib/queued-commands.js";
-import { DEFAULT_MESSAGE_SCOPE } from "../lib/scopes.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function messageSendCommand(
@@ -64,7 +64,6 @@ export async function messageSendCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

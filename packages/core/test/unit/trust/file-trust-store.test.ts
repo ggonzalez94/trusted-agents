@@ -1,22 +1,15 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { FileTrustStore } from "../../../src/trust/file-trust-store.js";
 import { BOB } from "../../fixtures/test-keys.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
 import { createTestContact } from "../../helpers/test-agent.js";
 
 describe("FileTrustStore", () => {
-	let tmpDir: string;
+	const dir = useTempDir("trust-store-test");
 	let store: FileTrustStore;
 
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "trust-store-test-"));
-		store = new FileTrustStore(tmpDir);
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
+	beforeEach(() => {
+		store = new FileTrustStore(dir.path);
 	});
 
 	it("should return empty contacts list initially", async () => {
@@ -120,7 +113,7 @@ describe("FileTrustStore", () => {
 		await store.addContact(contact);
 
 		// Create a new store instance pointing to the same directory
-		const store2 = new FileTrustStore(tmpDir);
+		const store2 = new FileTrustStore(dir.path);
 		const contacts = await store2.getContacts();
 		expect(contacts).toHaveLength(1);
 		expect(contacts[0]!.peerDisplayName).toBe("Bob's Agent");

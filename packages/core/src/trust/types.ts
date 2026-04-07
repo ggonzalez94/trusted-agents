@@ -18,3 +18,8 @@ export interface Contact {
 export interface ContactsFile {
 	contacts: Contact[];
 }
+
+/** Format a peer identifier as "DisplayName (#agentId)" for logs and ledger entries. */
+export function peerLabel(peer: { peerDisplayName: string; peerAgentId: number }): string {
+	return `${peer.peerDisplayName} (#${peer.peerAgentId})`;
+}

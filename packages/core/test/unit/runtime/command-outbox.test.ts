@@ -1,21 +1,16 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { FileTapCommandOutbox } from "../../../src/runtime/command-outbox.js";
+import { useTempDirs } from "../../helpers/temp-dir.js";
 
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-	await Promise.all(
-		tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true })),
-	);
-});
+const { track: trackDir } = useTempDirs();
 
 describe("FileTapCommandOutbox", () => {
 	it("claims queued jobs in FIFO order and stores completed results", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "tap-outbox-"));
-		tempDirs.push(dataDir);
+		trackDir(dataDir);
 		const outbox = new FileTapCommandOutbox(dataDir);
 
 		const first = await outbox.enqueue({
@@ -67,7 +62,7 @@ describe("FileTapCommandOutbox", () => {
 
 	it("reclaims stale processing jobs from dead owners", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "tap-outbox-"));
-		tempDirs.push(dataDir);
+		trackDir(dataDir);
 		const outbox = new FileTapCommandOutbox(dataDir);
 
 		const queued = await outbox.enqueue({
