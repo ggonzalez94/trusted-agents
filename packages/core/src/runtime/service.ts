@@ -3988,7 +3988,7 @@ function isSameAgentIdentifier(
 	return left.agentId === right.agentId && left.chain === right.chain;
 }
 
-function findApplicableTransferGrants(
+export function findApplicableTransferGrants(
 	grantSet: PermissionGrantSet,
 	request: TransferActionRequest,
 ) {
@@ -3997,7 +3997,7 @@ function findApplicableTransferGrants(
 	);
 }
 
-function matchesTransferGrantRequest(
+export function matchesTransferGrantRequest(
 	grant: PermissionGrantSet["grants"][number],
 	request: TransferActionRequest,
 ): boolean {

@@ -1,7 +1,10 @@
-import type { TapActionContext, TapActionResult } from "trusted-agents-core";
-import { isEthereumAddress } from "trusted-agents-core";
-import { findApplicableTransferGrants } from "./grants.js";
-import type { TransferActionRequest, TransferAsset } from "./types.js";
+import type {
+	TapActionContext,
+	TapActionResult,
+	TransferActionRequest,
+	TransferAsset,
+} from "trusted-agents-core";
+import { findApplicableTransferGrants, isEthereumAddress } from "trusted-agents-core";
 
 export async function handleTransferRequest(ctx: TapActionContext): Promise<TapActionResult> {
 	const request = validatePayload(ctx.payload);

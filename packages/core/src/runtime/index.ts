@@ -74,6 +74,8 @@ export {
 	summarizeGrantSet,
 } from "./grants.js";
 export {
+	findApplicableTransferGrants,
+	matchesTransferGrantRequest,
 	TapMessagingService,
 	type TapCancelMeetingResult,
 	type TapConnectResult,
