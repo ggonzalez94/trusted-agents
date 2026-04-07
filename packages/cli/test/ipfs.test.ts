@@ -46,20 +46,13 @@ describe("ipfs", () => {
 		expect(() => resolveIpfsUploadProvider("unknown-provider")).toThrow("Invalid IPFS provider");
 	});
 
-	it("auto-selects tack for Taiko chains", () => {
-		expect(resolveAutoProvider("eip155:167000")).toBe("tack");
-	});
-
-	it("auto-selects x402 for Base chains", () => {
-		expect(resolveAutoProvider("eip155:8453")).toBe("x402");
-	});
-
-	it("auto prefers tack on Taiko even when JWT is present", () => {
-		expect(resolveAutoProvider("eip155:167000", "jwt")).toBe("tack");
-	});
-
-	it("auto prefers pinata when JWT is present on non-Taiko chains", () => {
-		expect(resolveAutoProvider("eip155:8453", "jwt")).toBe("pinata");
+	it.each([
+		["auto-selects tack for Taiko chains", "eip155:167000", undefined, "tack"],
+		["auto-selects x402 for Base chains", "eip155:8453", undefined, "x402"],
+		["auto prefers tack on Taiko even when JWT is present", "eip155:167000", "jwt", "tack"],
+		["auto prefers pinata when JWT is present on non-Taiko chains", "eip155:8453", "jwt", "pinata"],
+	])("%s", (_, chain, jwt, expected) => {
+		expect(resolveAutoProvider(chain, jwt)).toBe(expected);
 	});
 
 	it("resolves the effective provider from config and credentials", () => {

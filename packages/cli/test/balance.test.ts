@@ -86,30 +86,16 @@ describe("tap balance", () => {
 		expect(output.data?.execution_usdc_balance).toBe("9.876543");
 	});
 
-	it("accepts a natural-language chain alias", async () => {
+	it.each([
+		["natural-language chain alias", "base"],
+		["CAIP-2 chain identifier", "eip155:8453"],
+	])("accepts a %s and resolves to eip155:8453", async (_, chainInput) => {
 		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(1n),
 			readContract: vi.fn().mockResolvedValue(2n),
 		} as never);
 
-		await balanceCommand({ json: true }, "base");
-
-		expect(core.buildChainPublicClient).toHaveBeenCalledWith(
-			expect.objectContaining({ caip2: "eip155:8453" }),
-		);
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			data?: Record<string, unknown>;
-		};
-		expect(output.data?.chain).toBe("eip155:8453");
-	});
-
-	it("accepts a CAIP-2 chain identifier", async () => {
-		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
-			getBalance: vi.fn().mockResolvedValue(1n),
-			readContract: vi.fn().mockResolvedValue(2n),
-		} as never);
-
-		await balanceCommand({ json: true }, "eip155:8453");
+		await balanceCommand({ json: true }, chainInput);
 
 		expect(core.buildChainPublicClient).toHaveBeenCalledWith(
 			expect.objectContaining({ caip2: "eip155:8453" }),
