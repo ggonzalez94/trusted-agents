@@ -1685,117 +1685,69 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
-	it("resolvePending approves a deferred connection request", async () => {
-		const trustStore = createMemoryTrustStore();
-		const transport = new FakeTransport();
-		const approveConnection = vi.fn(async () => null);
-		const { service, requestJournal } = await createService(
-			{},
-			{
+	it.each([
+		["approves", true, "accepted"],
+		["rejects", false, "rejected"],
+	] as const)(
+		"resolvePending %s a deferred connection request",
+		async (_, approve, expectedStatus) => {
+			const trustStore = createMemoryTrustStore();
+			const transport = new FakeTransport();
+			const approveConnection = vi.fn(async () => null);
+			const { service, requestJournal } = await createService(
+				{},
+				{
+					transport,
+					trustStore,
+					hooks: { approveConnection },
+				},
+			);
+
+			await service.start();
+			const request = await submitConnectionRequest(
 				transport,
-				trustStore,
-				hooks: { approveConnection },
-			},
-		);
+				`peer-inbox-resolve-${approve ? "approve" : "reject"}-connection`,
+			);
 
-		await service.start();
-		const request = await submitConnectionRequest(
-			transport,
-			"peer-inbox-resolve-approve-connection",
-		);
+			await sleep(50);
 
-		await sleep(50);
+			// Verify it's deferred
+			expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+				expect.objectContaining({
+					status: "pending",
+					method: "connection/request",
+				}),
+			);
 
-		// Verify it's deferred
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
-			expect.objectContaining({
-				status: "pending",
-				method: "connection/request",
-			}),
-		);
+			const report = await service.resolvePending(String(request.id), approve);
 
-		// Now resolve it with approval
-		const report = await service.resolvePending(String(request.id), true);
+			expect(report.pendingRequests).toEqual([]);
+			if (approve) {
+				expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+					expect.objectContaining({ status: "active" }),
+				);
+			} else {
+				expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+			}
+			expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+				expect.objectContaining({ status: "completed" }),
+			);
+			const connectionResults = transport.sentMessages.filter(
+				(entry) => entry.message.method === "connection/result",
+			);
+			expect(connectionResults).toHaveLength(1);
+			const resultParams = connectionResults[0]?.message.params as {
+				status?: string;
+				reason?: string;
+			};
+			expect(resultParams?.status).toBe(expectedStatus);
+			if (!approve) {
+				expect(resultParams?.reason).toContain("declined by operator");
+			}
 
-		expect(report.pendingRequests).toEqual([]);
-		// Contact should now be created
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
-			expect.objectContaining({
-				status: "active",
-			}),
-		);
-		// Journal entry should be completed
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
-			expect.objectContaining({
-				status: "completed",
-			}),
-		);
-		// An accepted connection/result should have been sent
-		const connectionResults = transport.sentMessages.filter(
-			(entry) => entry.message.method === "connection/result",
-		);
-		expect(connectionResults).toHaveLength(1);
-		const resultParams = connectionResults[0]?.message.params as { status?: string };
-		expect(resultParams?.status).toBe("accepted");
-
-		await service.stop();
-	});
-
-	it("resolvePending rejects a deferred connection request", async () => {
-		const trustStore = createMemoryTrustStore();
-		const transport = new FakeTransport();
-		const approveConnection = vi.fn(async () => null);
-		const { service, requestJournal } = await createService(
-			{},
-			{
-				transport,
-				trustStore,
-				hooks: { approveConnection },
-			},
-		);
-
-		await service.start();
-		const request = await submitConnectionRequest(
-			transport,
-			"peer-inbox-resolve-reject-connection",
-		);
-
-		await sleep(50);
-
-		// Verify it's deferred
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
-			expect.objectContaining({
-				status: "pending",
-				method: "connection/request",
-			}),
-		);
-
-		// Now resolve it with rejection
-		const report = await service.resolvePending(String(request.id), false);
-
-		expect(report.pendingRequests).toEqual([]);
-		// No contact should have been created
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
-		// Journal entry should be completed
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
-			expect.objectContaining({
-				status: "completed",
-			}),
-		);
-		// A rejection connection/result should have been sent
-		const connectionResults = transport.sentMessages.filter(
-			(entry) => entry.message.method === "connection/result",
-		);
-		expect(connectionResults).toHaveLength(1);
-		const resultParams = connectionResults[0]?.message.params as {
-			status?: string;
-			reason?: string;
-		};
-		expect(resultParams?.status).toBe("rejected");
-		expect(resultParams?.reason).toContain("declined by operator");
-
-		await service.stop();
-	});
+			await service.stop();
+		},
+	);
 
 	it("resolvePending scheduling approval applies override and bypasses confirm hook", async () => {
 		const contact = makeActiveContact("conn-deferred-scheduling");
