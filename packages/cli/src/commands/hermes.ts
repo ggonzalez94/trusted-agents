@@ -107,10 +107,13 @@ export async function hermesStatusCommand(
 			const config = await import("../hermes/config.js").then((module) =>
 				module.loadTapHermesPluginConfig(hermesHome),
 			);
-			const names =
-				cmdOpts.identity && config.identities.some((entry) => entry.name === cmdOpts.identity)
-					? [cmdOpts.identity]
-					: config.identities.map((entry) => entry.name);
+			if (
+				cmdOpts.identity &&
+				!config.identities.some((entry) => entry.name === cmdOpts.identity)
+			) {
+				throw new Error(`Unknown TAP identity: ${cmdOpts.identity}`);
+			}
+			const names = cmdOpts.identity ? [cmdOpts.identity] : config.identities.map((entry) => entry.name);
 			payload = {
 				configured: config.identities.length > 0,
 				configuredIdentities: config.identities.map((entry) => entry.name),
