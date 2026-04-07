@@ -777,7 +777,6 @@ export class TapMessagingService {
 						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 					});
 					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
 					const clearedLocalEvent = await this.cancelLocalSchedulingEvent(
 						latestEntry.requestId,
 						latestTracking.localEventId,
@@ -1219,7 +1218,6 @@ export class TapMessagingService {
 				await this.context.requestJournal.updateStatus(requestId, "acked");
 			}
 			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
-			await this.touchContactSafe(contact.connectionId);
 
 			const asyncResult = await waiter.promise;
 			if (!asyncResult) {
@@ -1325,7 +1323,6 @@ export class TapMessagingService {
 				await this.context.requestJournal.updateStatus(requestId, "acked");
 			}
 			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
-			await this.touchContactSafe(contact.connectionId);
 
 			return {
 				receipt,
@@ -1541,15 +1538,12 @@ export class TapMessagingService {
 				`Failed to record conversation log for ${contact.peerDisplayName} (#${contact.peerAgentId}): ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
-	}
-
-	private async touchContactSafe(connectionId: string): Promise<void> {
 		try {
-			await this.context.trustStore.touchContact(connectionId);
+			await this.context.trustStore.touchContact(contact.connectionId);
 		} catch (error: unknown) {
 			this.log(
 				"warn",
-				`Failed to update contact activity for ${connectionId}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to update contact activity for ${contact.connectionId}: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
 	}
@@ -2300,7 +2294,6 @@ export class TapMessagingService {
 					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 				});
 				await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
-				await this.touchContactSafe(contact.connectionId);
 			} catch (deliveryError: unknown) {
 				this.logActionResultDeliveryFailure(contact, response.actionId, deliveryError);
 			}
@@ -2755,7 +2748,6 @@ export class TapMessagingService {
 				...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
 			});
 			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-			await this.touchContactSafe(contact.connectionId);
 		} catch (error: unknown) {
 			this.log(
 				"warn",
@@ -2838,7 +2830,6 @@ export class TapMessagingService {
 		const contact = await findContactForMessage(this.context, from, message);
 		if (contact) {
 			await this.appendConversationLogSafe(contact, message, "incoming");
-			await this.touchContactSafe(contact.connectionId);
 		}
 
 		const response = parseTransferActionResponse(message);
@@ -3159,7 +3150,6 @@ export class TapMessagingService {
 			return;
 		}
 		await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
-		await this.touchContactSafe(contact.connectionId);
 	}
 
 	private async deliverPendingConnectionResult(
@@ -3224,7 +3214,6 @@ export class TapMessagingService {
 				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 			});
 			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-			await this.touchContactSafe(contact.connectionId);
 		} catch (error: unknown) {
 			this.log(
 				"warn",
@@ -3383,7 +3372,6 @@ export class TapMessagingService {
 					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
 				});
 				await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-				await this.touchContactSafe(contact.connectionId);
 			} catch (deliveryError: unknown) {
 				this.log(
 					"warn",
