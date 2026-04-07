@@ -1,7 +1,7 @@
 import { readCalendarProvider, resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, info, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { info, success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function calendarCheckCommand(opts: GlobalOptions): Promise<void> {
@@ -48,7 +48,6 @@ export async function calendarCheckCommand(opts: GlobalOptions): Promise<void> {
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

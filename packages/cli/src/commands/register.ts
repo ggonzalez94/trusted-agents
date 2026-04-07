@@ -24,7 +24,7 @@ import type {
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import {
 	resolveEffectiveIpfsProvider,
 	resolvePinataJwt,
@@ -668,8 +668,7 @@ export async function registerCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -928,8 +927,7 @@ export async function registerUpdateCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 

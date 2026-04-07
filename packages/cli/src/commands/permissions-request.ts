@@ -1,7 +1,7 @@
 import { assertContactActive, findContactForPeer } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
@@ -99,7 +99,6 @@ export async function permissionsRequestCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

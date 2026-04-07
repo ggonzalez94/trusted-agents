@@ -18,7 +18,7 @@ import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
 import {
@@ -254,8 +254,7 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 

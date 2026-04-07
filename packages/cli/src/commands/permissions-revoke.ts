@@ -1,7 +1,7 @@
 import { ValidationError, nowISO } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
@@ -118,7 +118,6 @@ export async function permissionsRevokeCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

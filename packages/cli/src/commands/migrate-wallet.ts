@@ -6,8 +6,8 @@ import { keccak256, toHex } from "viem";
 import YAML from "yaml";
 import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, info, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { info, success } from "../lib/output.js";
 import {
 	createOwsApiKey,
 	createOwsPolicy,
@@ -203,8 +203,7 @@ export async function migrateWalletCommand(
 
 		success(result, opts, startTime);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 

@@ -7,7 +7,7 @@ import {
 } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import {
@@ -219,7 +219,6 @@ export async function connectCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

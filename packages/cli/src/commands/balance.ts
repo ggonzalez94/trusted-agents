@@ -2,7 +2,7 @@ import { buildChainPublicClient, getExecutionPreview, getUsdcAsset } from "trust
 import { formatUnits } from "viem";
 import { resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
@@ -112,7 +112,6 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
