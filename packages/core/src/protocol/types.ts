@@ -10,13 +10,6 @@ export interface JsonRpcRequest {
 	params?: unknown;
 }
 
-export interface JsonRpcResponse {
-	jsonrpc: "2.0";
-	id: JsonRpcId;
-	result?: unknown;
-	error?: JsonRpcErrorObject;
-}
-
 export interface JsonRpcErrorObject {
 	code: number;
 	message: string;

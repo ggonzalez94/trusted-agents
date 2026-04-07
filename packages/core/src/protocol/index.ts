@@ -1,6 +1,5 @@
 export type {
 	JsonRpcRequest,
-	JsonRpcResponse,
 	JsonRpcErrorObject,
 	TextPart,
 	DataPart,
