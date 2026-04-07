@@ -1,9 +1,9 @@
-import type { TrustedAgentsConfig } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { TEST_BASE_CHAIN, TEST_TAIKO_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -30,37 +30,10 @@ vi.mock("trusted-agents-core", async () => {
 describe("tap balance", () => {
 	const { stdout: stdoutWrites } = useCapturedOutput();
 
-	function buildConfig(): TrustedAgentsConfig {
-		return {
-			agentId: -1,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
-			dataDir: "/tmp/tap",
-			chains: {
-				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
-					rpcUrl: "https://example.test/base",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
-				"eip155:167000": {
-					name: "Taiko",
-					caip2: "eip155:167000",
-					chainId: 167000,
-					rpcUrl: "https://example.test/taiko",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
-			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-			execution: {
-				mode: "eip7702",
-				paymasterProvider: "circle",
-			},
-		};
+	function buildConfig() {
+		return buildTestConfig({
+			chains: { "eip155:8453": TEST_BASE_CHAIN, "eip155:167000": TEST_TAIKO_CHAIN },
+		});
 	}
 
 	beforeEach(() => {

@@ -1,10 +1,10 @@
-import type { TrustedAgentsConfig } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as promptLib from "../src/lib/prompt.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { TEST_BASE_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
 
 const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
 	mockOwsProvider: vi.fn().mockImplementation(() => ({
@@ -31,12 +31,9 @@ vi.mock("trusted-agents-core", async () => {
 describe("tap transfer", () => {
 	const { stdout: stdoutWrites } = useCapturedOutput();
 
-	function buildConfig(): TrustedAgentsConfig {
-		return {
+	function buildConfig() {
+		return buildTestConfig({
 			agentId: 42,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
-			dataDir: "/tmp/tap",
 			chains: {
 				"eip155:1": {
 					name: "Ethereum Mainnet",
@@ -45,23 +42,9 @@ describe("tap transfer", () => {
 					rpcUrl: "https://example.test/mainnet",
 					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 				},
-				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
-					rpcUrl: "https://example.test/base",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
+				"eip155:8453": TEST_BASE_CHAIN,
 			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-			execution: {
-				mode: "eip7702",
-				paymasterProvider: "circle",
-			},
-		};
+		});
 	}
 
 	beforeEach(() => {

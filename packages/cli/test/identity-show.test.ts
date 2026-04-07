@@ -1,12 +1,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TrustedAgentsConfig } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityShowCommand } from "../src/commands/identity-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { buildTestConfig } from "./helpers/config-fixtures.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -34,29 +34,7 @@ describe("tap identity show", () => {
 	let tempRoot: string;
 	const { stdout: stdoutWrites } = useCapturedOutput();
 
-	const config: TrustedAgentsConfig = {
-		agentId: -1,
-		chain: "eip155:8453",
-		ows: { wallet: "test-wallet", apiKey: "test-api-key" },
-		dataDir: "/tmp/tap",
-		chains: {
-			"eip155:8453": {
-				name: "Base",
-				caip2: "eip155:8453",
-				chainId: 8453,
-				rpcUrl: "https://example.test/base",
-				registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-			},
-		},
-		inviteExpirySeconds: 3600,
-		resolveCacheTtlMs: 60000,
-		resolveCacheMaxEntries: 100,
-		xmtpDbEncryptionKey: undefined,
-		execution: {
-			mode: "eip7702",
-			paymasterProvider: "circle",
-		},
-	};
+	const config = buildTestConfig();
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-identity-show-"));

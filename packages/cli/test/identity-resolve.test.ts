@@ -1,9 +1,9 @@
-import type { TrustedAgentsConfig } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityResolveSelfCommand } from "../src/commands/identity-resolve.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as contextLib from "../src/lib/context.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { buildTestConfig } from "./helpers/config-fixtures.js";
 
 describe("identity resolve", () => {
 	const { stdout: stdoutWrites } = useCapturedOutput();
@@ -18,25 +18,7 @@ describe("identity resolve", () => {
 	});
 
 	it("resolves self using config.agentId and the requested chain", async () => {
-		const config: TrustedAgentsConfig = {
-			agentId: 42,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
-			dataDir: "/tmp/tap",
-			chains: {
-				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
-					rpcUrl: "https://example.test/rpc",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
-			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-		};
+		const config = buildTestConfig({ agentId: 42 });
 		const resolve = vi.fn().mockResolvedValue({
 			agentId: 42,
 			chain: "eip155:1",

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RegistrationFile, TrustedAgentsConfig } from "trusted-agents-core";
+import type { RegistrationFile } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
 import { getUsdcAsset } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import { registerUpdateCommand } from "../src/commands/register.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { TEST_BASE_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
 
 const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
@@ -34,31 +35,18 @@ describe("register update", () => {
 	let tmpDir: string;
 	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
-	function buildConfig(): TrustedAgentsConfig {
-		return {
+	function buildConfig() {
+		return buildTestConfig({
 			agentId: 7,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: tmpDir,
 			chains: {
 				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
+					...TEST_BASE_CHAIN,
 					rpcUrl: "https://example.test/base-mainnet",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 					blockExplorerUrl: "https://example.test/base-explorer",
 				},
 			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-			execution: {
-				mode: "eip7702",
-				paymasterProvider: "circle",
-			},
-		};
+		});
 	}
 
 	function buildRegistrationFile(capabilities: string[]): RegistrationFile {
