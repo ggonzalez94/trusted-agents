@@ -981,42 +981,13 @@ export class TapMessagingService {
 			const requestId = String(request.id);
 			const timestamp = nowISO();
 
-			await this.context.requestJournal.putOutbound({
-				requestId,
-				requestKey: `outbound:${request.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: request.method,
-				peerAgentId: contact.peerAgentId,
-				status: "pending",
-				metadata: { actionType },
-			});
-
-			let receipt: TransportReceipt;
-			try {
-				receipt = await this.context.transport.send(contact.peerAgentId, request, {
-					peerAddress: contact.peerAgentAddress,
-				});
-			} catch (error: unknown) {
-				if (!isTransportReceiptTimeout(error)) {
-					await this.context.requestJournal.delete(requestId);
-				}
-				throw error;
-			}
-
-			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-			if (journalEntry?.status !== "completed") {
-				await this.context.requestJournal.updateStatus(requestId, "acked");
-			}
-
-			await appendConversationLog(
-				this.context.conversationLogger,
+			const receipt = await this.sendAndJournalOutboundRequest(
 				contact,
 				request,
-				"outgoing",
+				requestId,
 				timestamp,
+				{ actionType },
 			);
-			await this.context.trustStore.touchContact(contact.connectionId);
 
 			return {
 				receipt,
@@ -1186,39 +1157,20 @@ export class TapMessagingService {
 				note: input.note,
 			});
 
-			await this.context.requestJournal.putOutbound({
-				requestId,
-				requestKey: `outbound:${request.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: request.method,
-				peerAgentId: contact.peerAgentId,
-				status: "pending",
-			});
 			const waiter = this.registerActionResultWaiter(
 				requestId,
 				requestPayload.actionId,
 				ACTION_RESULT_WAIT_TIMEOUT_MS,
 			);
 
-			let receipt: TransportReceipt;
-			try {
-				receipt = await this.context.transport.send(contact.peerAgentId, request, {
-					peerAddress: contact.peerAgentAddress,
-				});
-			} catch (error: unknown) {
-				waiter.cancel();
-				if (!isTransportReceiptTimeout(error)) {
-					await this.context.requestJournal.delete(requestId);
-				}
-				throw error;
-			}
-
-			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-			if (journalEntry?.status !== "completed") {
-				await this.context.requestJournal.updateStatus(requestId, "acked");
-			}
-			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+			const receipt = await this.sendAndJournalOutboundRequest(
+				contact,
+				request,
+				requestId,
+				timestamp,
+				undefined,
+				() => waiter.cancel(),
+			);
 
 			const asyncResult = await waiter.promise;
 			if (!asyncResult) {
@@ -1291,39 +1243,18 @@ export class TapMessagingService {
 				note: proposal.note ?? `Meeting: ${proposal.title}`,
 			});
 
-			await this.context.requestJournal.putOutbound({
+			const receipt = await this.sendAndJournalOutboundRequest(
+				contact,
+				request,
 				requestId,
-				requestKey: `outbound:${request.method}:${requestId}`,
-				direction: "outbound",
-				kind: "request",
-				method: request.method,
-				peerAgentId: contact.peerAgentId,
-				status: "pending",
-				metadata: serializePendingSchedulingRequestDetails(
+				timestamp,
+				serializePendingSchedulingRequestDetails(
 					contact,
 					proposal,
 					this.context.config.dataDir,
 					"outbound",
 				),
-			});
-
-			let receipt: TransportReceipt;
-			try {
-				receipt = await this.context.transport.send(contact.peerAgentId, request, {
-					peerAddress: contact.peerAgentAddress,
-				});
-			} catch (error: unknown) {
-				if (!isTransportReceiptTimeout(error)) {
-					await this.context.requestJournal.delete(requestId);
-				}
-				throw error;
-			}
-
-			const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-			if (journalEntry?.status !== "completed") {
-				await this.context.requestJournal.updateStatus(requestId, "acked");
-			}
-			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+			);
 
 			return {
 				receipt,
@@ -1511,6 +1442,47 @@ export class TapMessagingService {
 			return this.hooks.appendLedgerEntry(this.context.config.dataDir, entry);
 		}
 		return appendPermissionLedgerEntry(this.context.config.dataDir, entry);
+	}
+
+	private async sendAndJournalOutboundRequest(
+		contact: Contact,
+		request: ProtocolMessage,
+		requestId: string,
+		timestamp: string,
+		metadata?: Record<string, unknown>,
+		onSendError?: () => void,
+	): Promise<TransportReceipt> {
+		await this.context.requestJournal.putOutbound({
+			requestId,
+			requestKey: `outbound:${request.method}:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: request.method,
+			peerAgentId: contact.peerAgentId,
+			status: "pending",
+			...(metadata ? { metadata } : {}),
+		});
+
+		let receipt: TransportReceipt;
+		try {
+			receipt = await this.context.transport.send(contact.peerAgentId, request, {
+				peerAddress: contact.peerAgentAddress,
+			});
+		} catch (error: unknown) {
+			onSendError?.();
+			if (!isTransportReceiptTimeout(error)) {
+				await this.context.requestJournal.delete(requestId);
+			}
+			throw error;
+		}
+
+		const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
+		if (journalEntry?.status !== "completed") {
+			await this.context.requestJournal.updateStatus(requestId, "acked");
+		}
+		await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+
+		return receipt;
 	}
 
 	private async appendConversationLogSafe(
