@@ -6,15 +6,13 @@ import { deletePolicy, deleteWallet, listApiKeys, revokeApiKey } from "@open-wal
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 import { runCli } from "./helpers/run-cli.js";
 
 describe("tap init", () => {
 	let tmpDir: string;
 	let configPath: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	// Track OWS artifacts for cleanup
 	const createdWallets: string[] = [];
@@ -24,24 +22,9 @@ describe("tap init", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-init-test-"));
 		configPath = join(tmpDir, "config.yaml");
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
-
 		// Clean up OWS artifacts
 		for (const keyId of createdApiKeyIds) {
 			try {
@@ -140,7 +123,7 @@ describe("tap init", () => {
 		const firstConfig = await readFile(configPath, "utf-8");
 		trackOwsArtifacts(YAML.parse(firstConfig));
 
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 		await initCommand({ json: true, config: configPath, dataDir });
 		const secondConfig = await readFile(configPath, "utf-8");
 
@@ -181,7 +164,7 @@ describe("tap init", () => {
 		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
 		trackOwsArtifacts(YAML.parse(configContent));
 
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 		await initCommand({
 			json: true,
 			dataDir,

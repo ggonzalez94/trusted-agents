@@ -5,34 +5,18 @@ import type { TrustedAgentsConfig } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configShowCommand } from "../src/commands/config-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap config show", () => {
 	let tempRoot: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-config-show-"));
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 		process.exitCode = undefined;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.restoreAllMocks();
 		await rm(tempRoot, { recursive: true, force: true });

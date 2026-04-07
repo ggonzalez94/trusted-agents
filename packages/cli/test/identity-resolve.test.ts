@@ -3,23 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityResolveSelfCommand } from "../src/commands/identity-resolve.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as contextLib from "../src/lib/context.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("identity resolve", () => {
-	let stdoutWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	beforeEach(() => {
-		stdoutWrites = [];
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
 	});
 
 	afterEach(() => {
-		process.stdout.write = origStdoutWrite;
 		process.exitCode = undefined;
 		vi.restoreAllMocks();
 	});

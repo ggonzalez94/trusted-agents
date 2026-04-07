@@ -8,6 +8,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { migrateWalletCommand } from "../src/commands/migrate-wallet.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 import { runCli } from "./helpers/run-cli.js";
 
 // Well-known Hardhat test key — never use in production
@@ -19,10 +20,7 @@ describe("tap migrate-wallet", () => {
 	let dataDir: string;
 	let configPath: string;
 	let keyPath: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	// Track OWS artifacts for cleanup
 	const createdWallets: string[] = [];
@@ -44,25 +42,9 @@ describe("tap migrate-wallet", () => {
 				/* ignore — wallet may not exist */
 			}
 		}
-
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
-
 		// Clean up OWS artifacts
 		for (const keyId of createdApiKeyIds) {
 			try {

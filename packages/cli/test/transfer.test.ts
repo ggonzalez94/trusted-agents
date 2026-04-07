@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as promptLib from "../src/lib/prompt.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
 	mockOwsProvider: vi.fn().mockImplementation(() => ({
@@ -28,10 +29,7 @@ vi.mock("trusted-agents-core", async () => {
 });
 
 describe("tap transfer", () => {
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
@@ -67,20 +65,7 @@ describe("tap transfer", () => {
 	}
 
 	beforeEach(() => {
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
-
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
 		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
@@ -104,8 +89,6 @@ describe("tap transfer", () => {
 	});
 
 	afterEach(() => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 	});

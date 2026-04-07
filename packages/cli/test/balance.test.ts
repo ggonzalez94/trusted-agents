@@ -3,6 +3,7 @@ import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -27,10 +28,7 @@ vi.mock("trusted-agents-core", async () => {
 });
 
 describe("tap balance", () => {
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
@@ -66,19 +64,7 @@ describe("tap balance", () => {
 	}
 
 	beforeEach(() => {
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
 		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
 			requestedMode: "eip7702",
@@ -92,8 +78,6 @@ describe("tap balance", () => {
 	});
 
 	afterEach(() => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 	});

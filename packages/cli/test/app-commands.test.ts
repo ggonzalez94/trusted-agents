@@ -3,15 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appListCommand, appRemoveCommand } from "../src/commands/app.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap app commands", () => {
 	let tempRoot: string;
 	let dataDir: string;
 	let logWrites: string[];
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-app-cmd-"));
@@ -23,29 +21,14 @@ describe("tap app commands", () => {
 			"utf-8",
 		);
 		logWrites = [];
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
 		// The app commands use console.log for success output
 		vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
 			logWrites.push(args.map(String).join(" "));
 		});
-		// The error() helper writes to process.stdout (json) or process.stderr (text)
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 		process.exitCode = undefined;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.restoreAllMocks();
 		await rm(tempRoot, { recursive: true, force: true });

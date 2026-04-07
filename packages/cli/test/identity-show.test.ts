@@ -6,6 +6,7 @@ import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityShowCommand } from "../src/commands/identity-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -31,10 +32,7 @@ vi.mock("trusted-agents-core", async () => {
 
 describe("tap identity show", () => {
 	let tempRoot: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	const config: TrustedAgentsConfig = {
 		agentId: -1,
@@ -62,19 +60,7 @@ describe("tap identity show", () => {
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-identity-show-"));
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(config);
 		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
@@ -89,8 +75,6 @@ describe("tap identity show", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 		await rm(tempRoot, { recursive: true, force: true });

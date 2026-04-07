@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerUpdateCommand } from "../src/commands/register.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
@@ -31,10 +32,7 @@ vi.mock("trusted-agents-core", async () => {
 
 describe("register update", () => {
 	let tmpDir: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
@@ -92,19 +90,7 @@ describe("register update", () => {
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-register-update-test-"));
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
 		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
@@ -158,8 +144,6 @@ describe("register update", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
