@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityShowCommand } from "../src/commands/identity-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import { buildTestConfig } from "./helpers/config-fixtures.js";
+import { buildMockExecutionPreview, buildTestConfig } from "./helpers/config-fixtures.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -41,15 +41,7 @@ describe("tap identity show", () => {
 		process.exitCode = undefined;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(config);
-		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
-			requestedMode: "eip7702",
-			mode: "eip7702",
-			messagingAddress: ADDRESS,
-			executionAddress: ADDRESS,
-			fundingAddress: ADDRESS,
-			paymasterProvider: "circle",
-			warnings: [],
-		});
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(buildMockExecutionPreview(ADDRESS));
 	});
 
 	afterEach(async () => {

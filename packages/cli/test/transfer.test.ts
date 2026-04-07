@@ -4,7 +4,11 @@ import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as promptLib from "../src/lib/prompt.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import { TEST_BASE_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
+import {
+	TEST_BASE_CHAIN,
+	buildMockExecutionPreview,
+	buildTestConfig,
+} from "./helpers/config-fixtures.js";
 
 const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
 	mockOwsProvider: vi.fn().mockImplementation(() => ({
@@ -51,15 +55,12 @@ describe("tap transfer", () => {
 		process.exitCode = undefined;
 
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
-			requestedMode: "eip7702",
-			mode: "eip7702",
-			messagingAddress: "0x0000000000000000000000000000000000000001",
-			executionAddress: "0x0000000000000000000000000000000000000002",
-			fundingAddress: "0x0000000000000000000000000000000000000003",
-			paymasterProvider: "circle",
-			warnings: [],
-		});
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(
+			buildMockExecutionPreview("0x0000000000000000000000000000000000000001", {
+				executionAddress: "0x0000000000000000000000000000000000000002",
+				fundingAddress: "0x0000000000000000000000000000000000000003",
+			}),
+		);
 		vi.spyOn(promptLib, "promptYesNo").mockResolvedValue(true);
 		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			estimateGas: vi.fn().mockResolvedValue(21000n),

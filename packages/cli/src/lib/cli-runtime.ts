@@ -183,14 +183,7 @@ function printTransferRequest(context: TapTransferApprovalContext, opts: GlobalO
 		info(`Note: ${request.note}`, opts);
 	}
 
-	info("Matching active transfer grants for this request:", opts);
-	if (activeTransferGrants.length === 0) {
-		info("  - (none)", opts);
-	} else {
-		for (const grant of activeTransferGrants) {
-			info(`  - ${summarizeGrant(grant)}`, opts);
-		}
-	}
+	printActiveGrants(activeTransferGrants, "transfer", opts);
 	info(`Ledger path: ${ledgerPath}`, opts);
 	info("The agent should use the grants and ledger as context for this decision.", opts);
 }
@@ -213,11 +206,19 @@ function printSchedulingRequest(context: SchedulingApprovalContext, opts: Global
 		info(`  Note: ${proposal.note}`, opts);
 	}
 
-	info("Matching active scheduling grants:", opts);
-	if (activeSchedulingGrants.length === 0) {
+	printActiveGrants(activeSchedulingGrants, "scheduling", opts);
+}
+
+function printActiveGrants(
+	grants: Parameters<typeof summarizeGrant>[0][],
+	label: string,
+	opts: GlobalOptions,
+): void {
+	info(`Matching active ${label} grants:`, opts);
+	if (grants.length === 0) {
 		info("  - (none)", opts);
 	} else {
-		for (const grant of activeSchedulingGrants) {
+		for (const grant of grants) {
 			info(`  - ${summarizeGrant(grant)}`, opts);
 		}
 	}

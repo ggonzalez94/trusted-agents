@@ -9,7 +9,11 @@ import { registerUpdateCommand } from "../src/commands/register.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import { TEST_BASE_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
+import {
+	TEST_BASE_CHAIN,
+	buildMockExecutionPreview,
+	buildTestConfig,
+} from "./helpers/config-fixtures.js";
 
 const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
@@ -88,15 +92,15 @@ describe("register update", () => {
 		vi.spyOn(core.ERC8004Registry.prototype, "getTokenURI").mockResolvedValue(
 			"ipfs://existing-cid",
 		);
-		vi.spyOn(core, "getExecutionPreview").mockResolvedValue({
-			requestedMode: "eip4337",
-			mode: "eip4337",
-			messagingAddress: agentAddress,
-			executionAddress: "0x00000000000000000000000000000000000000aa",
-			fundingAddress: "0x00000000000000000000000000000000000000aa",
-			paymasterProvider: "candide",
-			warnings: [],
-		});
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(
+			buildMockExecutionPreview(agentAddress, {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				executionAddress: "0x00000000000000000000000000000000000000aa",
+				fundingAddress: "0x00000000000000000000000000000000000000aa",
+				paymasterProvider: "candide",
+			}),
+		);
 		vi.spyOn(core, "ensureExecutionReady").mockResolvedValue();
 		vi.spyOn(core, "executeContractCalls").mockResolvedValue({
 			requestedMode: "eip4337",
@@ -353,27 +357,17 @@ describe("register update", () => {
 			readContract,
 		} as never);
 		vi.spyOn(core, "getExecutionPreview").mockImplementation(async (_config, chainConfig) => {
-			if (chainConfig.caip2 === "eip155:8453") {
-				return {
-					requestedMode: "eip4337",
-					mode: "eip4337",
-					messagingAddress: agentAddress,
-					executionAddress: "0x00000000000000000000000000000000000000bb",
-					fundingAddress: "0x00000000000000000000000000000000000000bb",
-					paymasterProvider: "candide",
-					warnings: [],
-				};
-			}
-
-			return {
+			const addr =
+				chainConfig.caip2 === "eip155:8453"
+					? "0x00000000000000000000000000000000000000bb"
+					: "0x00000000000000000000000000000000000000aa";
+			return buildMockExecutionPreview(agentAddress, {
 				requestedMode: "eip4337",
 				mode: "eip4337",
-				messagingAddress: agentAddress,
-				executionAddress: "0x00000000000000000000000000000000000000aa",
-				fundingAddress: "0x00000000000000000000000000000000000000aa",
+				executionAddress: addr,
+				fundingAddress: addr,
 				paymasterProvider: "candide",
-				warnings: [],
-			};
+			});
 		});
 
 		await registerUpdateCommand({ capabilities: "search" }, { json: true });
