@@ -12,17 +12,38 @@ import {
 } from "../lib/queued-commands.js";
 import type { GlobalOptions } from "../types.js";
 
-export async function permissionsGrantCommand(
+type PermissionsDirection = "grant" | "request";
+
+const directionConfig = {
+	grant: {
+		verb: "Publishing",
+		commandType: "publish-grant-set" as const,
+		ownerLabel: "tap:permissions-grant",
+		successFlag: "published",
+		serviceMethod: "publishGrantSet" as const,
+	},
+	request: {
+		verb: "Requesting",
+		commandType: "request-grant-set" as const,
+		ownerLabel: "tap:permissions-request",
+		successFlag: "requested",
+		serviceMethod: "requestGrantSet" as const,
+	},
+};
+
+async function permissionsUpdateCommand(
+	direction: PermissionsDirection,
 	peer: string,
 	file: string,
 	opts: GlobalOptions,
 	cmdOpts?: { note?: string; dryRun?: boolean },
 ): Promise<void> {
 	const startTime = Date.now();
+	const cfg = directionConfig[direction];
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:permissions-grant" });
+		const runtime = await createCliRuntime({ config, opts, ownerLabel: cfg.ownerLabel });
 		const grantSet = await readGrantFile(file);
 		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
 		if (!contact) {
@@ -51,20 +72,23 @@ export async function permissionsGrantCommand(
 			return;
 		}
 
-		verbose(`Publishing ${grantSet.grants.length} grants to ${peer}...`, opts);
+		verbose(
+			`${cfg.verb} ${grantSet.grants.length} grants ${direction === "grant" ? "to" : "from"} ${peer}...`,
+			opts,
+		);
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
 			{
-				type: "publish-grant-set",
+				type: cfg.commandType,
 				payload: {
 					peer,
 					grantSet,
 					note: cmdOpts?.note,
 				},
 			},
-			async () => await runtime.service.publishGrantSet(peer, grantSet, cmdOpts?.note),
+			async () => await runtime.service[cfg.serviceMethod](peer, grantSet, cmdOpts?.note),
 			{
-				requestedBy: "tap:permissions-grant",
+				requestedBy: cfg.ownerLabel,
 			},
 		);
 
@@ -86,12 +110,13 @@ export async function permissionsGrantCommand(
 
 		success(
 			{
-				published: true,
+				[cfg.successFlag]: true,
 				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				grant_count: result.grantCount,
 				grants: grantSet.grants,
+				...("actionId" in result ? { action_id: result.actionId } : {}),
 				response: result.receipt,
 			},
 			opts,
@@ -100,4 +125,22 @@ export async function permissionsGrantCommand(
 	} catch (err) {
 		handleCommandError(err, opts);
 	}
+}
+
+export async function permissionsGrantCommand(
+	peer: string,
+	file: string,
+	opts: GlobalOptions,
+	cmdOpts?: { note?: string; dryRun?: boolean },
+): Promise<void> {
+	return permissionsUpdateCommand("grant", peer, file, opts, cmdOpts);
+}
+
+export async function permissionsRequestCommand(
+	peer: string,
+	file: string,
+	opts: GlobalOptions,
+	cmdOpts?: { note?: string; dryRun?: boolean },
+): Promise<void> {
+	return permissionsUpdateCommand("request", peer, file, opts, cmdOpts);
 }

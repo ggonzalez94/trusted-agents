@@ -14,6 +14,7 @@ import {
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
+	ChainConfig,
 	ExecutionPreview,
 	IpfsUploadProvider,
 	RegistrationFile,
@@ -721,43 +722,13 @@ export async function registerUpdateCommand(
 				preview: executionPreview,
 			});
 			info(`Updating agent #${config.agentId} URI on ${chainConfig.name}...`, opts);
-			const executionResult = await executeContractCalls(
+			await executeSetAgentURI(
 				config,
 				chainConfig,
 				signingProvider,
-				[
-					{
-						to: chainConfig.registryAddress,
-						data: encodeFunctionData({
-							abi: ERC8004_ABI,
-							functionName: "setAgentURI",
-							args: [BigInt(config.agentId), cmdOpts.uri],
-						}),
-					},
-				],
-				{
-					preview: executionPreview,
-				},
-			);
-			emitExecutionWarnings(executionResult, opts);
-
-			const uriNextSteps: string[] = [];
-			if (await commandExists("openclaw")) {
-				uriNextSteps.push(buildOpenClawConfigStep(config.dataDir));
-			}
-
-			success(
-				{
-					agent_id: config.agentId,
-					agent_uri: cmdOpts.uri,
-					execution_mode: executionResult.mode,
-					execution_address: executionResult.executionAddress,
-					gas_payment_mode: executionResult.gasPaymentMode,
-					transaction_hash: executionResult.transactionHash,
-					user_operation_hash: executionResult.userOperationHash,
-					updated: true,
-					...(uriNextSteps.length > 0 ? { next_steps: uriNextSteps } : {}),
-				},
+				executionPreview,
+				cmdOpts.uri,
+				{},
 				opts,
 				startTime,
 			);
@@ -879,50 +850,72 @@ export async function registerUpdateCommand(
 			emitNoChangeResult(config.agentId, result.agentURI, opts, startTime);
 			return;
 		}
-		const executionResult = await executeContractCalls(
+		await executeSetAgentURI(
 			config,
 			chainConfig,
 			signingProvider,
-			[
-				{
-					to: chainConfig.registryAddress,
-					data: encodeFunctionData({
-						abi: ERC8004_ABI,
-						functionName: "setAgentURI",
-						args: [BigInt(config.agentId), result.agentURI],
-					}),
-				},
-			],
-			{
-				preview: executionPreview,
-			},
-		);
-		emitExecutionWarnings(executionResult, opts);
-
-		const updateNextSteps: string[] = [];
-		if (await commandExists("openclaw")) {
-			updateNextSteps.push(buildOpenClawConfigStep(config.dataDir));
-		}
-
-		success(
-			{
-				agent_id: config.agentId,
-				agent_uri: result.agentURI,
-				ipfs_cid: result.ipfsCid,
-				execution_mode: executionResult.mode,
-				execution_address: executionResult.executionAddress,
-				gas_payment_mode: executionResult.gasPaymentMode,
-				transaction_hash: executionResult.transactionHash,
-				user_operation_hash: executionResult.userOperationHash,
-				updated: true,
-				...(updateNextSteps.length > 0 ? { next_steps: updateNextSteps } : {}),
-			},
+			executionPreview,
+			result.agentURI,
+			{ ipfs_cid: result.ipfsCid },
 			opts,
 			startTime,
 		);
 	} catch (err) {
 		handleCommandError(err, opts);
 	}
+}
+
+async function executeSetAgentURI(
+	config: TrustedAgentsConfig,
+	chainConfig: ChainConfig,
+	signingProvider: SigningProvider,
+	executionPreview: ExecutionPreview,
+	uri: string,
+	extraSuccessFields: Record<string, unknown>,
+	opts: GlobalOptions,
+	startTime: number,
+): Promise<void> {
+	const executionResult = await executeContractCalls(
+		config,
+		chainConfig,
+		signingProvider,
+		[
+			{
+				to: chainConfig.registryAddress,
+				data: encodeFunctionData({
+					abi: ERC8004_ABI,
+					functionName: "setAgentURI",
+					args: [BigInt(config.agentId), uri],
+				}),
+			},
+		],
+		{
+			preview: executionPreview,
+		},
+	);
+	emitExecutionWarnings(executionResult, opts);
+
+	const nextSteps: string[] = [];
+	if (await commandExists("openclaw")) {
+		nextSteps.push(buildOpenClawConfigStep(config.dataDir));
+	}
+
+	success(
+		{
+			agent_id: config.agentId,
+			agent_uri: uri,
+			...extraSuccessFields,
+			execution_mode: executionResult.mode,
+			execution_address: executionResult.executionAddress,
+			gas_payment_mode: executionResult.gasPaymentMode,
+			transaction_hash: executionResult.transactionHash,
+			user_operation_hash: executionResult.userOperationHash,
+			updated: true,
+			...(nextSteps.length > 0 ? { next_steps: nextSteps } : {}),
+		},
+		opts,
+		startTime,
+	);
 }
 
 async function updateConfigAgentId(configPath: string, agentId: number): Promise<void> {
