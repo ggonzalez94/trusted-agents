@@ -2544,6 +2544,12 @@ export class TapMessagingService {
 						} as const)
 					: evaluatedDecision;
 
+		const baseLedger = {
+			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			scope: "scheduling/request",
+			action_id: proposal.schedulingId,
+		};
+
 		switch (decision.action) {
 			case "confirm": {
 				const selectedSlot = decision.slot ?? proposal.slots[0];
@@ -2602,27 +2608,19 @@ export class TapMessagingService {
 						"completed",
 					);
 
-					try {
-						await this.context.transport.send(contact.peerAgentId, outgoing, {
-							peerAddress: contact.peerAgentAddress,
-							timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-						});
-						await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-						await this.touchContactSafe(contact.connectionId);
-					} catch (error: unknown) {
-						this.log(
-							"warn",
-							`Failed to deliver scheduling accept for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-						);
-					}
+					await this.deliverSchedulingOutgoing(
+						contact,
+						outgoing,
+						"accept",
+						proposal.schedulingId,
+						OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					);
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
-						peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+						...baseLedger,
 						direction: "granted-by-me",
 						event: "scheduling-accepted",
-						scope: "scheduling/request",
-						action_id: proposal.schedulingId,
 						decision: "accepted",
 					});
 
@@ -2672,26 +2670,13 @@ export class TapMessagingService {
 					"scheduling/request",
 				);
 
-				try {
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
-				} catch (error: unknown) {
-					this.log(
-						"warn",
-						`Failed to deliver scheduling counter for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
+				await this.deliverSchedulingOutgoing(contact, outgoing, "counter", proposal.schedulingId);
 
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+					...baseLedger,
 					direction: "local",
 					event: "scheduling-counter",
-					scope: "scheduling/request",
-					action_id: proposal.schedulingId,
 					decision: "counter",
 				});
 				break;
@@ -2737,19 +2722,13 @@ export class TapMessagingService {
 			"rejected",
 		);
 
-		try {
-			await this.context.transport.send(contact.peerAgentId, outgoing, {
-				peerAddress: contact.peerAgentAddress,
-				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-			});
-			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-			await this.touchContactSafe(contact.connectionId);
-		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
+		await this.deliverSchedulingOutgoing(
+			contact,
+			outgoing,
+			"reject",
+			proposal.schedulingId,
+			OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+		);
 
 		await this.context.requestJournal.updateStatus(requestId, "completed");
 		await this.appendLedger({
@@ -2761,6 +2740,28 @@ export class TapMessagingService {
 			decision: "rejected",
 			rationale: reason,
 		});
+	}
+
+	private async deliverSchedulingOutgoing(
+		contact: Contact,
+		outgoing: ProtocolMessage,
+		actionType: string,
+		schedulingId: string,
+		timeoutMs?: number,
+	): Promise<void> {
+		try {
+			await this.context.transport.send(contact.peerAgentId, outgoing, {
+				peerAddress: contact.peerAgentAddress,
+				...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+			});
+			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+			await this.touchContactSafe(contact.connectionId);
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to deliver scheduling ${actionType} for ${schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 	}
 
 	private async handleConnectionResult(
