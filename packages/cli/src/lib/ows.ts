@@ -87,13 +87,13 @@ export function listOwsWallets(): OwsWalletEntry[] {
 export function createOwsWallet(
 	name: string,
 	passphrase?: string,
-): { name: string; address: string } {
+): { id: string; name: string; address: string } {
 	const wallet = createWallet(name, passphrase ?? undefined);
 	const address = evmAddressFromWallet(wallet);
 	if (!address) {
 		throw new Error(`Wallet "${name}" was created but has no EVM account.`);
 	}
-	return { name: wallet.name, address };
+	return { id: wallet.id, name: wallet.name, address };
 }
 
 /**
@@ -169,7 +169,8 @@ export function findCompatiblePolicies(chain: string): CompatiblePolicy[] {
 
 export interface CreateApiKeyOptions {
 	name: string;
-	walletName: string;
+	/** OWS wallet ID (UUID), not the wallet name. */
+	walletId: string;
 	policyId: string;
 	passphrase: string;
 }
@@ -179,7 +180,7 @@ export interface CreateApiKeyOptions {
  * Returns the raw token (ows_key_...) and key metadata.
  */
 export function createOwsApiKey(opts: CreateApiKeyOptions): ApiKeyResult {
-	return createApiKey(opts.name, [opts.walletName], [opts.policyId], opts.passphrase);
+	return createApiKey(opts.name, [opts.walletId], [opts.policyId], opts.passphrase);
 }
 
 /**
@@ -206,11 +207,11 @@ export function importOwsWalletPrivateKey(
 	name: string,
 	privateKeyHex: string,
 	passphrase?: string,
-): { name: string; address: string } {
+): { id: string; name: string; address: string } {
 	const wallet = importWalletPrivateKey(name, privateKeyHex, passphrase ?? undefined);
 	const address = evmAddressFromWallet(wallet);
 	if (!address) {
 		throw new Error(`Wallet "${name}" was imported but has no EVM account.`);
 	}
-	return { name: wallet.name, address };
+	return { id: wallet.id, name: wallet.name, address };
 }

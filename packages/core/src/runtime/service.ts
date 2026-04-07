@@ -4061,18 +4061,31 @@ async function findContactForMessage(
 		}
 	}
 
+	const contacts = await context.trustStore.getContacts();
+
 	if (message.method === CONNECTION_RESULT) {
 		const params = parseConnectionResult(message);
-		return await context.trustStore.findByAgentId(params.from.agentId, params.from.chain);
+		return (
+			contacts.find(
+				(c) =>
+					c.peerAgentId === params.from.agentId &&
+					c.peerChain === params.from.chain &&
+					c.status === "active",
+			) ?? null
+		);
 	}
 
 	if (message.method === PERMISSIONS_UPDATE) {
 		const params = parsePermissionsUpdate(message);
 		const peer = resolvePermissionsUpdatePeer(context.config, params);
-		return await context.trustStore.findByAgentId(peer.agentId, peer.chain);
+		return (
+			contacts.find(
+				(c) =>
+					c.peerAgentId === peer.agentId && c.peerChain === peer.chain && c.status === "active",
+			) ?? null
+		);
 	}
 
-	const contacts = await context.trustStore.getContacts();
 	return findUniqueContactForAgentId(contacts, from) ?? null;
 }
 

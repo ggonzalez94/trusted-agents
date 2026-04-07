@@ -17,11 +17,13 @@ const POLICY_ID = `${TEST_PREFIX}-policy`;
 const PASSPHRASE = "test-passphrase";
 
 let apiKeyId: string | undefined;
+let walletId: string;
 
 describe("OWS helpers", () => {
 	beforeAll(() => {
 		// Ensure test wallet exists for read-only helpers
-		createWallet(WALLET_NAME, PASSPHRASE);
+		const w = createWallet(WALLET_NAME, PASSPHRASE);
+		walletId = w.id;
 	});
 
 	afterAll(() => {
@@ -72,8 +74,9 @@ describe("OWS helpers", () => {
 			}
 		});
 
-		it("creates a wallet and returns its EVM address", () => {
+		it("creates a wallet and returns its ID and EVM address", () => {
 			const result = createOwsWallet(newWalletName, PASSPHRASE);
+			expect(result.id).toMatch(/^[0-9a-f-]{36}$/);
 			expect(result.name).toBe(newWalletName);
 			expect(result.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
 		});
@@ -123,7 +126,7 @@ describe("OWS helpers", () => {
 		it("creates an API key and returns a token starting with ows_key_", () => {
 			const result = createOwsApiKey({
 				name: `${TEST_PREFIX}-key`,
-				walletName: WALLET_NAME,
+				walletId,
 				policyId: POLICY_ID,
 				passphrase: PASSPHRASE,
 			});
@@ -138,7 +141,7 @@ describe("OWS helpers", () => {
 			// Need an API key to sign
 			const keyResult = createOwsApiKey({
 				name: `${TEST_PREFIX}-derive-key`,
-				walletName: WALLET_NAME,
+				walletId,
 				policyId: POLICY_ID,
 				passphrase: PASSPHRASE,
 			});

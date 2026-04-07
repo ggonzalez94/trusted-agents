@@ -431,9 +431,24 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		const handled = await this.handleIncomingProtocolMessage(message, request);
-		if (handled) {
-			this.markIncomingRequestProcessed(message.senderInboxId, request);
+		// Mark as processed BEFORE the async handler to prevent the TOCTOU race
+		// where both the listener stream and reconcile process the same message concurrently.
+		this.markIncomingRequestProcessed(message.senderInboxId, request);
+		let handled: boolean;
+		try {
+			handled = await this.handleIncomingProtocolMessage(message, request);
+		} catch (err) {
+			// Remove the mark on error so the message can be retried
+			this.processedIncomingRequests.delete(
+				buildIncomingRequestKey(message.senderInboxId, request),
+			);
+			throw err;
+		}
+		if (!handled) {
+			// Remove the mark so genuine retries can be processed
+			this.processedIncomingRequests.delete(
+				buildIncomingRequestKey(message.senderInboxId, request),
+			);
 		}
 		return handled;
 	}

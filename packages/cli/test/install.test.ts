@@ -102,6 +102,9 @@ describe("tap install", () => {
 	});
 
 	it("reports no runtimes when none detected (no error)", async () => {
+		// Isolate PATH so real CLIs (like openclaw) aren't found,
+		// but keep /usr/bin:/bin so env/bash resolve for shell scripts
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		await installCommand({}, { json: true });
 
 		expect(process.exitCode).toBeUndefined();
@@ -148,6 +151,9 @@ describe("tap install", () => {
 	});
 
 	it("warns when the selected TAP data dir contains a legacy raw-key agent that needs migration", async () => {
+		// Isolate PATH so only fake CLIs are found (not real openclaw),
+		// but keep /usr/bin:/bin so env/bash resolve for shell scripts
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		await mkdir(join(homeDir, ".claude"), { recursive: true });
 		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 		await mkdir(join(homeDir, ".trustedagents", "identity"), { recursive: true });
