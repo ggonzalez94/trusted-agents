@@ -9,6 +9,7 @@ import {
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
 	PERMISSIONS_UPDATE,
+	extractConnectionIdFromParams,
 	isResultMethod,
 } from "../protocol/index.js";
 import type { AgentIdentifier } from "../protocol/types.js";
@@ -714,7 +715,7 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<Contact | null> {
-		const connectionId = this.extractConnectionId(message.params);
+		const connectionId = extractConnectionIdFromParams(message.params);
 		if (!connectionId) {
 			return null;
 		}
@@ -730,25 +731,6 @@ export class XmtpTransport implements TransportProvider {
 	private senderMatchesContact(senderAddresses: `0x${string}`[], contact: Contact): boolean {
 		const expectedAddress = contact.peerAgentAddress.toLowerCase();
 		return senderAddresses.some((address) => address.toLowerCase() === expectedAddress);
-	}
-
-	private extractConnectionId(params: unknown): string | null {
-		if (typeof params !== "object" || params === null) {
-			return null;
-		}
-
-		const payload = params as {
-			message?: {
-				metadata?: {
-					trustedAgent?: {
-						connectionId?: unknown;
-					};
-				};
-			};
-		};
-
-		const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
-		return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
 	}
 
 	private async sendJsonRpc(senderInboxId: string, payload: object): Promise<void> {

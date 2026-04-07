@@ -398,22 +398,12 @@ export class OpenClawTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const approve = params.action === "accept";
-
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
+		const matching = await this.findPendingSchedulingEntry(
+			runtime,
+			params.schedulingId,
+			"inbound",
+			`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
 		);
-		const matching = pending.find(
-			(r) =>
-				r.direction === "inbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
-			);
-		}
 
 		const report = await runtime.mutex.runExclusive(
 			async () => await runtime.runtime.resolvePending(matching.requestId, approve, params.reason),
@@ -436,22 +426,12 @@ export class OpenClawTapRegistry {
 		reason?: string;
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
-
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
+		const matching = await this.findPendingSchedulingEntry(
+			runtime,
+			params.schedulingId,
+			"outbound",
+			`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
 		);
-		const matching = pending.find(
-			(r) =>
-				r.direction === "outbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
-			);
-		}
 
 		const report = await runtime.mutex.runExclusive(
 			async () =>
@@ -529,6 +509,27 @@ export class OpenClawTapRegistry {
 				`[trusted-agents-tap] ${failures.length}/${this.pluginConfig.identities.length} TAP identities failed to start: ${failures.join("; ")}. Plugin will continue in degraded mode — use tap_gateway action "restart" to retry.`,
 			);
 		}
+	}
+
+	private async findPendingSchedulingEntry(
+		runtime: ManagedTapRuntime,
+		schedulingId: string,
+		direction: "inbound" | "outbound",
+		notFoundMessage: string,
+	) {
+		const pending = await runtime.mutex.runExclusive(
+			async () => await runtime.runtime.listPendingRequests(),
+		);
+		const matching = pending.find(
+			(r) =>
+				r.direction === direction &&
+				r.details?.type === "scheduling" &&
+				(r.details as TapPendingSchedulingDetails).schedulingId === schedulingId,
+		);
+		if (!matching) {
+			throw new Error(notFoundMessage);
+		}
+		return matching;
 	}
 
 	private async ensureRuntimeForAction(identity?: string): Promise<ManagedTapRuntime> {

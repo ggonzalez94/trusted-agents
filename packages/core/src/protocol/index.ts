@@ -26,4 +26,4 @@ export {
 
 export type { ResultMethod } from "./methods.js";
 
-export { createJsonRpcRequest } from "./messages.js";
+export { createJsonRpcRequest, extractConnectionIdFromParams } from "./messages.js";

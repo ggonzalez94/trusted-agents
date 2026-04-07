@@ -27,6 +27,7 @@ import {
 import type { ResolvedAgent } from "../identity/types.js";
 import { createEmptyPermissionState, createGrantSet } from "../permissions/index.js";
 import type { PermissionGrantSet } from "../permissions/types.js";
+import { extractConnectionIdFromParams } from "../protocol/messages.js";
 import {
 	ACTION_REQUEST,
 	ACTION_RESULT,
@@ -1719,14 +1720,13 @@ export class TapMessagingService {
 				});
 			}
 			// Malformed permissions payload — reject instead of falling through
-			await this.sendUnsupportedActionResult(
+			return this.rejectMalformedPayload(
 				contact,
 				String(envelope.message.id),
 				actionType ?? "permissions/request-grants",
 				requestKey,
+				claimed.duplicate,
 			);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		if (resolved.app.id === "scheduling") {
@@ -1762,14 +1762,13 @@ export class TapMessagingService {
 				});
 			}
 			// Malformed scheduling payload — reject instead of falling through
-			await this.sendUnsupportedActionResult(
+			return this.rejectMalformedPayload(
 				contact,
 				String(envelope.message.id),
 				actionType ?? "scheduling/propose",
 				requestKey,
+				claimed.duplicate,
 			);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		if (resolved.app.id === "tap-transfer") {
@@ -1792,14 +1791,13 @@ export class TapMessagingService {
 				});
 			}
 			// Malformed transfer payload — reject instead of falling through
-			await this.sendUnsupportedActionResult(
+			return this.rejectMalformedPayload(
 				contact,
 				String(envelope.message.id),
 				actionType ?? "transfer/request",
 				requestKey,
+				claimed.duplicate,
 			);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return { status: claimed.duplicate ? "duplicate" : "received" };
 		}
 
 		// For dynamically loaded (non-builtin) apps, use the full app dispatch path
@@ -3090,6 +3088,18 @@ export class TapMessagingService {
 		}
 	}
 
+	private async rejectMalformedPayload(
+		contact: Contact,
+		messageId: string,
+		fallbackActionType: string,
+		requestKey: string,
+		isDuplicate: boolean,
+	): Promise<{ status: "duplicate" | "received" }> {
+		await this.sendUnsupportedActionResult(contact, messageId, fallbackActionType, requestKey);
+		await this.context.requestJournal.updateStatus(messageId, "completed");
+		return { status: isDuplicate ? "duplicate" : "received" };
+	}
+
 	private async dispatchToApp(
 		contact: Contact,
 		requestId: string,
@@ -3829,7 +3839,7 @@ async function findContactForMessage(
 	from: number,
 	message: ProtocolMessage,
 ): Promise<Contact | null> {
-	const metadataConnectionId = extractConnectionId(message);
+	const metadataConnectionId = extractConnectionIdFromParams(message.params);
 	if (metadataConnectionId) {
 		const contact = await context.trustStore.getContact(metadataConnectionId);
 		if (contact?.peerAgentId === from) {
@@ -3850,25 +3860,6 @@ async function findContactForMessage(
 
 	const contacts = await context.trustStore.getContacts();
 	return findUniqueContactForAgentId(contacts, from) ?? null;
-}
-
-function extractConnectionId(message: ProtocolMessage): string | null {
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const payload = message.params as {
-		message?: {
-			metadata?: {
-				trustedAgent?: {
-					connectionId?: unknown;
-				};
-			};
-		};
-	};
-
-	const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
-	return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
 }
 
 function assertNever(value: never): never {
