@@ -104,4 +104,3 @@ export {
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
-export * from "../scheduling/index.js";

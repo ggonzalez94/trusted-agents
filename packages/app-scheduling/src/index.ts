@@ -22,7 +22,7 @@ export type {
 	ConfirmedMeeting,
 	SchedulingHooks,
 	SchedulingDecision,
-} from "./scheduling-handler.js";
+} from "trusted-agents-core";
 export type {
 	TimeSlot,
 	SchedulingProposal,

@@ -39,9 +39,9 @@ export type SchedulingDecision =
 	| { action: "reject"; reason: string }
 	| { action: "defer" };
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string } {
+export function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string } {
 	let minStart = slots[0]?.start ?? "";
 	let maxEnd = slots[0]?.end ?? "";
 	for (const slot of slots) {
@@ -51,7 +51,7 @@ function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string }
 	return { start: minStart, end: maxEnd };
 }
 
-function findOverlappingFreeSlots(
+export function findOverlappingFreeSlots(
 	proposedSlots: TimeSlot[],
 	availability: AvailabilityWindow[],
 ): TimeSlot[] {
@@ -65,7 +65,7 @@ function findOverlappingFreeSlots(
 	);
 }
 
-function buildCounterSlots(
+export function buildCounterSlots(
 	availability: AvailabilityWindow[],
 	durationMinutes: number,
 ): TimeSlot[] {

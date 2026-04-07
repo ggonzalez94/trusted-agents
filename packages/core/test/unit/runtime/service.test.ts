@@ -20,13 +20,13 @@ import {
 	FileTapCommandOutbox,
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
-	parseSchedulingActionResponse,
 	parseTransferActionRequest,
 	parseTransferActionResponse,
 } from "../../../src/runtime/index.js";
 import type { FileRequestJournal } from "../../../src/runtime/request-journal.js";
 import { FileRequestJournal as FileRequestJournalImpl } from "../../../src/runtime/request-journal.js";
 import { TapMessagingService } from "../../../src/runtime/service.js";
+import { parseSchedulingActionResponse } from "../../../src/scheduling/index.js";
 import type {
 	ProtocolMessage,
 	TransportHandlers,

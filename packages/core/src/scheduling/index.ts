@@ -13,7 +13,12 @@ export {
 	findSchedulableSchedulingSlots,
 	matchesSchedulingConstraints,
 } from "./grants.js";
-export { SchedulingHandler } from "./handler.js";
+export {
+	buildCounterSlots,
+	findOverlappingFreeSlots,
+	getProposalTimeRange,
+	SchedulingHandler,
+} from "./handler.js";
 export type {
 	SchedulingApprovalContext,
 	ProposedMeeting,

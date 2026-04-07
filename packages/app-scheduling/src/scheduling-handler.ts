@@ -1,98 +1,26 @@
 import type {
-	AvailabilityWindow,
 	Contact,
 	ICalendarProvider,
-	PermissionGrant,
 	SchedulingAccept,
+	SchedulingDecision,
+	SchedulingHooks,
 	SchedulingProposal,
-	TimeSlot,
 } from "trusted-agents-core";
 import {
+	buildCounterSlots,
 	findApplicableSchedulingGrants,
+	findOverlappingFreeSlots,
 	findSchedulableSchedulingSlots,
+	getProposalTimeRange,
 } from "trusted-agents-core";
 
-// ── Public interfaces ─────────────────────────────────────────────────────────
-
-export interface SchedulingApprovalContext {
-	requestId: string;
-	contact: Contact;
-	proposal: SchedulingProposal;
-	activeSchedulingGrants: PermissionGrant[];
-}
-
-export interface ProposedMeeting {
-	schedulingId: string;
-	title: string;
-	slot: TimeSlot;
-	peerName: string;
-	peerAgentId: number;
-	originTimezone: string;
-}
-
-export interface ConfirmedMeeting extends ProposedMeeting {
-	eventId?: string;
-}
-
-export interface SchedulingHooks {
-	approveScheduling?: (context: SchedulingApprovalContext) => Promise<boolean | null>;
-	confirmMeeting?: (meeting: ProposedMeeting) => Promise<boolean>;
-	onMeetingConfirmed?: (meeting: ConfirmedMeeting) => Promise<void>;
-	log?: (level: "info" | "warn" | "error", message: string) => void;
-}
-
-export type SchedulingDecision =
-	| { action: "confirm"; slot: TimeSlot; proposal: SchedulingProposal }
-	| { action: "counter"; slots: TimeSlot[]; proposal: SchedulingProposal }
-	| { action: "reject"; reason: string }
-	| { action: "defer" };
-
-// ── Internal helpers ──────────────────────────────────────────────────────────
-
-function getProposalTimeRange(slots: TimeSlot[]): { start: string; end: string } {
-	let minStart = slots[0]?.start ?? "";
-	let maxEnd = slots[0]?.end ?? "";
-	for (const slot of slots) {
-		if (slot.start < minStart) minStart = slot.start;
-		if (slot.end > maxEnd) maxEnd = slot.end;
-	}
-	return { start: minStart, end: maxEnd };
-}
-
-function findOverlappingFreeSlots(
-	proposedSlots: TimeSlot[],
-	availability: AvailabilityWindow[],
-): TimeSlot[] {
-	const freeWindows = availability.filter((w) => w.status === "free");
-	return proposedSlots.filter((slot) =>
-		freeWindows.some(
-			(window) =>
-				new Date(slot.start) >= new Date(window.start) &&
-				new Date(slot.end) <= new Date(window.end),
-		),
-	);
-}
-
-function buildCounterSlots(
-	availability: AvailabilityWindow[],
-	durationMinutes: number,
-): TimeSlot[] {
-	const durationMs = durationMinutes * 60 * 1000;
-	return availability
-		.filter((window) => window.status === "free")
-		.map((window) => {
-			const startMs = new Date(window.start).getTime();
-			const endMs = new Date(window.end).getTime();
-			if (endMs - startMs < durationMs) {
-				return null;
-			}
-			return {
-				start: window.start,
-				end: new Date(startMs + durationMs).toISOString(),
-			};
-		})
-		.filter((slot): slot is TimeSlot => slot !== null);
-}
+export type {
+	SchedulingApprovalContext,
+	ConfirmedMeeting,
+	ProposedMeeting,
+	SchedulingDecision,
+	SchedulingHooks,
+} from "trusted-agents-core";
 
 // ── SchedulingHandler ─────────────────────────────────────────────────────────
 
