@@ -154,7 +154,7 @@ export async function migrateWalletCommand(
 		const keyName = `tap-${walletName}-${Date.now()}`;
 		const apiKeyResult = createOwsApiKey({
 			name: keyName,
-			walletName,
+			walletId: imported.id,
 			policyId,
 			passphrase,
 		});

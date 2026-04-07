@@ -81,6 +81,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			const policyId = policySetup.policyId;
 
 			const apiKeySetup = await setupApiKey(
+				walletSetup.walletId,
 				owsWallet,
 				policyId,
 				walletSetup.passphrase,
@@ -167,6 +168,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 // ─── Wallet Setup ───────────────────────────────────────────────────────
 
 interface WalletSetupResult {
+	walletId: string;
 	walletName: string;
 	passphrase: string;
 }
@@ -182,12 +184,12 @@ async function setupWallet(opts: GlobalOptions, cmdOpts?: InitOptions): Promise<
 		const existing = existingWallets.find((w) => w.name === walletName);
 		if (existing) {
 			info(`Using existing wallet: ${walletName} (${existing.address})`, opts);
-			return { walletName, passphrase };
+			return { walletId: existing.id, walletName, passphrase };
 		}
 
 		const created = createOwsWallet(walletName, passphrase || undefined);
 		info(`Created wallet: ${created.name} (${created.address})`, opts);
-		return { walletName: created.name, passphrase };
+		return { walletId: created.id, walletName: created.name, passphrase };
 	}
 
 	// Interactive flow
@@ -210,7 +212,7 @@ async function setupWallet(opts: GlobalOptions, cmdOpts?: InitOptions): Promise<
 				const selected = existingWallets[idx]!;
 				info(`Using wallet: ${selected.name}`, opts);
 				const passphrase = (await promptInput("Wallet passphrase (leave blank if none): ")) ?? "";
-				return { walletName: selected.name, passphrase };
+				return { walletId: selected.id, walletName: selected.name, passphrase };
 			}
 		}
 	}
@@ -225,7 +227,7 @@ async function setupWallet(opts: GlobalOptions, cmdOpts?: InitOptions): Promise<
 	const created = createOwsWallet(walletName, passphrase || undefined);
 	info(`Created wallet: ${created.name} (${created.address})`, opts);
 
-	return { walletName: created.name, passphrase };
+	return { walletId: created.id, walletName: created.name, passphrase };
 }
 
 // ─── Policy Setup ───────────────────────────────────────────────────────
@@ -288,6 +290,7 @@ interface ApiKeySetupResult {
 }
 
 async function setupApiKey(
+	walletId: string,
 	walletName: string,
 	policyId: string,
 	passphrase: string,
@@ -297,7 +300,7 @@ async function setupApiKey(
 	const keyName = `tap-${walletName}-${Date.now()}`;
 	const result = createOwsApiKey({
 		name: keyName,
-		walletName,
+		walletId,
 		policyId,
 		passphrase,
 	});
