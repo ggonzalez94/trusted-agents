@@ -9,26 +9,14 @@ export {
 	ValidationError,
 } from "./errors.js";
 
-export { generateNonce, generateConnectionId, bytesToBase64, base64ToBytes } from "./crypto.js";
+export { generateNonce, generateConnectionId } from "./crypto.js";
 
-export { nowISO, nowUnix, isExpired, expiresIn, toISO } from "./time.js";
+export { nowISO, isExpired, expiresIn, toISO } from "./time.js";
 
-export {
-	isEthereumAddress,
-	isValidUrl,
-	isValidUUID,
-	isCAIP2Chain,
-	caip2ToChainId,
-	assertEthereumAddress,
-} from "./validation.js";
+export { isEthereumAddress, isCAIP2Chain, caip2ToChainId } from "./validation.js";
 
 export { AsyncMutex } from "./mutex.js";
 
 export { resolveDataDir, assertSafeFileComponent, assertPathWithinBase } from "./paths.js";
 
-export {
-	buildChainPublicClient,
-	buildChainTransport,
-	buildChainWalletClient,
-	getViemChain,
-} from "./viem.js";
+export { buildChainPublicClient, buildChainWalletClient } from "./viem.js";
