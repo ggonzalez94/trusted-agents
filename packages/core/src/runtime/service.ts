@@ -2666,52 +2666,12 @@ export class TapMessagingService {
 					break;
 				}
 
-				await this.updateSchedulingTracking(requestId, {
-					schedulingState: "rejected",
-				});
-				const rejectData: Record<string, unknown> = {
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: "Scheduling request declined by operator",
-				};
-				const rejectText = buildSchedulingRejectText({
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: "Scheduling request declined by operator",
-				});
-				const outgoing = buildOutgoingActionResult(
+				await this.deliverSchedulingReject(
 					contact,
 					requestId,
-					rejectText,
-					rejectData,
-					"scheduling/request",
-					"rejected",
+					proposal,
+					"Scheduling request declined by operator",
 				);
-
-				try {
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
-				} catch (error: unknown) {
-					this.log(
-						"warn",
-						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
-
-				await this.context.requestJournal.updateStatus(requestId, "completed");
-				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
-					event: "scheduling-rejected",
-					scope: "scheduling/request",
-					action_id: proposal.schedulingId,
-					decision: "rejected",
-					rationale: "Scheduling request declined by operator",
-				});
 				break;
 			}
 			case "counter": {
@@ -2763,52 +2723,7 @@ export class TapMessagingService {
 				break;
 			}
 			case "reject": {
-				await this.updateSchedulingTracking(requestId, {
-					schedulingState: "rejected",
-				});
-				const rejectData: Record<string, unknown> = {
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: decision.reason,
-				};
-				const rejectText = buildSchedulingRejectText({
-					type: "scheduling/reject",
-					schedulingId: proposal.schedulingId,
-					reason: decision.reason,
-				});
-				const outgoing = buildOutgoingActionResult(
-					contact,
-					requestId,
-					rejectText,
-					rejectData,
-					"scheduling/request",
-					"rejected",
-				);
-
-				try {
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
-					await this.touchContactSafe(contact.connectionId);
-				} catch (error: unknown) {
-					this.log(
-						"warn",
-						`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
-
-				await this.context.requestJournal.updateStatus(requestId, "completed");
-				await this.appendLedger({
-					peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
-					direction: "granted-by-me",
-					event: "scheduling-rejected",
-					scope: "scheduling/request",
-					action_id: proposal.schedulingId,
-					decision: "rejected",
-					rationale: decision.reason,
-				});
+				await this.deliverSchedulingReject(contact, requestId, proposal, decision.reason);
 				break;
 			}
 			case "defer":
@@ -2818,6 +2733,60 @@ export class TapMessagingService {
 				);
 				break;
 		}
+	}
+
+	private async deliverSchedulingReject(
+		contact: Contact,
+		requestId: string,
+		proposal: SchedulingProposal,
+		reason: string,
+	): Promise<void> {
+		await this.updateSchedulingTracking(requestId, {
+			schedulingState: "rejected",
+		});
+		const rejectData: Record<string, unknown> = {
+			type: "scheduling/reject",
+			schedulingId: proposal.schedulingId,
+			reason,
+		};
+		const rejectText = buildSchedulingRejectText({
+			type: "scheduling/reject",
+			schedulingId: proposal.schedulingId,
+			reason,
+		});
+		const outgoing = buildOutgoingActionResult(
+			contact,
+			requestId,
+			rejectText,
+			rejectData,
+			"scheduling/request",
+			"rejected",
+		);
+
+		try {
+			await this.context.transport.send(contact.peerAgentId, outgoing, {
+				peerAddress: contact.peerAgentAddress,
+				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			});
+			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+			await this.touchContactSafe(contact.connectionId);
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to deliver scheduling reject for ${proposal.schedulingId}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+
+		await this.context.requestJournal.updateStatus(requestId, "completed");
+		await this.appendLedger({
+			peer: `${contact.peerDisplayName} (#${contact.peerAgentId})`,
+			direction: "granted-by-me",
+			event: "scheduling-rejected",
+			scope: "scheduling/request",
+			action_id: proposal.schedulingId,
+			decision: "rejected",
+			rationale: reason,
+		});
 	}
 
 	private async handleConnectionResult(
