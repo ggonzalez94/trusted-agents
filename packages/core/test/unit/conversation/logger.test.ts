@@ -3,10 +3,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FileConversationLogger } from "../../../src/conversation/logger.js";
-import {
-	SAMPLE_CONVERSATION_MESSAGE,
-	SAMPLE_OUTGOING_MESSAGE,
-} from "../../fixtures/test-messages.js";
+import type { ConversationMessage } from "../../../src/index.js";
+
+const SAMPLE_CONVERSATION_MESSAGE: ConversationMessage = {
+	timestamp: "2025-06-15T10:30:00.000Z",
+	direction: "incoming",
+	scope: "general-chat",
+	content: "Hello, how can I help you today?",
+	humanApprovalRequired: false,
+	humanApprovalGiven: null,
+};
+
+const SAMPLE_OUTGOING_MESSAGE: ConversationMessage = {
+	timestamp: "2025-06-15T10:31:00.000Z",
+	direction: "outgoing",
+	scope: "general-chat",
+	content: "I need help scheduling a meeting.",
+	humanApprovalRequired: true,
+	humanApprovalGiven: true,
+	humanApprovalAt: "2025-06-15T10:30:30.000Z",
+};
 
 describe("FileConversationLogger", () => {
 	let tmpDir: string;

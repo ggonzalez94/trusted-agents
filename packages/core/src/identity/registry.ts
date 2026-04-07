@@ -2,14 +2,7 @@ import type { PublicClient, WalletClient } from "viem";
 import { IdentityError } from "../common/index.js";
 import { ERC8004_ABI } from "./abi.js";
 
-export interface IIdentityRegistry {
-	getTokenURI(agentId: number): Promise<string>;
-	getOwner(agentId: number): Promise<`0x${string}`>;
-	register(agentURI: string, walletClient: WalletClient): Promise<number>;
-	setAgentURI(agentId: number, newURI: string, walletClient: WalletClient): Promise<void>;
-}
-
-export class ERC8004Registry implements IIdentityRegistry {
+export class ERC8004Registry {
 	constructor(
 		private readonly publicClient: PublicClient,
 		private readonly registryAddress: `0x${string}`,
