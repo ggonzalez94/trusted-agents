@@ -77,6 +77,14 @@ For OpenClaw, also run:
 tap install --runtime openclaw
 ```
 
+For Hermes, also run:
+
+```bash
+tap install --runtime hermes
+tap hermes configure --name default
+# then restart: hermes gateway
+```
+
 #### 2. Initialize
 
 ```bash
@@ -104,7 +112,7 @@ tap register \
 # Optional: --ipfs-provider tack   # Use Tack x402 uploads on Taiko
 ```
 
-On OpenClaw, `tap register` output includes the plugin config command — run it to wire your identity into Gateway.
+On OpenClaw, `tap register` output includes the plugin config command. On Hermes, it includes the `tap hermes configure` step when a Hermes install is detected.
 
 #### 5. Connect two agents
 
@@ -157,6 +165,7 @@ tap conversations list --with PeerAgent  # review the conversation
 | `tap message sync` | Portable baseline. Run at the start of each agent turn or on a schedule. |
 | `tap message listen` | Long-lived listener for dedicated TAP processes. |
 | OpenClaw plugin | Streaming default inside Gateway. Use the `tap_gateway` tool. |
+| Hermes plugin | Long-lived TAP daemon + thin Python plugin inside Hermes. Notifications appear on the next Hermes turn because Hermes does not expose an immediate wake API. |
 
 Keep exactly one transport owner per TAP identity — don't run `listen` and the plugin against the same data directory.
 
@@ -199,21 +208,22 @@ Run `tap <command> --help` for human help, `tap schema <command>` for the machin
 | `Invalid or expired invite` | Invites are time-limited. Create a new one with `tap invite create`. |
 | `Contact not active` | Connection handshake incomplete. Run `tap message sync` on both sides. |
 | OpenClaw Gateway is down | Run `openclaw gateway restart`. If that doesn't work, run `openclaw gateway install` then `openclaw gateway start`. |
+| Hermes plugin not receiving TAP events | The Hermes plugin will try one bounded daemon restart on the next TAP tool call or next Hermes turn. If it still fails, run `tap hermes status`, then restart `hermes gateway`. |
 
 ## Development
 
 ### Architecture: thin plugin, fat CLI
 
-All protocol and business logic lives in `core`. Both the CLI and the OpenClaw plugin are **host adapters** — they compose core abstractions, they don't reimplement them.
+All protocol and business logic lives in `core`. The CLI, the OpenClaw plugin, and the Hermes host integration are **host adapters** — they compose core abstractions, they don't reimplement them.
 
-The plugin only exposes actions that **require a long-lived XMTP transport connection** (sending messages, resolving pending approvals, plugin lifecycle). Everything else — setup, inspection, configuration, conversation history, on-chain queries — lives in the CLI only. This avoids maintaining feature parity across two surfaces. When adding a new feature, ask: "Does this need a live transport?" If no, it goes in the CLI.
+The host adapter only exposes actions that **require a long-lived XMTP transport connection** (sending messages, resolving pending approvals, lifecycle). Everything else — setup, inspection, configuration, conversation history, on-chain queries — lives in the CLI only. This avoids maintaining feature parity across surfaces. When adding a new feature, ask: "Does this need a live transport?" If no, it goes in the CLI.
 
 ### Repository structure
 
 ```
 packages/
   core/       Protocol logic, identity resolution, XMTP transport, trust store
-  cli/        The `tap` command — host adapter over core (fat: owns all non-transport features)
+  cli/        The `tap` command plus Hermes host assets/daemon (fat: owns all non-transport features)
   landing/    Marketing site and release-facing copy
   openclaw-plugin/  OpenClaw Gateway plugin (thin: only transport-dependent actions + notification pipeline)
 ```

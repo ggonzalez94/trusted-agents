@@ -8,12 +8,14 @@
     "tap": "./dist/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
+    "prebuild": "rm -rf assets/skills && mkdir -p assets/skills && cp -r ../../skills/trusted-agents assets/skills/trusted-agents",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit"
   },

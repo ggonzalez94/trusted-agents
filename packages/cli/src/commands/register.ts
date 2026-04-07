@@ -18,6 +18,7 @@ import type { SigningProvider } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
 import { getUsdcAsset } from "../lib/assets.js";
+import { resolveHermesHome } from "../hermes/config.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import {
@@ -72,6 +73,10 @@ function buildOpenClawConfigStep(dataDir: string): string {
 	]);
 	const escaped = identity.replace(/'/g, "'\\''");
 	return `Configure OpenClaw plugin: openclaw config set plugins.entries.trusted-agents-tap.config.identities '${escaped}' --json`;
+}
+
+function buildHermesConfigStep(): string {
+	return "Configure Hermes plugin: tap hermes configure --name default";
 }
 
 function upsertXmtpService(
@@ -647,6 +652,9 @@ export async function registerCommand(
 		if (await commandExists("openclaw")) {
 			nextSteps.push(buildOpenClawConfigStep(config.dataDir));
 		}
+		if (existsSync(resolveHermesHome())) {
+			nextSteps.push(buildHermesConfigStep());
+		}
 
 		success(
 			{
@@ -751,6 +759,9 @@ export async function registerUpdateCommand(
 			const uriNextSteps: string[] = [];
 			if (await commandExists("openclaw")) {
 				uriNextSteps.push(buildOpenClawConfigStep(config.dataDir));
+			}
+			if (existsSync(resolveHermesHome())) {
+				uriNextSteps.push(buildHermesConfigStep());
 			}
 
 			success(
@@ -911,6 +922,9 @@ export async function registerUpdateCommand(
 		const updateNextSteps: string[] = [];
 		if (await commandExists("openclaw")) {
 			updateNextSteps.push(buildOpenClawConfigStep(config.dataDir));
+		}
+		if (existsSync(resolveHermesHome())) {
+			updateNextSteps.push(buildHermesConfigStep());
 		}
 
 		success(

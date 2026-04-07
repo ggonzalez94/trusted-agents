@@ -29,7 +29,7 @@ describe("tap install", () => {
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
 		process.env.HOME = homeDir;
-		process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = JSON.stringify({ valid: true });
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
 		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = gatewayStatusJson({
@@ -99,6 +99,24 @@ describe("tap install", () => {
 
 		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
 		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents -y"]);
+	});
+
+	it("installs Hermes plugin, startup hook, and skill assets", async () => {
+		await installCommand({ runtimes: ["hermes"] }, { json: true });
+
+		const hermesHome = join(homeDir, ".hermes");
+		await expect(readFile(join(hermesHome, "plugins", "trusted-agents-tap", "plugin.yaml"), "utf-8")).resolves.toContain(
+			"trusted-agents-tap",
+		);
+		await expect(
+			readFile(join(hermesHome, "plugins", "trusted-agents-tap", "config.json"), "utf-8"),
+		).resolves.toContain('"identities": []');
+		await expect(readFile(join(hermesHome, "hooks", "trusted-agents-tap", "HOOK.yaml"), "utf-8")).resolves.toContain(
+			"gateway:startup",
+		);
+		await expect(readFile(join(hermesHome, "skills", "trusted-agents", "SKILL.md"), "utf-8")).resolves.toContain(
+			"# Trusted Agents Protocol",
+		);
 	});
 
 	it("reports no runtimes when none detected (no error)", async () => {

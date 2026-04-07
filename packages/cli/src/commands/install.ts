@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
+import { installTapHermesAssets } from "../hermes/install.js";
+import { resolveHermesHome } from "../hermes/config.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
@@ -15,7 +17,7 @@ const execFileAsync = promisify(execFile);
 
 const SKILLS_REPO = "ggonzalez94/trusted-agents";
 const OPENCLAW_PLUGIN_NAME = "trusted-agents-tap";
-const SUPPORTED_RUNTIMES = ["claude", "codex", "openclaw"] as const;
+const SUPPORTED_RUNTIMES = ["claude", "codex", "openclaw", "hermes"] as const;
 const DEFAULT_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS = 60_000;
 const DEFAULT_OPENCLAW_GATEWAY_WAIT_POLL_MS = 500;
 
@@ -30,6 +32,7 @@ interface RuntimeInstallResult {
 	detected: boolean;
 	skills_installed: boolean;
 	plugin_installed?: boolean;
+	hook_installed?: boolean;
 	notes: string[];
 }
 
@@ -49,6 +52,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 		const autoDetect = runtimes.length === 0;
 		const results: RuntimeInstallResult[] = [];
 		let skillsInstalled = false;
+		let hermesInstalled = false;
 		const dataDir = resolveDataDir(opts);
 		const configPath = resolveConfigPath(opts, dataDir);
 		const legacyWarning = getLegacyWalletMigrationWarning({
@@ -61,7 +65,9 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {
 			const runtimeDir = join(homeDir, `.${runtime}`);
 			const detected =
-				existsSync(runtimeDir) || (runtime === "openclaw" && (await commandExists("openclaw")));
+				runtime === "hermes"
+					? existsSync(resolveHermesHome())
+					: existsSync(runtimeDir) || (runtime === "openclaw" && (await commandExists("openclaw")));
 			if (autoDetect && !detected) {
 				continue;
 			}
@@ -86,6 +92,14 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			if (runtime === "openclaw") {
 				const pluginResult = await installOpenClawPlugin(autoDetect, notes);
 				result.plugin_installed = pluginResult.installed;
+			}
+
+			if (runtime === "hermes") {
+				const hermesResult = await installHermesPlugin(notes);
+				result.skills_installed = true;
+				result.plugin_installed = hermesResult.pluginInstalled;
+				result.hook_installed = hermesResult.hookInstalled;
+				hermesInstalled = true;
 			}
 
 			results.push(result);
@@ -116,6 +130,9 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 				next_steps: [
 					"Run `tap init` to create or import the TAP identity.",
 					"Fund the wallet, then run `tap register`.",
+					...(hermesInstalled
+						? ["Run `tap hermes configure --name default`, then restart `hermes gateway`."]
+						: []),
 				],
 			},
 			opts,
@@ -196,6 +213,17 @@ async function installOpenClawPlugin(
 	}
 
 	return { installed: true };
+}
+
+async function installHermesPlugin(
+	notes: string[],
+): Promise<{ pluginInstalled: boolean; hookInstalled: boolean }> {
+	const hermesHome = resolveHermesHome();
+	const paths = await installTapHermesAssets(hermesHome);
+	notes.push(`Installed the TAP Hermes plugin into ${paths.pluginDir}.`);
+	notes.push(`Installed the TAP Hermes startup hook into ${paths.hookDir}.`);
+	notes.push(`Copied the TAP skill into ${paths.skillDir}.`);
+	return { pluginInstalled: true, hookInstalled: true };
 }
 
 async function validateOpenClawConfig(notes: string[]): Promise<void> {

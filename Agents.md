@@ -13,7 +13,7 @@ When this file conflicts with code, code wins.
 - No backend service exists in this repo.
 - Package boundaries:
 	- `packages/core`: protocol + storage + transport abstractions
-	- `packages/cli`: executable UX and config/bootstrap behavior
+	- `packages/cli`: executable UX, config/bootstrap behavior, and Hermes host assets/daemon
 	- `packages/openclaw-plugin`: OpenClaw Gateway plugin that owns TAP as a background service
 	- `packages/sdk`: Public SDK entry point for building on TAP. Owns `createTapRuntime`, app install/remove, and the public API surface.
 	- `packages/app-transfer`: Transfer request handling as a TAP app. Owns grant matching, payload parsing, transfer execution handler.
@@ -49,6 +49,8 @@ When this file conflicts with code, code wins.
 	- CLI-specific prompting / approval UX
 	- onboarding commands
 	- local operator workflows
+	- Hermes host integration assets (`packages/cli/assets/hermes`)
+	- Hermes daemon / IPC layer used to hold long-lived TAP runtimes outside the Python plugin process
 
 ### `packages/sdk`
 - Public entry point for building on TAP.
@@ -129,17 +131,18 @@ When adding a new feature, ask: "Does this need a live XMTP transport?" If no, i
 
 ## Skills Layout
 
-There is one unified TAP skill that covers both CLI and OpenClaw plugin mode:
+There is one unified TAP skill that covers CLI, OpenClaw plugin mode, and Hermes mode:
 
 - **Canonical location:** `skills/trusted-agents/SKILL.md` + `references/permissions-v1.md`
 - **OpenClaw plugin:** `packages/openclaw-plugin/skills/trusted-agents-openclaw/` receives copies of the canonical files at build time via a `prebuild` script (`cp -r ../../skills/trusted-agents skills/trusted-agents`). The copies are `.gitignored`.
-- Both hosts get the same skill content. OpenClaw-specific sections are gated with "Skip this section if you're not running inside OpenClaw Gateway."
+- **Hermes install assets:** `packages/cli/assets/skills/trusted-agents/` receives copies of the canonical files at build time so `tap install --runtime hermes` can copy the same skill into `~/.hermes/skills/trusted-agents`.
+- Host-specific sections are gated in the canonical skill file ("Skip this section if you're not running inside OpenClaw Gateway.", "Skip this section if you're not running inside Hermes.").
 
 Installation expectations:
 
 - OpenClaw plugin install loads the plugin skill directory from `packages/openclaw-plugin/openclaw.plugin.json`, which uses the build-time copied skills.
-- `tap install --runtime openclaw` installs the plugin; `tap install --runtime claude` installs the skill for Claude Code. Both point at the same underlying content.
-- In this repo, `skills/trusted-agents/` is the single source of truth. The OpenClaw plugin copies and any host-specific installed copies are mirrors.
+- `tap install --runtime openclaw` installs the plugin; `tap install --runtime hermes` installs the Hermes plugin/hook/skill assets; `tap install --runtime claude` installs the skill for Claude Code.
+- In this repo, `skills/trusted-agents/` is the single source of truth. The OpenClaw plugin copies and Hermes/other host-installed copies are mirrors.
 
 ## Read Order For Fast Orientation
 1. `packages/core/src/protocol/*` (wire protocol)
@@ -348,6 +351,12 @@ File: `packages/sdk/src/orchestrator.ts`
 18. Invite chain value is not strongly validated in invite generation:
 - `generateInvite()` signs any chain string given by caller
 - CAIP-2 correctness is enforced at higher layers, not inside invite generation
+
+19. Hermes mode owns transport in a sidecar daemon, not in the Python plugin:
+- `packages/cli/assets/hermes/plugin/` is a thin Python Hermes plugin that exposes `tap_gateway` and injects `[TAP Notifications]` through `pre_llm_call`
+- `packages/cli/assets/hermes/hook/` is a Hermes startup hook that launches `tap hermes daemon run`
+- `packages/cli/src/hermes/daemon.ts` holds one long-lived `TapRuntime` per configured identity and serves local IPC over a Unix socket
+- Hermes has no OpenClaw-style immediate wake API; escalation notifications are shown on the next Hermes turn rather than waking an idle session immediately
 
 ## If You Change X, Also Check Y
 

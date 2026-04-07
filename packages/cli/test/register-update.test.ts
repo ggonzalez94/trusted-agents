@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RegistrationFile, TrustedAgentsConfig } from "trusted-agents-core";
@@ -9,6 +9,7 @@ import { getUsdcAsset } from "../src/lib/assets.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as executionLib from "../src/lib/execution.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
+import * as shellLib from "../src/lib/shell.js";
 import * as walletLib from "../src/lib/wallet.js";
 
 const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
@@ -37,6 +38,7 @@ describe("register update", () => {
 	let stderrWrites: string[];
 	let origStdoutWrite: typeof process.stdout.write;
 	let origStderrWrite: typeof process.stderr.write;
+	let originalHermesHome: string | undefined;
 
 	function buildConfig(): TrustedAgentsConfig {
 		return {
@@ -96,6 +98,7 @@ describe("register update", () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-register-update-test-"));
 		stdoutWrites = [];
 		stderrWrites = [];
+		originalHermesHome = process.env.HERMES_HOME;
 		process.exitCode = undefined;
 		origStdoutWrite = process.stdout.write;
 		origStderrWrite = process.stderr.write;
@@ -157,11 +160,17 @@ describe("register update", () => {
 			cid: "uploaded-cid",
 			uri: "ipfs://uploaded-cid",
 		});
+		vi.spyOn(shellLib, "commandExists").mockResolvedValue(false);
 	});
 
 	afterEach(async () => {
 		process.stdout.write = origStdoutWrite;
 		process.stderr.write = origStderrWrite;
+		if (originalHermesHome === undefined) {
+			delete process.env.HERMES_HOME;
+		} else {
+			process.env.HERMES_HOME = originalHermesHome;
+		}
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
@@ -373,6 +382,21 @@ describe("register update", () => {
 		};
 		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
+	});
+
+	it("includes the Hermes configure hint when a Hermes install is present", async () => {
+		const hermesHome = join(tmpDir, "hermes-home");
+		await mkdir(hermesHome, { recursive: true });
+		process.env.HERMES_HOME = hermesHome;
+
+		await registerUpdateCommand({ uri: "ipfs://new-cid" }, { json: true });
+
+		const output = lastJsonOutput() as {
+			status: string;
+			data?: { next_steps?: string[] };
+		};
+		expect(output.status).toBe("ok");
+		expect(output.data?.next_steps).toContain("Configure Hermes plugin: tap hermes configure --name default");
 	});
 
 	it("tops up the messaging identity from the Base execution account before x402 upload", async () => {

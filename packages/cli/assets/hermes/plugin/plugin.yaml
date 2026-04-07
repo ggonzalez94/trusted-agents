@@ -1,0 +1,7 @@
+name: trusted-agents-tap
+version: 0.1.5
+description: Trusted Agents Protocol tool and notification bridge for Hermes
+provides_tools:
+  - tap_gateway
+provides_hooks:
+  - pre_llm_call
