@@ -750,6 +750,9 @@ export class HermesTapRegistry {
 			case "connection/result":
 				return `Connection confirmed with ${peer}`;
 			case "action/request":
+				if (event.scope === "scheduling/request") {
+					return `Meeting request from ${peer}`;
+				}
 				return `Action request from ${peer}`;
 			case "scheduling/propose":
 				return `Meeting proposal from ${peer}`;

@@ -122,6 +122,12 @@ describe("tap install", () => {
 	it("reports no runtimes when none detected (no error)", async () => {
 		await installCommand({}, { json: true });
 
+		const output = JSON.parse(stdoutWrites.join("")) as {
+			status: string;
+			data?: { reason?: string };
+		};
+		expect(output.status).toBe("ok");
+		expect(output.data?.reason).toContain("~/.hermes");
 		expect(process.exitCode).toBeUndefined();
 	});
 

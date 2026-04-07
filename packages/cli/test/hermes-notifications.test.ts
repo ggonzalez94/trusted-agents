@@ -64,4 +64,17 @@ describe("FileTapHermesNotificationStore", () => {
 		const queued = await store.peek();
 		expect(queued.map((item) => item.messageId)).toEqual(["summary-1", "esc-1"]);
 	});
+
+	it("still bounds the queue when every item is an escalation", async () => {
+		const stateDir = await mkdtemp(join(tmpdir(), "tap-hermes-notify-"));
+		createdDirs.push(stateDir);
+
+		const store = new FileTapHermesNotificationStore(stateDir, 2);
+		await store.push(makeNotification({ type: "escalation", messageId: "esc-1" }));
+		await store.push(makeNotification({ type: "escalation", messageId: "esc-2" }));
+		await store.push(makeNotification({ type: "escalation", messageId: "esc-3" }));
+
+		const queued = await store.peek();
+		expect(queued.map((item) => item.messageId)).toEqual(["esc-2", "esc-3"]);
+	});
 });

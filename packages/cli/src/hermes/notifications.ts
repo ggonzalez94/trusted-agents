@@ -90,14 +90,18 @@ export class FileTapHermesNotificationStore {
 	}
 
 	private evictIfNeeded(items: TapNotification[]): void {
-		if (items.length <= this.maxSize) {
-			return;
-		}
-		for (const evictType of EVICTION_PRIORITY) {
-			const index = items.findIndex((item) => item.type === evictType);
-			if (index !== -1) {
-				items.splice(index, 1);
-				return;
+		while (items.length > this.maxSize) {
+			let removed = false;
+			for (const evictType of EVICTION_PRIORITY) {
+				const index = items.findIndex((item) => item.type === evictType);
+				if (index !== -1) {
+					items.splice(index, 1);
+					removed = true;
+					break;
+				}
+			}
+			if (!removed) {
+				items.shift();
 			}
 		}
 	}

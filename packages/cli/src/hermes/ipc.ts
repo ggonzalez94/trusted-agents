@@ -46,6 +46,7 @@ export class HermesTapIpcServer {
 					return;
 				}
 				const line = buffer.slice(0, newlineIndex).trim();
+				buffer = buffer.slice(newlineIndex + 1);
 				void this.respond(socket, line);
 			});
 			socket.on("error", () => {
