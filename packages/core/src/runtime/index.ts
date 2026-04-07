@@ -42,7 +42,6 @@ export {
 	type PermissionLedgerEntry,
 } from "./permission-ledger.js";
 export {
-	assertContactActive,
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
 	buildOutgoingMessageRequest,
@@ -50,6 +49,7 @@ export {
 	buildConversationLogEntry,
 	findContactForPeer,
 	findUniqueContactForAgentId,
+	requireActiveContact,
 	DEFAULT_MESSAGE_SCOPE,
 } from "./message-conversations.js";
 export {

@@ -1,9 +1,9 @@
-import { assertContactActive, findContactForPeer } from "trusted-agents-core";
+import { requireActiveContact } from "trusted-agents-core";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
-import { error, success, verbose } from "../lib/output.js";
+import { success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
 	queuedTapCommandPendingFields,
@@ -45,13 +45,7 @@ async function permissionsUpdateCommand(
 		const config = await loadConfig(opts);
 		const runtime = await createCliRuntime({ config, opts, ownerLabel: cfg.ownerLabel });
 		const grantSet = await readGrantFile(file);
-		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
-		if (!contact) {
-			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
-			process.exitCode = 4;
-			return;
-		}
-		assertContactActive(contact, peer);
+		const contact = requireActiveContact(await runtime.trustStore.getContacts(), peer);
 
 		if (cmdOpts?.dryRun) {
 			success(
