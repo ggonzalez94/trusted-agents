@@ -300,9 +300,7 @@ async function ensureX402UploadFunding(
 	const baseExecution = await getExecutionPreview(config, baseChainConfig, signingProvider, {
 		requireProvider: true,
 	});
-	for (const warning of baseExecution.warnings) {
-		verbose(warning, opts);
-	}
+	emitExecutionWarnings(baseExecution, opts);
 
 	const shortfall = X402_UPLOAD_BUFFER_USDC - messagingBalance;
 	if (baseExecution.executionAddress.toLowerCase() === messagingAddress.toLowerCase()) {
@@ -346,9 +344,7 @@ async function ensureX402UploadFunding(
 			preview: baseExecution,
 		},
 	);
-	for (const warning of topUpResult.warnings) {
-		verbose(warning, opts);
-	}
+	emitExecutionWarnings(topUpResult, opts);
 	info(
 		`Funded messaging identity with ${formatUnits(shortfall, usdc.decimals)} ${usdc.symbol} on Base mainnet.`,
 		opts,

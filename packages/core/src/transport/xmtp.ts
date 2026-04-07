@@ -286,6 +286,16 @@ export class XmtpTransport implements TransportProvider {
 		})();
 	}
 
+	private toIncomingMessage(message: DecodedMessage): IncomingTransportMessage {
+		return {
+			senderInboxId: message.senderInboxId,
+			content: message.content,
+			conversationId: message.conversationId,
+			messageId: message.id,
+			sentAtNs: message.sentAtNs,
+		};
+	}
+
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
@@ -297,13 +307,7 @@ export class XmtpTransport implements TransportProvider {
 		for await (const message of stream) {
 			if (!this.running) break;
 			try {
-				await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-					messageId: message.id,
-					sentAtNs: message.sentAtNs,
-				});
+				await this.processMessage(this.toIncomingMessage(message));
 				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
 			} catch {
 				// Leave the checkpoint unchanged so transient failures can be retried.
@@ -327,13 +331,7 @@ export class XmtpTransport implements TransportProvider {
 			const messages = await dm.messages();
 			messages.sort((left, right) => left.sentAt.getTime() - right.sentAt.getTime());
 			for (const message of messages) {
-				const didProcess = await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-					messageId: message.id,
-					sentAtNs: message.sentAtNs,
-				});
+				const didProcess = await this.processMessage(this.toIncomingMessage(message));
 				if (didProcess) {
 					processed += 1;
 				}
@@ -376,13 +374,7 @@ export class XmtpTransport implements TransportProvider {
 			if (isMessageAlreadyCheckpointed(checkpoint, message)) {
 				continue;
 			}
-			const didProcess = await this.processMessage({
-				senderInboxId: message.senderInboxId,
-				content: message.content,
-				conversationId: message.conversationId,
-				messageId: message.id,
-				sentAtNs: message.sentAtNs,
-			});
+			const didProcess = await this.processMessage(this.toIncomingMessage(message));
 			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
 			if (didProcess) {
 				processed += 1;
