@@ -161,7 +161,7 @@ jobs:
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           cd packages/core && bun pm pack --dry-run && cd ../..
-          for pkg_dir in packages/cli packages/openclaw-plugin; do
+          for pkg_dir in packages/sdk packages/cli packages/openclaw-plugin; do
             cd "$pkg_dir"
             bun pm pack --dry-run
             TARBALL=$(bun pm pack 2>&1 | grep '\.tgz$')

@@ -12,14 +12,16 @@ export function useOwsArtifactCleanup() {
 	const createdWallets: string[] = [];
 	const createdPolicies: string[] = [];
 	const createdApiKeyIds: string[] = [];
-	let preExistingKeyIds = new Set<string>();
+	let preExistingKeyIds: Set<string> | null = null;
 
 	beforeEach(() => {
 		try {
 			const keys = listApiKeys();
 			preExistingKeyIds = new Set(keys.map((k: { id: string }) => k.id));
 		} catch (_) {
-			preExistingKeyIds = new Set();
+			// If we can't snapshot the vault, mark as null so trackOwsArtifacts
+			// skips key revocation — avoids accidentally revoking real keys.
+			preExistingKeyIds = null;
 		}
 	});
 
@@ -55,15 +57,17 @@ export function useOwsArtifactCleanup() {
 		if (ows?.wallet) {
 			createdWallets.push(ows.wallet);
 		}
-		try {
-			const keys = listApiKeys();
-			for (const k of keys) {
-				if (!preExistingKeyIds.has(k.id)) {
-					createdApiKeyIds.push(k.id);
+		if (preExistingKeyIds !== null) {
+			try {
+				const keys = listApiKeys();
+				for (const k of keys) {
+					if (!preExistingKeyIds.has(k.id)) {
+						createdApiKeyIds.push(k.id);
+					}
 				}
+			} catch (_) {
+				/* ignore */
 			}
-		} catch (_) {
-			/* ignore */
 		}
 	}
 
