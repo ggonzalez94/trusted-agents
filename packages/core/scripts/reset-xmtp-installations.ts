@@ -1,24 +1,25 @@
 /**
  * Reset XMTP installations for E2E wallets if saturated.
  *
- * Uses the static Client.revokeInstallations() API — no client registration needed.
- * Only revokes if an inbox is at or near the 10-installation limit.
- * Safe to run as a CI pre-step: if the inbox is healthy, it's a no-op.
+ * Uses static SDK functions — no Client.create() needed (which would itself
+ * fail at the 10-installation limit). Flow:
+ *   1. getInboxIdForIdentifier() → get inbox ID from wallet address
+ *   2. Client.fetchInboxStates() → count installations
+ *   3. Client.revokeInstallations() → revoke all if saturated
  *
- * Requires: E2E_AGENT_A_OWS_WALLET and E2E_AGENT_B_OWS_WALLET env vars,
- * with the wallets already imported into the OWS vault.
+ * Safe to run as a CI pre-step: if the inbox is healthy, it's a no-op.
  */
-import { Client, type Signer } from "@xmtp/node-sdk";
+import { Client, type Signer, getInboxIdForIdentifier } from "@xmtp/node-sdk";
 import { OwsSigningProvider } from "trusted-agents-core";
 
-const REVOKE_THRESHOLD = 8; // Revoke when at or above this count
+const REVOKE_THRESHOLD = 8;
 
 async function createSigner(provider: OwsSigningProvider): Promise<Signer> {
 	const address = await provider.getAddress();
 	return {
 		type: "EOA",
 		getIdentifier: () => ({
-			identifierKind: 0 as const, // IdentifierKind.Ethereum
+			identifierKind: 0 as const,
 			identifier: address.toLowerCase(),
 		}),
 		signMessage: async (message: string) => {
@@ -40,17 +41,21 @@ if (walletNames.length === 0) {
 for (const walletName of walletNames) {
 	try {
 		const provider = new OwsSigningProvider(walletName, "eip155:8453", "");
+		const address = await provider.getAddress();
 		const signer = await createSigner(provider);
 
-		// Create a temporary unregistered client to get the inbox ID
-		const tempClient = await Client.create(signer, {
-			env: "production",
-			disableAutoRegister: true,
-			dbPath: null, // in-memory only
-		});
-		const inboxId = tempClient.inboxId;
+		// Get inbox ID without creating a client
+		const inboxId = await getInboxIdForIdentifier(
+			{ identifierKind: 0, identifier: address.toLowerCase() },
+			"production",
+		);
 
-		// Fetch current installation count
+		if (!inboxId) {
+			console.log(`${walletName}: no XMTP inbox found for ${address}, skipping.`);
+			continue;
+		}
+
+		// Fetch installation count
 		const states = await Client.fetchInboxStates([inboxId], "production");
 		const installationCount = states[0]?.installations.length ?? 0;
 
