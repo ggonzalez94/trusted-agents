@@ -314,15 +314,17 @@ export async function waitForStableBaseline(
 	label: string,
 	timeoutMs = 30_000,
 ): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-
-	// Initial sync to establish checkpoints — must succeed
+	// Initial sync to establish checkpoints — must succeed.
+	// Deadline starts AFTER this completes so a slow initial sync
+	// does not consume the polling budget.
 	const initResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
 	if (initResult.exitCode !== 0) {
 		throw new Error(
 			`${label}: initial baseline sync failed (exit ${initResult.exitCode}): ${initResult.stderr}`,
 		);
 	}
+
+	const deadline = Date.now() + timeoutMs;
 
 	// Poll until a sync returns 0 processed messages (baseline is stable)
 	while (Date.now() < deadline) {

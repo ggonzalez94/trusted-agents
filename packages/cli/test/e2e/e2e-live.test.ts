@@ -275,7 +275,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		// XMTP baselines existing DM history on the first sync.
 		// Both agents must sync once BEFORE any messages are sent,
 		// otherwise the first real message gets baselined (ignored).
-		it("Establish XMTP baseline for both agents", { timeout: 60_000 }, async () => {
+		it("Establish XMTP baseline for both agents", { timeout: 120_000 }, async () => {
 			await waitForStableBaseline(agentADir, "Agent A", 30_000);
 			await waitForStableBaseline(agentBDir, "Agent B", 30_000);
 		});
