@@ -13,12 +13,13 @@ import { OwsSigningProvider } from "trusted-agents-core";
 
 const REVOKE_THRESHOLD = 8; // Revoke when at or above this count
 
-function createSigner(provider: OwsSigningProvider): Signer {
+async function createSigner(provider: OwsSigningProvider): Promise<Signer> {
+	const address = await provider.getAddress();
 	return {
 		type: "EOA",
 		getIdentifier: () => ({
 			identifierKind: 0 as const, // IdentifierKind.Ethereum
-			identifier: provider.getAddress().then((a) => a.toLowerCase()),
+			identifier: address.toLowerCase(),
 		}),
 		signMessage: async (message: string) => {
 			const signature = await provider.signMessage(message);
@@ -39,7 +40,7 @@ if (walletNames.length === 0) {
 for (const walletName of walletNames) {
 	try {
 		const provider = new OwsSigningProvider(walletName, "eip155:8453", "");
-		const signer = createSigner(provider);
+		const signer = await createSigner(provider);
 
 		// Create a temporary unregistered client to get the inbox ID
 		const tempClient = await Client.create(signer, {
