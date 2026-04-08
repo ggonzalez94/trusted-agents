@@ -1,9 +1,4 @@
 import {
-	type CreateTapRuntimeOptions,
-	type TapRuntime,
-	createTapRuntime,
-} from "trusted-agents-sdk";
-import {
 	SchedulingHandler,
 	type TapServiceHooks,
 	type TapTransferApprovalContext,
@@ -13,6 +8,11 @@ import {
 	summarizeGrant,
 } from "trusted-agents-core";
 import type { ProposedMeeting, SchedulingApprovalContext } from "trusted-agents-core";
+import {
+	type CreateTapRuntimeOptions,
+	type TapRuntime,
+	createTapRuntime,
+} from "trusted-agents-sdk";
 import type { GlobalOptions } from "../types.js";
 import { resolveConfiguredCalendarProvider } from "./calendar/setup.js";
 import { ALL_CHAINS } from "./chains.js";

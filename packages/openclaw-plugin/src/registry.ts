@@ -1,3 +1,11 @@
+import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
+import {
+	AsyncMutex,
+	executeOnchainTransfer,
+	generateInvite,
+	generateSchedulingId,
+	toErrorMessage,
+} from "trusted-agents-core";
 import {
 	OwsSigningProvider,
 	type PermissionGrantSet,
@@ -12,14 +20,6 @@ import {
 	createTapRuntime,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-sdk";
-import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
-import {
-	AsyncMutex,
-	executeOnchainTransfer,
-	generateInvite,
-	generateSchedulingId,
-	toErrorMessage,
-} from "trusted-agents-core";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
