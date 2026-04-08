@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUnits } from "viem";
@@ -103,6 +103,21 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		agentBDir = join(tempRoot, "agent-b");
 		await mkdir(agentADir, { recursive: true });
 		await mkdir(agentBDir, { recursive: true });
+
+		// If a cached XMTP DB dir is available (CI), symlink each agent's xmtp/
+		// dir to the cache so the same XMTP installation is reused across runs.
+		// This avoids exhausting the 10-per-inbox installation limit.
+		const xmtpCacheDir = process.env.E2E_XMTP_DB_CACHE;
+		if (xmtpCacheDir) {
+			for (const [dir, label] of [
+				[agentADir, "agent-a"],
+				[agentBDir, "agent-b"],
+			] as const) {
+				const cacheTarget = join(xmtpCacheDir, label, "xmtp");
+				await mkdir(cacheTarget, { recursive: true });
+				await symlink(cacheTarget, join(dir, "xmtp"));
+			}
+		}
 	});
 
 	afterAll(async () => {

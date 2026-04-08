@@ -104,12 +104,31 @@ jobs:
           echo "Imported wallets:"
           ows wallet list | grep -E "Name:|eip155:1"
 
+      # Cache XMTP DB files so the same installation is reused across runs.
+      # Without this, each run registers new installations and eventually
+      # exhausts the 10-per-inbox limit and the 256 lifetime update budget.
+      - name: Cache XMTP databases
+        uses: actions/cache@v4
+        with:
+          path: /tmp/xmtp-e2e-db
+          key: xmtp-e2e-db-${{ matrix.chain }}
+
+      # If installations are saturated (10/10) and no cached DB exists,
+      # revoke all installations so the test can register fresh ones.
+      - name: Reset XMTP installations if saturated
+        working-directory: packages/core
+        run: bun scripts/reset-xmtp-installations.ts
+        env:
+          E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
+          E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
+
       - name: Run E2E tests (${{ matrix.chain }})
         run: bun vitest run packages/cli/test/e2e/e2e-live.test.ts --reporter=verbose
         env:
           E2E_CHAIN: ${{ matrix.chain }}
           E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
           E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
+          E2E_XMTP_DB_CACHE: /tmp/xmtp-e2e-db
 
   publish:
     name: Publish
