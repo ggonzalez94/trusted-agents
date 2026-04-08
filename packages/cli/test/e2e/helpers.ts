@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { TapRuntime } from "@trustedagents/sdk";
 import { http, createPublicClient, formatUnits, parseAbi } from "viem";
-import { createCliRuntime, type CliTapServiceHooks } from "../../src/lib/cli-runtime.js";
+import { type CliTapServiceHooks, createCliRuntime } from "../../src/lib/cli-runtime.js";
 import { loadConfig } from "../../src/lib/config-loader.js";
 import { runCli } from "../helpers/run-cli.js";
 
@@ -237,7 +237,14 @@ export async function waitForSync(opts: {
 	/** When provided, use runtime.syncOnce() instead of spawning a CLI process. */
 	runtime?: TapRuntime;
 }): Promise<void> {
-	const { dataDir, description, timeoutMs = 30_000, intervalMs = 2_000, minProcessed = 1, runtime } = opts;
+	const {
+		dataDir,
+		description,
+		timeoutMs = 30_000,
+		intervalMs = 2_000,
+		minProcessed = 1,
+		runtime,
+	} = opts;
 	const deadline = Date.now() + timeoutMs;
 
 	let lastStdout = "";
@@ -355,7 +362,7 @@ export async function waitForContact(opts: {
 // ── XMTP Baseline ───────────────────────────────────────────────────────────
 
 /**
- * Sync until the XMTP baseline is stable (a sync returns 0 new messages).
+ * Sync until the XMTP baseline is stable (two consecutive syncs return 0 new messages).
  * Prevents the first real message from being swallowed by an incomplete baseline.
  */
 export async function waitForStableBaseline(
@@ -380,23 +387,32 @@ export async function waitForStableBaseline(
 	}
 
 	const deadline = Date.now() + timeoutMs;
+	let consecutiveZeros = 0;
 
-	// Poll until a sync returns 0 processed messages (baseline is stable)
+	// Poll until two consecutive syncs return 0 processed messages (baseline is stable)
 	while (Date.now() < deadline) {
+		let processed: number | undefined;
 		if (runtime) {
 			const report = await runtime.syncOnce();
-			if (report.processed === 0) return;
+			processed = report.processed;
 		} else {
 			const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
 			if (result.exitCode === 0) {
 				try {
 					const parsed = parseJsonOutput(result.stdout);
 					const data = parsed.data as { processed?: number };
-					if ((data.processed ?? 0) === 0) return;
+					processed = data.processed ?? 0;
 				} catch {
-					// Parse error — keep polling
+					// Parse error — reset streak and keep polling
 				}
 			}
+		}
+
+		if (processed === 0) {
+			consecutiveZeros++;
+			if (consecutiveZeros >= 2) return;
+		} else {
+			consecutiveZeros = 0;
 		}
 		await new Promise((r) => setTimeout(r, 2_000));
 	}
