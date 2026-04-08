@@ -114,6 +114,7 @@ function createMockClient(opts?: { inboxId?: string }) {
 
 	const client = {
 		inboxId: clientInboxId,
+		register: vi.fn(async () => {}),
 		revokeAllOtherInstallations: vi.fn(async () => {}),
 		conversations: {
 			streamAllDmMessages: vi.fn(async (options?: unknown) => {

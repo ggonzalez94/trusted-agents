@@ -100,13 +100,15 @@ export class XmtpTransport implements TransportProvider {
 			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
 		}
 
-		const clientPromise = Client.create(signer, {
-			env: "production",
+		const clientOptions = {
+			env: "production" as const,
 			dbEncryptionKey,
+			disableAutoRegister: true,
 			...(this.config.dbPath
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
-		});
+		};
+		const clientPromise = Client.create(signer, clientOptions);
 		const timeoutPromise = new Promise<never>((_, reject) => {
 			setTimeout(
 				() => reject(new TransportError("XMTP Client.create() timed out")),
@@ -115,15 +117,16 @@ export class XmtpTransport implements TransportProvider {
 		});
 		this.client = await Promise.race([clientPromise, timeoutPromise]);
 
-		// Each transport session is the sole owner of this inbox (enforced by
-		// TapMessagingService.ownerLock). Revoke stale XMTP installations left
-		// by previous sessions to stay under the per-inbox installation limit.
+		// Revoke stale installations BEFORE registering the new one so we stay
+		// under the per-inbox 10-installation limit.  Without this, Client.create
+		// with auto-register would fail when the budget is already exhausted.
 		try {
 			await this.client.revokeAllOtherInstallations();
 		} catch {
 			// Best-effort: if revocation fails (e.g. network), proceed anyway.
-			// The session can still work with its own fresh installation.
 		}
+
+		await this.client.register();
 
 		this.running = true;
 		await this.populateInboxIdCache();
