@@ -1,7 +1,37 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { TapRuntime } from "@trustedagents/sdk";
 import { http, createPublicClient, formatUnits, parseAbi } from "viem";
+import { createCliRuntime, type CliTapServiceHooks } from "../../src/lib/cli-runtime.js";
+import { loadConfig } from "../../src/lib/config-loader.js";
 import { runCli } from "../helpers/run-cli.js";
+
+// ── Agent Session ───────────────────────────────────────────────────────────
+
+export interface AgentSession {
+	runtime: TapRuntime;
+	stop(): Promise<void>;
+}
+
+export async function createAgentSession(opts: {
+	dataDir: string;
+	hooks?: CliTapServiceHooks;
+}): Promise<AgentSession> {
+	const config = await loadConfig({ plain: true, dataDir: opts.dataDir });
+	const runtime = await createCliRuntime({
+		config,
+		opts: { plain: true, dataDir: opts.dataDir },
+		ownerLabel: "e2e-session",
+		hooks: opts.hooks,
+	});
+	await runtime.service.start();
+	return {
+		runtime,
+		stop: async () => {
+			await runtime.service.stop();
+		},
+	};
+}
 
 // ── Chain & USDC Config ──────────────────────────────────────────────────────
 
@@ -204,8 +234,10 @@ export async function waitForSync(opts: {
 	intervalMs?: number;
 	/** Require at least this many messages processed. Defaults to 1. Set to 0 to accept empty syncs. */
 	minProcessed?: number;
+	/** When provided, use runtime.syncOnce() instead of spawning a CLI process. */
+	runtime?: TapRuntime;
 }): Promise<void> {
-	const { dataDir, description, timeoutMs = 30_000, intervalMs = 2_000, minProcessed = 1 } = opts;
+	const { dataDir, description, timeoutMs = 30_000, intervalMs = 2_000, minProcessed = 1, runtime } = opts;
 	const deadline = Date.now() + timeoutMs;
 
 	let lastStdout = "";
@@ -213,21 +245,29 @@ export async function waitForSync(opts: {
 	let lastProcessed = 0;
 
 	while (Date.now() < deadline) {
-		const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
-		lastStdout = result.stdout;
-		lastStderr = result.stderr;
+		if (runtime) {
+			const report = await runtime.syncOnce();
+			lastProcessed = report.processed;
+			if (lastProcessed >= minProcessed) {
+				return;
+			}
+		} else {
+			const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+			lastStdout = result.stdout;
+			lastStderr = result.stderr;
 
-		if (result.exitCode === 0) {
-			// Parse the sync report to check processed count
-			try {
-				const parsed = parseJsonOutput(result.stdout);
-				const data = parsed.data as { processed?: number };
-				lastProcessed = data.processed ?? 0;
-				if (lastProcessed >= minProcessed) {
-					return;
+			if (result.exitCode === 0) {
+				// Parse the sync report to check processed count
+				try {
+					const parsed = parseJsonOutput(result.stdout);
+					const data = parsed.data as { processed?: number };
+					lastProcessed = data.processed ?? 0;
+					if (lastProcessed >= minProcessed) {
+						return;
+					}
+				} catch {
+					// If we can't parse, keep polling
 				}
-			} catch {
-				// If we can't parse, keep polling
 			}
 		}
 
@@ -251,8 +291,10 @@ export async function waitForContact(opts: {
 	peerName: string;
 	timeoutMs?: number;
 	intervalMs?: number;
+	/** When provided, use runtime.syncOnce() instead of spawning a CLI process. */
+	runtime?: TapRuntime;
 }): Promise<void> {
-	const { dataDir, peerName, timeoutMs = 60_000, intervalMs = 2_000 } = opts;
+	const { dataDir, peerName, timeoutMs = 60_000, intervalMs = 2_000, runtime } = opts;
 	const deadline = Date.now() + timeoutMs;
 	let lastSyncExitCode = 0;
 	let lastSyncStdout = "";
@@ -260,12 +302,19 @@ export async function waitForContact(opts: {
 
 	while (Date.now() < deadline) {
 		// Sync to process any pending messages
-		const syncResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
-		lastSyncExitCode = syncResult.exitCode;
-		lastSyncStdout = syncResult.stdout;
-		lastSyncStderr = syncResult.stderr;
+		let syncOk = false;
+		if (runtime) {
+			await runtime.syncOnce();
+			syncOk = true;
+		} else {
+			const syncResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+			lastSyncExitCode = syncResult.exitCode;
+			lastSyncStdout = syncResult.stdout;
+			lastSyncStderr = syncResult.stderr;
+			syncOk = syncResult.exitCode === 0;
+		}
 
-		// Check contacts
+		// Check contacts (always via CLI — read-only, no XMTP)
 		const result = await runCli(["--json", "--data-dir", dataDir, "contacts", "list"]);
 		if (result.exitCode === 0) {
 			try {
@@ -274,7 +323,7 @@ export async function waitForContact(opts: {
 					contacts: Array<{ name: string; status: string }>;
 				};
 				const contact = data.contacts.find((c) => c.name === peerName);
-				if (syncResult.exitCode === 0 && contact?.status === "active") return;
+				if (syncOk && contact?.status === "active") return;
 			} catch {
 				// parse error, keep polling
 			}
@@ -313,29 +362,40 @@ export async function waitForStableBaseline(
 	dataDir: string,
 	label: string,
 	timeoutMs = 30_000,
+	/** When provided, use runtime.syncOnce() instead of spawning a CLI process. */
+	runtime?: TapRuntime,
 ): Promise<void> {
 	// Initial sync to establish checkpoints — must succeed.
 	// Deadline starts AFTER this completes so a slow initial sync
 	// does not consume the polling budget.
-	const initResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
-	if (initResult.exitCode !== 0) {
-		throw new Error(
-			`${label}: initial baseline sync failed (exit ${initResult.exitCode}): ${initResult.stderr}`,
-		);
+	if (runtime) {
+		await runtime.syncOnce();
+	} else {
+		const initResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		if (initResult.exitCode !== 0) {
+			throw new Error(
+				`${label}: initial baseline sync failed (exit ${initResult.exitCode}): ${initResult.stderr}`,
+			);
+		}
 	}
 
 	const deadline = Date.now() + timeoutMs;
 
 	// Poll until a sync returns 0 processed messages (baseline is stable)
 	while (Date.now() < deadline) {
-		const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
-		if (result.exitCode === 0) {
-			try {
-				const parsed = parseJsonOutput(result.stdout);
-				const data = parsed.data as { processed?: number };
-				if ((data.processed ?? 0) === 0) return;
-			} catch {
-				// Parse error — keep polling
+		if (runtime) {
+			const report = await runtime.syncOnce();
+			if (report.processed === 0) return;
+		} else {
+			const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+			if (result.exitCode === 0) {
+				try {
+					const parsed = parseJsonOutput(result.stdout);
+					const data = parsed.data as { processed?: number };
+					if ((data.processed ?? 0) === 0) return;
+				} catch {
+					// Parse error — keep polling
+				}
 			}
 		}
 		await new Promise((r) => setTimeout(r, 2_000));
@@ -389,6 +449,8 @@ export async function waitForPermissions(
 	predicate: (snapshot: PermissionSnapshot) => boolean,
 	timeoutMs = 30_000,
 	intervalMs = 2_000,
+	/** When provided, use runtime.syncOnce() instead of spawning a CLI process. */
+	runtime?: TapRuntime,
 ): Promise<PermissionSnapshot> {
 	const deadline = Date.now() + timeoutMs;
 
@@ -398,7 +460,11 @@ export async function waitForPermissions(
 
 	while (Date.now() < deadline) {
 		// Sync first so any pending messages are processed
-		await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		if (runtime) {
+			await runtime.syncOnce();
+		} else {
+			await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		}
 
 		const result = await runCli(["--json", "--data-dir", dataDir, "permissions", "show", peer]);
 		lastStdout = result.stdout;
