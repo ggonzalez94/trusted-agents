@@ -115,6 +115,16 @@ export class XmtpTransport implements TransportProvider {
 		});
 		this.client = await Promise.race([clientPromise, timeoutPromise]);
 
+		// Each transport session is the sole owner of this inbox (enforced by
+		// TapMessagingService.ownerLock). Revoke stale XMTP installations left
+		// by previous sessions to stay under the per-inbox installation limit.
+		try {
+			await this.client.revokeAllOtherInstallations();
+		} catch {
+			// Best-effort: if revocation fails (e.g. network), proceed anyway.
+			// The session can still work with its own fresh installation.
+		}
+
 		this.running = true;
 		await this.populateInboxIdCache();
 		this.listenWithReconnect();
