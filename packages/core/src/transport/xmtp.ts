@@ -103,7 +103,6 @@ export class XmtpTransport implements TransportProvider {
 		const clientOptions = {
 			env: "production" as const,
 			dbEncryptionKey,
-			disableAutoRegister: true,
 			...(this.config.dbPath
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
@@ -117,16 +116,13 @@ export class XmtpTransport implements TransportProvider {
 		});
 		this.client = await Promise.race([clientPromise, timeoutPromise]);
 
-		// Revoke stale installations BEFORE registering the new one so we stay
-		// under the per-inbox 10-installation limit.  Without this, Client.create
-		// with auto-register would fail when the budget is already exhausted.
+		// Revoke stale installations after successfully registering so the NEXT
+		// start has room.  This keeps the inbox clean over repeated sessions.
 		try {
 			await this.client.revokeAllOtherInstallations();
 		} catch {
-			// Best-effort: if revocation fails (e.g. network), proceed anyway.
+			// Best-effort: if revocation fails, proceed anyway.
 		}
-
-		await this.client.register();
 
 		this.running = true;
 		await this.populateInboxIdCache();
