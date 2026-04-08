@@ -10,8 +10,10 @@ import {
 } from "../../src/commands/message-listen.js";
 import { runCli } from "../helpers/run-cli.js";
 import {
+	type AgentSession,
 	CHAIN_CONFIGS,
 	type PermissionSnapshot,
+	createAgentSession,
 	createPhaseTimer,
 	formatUsdc,
 	getUsdcBalance,
@@ -89,6 +91,8 @@ let inviteUrl: string;
 let balanceBeforeTransfer: bigint;
 let balanceAfterTransfer: bigint;
 let agentAListener: MessageListenerSession | undefined;
+let sessionA: AgentSession | undefined;
+let sessionB: AgentSession | undefined;
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -103,6 +107,8 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 
 	afterAll(async () => {
 		await agentAListener?.stop();
+		await sessionA?.stop();
+		await sessionB?.stop();
 		if (tempRoot) {
 			await rm(tempRoot, { recursive: true, force: true });
 		}
@@ -272,12 +278,17 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		beforeAll(timer.start);
 		afterAll(timer.stop);
 
+		it("Start XMTP sessions", { timeout: 60_000 }, async () => {
+			sessionA = await createAgentSession({ dataDir: agentADir });
+			sessionB = await createAgentSession({ dataDir: agentBDir });
+		});
+
 		// XMTP baselines existing DM history on the first sync.
 		// Both agents must sync once BEFORE any messages are sent,
 		// otherwise the first real message gets baselined (ignored).
 		it("Establish XMTP baseline for both agents", { timeout: 120_000 }, async () => {
-			await waitForStableBaseline(agentADir, "Agent A", 30_000);
-			await waitForStableBaseline(agentBDir, "Agent B", 30_000);
+			await waitForStableBaseline(agentADir, "Agent A", 30_000, sessionA?.runtime);
+			await waitForStableBaseline(agentBDir, "Agent B", 30_000, sessionB?.runtime);
 		});
 
 		it(SCENARIOS.CREATE_INVITE.name, { timeout: 60_000 }, async () => {
@@ -295,6 +306,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		it(SCENARIOS.ACCEPT_INVITE.name, { timeout: 60_000 }, async () => {
 			expect(inviteUrl, "Invite URL must be set from previous test").toBeTruthy();
 
+			// Stop sessionB to release the transport lock before connect
+			await sessionB?.stop();
+			sessionB = undefined;
+
 			const result = await runCli([
 				"--plain",
 				"--data-dir",
@@ -305,6 +320,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			]);
 
 			expect(result.exitCode, `Agent B connect failed:\n${result.stderr}`).toBe(0);
+
+			// Restart sessionB after connect
+			sessionB = await createAgentSession({ dataDir: agentBDir });
 		});
 
 		it(SCENARIOS.VERIFY_CONTACTS_A.name, { timeout: 60_000 }, async () => {
@@ -313,6 +331,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentADir,
 				peerName: AGENT_B_NAME,
 				timeoutMs: 60_000,
+				runtime: sessionA?.runtime,
 			});
 		});
 
@@ -321,6 +340,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentBDir,
 				peerName: AGENT_A_NAME,
 				timeoutMs: 60_000,
+				runtime: sessionB?.runtime,
 			});
 		});
 	});
@@ -366,6 +386,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				},
 			]);
 
+			// Stop sessionA to release the transport lock before permissions grant
+			await sessionA?.stop();
+			sessionA = undefined;
+
 			const result = await runCli([
 				"--plain",
 				"--data-dir",
@@ -384,6 +408,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				[0, 5].includes(result.exitCode),
 				`permissions grant failed with unexpected exit code ${result.exitCode}:\n${result.stdout}\n${result.stderr}`,
 			).toBe(true);
+
+			// Restart sessionA after permissions grant
+			sessionA = await createAgentSession({ dataDir: agentADir });
 		});
 
 		it(SCENARIOS.SYNC_GRANT.name, { timeout: 60_000 }, async () => {
@@ -391,6 +418,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentBDir,
 				description: "Agent B receiving permissions/update grant",
 				timeoutMs: 60_000,
+				runtime: sessionB?.runtime,
 			});
 		});
 
@@ -401,6 +429,8 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				(data) =>
 					data.granted_by_peer.grants.some((g) => g.grantId === GRANT_ID && g.status === "active"),
 				60_000,
+				2_000,
+				sessionB?.runtime,
 			);
 
 			const grant = snapshot.granted_by_peer.grants.find((g) => g.grantId === GRANT_ID);
@@ -417,6 +447,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		afterAll(timer.stop);
 
 		it(SCENARIOS.SEND_MESSAGE_A_TO_B.name, { timeout: 60_000 }, async () => {
+			// Stop sessionA to release the transport lock before message send
+			await sessionA?.stop();
+			sessionA = undefined;
+
 			const result = await runCli([
 				"--plain",
 				"--data-dir",
@@ -434,6 +468,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				[0, 5].includes(result.exitCode),
 				`message send (A→B) failed with unexpected exit code ${result.exitCode}:\n${result.stdout}\n${result.stderr}`,
 			).toBe(true);
+
+			// Restart sessionA after message send
+			sessionA = await createAgentSession({ dataDir: agentADir });
 		});
 
 		it(SCENARIOS.SYNC_MESSAGE_B.name, { timeout: 60_000 }, async () => {
@@ -441,10 +478,15 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentBDir,
 				description: "Agent B receiving message from Agent A",
 				timeoutMs: 60_000,
+				runtime: sessionB?.runtime,
 			});
 		});
 
 		it(SCENARIOS.SEND_MESSAGE_B_TO_A.name, { timeout: 60_000 }, async () => {
+			// Stop sessionB to release the transport lock before message send
+			await sessionB?.stop();
+			sessionB = undefined;
+
 			const result = await runCli([
 				"--plain",
 				"--data-dir",
@@ -462,6 +504,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				[0, 5].includes(result.exitCode),
 				`message send (B→A) failed with unexpected exit code ${result.exitCode}:\n${result.stdout}\n${result.stderr}`,
 			).toBe(true);
+
+			// Restart sessionB after message send
+			sessionB = await createAgentSession({ dataDir: agentBDir });
 		});
 
 		it(SCENARIOS.SYNC_MESSAGE_A.name, { timeout: 60_000 }, async () => {
@@ -469,6 +514,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentADir,
 				description: "Agent A receiving message from Agent B",
 				timeoutMs: 60_000,
+				runtime: sessionA?.runtime,
 			});
 		});
 
@@ -535,6 +581,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		// A listener with an explicit approveTransfer hook is needed to auto-approve
 		// when grants match — this mirrors the production plugin/listener pattern.
 		it("Start Agent A listener for transfer approval", { timeout: 60_000 }, async () => {
+			// Stop sessionA to release the transport lock before starting listener
+			await sessionA?.stop();
+			sessionA = undefined;
+
 			agentAListener = await createMessageListenerSession(
 				{ plain: true, dataDir: agentADir },
 				{
@@ -550,6 +600,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.REQUEST_FUNDS_APPROVED.name, { timeout: 60_000 }, async () => {
+			// Stop sessionB to release the transport lock before request-funds
+			await sessionB?.stop();
+			sessionB = undefined;
+
 			const result = await runCli([
 				"--plain",
 				"--data-dir",
@@ -572,6 +626,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				[0, 5].includes(result.exitCode),
 				`request-funds failed with unexpected exit code ${result.exitCode}:\n${result.stdout}\n${result.stderr}`,
 			).toBe(true);
+
+			// Restart sessionB after request-funds
+			sessionB = await createAgentSession({ dataDir: agentBDir });
 		});
 
 		it(SCENARIOS.SYNC_TRANSFER_RESULT_B.name, { timeout: 60_000 }, async () => {
@@ -581,6 +638,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentBDir,
 				description: "Agent B receiving transfer action/result",
 				timeoutMs: 60_000,
+				runtime: sessionB?.runtime,
 			});
 		});
 
@@ -629,6 +687,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				[0, 5].includes(result.exitCode),
 				`permissions revoke failed with unexpected exit code ${result.exitCode}:\n${result.stdout}\n${result.stderr}`,
 			).toBe(true);
+
+			// Restart sessionA after listener stop + revoke
+			sessionA = await createAgentSession({ dataDir: agentADir });
 		});
 
 		it(SCENARIOS.SYNC_REVOCATION.name, { timeout: 60_000 }, async () => {
@@ -639,6 +700,8 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				(data) =>
 					data.granted_by_peer.grants.some((g) => g.grantId === GRANT_ID && g.status === "revoked"),
 				60_000,
+				2_000,
+				sessionB?.runtime,
 			);
 
 			const grant = snapshot.granted_by_peer.grants.find((g) => g.grantId === GRANT_ID);
@@ -646,6 +709,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.REQUEST_FUNDS_REJECTED.name, { timeout: 60_000 }, async () => {
+			// Stop sessionB to release the transport lock before request-funds
+			await sessionB?.stop();
+			sessionB = undefined;
+
 			// Agent B sends another request — should be rejected because grant is revoked
 			const result = await runCli([
 				"--plain",
@@ -670,6 +737,9 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				[0, 3, 5].includes(result.exitCode),
 				`request-funds (rejected) failed with unexpected exit code ${result.exitCode}:\n${result.stdout}\n${result.stderr}`,
 			).toBe(true);
+
+			// Restart sessionB after request-funds
+			sessionB = await createAgentSession({ dataDir: agentBDir });
 		});
 
 		it(SCENARIOS.SYNC_REJECTION_A.name, { timeout: 60_000 }, async () => {
@@ -678,6 +748,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentADir,
 				description: "Agent A processing and auto-rejecting ungrantable transfer request",
 				timeoutMs: 60_000,
+				runtime: sessionA?.runtime,
 			});
 		});
 
@@ -687,6 +758,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				dataDir: agentBDir,
 				description: "Agent B receiving transfer rejection action/result",
 				timeoutMs: 60_000,
+				runtime: sessionB?.runtime,
 			});
 		});
 
