@@ -58,6 +58,10 @@ export class ValidationError extends TrustedAgentError {
 }
 
 export function toErrorMessage(error: unknown): string {
+	if (error instanceof Error && "shortMessage" in error) {
+		const { shortMessage } = error as { shortMessage: unknown };
+		if (typeof shortMessage === "string") return shortMessage;
+	}
 	return error instanceof Error ? error.message : String(error);
 }
 

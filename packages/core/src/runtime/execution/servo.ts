@@ -10,7 +10,7 @@ import {
 	toHex,
 } from "viem";
 import { createBundlerClient, getUserOperationHash } from "viem/account-abstraction";
-import { ValidationError } from "../../common/index.js";
+import { ConnectionError, ValidationError, toErrorMessage } from "../../common/index.js";
 import type { ChainConfig } from "../../config/types.js";
 import { getUsdcAsset } from "../assets.js";
 import {
@@ -255,13 +255,19 @@ export async function resolveServoExecutionAddress(
 	factoryAddress: Address,
 	owner: Address,
 ): Promise<Address> {
-	const result = await context.readContract({
-		address: factoryAddress,
-		abi: SERVO_ACCOUNT_FACTORY_ABI,
-		functionName: "getAddress",
-		args: [owner, SERVO_ACCOUNT_SALT],
-	});
-	return getAddress(result);
+	try {
+		const result = await context.readContract({
+			address: factoryAddress,
+			abi: SERVO_ACCOUNT_FACTORY_ABI,
+			functionName: "getAddress",
+			args: [owner, SERVO_ACCOUNT_SALT],
+		});
+		return getAddress(result);
+	} catch (err) {
+		throw new ConnectionError(
+			`Failed to resolve Servo smart account address via RPC: ${toErrorMessage(err)}`,
+		);
+	}
 }
 
 async function resolveEip1559Fees(

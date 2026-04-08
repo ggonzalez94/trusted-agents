@@ -151,6 +151,14 @@ export async function fetchRegistrationFile(uri: string): Promise<RegistrationFi
 		return validateRegistrationFile(data);
 	} catch (error) {
 		if (error instanceof IdentityError) throw error;
+		const isTimeout =
+			(error instanceof DOMException && error.name === "AbortError") ||
+			(error instanceof Error && error.message.toLowerCase().includes("aborted"));
+		if (isTimeout) {
+			throw new IdentityError(
+				`Registration file fetch timed out for ${resolvedUri}. If you just updated the registration, IPFS propagation can take up to a minute — wait and retry.`,
+			);
+		}
 		throw new IdentityError(
 			`Failed to fetch registration file from ${resolvedUri}: ${toErrorMessage(error)}`,
 		);

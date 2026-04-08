@@ -14,8 +14,10 @@
       "name": "@trustedagents/app-scheduling",
       "version": "0.1.0",
       "dependencies": {
-        "@types/node": "^25.3.3",
         "trusted-agents-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^25.3.3",
       },
     },
     "packages/app-transfer": {
@@ -27,7 +29,7 @@
     },
     "packages/cli": {
       "name": "trusted-agents-cli",
-      "version": "0.1.5",
+      "version": "0.2.0-beta.1",
       "bin": {
         "tap": "./dist/bin.js",
       },
@@ -49,7 +51,7 @@
     },
     "packages/core": {
       "name": "trusted-agents-core",
-      "version": "0.1.5",
+      "version": "0.2.0-beta.1",
       "dependencies": {
         "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
         "@xmtp/node-sdk": "^5.4.0",
@@ -87,12 +89,11 @@
     },
     "packages/openclaw-plugin": {
       "name": "trusted-agents-tap",
-      "version": "0.1.5",
+      "version": "0.2.0-beta.1",
       "dependencies": {
         "@sinclair/typebox": "^0.34.48",
         "@trustedagents/sdk": "workspace:*",
         "trusted-agents-core": "workspace:*",
-        "viem": "2.46.3",
       },
       "devDependencies": {
         "@types/node": "^25.3.3",
@@ -109,7 +110,7 @@
     },
     "packages/sdk": {
       "name": "@trustedagents/sdk",
-      "version": "0.1.0",
+      "version": "0.2.0-beta.1",
       "dependencies": {
         "trusted-agents-core": "workspace:*",
       },

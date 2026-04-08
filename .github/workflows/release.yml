@@ -46,7 +46,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in packages/core/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
+          for pkg in packages/core/package.json packages/sdk/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
             PKG_VERSION=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('$pkg','utf8')).version)")
             if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
               echo "::error::Version mismatch: $pkg has $PKG_VERSION but tag is v$TAG_VERSION"
@@ -138,7 +138,7 @@ jobs:
       - name: Resolve workspace dependencies
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in packages/cli/package.json packages/openclaw-plugin/package.json; do
+          for pkg in packages/sdk/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
             node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
@@ -161,7 +161,7 @@ jobs:
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           cd packages/core && bun pm pack --dry-run && cd ../..
-          for pkg_dir in packages/cli packages/openclaw-plugin; do
+          for pkg_dir in packages/sdk packages/cli packages/openclaw-plugin; do
             cd "$pkg_dir"
             bun pm pack --dry-run
             TARBALL=$(bun pm pack 2>&1 | grep '\.tgz$')
@@ -200,6 +200,22 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           if npm view "trusted-agents-core@$TAG_VERSION" version 2>/dev/null; then
             echo "trusted-agents-core@$TAG_VERSION already published, skipping"
+          else
+            if [[ -n "${NPM_DIST_TAG:-}" ]]; then
+              bun publish --access public --no-git-checks --provenance --tag "$NPM_DIST_TAG"
+            else
+              bun publish --access public --no-git-checks --provenance
+            fi
+          fi
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @trustedagents/sdk
+        working-directory: packages/sdk
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "@trustedagents/sdk@$TAG_VERSION" version 2>/dev/null; then
+            echo "@trustedagents/sdk@$TAG_VERSION already published, skipping"
           else
             if [[ -n "${NPM_DIST_TAG:-}" ]]; then
               bun publish --access public --no-git-checks --provenance --tag "$NPM_DIST_TAG"
