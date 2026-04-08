@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700">
+  <style>
+    text { font-family: -apple-system, 'Segoe UI', system-ui, Helvetica, sans-serif; }
+    .name-muted { font-size: 21px; font-weight: 700; fill: rgba(255,255,255,0.6); }
+    .name-bright { font-size: 23px; font-weight: 800; fill: #fff; }
+    .example { font-size: 13px; font-weight: 400; fill: rgba(255,255,255,0.28); letter-spacing: 0.5px; }
+    .seg { font-size: 14px; font-weight: 600; fill: rgba(255,255,255,0.45); }
+    .cat { font-size: 11px; font-weight: 600; fill: rgba(255,255,255,0.2); letter-spacing: 2.5px; text-transform: uppercase; }
+  </style>
+
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="700" fill="#08080f"/>
+
+  <!-- Applications label -->
+  <text x="600" y="106" text-anchor="middle" class="cat">Applications</text>
+
+  <!-- Applications (muted, segmented) -->
+  <rect x="120" y="117" width="960" height="82" rx="12" fill="#141420" stroke="#1e1e30" stroke-width="1"/>
+  <rect x="120" y="117" width="3" height="82" rx="1.5" fill="#10b981" opacity="0.35"/>
+  <line x1="358" y1="129" x2="358" y2="187" stroke="#1e1e30" stroke-width="1"/>
+  <line x1="648" y1="129" x2="648" y2="187" stroke="#1e1e30" stroke-width="1"/>
+  <line x1="888" y1="129" x2="888" y2="187" stroke="#1e1e30" stroke-width="1"/>
+  <text x="239" y="163" text-anchor="middle" class="seg">Scheduling</text>
+  <text x="503" y="163" text-anchor="middle" class="seg">Payments &amp; Settlement</text>
+  <text x="768" y="163" text-anchor="middle" class="seg">P2P Betting</text>
+  <text x="984" y="163" text-anchor="middle" class="seg" opacity="0.35">· · ·</text>
+
+  <!-- Coordination & Trust (THE HIGHLIGHTED LAYER) -->
+  <rect x="112" y="205" width="976" height="98" rx="16" fill="#f59e0b" opacity="0.08" filter="url(#glow)"/>
+  <rect x="120" y="213" width="960" height="82" rx="12" fill="#f59e0b"/>
+  <text x="600" y="261" text-anchor="middle" class="name-bright">Coordination &amp; Trust</text>
+
+  <!-- Messaging (muted) -->
+  <rect x="120" y="309" width="960" height="82" rx="12" fill="#141420" stroke="#1e1e30" stroke-width="1"/>
+  <rect x="120" y="309" width="3" height="82" rx="1.5" fill="#06b6d4" opacity="0.35"/>
+  <text x="600" y="347" text-anchor="middle" class="name-muted">Messaging</text>
+  <text x="600" y="369" text-anchor="middle" class="example">XMTP</text>
+
+  <!-- Identity (muted) -->
+  <rect x="120" y="405" width="960" height="82" rx="12" fill="#141420" stroke="#1e1e30" stroke-width="1"/>
+  <rect x="120" y="405" width="3" height="82" rx="1.5" fill="#8b5cf6" opacity="0.35"/>
+  <text x="600" y="443" text-anchor="middle" class="name-muted">Identity</text>
+  <text x="600" y="465" text-anchor="middle" class="example">ERC-8004</text>
+
+  <!-- Agent Harness (muted) -->
+  <rect x="120" y="501" width="960" height="82" rx="12" fill="#141420" stroke="#1e1e30" stroke-width="1"/>
+  <rect x="120" y="501" width="3" height="82" rx="1.5" fill="#3b82f6" opacity="0.35"/>
+  <text x="600" y="539" text-anchor="middle" class="name-muted">Agent Harness</text>
+  <text x="600" y="561" text-anchor="middle" class="example">OpenClaw · Claude Code</text>
+</svg>

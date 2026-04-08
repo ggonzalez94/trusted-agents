@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700">
+  <style>
+    text { font-family: -apple-system, 'Segoe UI', system-ui, Helvetica, sans-serif; }
+    .name { font-size: 21px; font-weight: 700; fill: #fff; }
+    .example { font-size: 13px; font-weight: 400; fill: rgba(255,255,255,0.55); letter-spacing: 0.5px; }
+    .seg { font-size: 14px; font-weight: 600; fill: #fff; }
+    .cat { font-size: 11px; font-weight: 600; fill: rgba(255,255,255,0.3); letter-spacing: 2.5px; text-transform: uppercase; }
+  </style>
+
+  <!-- Background -->
+  <rect width="1200" height="700" fill="#09090b"/>
+
+  <!-- Applications label -->
+  <text x="600" y="106" text-anchor="middle" class="cat">Applications</text>
+
+  <!-- Applications layer (segmented) -->
+  <rect x="120" y="117" width="960" height="82" rx="12" fill="#059669"/>
+  <line x1="358" y1="129" x2="358" y2="187" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+  <line x1="648" y1="129" x2="648" y2="187" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+  <line x1="888" y1="129" x2="888" y2="187" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+  <text x="239" y="163" text-anchor="middle" class="seg">Scheduling</text>
+  <text x="503" y="163" text-anchor="middle" class="seg">Payments &amp; Settlement</text>
+  <text x="768" y="163" text-anchor="middle" class="seg">P2P Betting</text>
+  <text x="984" y="163" text-anchor="middle" class="seg" opacity="0.4">· · ·</text>
+
+  <!-- Coordination & Trust -->
+  <rect x="120" y="213" width="960" height="82" rx="12" fill="#f59e0b"/>
+  <text x="600" y="261" text-anchor="middle" class="name">Coordination &amp; Trust</text>
+
+  <!-- Messaging -->
+  <rect x="120" y="309" width="960" height="82" rx="12" fill="#0891b2"/>
+  <text x="600" y="347" text-anchor="middle" class="name">Messaging</text>
+  <text x="600" y="369" text-anchor="middle" class="example">XMTP</text>
+
+  <!-- Identity -->
+  <rect x="120" y="405" width="960" height="82" rx="12" fill="#7c3aed"/>
+  <text x="600" y="443" text-anchor="middle" class="name">Identity</text>
+  <text x="600" y="465" text-anchor="middle" class="example">ERC-8004</text>
+
+  <!-- Agent Harness -->
+  <rect x="120" y="501" width="960" height="82" rx="12" fill="#2563eb"/>
+  <text x="600" y="539" text-anchor="middle" class="name">Agent Harness</text>
+  <text x="600" y="561" text-anchor="middle" class="example">OpenClaw · Claude Code</text>
+</svg>
