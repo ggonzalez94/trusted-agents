@@ -63,6 +63,9 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      # Both chains share the same OWS wallets (same XMTP inbox IDs).
+      # Parallel runs would trigger XMTP installation revocation conflicts.
+      # Use per-chain wallet secrets to enable parallel execution.
       max-parallel: 1
       matrix:
         chain: [base, taiko]
