@@ -104,6 +104,7 @@ const TAP_DATA_DIR_ENTRIES = new Set([
 	"identity",
 	"ipfs-cache.json",
 	"notes",
+	"outbox",
 	"pending-connects.json",
 	"pending-invites.json",
 	"request-journal.json",

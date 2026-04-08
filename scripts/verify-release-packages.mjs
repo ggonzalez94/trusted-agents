@@ -8,6 +8,7 @@ const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const packages = [
 	{ dir: "packages/core", name: "trusted-agents-core" },
+	{ dir: "packages/sdk", name: "@trustedagents/sdk" },
 	{ dir: "packages/cli", name: "trusted-agents-cli" },
 	{ dir: "packages/openclaw-plugin", name: "trusted-agents-tap" },
 ];

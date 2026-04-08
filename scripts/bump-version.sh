@@ -16,6 +16,7 @@ fi
 
 PACKAGES=(
   "packages/core/package.json"
+  "packages/sdk/package.json"
   "packages/cli/package.json"
   "packages/openclaw-plugin/package.json"
 )

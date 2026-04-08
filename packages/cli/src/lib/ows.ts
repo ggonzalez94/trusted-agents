@@ -233,9 +233,6 @@ export async function setupOwsPolicy(
 	options?: { nonInteractive?: boolean; reuseInNonInteractive?: boolean },
 ): Promise<string> {
 	const policyChains = [chain];
-	if (chain !== "eip155:8453") {
-		policyChains.push("eip155:8453");
-	}
 
 	const compatible = findCompatiblePolicies(chain);
 
