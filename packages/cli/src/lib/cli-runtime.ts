@@ -2,7 +2,7 @@ import {
 	type CreateTapRuntimeOptions,
 	type TapRuntime,
 	createTapRuntime,
-} from "@trustedagents/sdk";
+} from "trusted-agents-sdk";
 import {
 	SchedulingHandler,
 	type TapServiceHooks,

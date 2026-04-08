@@ -29,17 +29,17 @@
     },
     "packages/cli": {
       "name": "trusted-agents-cli",
-      "version": "0.2.0-beta.1",
+      "version": "0.2.0-beta.2",
       "bin": {
         "tap": "./dist/bin.js",
       },
       "dependencies": {
         "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
-        "@trustedagents/sdk": "workspace:*",
         "@x402/evm": "^2.5.0",
         "@x402/fetch": "^2.5.0",
         "commander": "^13.0.0",
         "trusted-agents-core": "workspace:*",
+        "trusted-agents-sdk": "workspace:*",
         "viem": "2.46.3",
         "yaml": "^2.7.0",
       },
@@ -51,7 +51,7 @@
     },
     "packages/core": {
       "name": "trusted-agents-core",
-      "version": "0.2.0-beta.1",
+      "version": "0.2.0-beta.2",
       "dependencies": {
         "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
         "@xmtp/node-sdk": "^5.4.0",
@@ -89,11 +89,11 @@
     },
     "packages/openclaw-plugin": {
       "name": "trusted-agents-tap",
-      "version": "0.2.0-beta.1",
+      "version": "0.2.0-beta.2",
       "dependencies": {
         "@sinclair/typebox": "^0.34.48",
-        "@trustedagents/sdk": "workspace:*",
         "trusted-agents-core": "workspace:*",
+        "trusted-agents-sdk": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^25.3.3",
@@ -109,8 +109,8 @@
       ],
     },
     "packages/sdk": {
-      "name": "@trustedagents/sdk",
-      "version": "0.2.0-beta.1",
+      "name": "trusted-agents-sdk",
+      "version": "0.2.0-beta.2",
       "dependencies": {
         "trusted-agents-core": "workspace:*",
       },
@@ -865,8 +865,6 @@
     "@trustedagents/app-scheduling": ["@trustedagents/app-scheduling@workspace:packages/app-scheduling"],
 
     "@trustedagents/app-transfer": ["@trustedagents/app-transfer@workspace:packages/app-transfer"],
-
-    "@trustedagents/sdk": ["@trustedagents/sdk@workspace:packages/sdk"],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg=="],
 
@@ -1813,6 +1811,8 @@
     "trusted-agents-cli": ["trusted-agents-cli@workspace:packages/cli"],
 
     "trusted-agents-core": ["trusted-agents-core@workspace:packages/core"],
+
+    "trusted-agents-sdk": ["trusted-agents-sdk@workspace:packages/sdk"],
 
     "trusted-agents-tap": ["trusted-agents-tap@workspace:packages/openclaw-plugin"],
 

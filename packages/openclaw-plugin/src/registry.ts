@@ -11,7 +11,7 @@ import {
 	type TrustedAgentsConfig,
 	createTapRuntime,
 	loadTrustedAgentConfigFromDataDir,
-} from "@trustedagents/sdk";
+} from "trusted-agents-sdk";
 import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	AsyncMutex,

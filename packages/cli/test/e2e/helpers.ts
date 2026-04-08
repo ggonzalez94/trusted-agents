@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { TapRuntime } from "@trustedagents/sdk";
+import type { TapRuntime } from "trusted-agents-sdk";
 import { http, createPublicClient, formatUnits, parseAbi } from "viem";
 import { type CliTapServiceHooks, createCliRuntime } from "../../src/lib/cli-runtime.js";
 import { loadConfig } from "../../src/lib/config-loader.js";

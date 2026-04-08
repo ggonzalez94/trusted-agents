@@ -213,12 +213,12 @@ jobs:
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @trustedagents/sdk
+      - name: Publish trusted-agents-sdk
         working-directory: packages/sdk
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if npm view "@trustedagents/sdk@$TAG_VERSION" version 2>/dev/null; then
-            echo "@trustedagents/sdk@$TAG_VERSION already published, skipping"
+          if npm view "trusted-agents-sdk@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-sdk@$TAG_VERSION already published, skipping"
           else
             if [[ -n "${NPM_DIST_TAG:-}" ]]; then
               bun publish --access public --no-git-checks --provenance --tag "$NPM_DIST_TAG"
