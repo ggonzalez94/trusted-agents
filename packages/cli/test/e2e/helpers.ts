@@ -17,14 +17,14 @@ export const CHAIN_CONFIGS: Record<string, ChainE2EConfig> = {
 	base: {
 		caip2: "eip155:8453",
 		alias: "base",
-		rpcUrl: "https://mainnet.base.org",
+		rpcUrl: process.env.E2E_BASE_RPC_URL ?? "https://mainnet.base.org",
 		usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
 		usdcDecimals: 6,
 	},
 	taiko: {
 		caip2: "eip155:167000",
 		alias: "taiko",
-		rpcUrl: "https://rpc.mainnet.taiko.xyz",
+		rpcUrl: process.env.E2E_TAIKO_RPC_URL ?? "https://rpc.mainnet.taiko.xyz",
 		usdcAddress: "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
 		usdcDecimals: 6,
 	},
@@ -301,6 +301,64 @@ export async function waitForContact(opts: {
 			`Last sync stdout: ${lastSyncStdout}. ` +
 			`Last sync stderr: ${lastSyncStderr}`,
 	);
+}
+
+// ── XMTP Baseline ───────────────────────────────────────────────────────────
+
+/**
+ * Sync until the XMTP baseline is stable (a sync returns 0 new messages).
+ * Prevents the first real message from being swallowed by an incomplete baseline.
+ */
+export async function waitForStableBaseline(
+	dataDir: string,
+	label: string,
+	timeoutMs = 30_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+
+	// Initial sync to establish checkpoints — must succeed
+	const initResult = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+	if (initResult.exitCode !== 0) {
+		throw new Error(
+			`${label}: initial baseline sync failed (exit ${initResult.exitCode}): ${initResult.stderr}`,
+		);
+	}
+
+	// Poll until a sync returns 0 processed messages (baseline is stable)
+	while (Date.now() < deadline) {
+		const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		if (result.exitCode === 0) {
+			try {
+				const parsed = parseJsonOutput(result.stdout);
+				const data = parsed.data as { processed?: number };
+				if ((data.processed ?? 0) === 0) return;
+			} catch {
+				// Parse error — keep polling
+			}
+		}
+		await new Promise((r) => setTimeout(r, 2_000));
+	}
+
+	throw new Error(`${label} XMTP baseline did not stabilize within ${timeoutMs}ms`);
+}
+
+// ── Phase Timing ────────────────────────────────────────────────────────────
+
+/**
+ * Simple phase-level timer for CI telemetry.
+ * Usage: `const timer = createPhaseTimer("Phase 1"); beforeAll(timer.start); afterAll(timer.stop);`
+ */
+export function createPhaseTimer(name: string): { start: () => void; stop: () => void } {
+	let startTime: number;
+	return {
+		start() {
+			startTime = Date.now();
+		},
+		stop() {
+			const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+			console.log(`[timing] ${name}: ${elapsed}s`);
+		},
+	};
 }
 
 // ── Grant File Helpers ───────────────────────────────────────────────────────

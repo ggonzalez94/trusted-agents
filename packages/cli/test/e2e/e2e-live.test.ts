@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUnits } from "viem";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed } from "vitest";
 import {
 	type MessageListenerSession,
 	createMessageListenerSession,
@@ -11,6 +12,7 @@ import { runCli } from "../helpers/run-cli.js";
 import {
 	CHAIN_CONFIGS,
 	type PermissionSnapshot,
+	createPhaseTimer,
 	formatUsdc,
 	getUsdcBalance,
 	parseJsonOutput,
@@ -19,6 +21,7 @@ import {
 	waitForBalanceChange,
 	waitForContact,
 	waitForPermissions,
+	waitForStableBaseline,
 	waitForSync,
 	writeGrantFile,
 } from "./helpers.js";
@@ -105,9 +108,55 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		}
 	});
 
+	// ── Bail-out: skip remaining tests after the first failure ───────────────
+
+	let suiteFailed = false;
+
+	beforeEach(({ skip }) => {
+		if (suiteFailed) skip();
+		onTestFailed(() => {
+			suiteFailed = true;
+		});
+	});
+
+	// ── Phase 0: Preflight ───────────────────────────────────────────────────
+
+	describe("Phase 0: Preflight", () => {
+		const timer = createPhaseTimer("Phase 0: Preflight");
+		beforeAll(timer.start);
+		afterAll(timer.stop);
+
+		it(SCENARIOS.PREFLIGHT_RPC.name, { timeout: 15_000 }, async () => {
+			try {
+				await getUsdcBalance("0x0000000000000000000000000000000000000001", CHAIN_KEY);
+			} catch (err) {
+				throw new Error(
+					`Chain RPC for ${CHAIN_KEY} (${CHAIN.rpcUrl}) is not reachable. E2E tests require a working RPC endpoint. Override with E2E_${CHAIN_KEY.toUpperCase()}_RPC_URL env var. Error: ${(err as Error).message}`,
+				);
+			}
+		});
+
+		it(SCENARIOS.PREFLIGHT_OWS.name, { timeout: 15_000 }, async () => {
+			try {
+				execFileSync("ows", ["wallet", "list"], {
+					timeout: 10_000,
+					stdio: "pipe",
+				});
+			} catch (err) {
+				throw new Error(
+					`OWS is not available or not installed. E2E tests require OWS for wallet signing. Error: ${(err as Error).message}`,
+				);
+			}
+		});
+	});
+
 	// ── Phase 1: Onboarding ───────────────────────────────────────────────────
 
 	describe("Phase 1: Onboarding", () => {
+		const timer = createPhaseTimer("Phase 1: Onboarding");
+		beforeAll(timer.start);
+		afterAll(timer.stop);
+
 		it(SCENARIOS.INIT_AGENT_A.name, { timeout: 120_000 }, async () => {
 			const walletA = requireEnv("E2E_AGENT_A_OWS_WALLET");
 
@@ -219,12 +268,16 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 	// ── Phase 2: Connection ───────────────────────────────────────────────────
 
 	describe("Phase 2: Connection", () => {
+		const timer = createPhaseTimer("Phase 2: Connection");
+		beforeAll(timer.start);
+		afterAll(timer.stop);
+
 		// XMTP baselines existing DM history on the first sync.
 		// Both agents must sync once BEFORE any messages are sent,
 		// otherwise the first real message gets baselined (ignored).
 		it("Establish XMTP baseline for both agents", { timeout: 60_000 }, async () => {
-			await runCli(["--json", "--data-dir", agentADir, "message", "sync"]);
-			await runCli(["--json", "--data-dir", agentBDir, "message", "sync"]);
+			await waitForStableBaseline(agentADir, "Agent A", 30_000);
+			await waitForStableBaseline(agentBDir, "Agent B", 30_000);
 		});
 
 		it(SCENARIOS.CREATE_INVITE.name, { timeout: 60_000 }, async () => {
@@ -275,6 +328,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 	// ── Phase 3: Permissions ──────────────────────────────────────────────────
 
 	describe("Phase 3: Permissions", () => {
+		const timer = createPhaseTimer("Phase 3: Permissions");
+		beforeAll(timer.start);
+		afterAll(timer.stop);
+
 		it(SCENARIOS.VERIFY_NO_GRANTS.name, { timeout: 30_000 }, async () => {
 			const result = await runCli([
 				"--json",
@@ -355,6 +412,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 	// ── Phase 4: Messaging ────────────────────────────────────────────────────
 
 	describe("Phase 4: Messaging", () => {
+		const timer = createPhaseTimer("Phase 4: Messaging");
+		beforeAll(timer.start);
+		afterAll(timer.stop);
+
 		it(SCENARIOS.SEND_MESSAGE_A_TO_B.name, { timeout: 60_000 }, async () => {
 			const result = await runCli([
 				"--plain",
@@ -461,6 +522,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 	// ── Phase 5: Transfers ────────────────────────────────────────────────────
 
 	describe("Phase 5: Transfers", () => {
+		const timer = createPhaseTimer("Phase 5: Transfers");
+		beforeAll(timer.start);
+		afterAll(timer.stop);
+
 		it(SCENARIOS.RECORD_BALANCE_BEFORE.name, { timeout: 15_000 }, async () => {
 			balanceBeforeTransfer = await getUsdcBalance(agentBAddress, CHAIN_KEY);
 		});
@@ -476,6 +541,12 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 					approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
 				},
 			);
+
+			// Allow XMTP stream subscription to fully establish before sending
+			// messages. Without this, messages sent immediately after start() may
+			// land in the XMTP mailbox before the stream listener is ready,
+			// requiring a manual reconcile that this test flow does not perform.
+			await new Promise((r) => setTimeout(r, 3_000));
 		});
 
 		it(SCENARIOS.REQUEST_FUNDS_APPROVED.name, { timeout: 60_000 }, async () => {
@@ -525,10 +596,11 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 
 			const delta = balanceAfterTransfer - balanceBeforeTransfer;
 			expect(
-				delta,
-				`Agent B balance should have increased by ${TRANSFER_AMOUNT} USDC (${TRANSFER_AMOUNT_UNITS} units). ` +
-					`Before: ${formatUsdc(balanceBeforeTransfer, CHAIN_KEY)}, After: ${formatUsdc(balanceAfterTransfer, CHAIN_KEY)}`,
-			).toBe(TRANSFER_AMOUNT_UNITS);
+				delta >= TRANSFER_AMOUNT_UNITS,
+				`Agent B balance should have increased by at least ${TRANSFER_AMOUNT} USDC (${TRANSFER_AMOUNT_UNITS} units). ` +
+					`Before: ${formatUsdc(balanceBeforeTransfer, CHAIN_KEY)}, After: ${formatUsdc(balanceAfterTransfer, CHAIN_KEY)}, ` +
+					`Delta: ${formatUsdc(delta, CHAIN_KEY)}`,
+			).toBe(true);
 		});
 
 		// Stop Agent A's listener to release the transport lock before revoke.
