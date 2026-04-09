@@ -24,9 +24,19 @@ export function buildConnectionResult(
  * inbound connection/request. Used so that repeated `sendConnectionResult`
  * calls for the same correlation upsert a single journal entry instead of
  * accumulating one entry per retry.
+ *
+ * The id MUST include peer identity (chain + agentId) because JSON-RPC request
+ * ids are only unique within a single client's own request space — two
+ * different peers can happily both use id "1" for their connection/request,
+ * and without peer scoping their derived connection-result ids would collide
+ * and overwrite each other's pending journal entry.
  */
-export function deriveConnectionResultId(correlationId: string): string {
-	return `connection-result:${correlationId}`;
+export function deriveConnectionResultId(params: {
+	chain: string;
+	peerAgentId: number;
+	correlationId: string;
+}): string {
+	return `connection-result:${params.chain}:${params.peerAgentId}:${params.correlationId}`;
 }
 
 export function buildPermissionsUpdate(params: PermissionsUpdateParams): JsonRpcRequest {

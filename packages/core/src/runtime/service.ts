@@ -2959,6 +2959,15 @@ export class TapMessagingService {
 					`Abandoning pending ${method} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
 				);
 				await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
+				// Keep the connection-result short-circuit cache in sync with
+				// the journal (matches `sendAndCompleteJournalEntry`): a GC'd
+				// entry is no longer pending, so remove the peer from the set.
+				// If another non-stale entry exists for the same peer the
+				// cache will be re-primed on the next `sendConnectionResult`
+				// or `markPendingConnectionResultsCompletedFor` rebuild.
+				if (entry.method === CONNECTION_RESULT) {
+					this.peersWithPendingConnectionResult.delete(entry.peerAgentId);
+				}
 				continue;
 			}
 
@@ -3733,9 +3742,19 @@ function buildPendingConnectionResultDelivery(
 	peer: ResolvedAgent,
 	result: ConnectionResultParams,
 ): PendingConnectionResultDelivery {
-	// Deterministic id keyed by correlation so repeated calls upsert a single
-	// journal entry instead of accumulating one per retry (bounds pending set).
-	const request = buildConnectionResult(result, deriveConnectionResultId(result.requestId));
+	// Deterministic id keyed by (chain, peer agentId, correlation) so repeated
+	// calls upsert a single journal entry instead of accumulating one per retry
+	// (bounds pending set). Peer identity is part of the key because JSON-RPC
+	// ids are only unique within a single client's request space — two peers
+	// can use the same correlationId without scoping.
+	const request = buildConnectionResult(
+		result,
+		deriveConnectionResultId({
+			chain: peer.chain,
+			peerAgentId: peer.agentId,
+			correlationId: result.requestId,
+		}),
+	);
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: peer.agentId,
