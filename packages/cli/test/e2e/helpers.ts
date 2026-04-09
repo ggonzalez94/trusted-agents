@@ -245,36 +245,43 @@ export async function waitForSync(opts: {
 		minProcessed = 1,
 		runtime,
 	} = opts;
-	const deadline = Date.now() + timeoutMs;
 
+	// When a runtime is provided, its XMTP stream listener processes inbound
+	// messages in real-time and advances the sync checkpoint.  A subsequent
+	// reconcile() therefore returns processed=0 even though messages WERE
+	// handled.  Polling on the reconcile count would loop forever.
+	//
+	// A single syncOnce() call is still valuable as a belt-and-suspenders
+	// reconcile pass (catches anything the stream missed), but we must not
+	// gate return on the processed count.  Callers that need to verify
+	// specific state after sync should use waitForPermissions, waitForContact,
+	// or similar state-polling helpers instead.
+	if (runtime) {
+		await runtime.syncOnce();
+		return;
+	}
+
+	const deadline = Date.now() + timeoutMs;
 	let lastStdout = "";
 	let lastStderr = "";
 	let lastProcessed = 0;
 
 	while (Date.now() < deadline) {
-		if (runtime) {
-			const report = await runtime.syncOnce();
-			lastProcessed = report.processed;
-			if (lastProcessed >= minProcessed) {
-				return;
-			}
-		} else {
-			const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
-			lastStdout = result.stdout;
-			lastStderr = result.stderr;
+		const result = await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		lastStdout = result.stdout;
+		lastStderr = result.stderr;
 
-			if (result.exitCode === 0) {
-				// Parse the sync report to check processed count
-				try {
-					const parsed = parseJsonOutput(result.stdout);
-					const data = parsed.data as { processed?: number };
-					lastProcessed = data.processed ?? 0;
-					if (lastProcessed >= minProcessed) {
-						return;
-					}
-				} catch {
-					// If we can't parse, keep polling
+		if (result.exitCode === 0) {
+			// Parse the sync report to check processed count
+			try {
+				const parsed = parseJsonOutput(result.stdout);
+				const data = parsed.data as { processed?: number };
+				lastProcessed = data.processed ?? 0;
+				if (lastProcessed >= minProcessed) {
+					return;
 				}
+			} catch {
+				// If we can't parse, keep polling
 			}
 		}
 

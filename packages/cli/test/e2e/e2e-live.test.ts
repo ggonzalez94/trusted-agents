@@ -428,14 +428,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			sessionA = await createAgentSession({ dataDir: agentADir });
 		});
 
-		it(SCENARIOS.SYNC_GRANT.name, { timeout: 60_000 }, async () => {
-			await waitForSync({
-				dataDir: agentBDir,
-				description: "Agent B receiving permissions/update grant",
-				timeoutMs: 60_000,
-				runtime: sessionB?.runtime,
-			});
-		});
+		// SYNC_GRANT removed: waitForPermissions below already syncs + polls state.
+		// A standalone waitForSync was unreliable because the runtime's XMTP
+		// stream listener processes messages in real-time, making reconcile()
+		// return processed=0.
 
 		it(SCENARIOS.VERIFY_GRANT.name, { timeout: 60_000 }, async () => {
 			const snapshot = await waitForPermissions(
