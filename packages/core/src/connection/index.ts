@@ -8,6 +8,7 @@ export {
 	buildConnectionRequest,
 	buildConnectionResult,
 	buildPermissionsUpdate,
+	deriveConnectionResultId,
 } from "./handshake.js";
 
 export {

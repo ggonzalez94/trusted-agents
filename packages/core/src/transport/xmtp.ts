@@ -155,6 +155,32 @@ export class XmtpTransport implements TransportProvider {
 		const inboxId = await this.resolveInboxId(peerAddress);
 		const dm = await this.client.conversations.createDm(inboxId);
 		const requestId = String(message.id);
+		const waitForAck = options?.waitForAck ?? true;
+
+		// Fire-and-forget path: publish to the transport and return immediately.
+		// The peer may still emit a JSON-RPC receipt later, which `processIncomingReceipt`
+		// will silently ignore (no matching pendingRequest entry). Delivery durability
+		// is owned by the caller's request journal + retry pipeline, not by the
+		// synchronous ack.
+		if (!waitForAck) {
+			try {
+				await dm.sendText(JSON.stringify(message));
+			} catch (err) {
+				throw err instanceof TransportError
+					? err
+					: new TransportError(`Failed to send message: ${toErrorMessage(err)}`);
+			}
+			if (connectionId) {
+				this.trustStore.touchContact(connectionId).catch(() => {});
+			}
+			return {
+				received: true,
+				requestId,
+				status: "published",
+				receivedAt: nowISO(),
+			};
+		}
+
 		const timeout = options?.timeout ?? this.config.defaultResponseTimeoutMs ?? 30_000;
 
 		const receiptPromise = new Promise<TransportReceipt>((resolve, reject) => {

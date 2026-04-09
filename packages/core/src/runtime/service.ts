@@ -19,6 +19,7 @@ import {
 	buildConnectionRequest,
 	buildConnectionResult,
 	buildPermissionsUpdate,
+	deriveConnectionResultId,
 	handleConnectionRequest,
 	isSelfInvite,
 	parseInviteUrl,
@@ -123,7 +124,13 @@ import {
 
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
 const CONNECT_RECEIPT_TIMEOUT_MS = 5_000;
-const OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS = 15_000;
+/**
+ * Pending outbound result entries older than this are garbage-collected by the
+ * retry pipeline. Prevents accumulation when a peer is permanently unreachable
+ * (or when the local side has lost track of outbound deliveries across many
+ * restarts).
+ */
+const PENDING_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const OUTBOX_POLL_INTERVAL_MS = 1_000;
 const OUTBOX_RESULT_RETENTION_MS = 60 * 60 * 1000;
 const OUTBOX_RESULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -195,6 +202,15 @@ interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	request: ProtocolMessage;
 }
 
+const DELIVERY_FAILURE_METADATA_KEY = "__deliveryFailure";
+
+interface DeliveryFailureMetadata {
+	type: "delivery-failure";
+	attempts: number;
+	lastAttemptAt: string;
+	lastError: string;
+}
+
 interface PendingConnectionRequest extends Record<string, unknown> {
 	type: "connection-request";
 	message: ProtocolMessage;
@@ -250,10 +266,22 @@ export interface TapServiceStatus {
 	pendingRequests: TapPendingRequest[];
 }
 
+export interface TapPendingDelivery {
+	requestId: string;
+	method: string;
+	peerAgentId: number;
+	correlationId?: string;
+	ageMs: number;
+	attempts?: number;
+	lastAttemptAt?: string;
+	lastError?: string;
+}
+
 export interface TapSyncReport {
 	synced: true;
 	processed: number;
 	pendingRequests: TapServiceStatus["pendingRequests"];
+	pendingDeliveries: TapPendingDelivery[];
 }
 
 export interface TapConnectResult {
@@ -344,6 +372,15 @@ export class TapMessagingService {
 	private readonly outboxStaleLeaseMs: number;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
+	/**
+	 * Peer ids that currently have (or recently had) a pending outbound
+	 * connection/result entry in the journal. Lets the implicit-completion
+	 * path avoid a full journal scan on every inbound DM. See
+	 * {@link markPendingConnectionResultsCompletedFor}.
+	 */
+	private readonly peersWithPendingConnectionResult = new Set<number>();
+	private connectionResultCachePriming: Promise<void> | null = null;
+	private connectionResultCachePrimed = false;
 	private readonly decisionOverrides = {
 		transfers: new Map<string, boolean>(),
 		scheduling: new Map<string, { approve: boolean; reason?: string }>(),
@@ -523,19 +560,8 @@ export class TapMessagingService {
 	}
 
 	async listPendingRequests(): Promise<TapServiceStatus["pendingRequests"]> {
-		const pending = (await this.context.requestJournal.listPending()).filter(
-			(entry) => entry.kind === "request",
-		);
-		return pending.map((entry) => ({
-			requestId: entry.requestId,
-			method: entry.method,
-			peerAgentId: entry.peerAgentId,
-			direction: entry.direction,
-			kind: entry.kind,
-			status: entry.status,
-			correlationId: entry.correlationId,
-			details: parsePendingRequestDetails(entry.metadata),
-		}));
+		const pending = await this.context.requestJournal.listPending();
+		return pending.filter((entry) => entry.kind === "request").map(toPendingRequestView);
 	}
 
 	private async findCancellableSchedulingRequest(
@@ -778,7 +804,7 @@ export class TapMessagingService {
 
 					await this.context.transport.send(contact.peerAgentId, outgoing, {
 						peerAddress: contact.peerAgentAddress,
-						timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+						waitForAck: false,
 					});
 					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
 					const clearedLocalEvent = await this.cancelLocalSchedulingEvent(
@@ -917,8 +943,12 @@ export class TapMessagingService {
 			const contact = await this.requireActiveContact(peer);
 			const request = buildOutgoingMessageRequest(contact, text, scope, options);
 			const timestamp = nowISO();
+			// Fire-and-forget: a one-shot peer that isn't running `tap message
+			// listen` during the publish window would otherwise turn a
+			// successful XMTP publication into a local timeout.
 			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
 				peerAddress: contact.peerAgentAddress,
+				waitForAck: false,
 			});
 
 			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
@@ -1404,11 +1434,35 @@ export class TapMessagingService {
 	}
 
 	private async buildSyncReport(processed: number): Promise<TapSyncReport> {
+		// Single journal scan partitioned into the two views the report needs.
+		// Avoids reading request-journal.json twice per sync.
+		const allPending = await this.context.requestJournal.listPending();
+		const pendingRequests = allPending
+			.filter((entry) => entry.kind === "request")
+			.map(toPendingRequestView);
+		const pendingDeliveries = allPending
+			.filter((entry) => entry.direction === "outbound" && entry.kind === "result")
+			.map((entry) => toPendingDeliveryView(entry, Date.now()));
 		return {
 			synced: true,
 			processed,
-			pendingRequests: await this.listPendingRequests(),
+			pendingRequests,
+			pendingDeliveries,
 		};
+	}
+
+	/**
+	 * Pending outbound "result" deliveries — connection/result, action/result,
+	 * scheduling responses — whose publication has failed or not yet been
+	 * attempted. Surfaces the retry pipeline's backlog so operators and host
+	 * agents see real stuck work, not a misleading "processed: 0".
+	 */
+	async listPendingDeliveries(): Promise<TapPendingDelivery[]> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		const now = Date.now();
+		return pending
+			.filter((entry) => entry.kind === "result")
+			.map((entry) => toPendingDeliveryView(entry, now));
 	}
 
 	private emitEvent(payload: Record<string, unknown>): void {
@@ -1642,6 +1696,14 @@ export class TapMessagingService {
 			throw new ValidationError(`No contact found for agent ${envelope.from}`);
 		}
 
+		// Implicit handshake completion: the peer could only be sending us a
+		// non-bootstrap request if they already have an active contact for us,
+		// which means they received our connection/result. Any pending outbound
+		// connection/result entries for this peer are now load-bearing no more.
+		if (contact.status === "active") {
+			await this.markPendingConnectionResultsCompletedFor(contact.peerAgentId);
+		}
+
 		if (envelope.message.method === PERMISSIONS_UPDATE) {
 			await this.handlePermissionsUpdate(contact, envelope.message);
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
@@ -1841,6 +1903,11 @@ export class TapMessagingService {
 		if (claimed.duplicate && claimed.entry.status === "completed") {
 			return this.emitIncomingAndReturn(envelope, "duplicate");
 		}
+
+		// Implicit handshake completion (see onRequest for rationale). A
+		// non-connection result means the peer already has us as an active
+		// contact; any pending outbound connection/result for them is moot.
+		await this.markPendingConnectionResultsCompletedFor(envelope.from);
 
 		let peerName: string | undefined;
 		if (envelope.message.method === ACTION_RESULT) {
@@ -2165,7 +2232,7 @@ export class TapMessagingService {
 			try {
 				await this.context.transport.send(contact.peerAgentId, delivery.request, {
 					peerAddress: contact.peerAgentAddress,
-					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					waitForAck: false,
 				});
 				await this.appendConversationLogSafe(contact, delivery.request, "outgoing");
 			} catch (deliveryError: unknown) {
@@ -2435,13 +2502,7 @@ export class TapMessagingService {
 						"completed",
 					);
 
-					await this.deliverSchedulingOutgoing(
-						contact,
-						outgoing,
-						"accept",
-						proposal.schedulingId,
-						OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-					);
+					await this.deliverSchedulingOutgoing(contact, outgoing, "accept", proposal.schedulingId);
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
@@ -2549,13 +2610,7 @@ export class TapMessagingService {
 			"rejected",
 		);
 
-		await this.deliverSchedulingOutgoing(
-			contact,
-			outgoing,
-			"reject",
-			proposal.schedulingId,
-			OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
-		);
+		await this.deliverSchedulingOutgoing(contact, outgoing, "reject", proposal.schedulingId);
 
 		await this.context.requestJournal.updateStatus(requestId, "completed");
 		await this.appendLedger({
@@ -2574,12 +2629,11 @@ export class TapMessagingService {
 		outgoing: ProtocolMessage,
 		actionType: string,
 		schedulingId: string,
-		timeoutMs?: number,
 	): Promise<void> {
 		try {
 			await this.context.transport.send(contact.peerAgentId, outgoing, {
 				peerAddress: contact.peerAgentAddress,
-				...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+				waitForAck: false,
 			});
 			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
 		} catch (error: unknown) {
@@ -2807,6 +2861,7 @@ export class TapMessagingService {
 				metadata: delivery as unknown as Record<string, unknown>,
 			});
 			persisted = true;
+			this.peersWithPendingConnectionResult.add(peer.agentId);
 		} catch (error: unknown) {
 			this.log(
 				"error",
@@ -2820,7 +2875,7 @@ export class TapMessagingService {
 			} else {
 				await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 					peerAddress: delivery.peerAddress,
-					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					waitForAck: false,
 				});
 			}
 		} catch (error: unknown) {
@@ -2887,10 +2942,26 @@ export class TapMessagingService {
 	): Promise<number> {
 		const pending = await this.context.requestJournal.listPending("outbound");
 		let processed = 0;
+		const now = Date.now();
 		for (const entry of pending) {
 			if (entry.kind !== "result" || entry.method !== method) {
 				continue;
 			}
+
+			// Stale cleanup — prevent indefinite accumulation for peers that
+			// have been offline so long that the delivery is no longer
+			// meaningful. The entry is marked terminal rather than deleted so
+			// the journal still carries a record of the attempt.
+			const createdMs = Date.parse(entry.createdAt);
+			if (Number.isFinite(createdMs) && now - createdMs > PENDING_RESULT_MAX_AGE_MS) {
+				this.log(
+					"warn",
+					`Abandoning pending ${method} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
+				);
+				await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
+				continue;
+			}
+
 			const delivery = parse(entry.metadata);
 			if (!delivery) {
 				continue;
@@ -2904,9 +2975,42 @@ export class TapMessagingService {
 					`${delivery.peerName} (#${delivery.peerAgentId})`,
 					error,
 				);
+				await this.recordDeliveryFailure(entry.requestId, entry.metadata, error);
 			}
 		}
 		return processed;
+	}
+
+	/**
+	 * Merge `lastError` / `lastAttemptAt` / `attempts` into the journal entry's
+	 * metadata so `listPendingDeliveries` — and by extension the sync report —
+	 * can surface a real reason for stuck deliveries. Failures are best-effort:
+	 * if the metadata update itself fails we don't want to lose the original
+	 * delivery payload, so we catch and continue.
+	 */
+	private async recordDeliveryFailure(
+		requestId: string,
+		metadata: Record<string, unknown> | undefined,
+		error: unknown,
+	): Promise<void> {
+		try {
+			const previousFailure = parseDeliveryFailureMetadata(metadata);
+			const nextFailure: DeliveryFailureMetadata = {
+				type: "delivery-failure",
+				attempts: (previousFailure?.attempts ?? 0) + 1,
+				lastAttemptAt: nowISO(),
+				lastError: toErrorMessage(error),
+			};
+			await this.context.requestJournal.updateMetadata(requestId, {
+				...(metadata ?? {}),
+				[DELIVERY_FAILURE_METADATA_KEY]: nextFailure,
+			});
+		} catch (updateError: unknown) {
+			this.log(
+				"warn",
+				`Failed to record delivery failure for ${requestId}: ${toErrorMessage(updateError)}`,
+			);
+		}
 	}
 
 	private retryPendingActionResults(): Promise<number> {
@@ -2954,6 +3058,100 @@ export class TapMessagingService {
 		);
 	}
 
+	/**
+	 * Implicit handshake completion. Any inbound protocol message from a peer
+	 * with whom we already have an active contact is proof that the peer has
+	 * received and accepted our previous connection/result — otherwise the
+	 * transport would have rejected the message as "Unknown sender" instead
+	 * of routing it here. When that happens, any pending outbound
+	 * connection/result entries for that peer become load-bearing no more,
+	 * and we complete them so the retry pipeline stops hammering and the
+	 * sync report stops reporting stuck handshake work.
+	 */
+	private async markPendingConnectionResultsCompletedFor(peerAgentId: number): Promise<void> {
+		// Hot-path short-circuit: only pay for the journal scan if we know this
+		// peer has a pending connection/result entry. The cache is populated
+		// lazily on first miss (see `primeConnectionResultCache`), updated by
+		// `sendConnectionResult` when a new entry is persisted, and kept in
+		// sync on successful completion below.
+		await this.primeConnectionResultCache();
+		if (!this.peersWithPendingConnectionResult.has(peerAgentId)) {
+			return;
+		}
+
+		let pending: RequestJournalEntry[];
+		try {
+			pending = await this.context.requestJournal.listPending("outbound");
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to scan pending outbound deliveries for implicit completion: ${toErrorMessage(error)}`,
+			);
+			return;
+		}
+
+		let remainingForPeer = false;
+		for (const entry of pending) {
+			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
+				continue;
+			}
+			if (entry.peerAgentId !== peerAgentId) {
+				continue;
+			}
+			try {
+				await this.markJournalEntryCompleted(entry.requestId);
+				this.log(
+					"info",
+					`Implicitly completed pending connection result ${entry.requestId} for agent #${peerAgentId} — peer is already sending active traffic`,
+				);
+			} catch (error: unknown) {
+				remainingForPeer = true;
+				this.log(
+					"warn",
+					`Failed to implicitly complete pending connection result ${entry.requestId}: ${toErrorMessage(error)}`,
+				);
+			}
+		}
+		if (!remainingForPeer) {
+			this.peersWithPendingConnectionResult.delete(peerAgentId);
+		}
+	}
+
+	/**
+	 * Populate {@link peersWithPendingConnectionResult} from the journal on
+	 * first access so a freshly-constructed service sees pre-existing entries
+	 * left over from the previous process run. Concurrent callers share the
+	 * same priming promise so no caller sees an in-flight empty cache (which
+	 * would cause false-negative short-circuits on inbound traffic). Best-
+	 * effort: on failure, the cache stays unprimed and a future call retries.
+	 */
+	private async primeConnectionResultCache(): Promise<void> {
+		if (this.connectionResultCachePrimed) {
+			return;
+		}
+		if (!this.connectionResultCachePriming) {
+			this.connectionResultCachePriming = (async () => {
+				try {
+					const pending = await this.context.requestJournal.listPending("outbound");
+					for (const entry of pending) {
+						if (entry.kind === "result" && entry.method === CONNECTION_RESULT) {
+							this.peersWithPendingConnectionResult.add(entry.peerAgentId);
+						}
+					}
+					this.connectionResultCachePrimed = true;
+				} catch (error: unknown) {
+					this.log(
+						"warn",
+						`Failed to prime pending connection-result cache: ${toErrorMessage(error)}`,
+					);
+				} finally {
+					this.connectionResultCachePriming = null;
+				}
+			})();
+		}
+		await this.connectionResultCachePriming;
+	}
+
 	private async sendAndCompleteJournalEntry(delivery: {
 		peerAgentId: number;
 		request: ProtocolMessage;
@@ -2961,10 +3159,27 @@ export class TapMessagingService {
 	}): Promise<void> {
 		await this.context.transport.send(delivery.peerAgentId, delivery.request, {
 			peerAddress: delivery.peerAddress,
-			timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+			waitForAck: false,
 		});
-		await this.context.requestJournal.updateStatus(String(delivery.request.id), "completed");
-		await this.context.requestJournal.updateMetadata(String(delivery.request.id), undefined);
+		await this.markJournalEntryCompleted(String(delivery.request.id));
+		// Keep the connection-result short-circuit cache in sync with the
+		// journal: once a retry-pipeline delivery succeeds, the peer no longer
+		// has a pending outbound connection/result, so subsequent inbounds
+		// should skip the journal scan. Without this, the peer stays in the
+		// cache until an inbound triggers `markPendingConnectionResultsCompletedFor`.
+		if (delivery.request.method === CONNECTION_RESULT) {
+			this.peersWithPendingConnectionResult.delete(delivery.peerAgentId);
+		}
+	}
+
+	/**
+	 * Terminal state for a journal entry: mark completed and clear any retry
+	 * metadata. Errors propagate — callers that want to swallow (implicit
+	 * cleanup, stale-entry GC) wrap the call themselves.
+	 */
+	private async markJournalEntryCompleted(requestId: string): Promise<void> {
+		await this.context.requestJournal.updateStatus(requestId, "completed");
+		await this.context.requestJournal.updateMetadata(requestId, undefined);
 	}
 
 	private async deliverPendingActionResult(delivery: PendingActionResultDelivery): Promise<void> {
@@ -3020,7 +3235,7 @@ export class TapMessagingService {
 		try {
 			await this.context.transport.send(contact.peerAgentId, outgoing, {
 				peerAddress: contact.peerAgentAddress,
-				timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+				waitForAck: false,
 			});
 			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
 		} catch (error: unknown) {
@@ -3190,7 +3405,7 @@ export class TapMessagingService {
 			try {
 				await this.context.transport.send(contact.peerAgentId, outgoing, {
 					peerAddress: contact.peerAgentAddress,
-					timeout: OUTBOUND_RESULT_RECEIPT_TIMEOUT_MS,
+					waitForAck: false,
 				});
 				await this.appendConversationLogSafe(contact, outgoing, "outgoing");
 			} catch (deliveryError: unknown) {
@@ -3518,7 +3733,9 @@ function buildPendingConnectionResultDelivery(
 	peer: ResolvedAgent,
 	result: ConnectionResultParams,
 ): PendingConnectionResultDelivery {
-	const request = buildConnectionResult(result);
+	// Deterministic id keyed by correlation so repeated calls upsert a single
+	// journal entry instead of accumulating one per retry (bounds pending set).
+	const request = buildConnectionResult(result, deriveConnectionResultId(result.requestId));
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: peer.agentId,
@@ -3687,6 +3904,57 @@ function parseRecordedTransferResponse(
 	}
 
 	return parsed as TransferActionResponse;
+}
+
+function toPendingRequestView(entry: RequestJournalEntry): TapPendingRequest {
+	return {
+		requestId: entry.requestId,
+		method: entry.method,
+		peerAgentId: entry.peerAgentId,
+		direction: entry.direction,
+		kind: entry.kind,
+		status: entry.status,
+		correlationId: entry.correlationId,
+		details: parsePendingRequestDetails(entry.metadata),
+	};
+}
+
+function toPendingDeliveryView(entry: RequestJournalEntry, now: number): TapPendingDelivery {
+	const createdMs = Date.parse(entry.createdAt);
+	const ageMs = Number.isFinite(createdMs) ? now - createdMs : 0;
+	const failure = parseDeliveryFailureMetadata(entry.metadata);
+	return {
+		requestId: entry.requestId,
+		method: entry.method,
+		peerAgentId: entry.peerAgentId,
+		...(entry.correlationId ? { correlationId: entry.correlationId } : {}),
+		ageMs,
+		...(failure?.attempts !== undefined ? { attempts: failure.attempts } : {}),
+		...(failure?.lastAttemptAt ? { lastAttemptAt: failure.lastAttemptAt } : {}),
+		...(failure?.lastError ? { lastError: failure.lastError } : {}),
+	};
+}
+
+function parseDeliveryFailureMetadata(
+	metadata: Record<string, unknown> | undefined,
+): DeliveryFailureMetadata | null {
+	if (!metadata) {
+		return null;
+	}
+	const raw = metadata[DELIVERY_FAILURE_METADATA_KEY];
+	if (typeof raw !== "object" || raw === null) {
+		return null;
+	}
+	const candidate = raw as Partial<DeliveryFailureMetadata>;
+	if (
+		candidate.type !== "delivery-failure" ||
+		typeof candidate.attempts !== "number" ||
+		typeof candidate.lastAttemptAt !== "string" ||
+		typeof candidate.lastError !== "string"
+	) {
+		return null;
+	}
+	return candidate as DeliveryFailureMetadata;
 }
 
 function isProtocolMessage(value: unknown): value is ProtocolMessage {
