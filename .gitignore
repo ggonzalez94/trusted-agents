@@ -12,5 +12,6 @@ xmtp-*.db3*
 skill-workspace/
 .claude/
 packages/openclaw-plugin/skills/
+packages/cli/skills/
 .next/
 out/

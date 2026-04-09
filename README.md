@@ -72,6 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scr
 From a local clone: `bash scripts/install.sh`
 
 Stable remains the default unless you explicitly opt into a prerelease.
+Rerunning the installer updates the global `tap` CLI first, then refreshes the bundled TAP skills, and updates the OpenClaw plugin when that runtime is selected or detected.
 
 Install the latest beta:
 
