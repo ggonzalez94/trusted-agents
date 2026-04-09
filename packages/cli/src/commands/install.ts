@@ -86,7 +86,7 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 				for (const runtime of skillInstallTargets) {
 					results.push({
 						runtime,
-						detected: true,
+						detected: detectedSkillHostRuntimes.includes(runtime),
 						skills_installed: true,
 						notes: firstRuntime ? [...notes] : ["Skills already installed for another runtime."],
 					});
@@ -117,22 +117,6 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			const pluginResult = await installOpenClawPlugin(autoDetect, notes, pluginPackageSpec);
 			result.plugin_installed = pluginResult.installed;
 			results.push(result);
-		}
-
-		if (results.length === 0) {
-			success(
-				{
-					installed: false,
-					reason: "No TAP install targets were selected.",
-					warnings: legacyWarning ? [legacyWarning] : undefined,
-					next_steps: [
-						"Pass --runtime claude, --runtime codex, or --runtime openclaw to install explicitly.",
-					],
-				},
-				opts,
-				startTime,
-			);
-			return;
 		}
 
 		success(
