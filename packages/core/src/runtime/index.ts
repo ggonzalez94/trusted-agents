@@ -80,6 +80,7 @@ export {
 	type TapCancelMeetingResult,
 	type TapConnectResult,
 	type TapConnectionApprovalContext,
+	type TapPendingDelivery,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,
 	type TapPendingSchedulingDetails,

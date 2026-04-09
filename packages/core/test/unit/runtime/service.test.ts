@@ -33,6 +33,7 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "../../../src/transport/interface.js";
+import type { TransportSendOptions } from "../../../src/transport/types.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
 import {
@@ -59,7 +60,11 @@ class FakeTransport implements TransportProvider {
 		} = {},
 	) {}
 
-	public readonly sentMessages: Array<{ peerId: number; message: ProtocolMessage }> = [];
+	public readonly sentMessages: Array<{
+		peerId: number;
+		message: ProtocolMessage;
+		options?: TransportSendOptions;
+	}> = [];
 
 	setHandlers(handlers: TransportHandlers): void {
 		this.handlers = handlers;
@@ -88,10 +93,15 @@ class FakeTransport implements TransportProvider {
 		};
 	}
 
-	async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+	async send(
+		peerId: number,
+		message: ProtocolMessage,
+		options?: TransportSendOptions,
+	): Promise<TransportReceipt> {
 		this.sentMessages.push({
 			peerId,
 			message,
+			...(options ? { options } : {}),
 		});
 		if (this.options.sendError) {
 			throw this.options.sendError;
@@ -99,7 +109,7 @@ class FakeTransport implements TransportProvider {
 		return {
 			received: true,
 			requestId: String(message.id),
-			status: "received",
+			status: options?.waitForAck === false ? "published" : "received",
 			receivedAt: "2026-03-07T00:00:00.000Z",
 		};
 	}
@@ -305,6 +315,7 @@ describe("TapMessagingService", () => {
 			synced: true,
 			processed: 3,
 			pendingRequests: [],
+			pendingDeliveries: [],
 		});
 		expect(transport.startCalls).toBe(1);
 		expect(transport.stopCalls).toBe(1);
@@ -2711,5 +2722,627 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.stop();
+	});
+
+	describe("messaging fire-and-forget semantics", () => {
+		it("sendMessage publishes without waiting for an application-level ack", async () => {
+			const activeContact = makeActiveContact("conn-fire-and-forget");
+			const loggedMessages: Array<{
+				conversationId: string;
+				direction: string;
+				content: unknown;
+			}> = [];
+			const conversationLogger: IConversationLogger = {
+				logMessage: async (conversationId, message) => {
+					loggedMessages.push({
+						conversationId,
+						direction: message.direction,
+						content: message.content,
+					});
+				},
+				getConversation: async () => null,
+				listConversations: async () => [],
+				generateTranscript: async () => "",
+			};
+
+			// Custom transport that NEVER sends a transport-level ack back —
+			// simulates a peer that's not listening (one-shot CLI scenario).
+			// Before the fix, sendMessage would rely on the JSON-RPC receipt
+			// coming back and throw "Response timeout" if the peer is offline.
+			class SilentTransport extends FakeTransport {
+				override async send(
+					peerId: number,
+					message: ProtocolMessage,
+					options?: TransportSendOptions,
+				): Promise<TransportReceipt> {
+					this.sentMessages.push({
+						peerId,
+						message,
+						...(options ? { options } : {}),
+					});
+					// Intentionally return "published" — this is what the transport
+					// MUST do when waitForAck:false so the caller doesn't block.
+					return {
+						received: true,
+						requestId: String(message.id),
+						status: "published",
+						receivedAt: "2026-03-08T00:00:00.000Z",
+					};
+				}
+			}
+
+			const transport = new SilentTransport();
+			const dataDir = await mkdtemp(join(tmpdir(), "tap-fire-and-forget-"));
+			trackTempDir(dataDir);
+			const config: TrustedAgentsConfig = {
+				agentId: 1,
+				chain: "eip155:8453",
+				ows: { wallet: "test", apiKey: "ows_key_test" },
+				dataDir,
+				chains: {},
+				inviteExpirySeconds: 3600,
+				resolveCacheTtlMs: 60_000,
+				resolveCacheMaxEntries: 128,
+			};
+			const requestJournal = new FileRequestJournalImpl(dataDir);
+			const appRegistry = new TapAppRegistry(dataDir);
+			const service = new TapMessagingService(
+				{
+					config,
+					signingProvider: ALICE_SIGNING_PROVIDER,
+					trustStore: createMemoryTrustStore([activeContact]),
+					resolver: createStaticResolver(),
+					conversationLogger,
+					requestJournal,
+					transport,
+					appRegistry,
+				},
+				{
+					ownerLabel: "tap:test-fire-and-forget",
+				},
+			);
+
+			const result = await service.sendMessage(activeContact.peerDisplayName, "Hello Bob");
+
+			// 1. It did not throw. (Before: would throw "Response timeout".)
+			expect(result.receipt.status).toBe("published");
+
+			// 2. Transport.send was invoked with waitForAck: false.
+			expect(transport.sentMessages).toHaveLength(1);
+			expect(transport.sentMessages[0]?.message.method).toBe("message/send");
+			expect(transport.sentMessages[0]?.options?.waitForAck).toBe(false);
+
+			// 3. Conversation log was written immediately after publication —
+			//    even though no ack ever arrived.
+			expect(loggedMessages).toHaveLength(1);
+			expect(loggedMessages[0]?.direction).toBe("outgoing");
+		});
+
+		it("writes conversation log for outgoing messages on successful publication", async () => {
+			const activeContact = makeActiveContact("conn-eager-log");
+			const loggedMessages: Array<{ direction: string }> = [];
+			const conversationLogger: IConversationLogger = {
+				logMessage: async (_conversationId, message) => {
+					loggedMessages.push({ direction: message.direction });
+				},
+				getConversation: async () => null,
+				listConversations: async () => [],
+				generateTranscript: async () => "",
+			};
+
+			const transport = new FakeTransport();
+			const dataDir = await mkdtemp(join(tmpdir(), "tap-eager-log-"));
+			trackTempDir(dataDir);
+			const config: TrustedAgentsConfig = {
+				agentId: 1,
+				chain: "eip155:8453",
+				ows: { wallet: "test", apiKey: "ows_key_test" },
+				dataDir,
+				chains: {},
+				inviteExpirySeconds: 3600,
+				resolveCacheTtlMs: 60_000,
+				resolveCacheMaxEntries: 128,
+			};
+			const service = new TapMessagingService(
+				{
+					config,
+					signingProvider: ALICE_SIGNING_PROVIDER,
+					trustStore: createMemoryTrustStore([activeContact]),
+					resolver: createStaticResolver(),
+					conversationLogger,
+					requestJournal: new FileRequestJournalImpl(dataDir),
+					transport,
+					appRegistry: new TapAppRegistry(dataDir),
+				},
+				{ ownerLabel: "tap:test-eager-log" },
+			);
+
+			await service.sendMessage(activeContact.peerDisplayName, "Eager log test");
+
+			expect(loggedMessages).toEqual([{ direction: "outgoing" }]);
+		});
+
+		it("does NOT write conversation log if publication fails", async () => {
+			const activeContact = makeActiveContact("conn-publish-fail");
+			const loggedMessages: Array<unknown> = [];
+			const conversationLogger: IConversationLogger = {
+				logMessage: async () => {
+					loggedMessages.push(true);
+				},
+				getConversation: async () => null,
+				listConversations: async () => [],
+				generateTranscript: async () => "",
+			};
+
+			class PublishFailTransport extends FakeTransport {
+				override async send(): Promise<TransportReceipt> {
+					throw new TransportError("Failed to publish DM: network unreachable");
+				}
+			}
+
+			const dataDir = await mkdtemp(join(tmpdir(), "tap-publish-fail-"));
+			trackTempDir(dataDir);
+			const config: TrustedAgentsConfig = {
+				agentId: 1,
+				chain: "eip155:8453",
+				ows: { wallet: "test", apiKey: "ows_key_test" },
+				dataDir,
+				chains: {},
+				inviteExpirySeconds: 3600,
+				resolveCacheTtlMs: 60_000,
+				resolveCacheMaxEntries: 128,
+			};
+			const service = new TapMessagingService(
+				{
+					config,
+					signingProvider: ALICE_SIGNING_PROVIDER,
+					trustStore: createMemoryTrustStore([activeContact]),
+					resolver: createStaticResolver(),
+					conversationLogger,
+					requestJournal: new FileRequestJournalImpl(dataDir),
+					transport: new PublishFailTransport(),
+					appRegistry: new TapAppRegistry(dataDir),
+				},
+				{ ownerLabel: "tap:test-publish-fail" },
+			);
+
+			await expect(service.sendMessage(activeContact.peerDisplayName, "Will fail")).rejects.toThrow(
+				"Failed to publish",
+			);
+			expect(loggedMessages).toHaveLength(0);
+		});
+	});
+
+	describe("connection result journal idempotency", () => {
+		it("reuses the same outbound journal entry when processConnectionRequest re-runs for the same inbound", async () => {
+			// Scenario that reproduces the reported accumulation bug:
+			// the process crashes between sendConnectionResult's putOutbound and
+			// the updateStatus("completed") of the inbound entry. On restart,
+			// the listener re-processes the still-pending inbound, runs
+			// sendConnectionResult again, and — before the fix — creates a
+			// brand-new outbound entry each time. We simulate the crash by
+			// resetting the inbound status to "pending" between submissions.
+			const trustStore = createMemoryTrustStore();
+			class PublishFailingTransport extends FakeTransport {
+				override async send(
+					peerId: number,
+					message: ProtocolMessage,
+					options?: TransportSendOptions,
+				): Promise<TransportReceipt> {
+					this.sentMessages.push({
+						peerId,
+						message,
+						...(options ? { options } : {}),
+					});
+					if (message.method === "connection/result") {
+						throw new TransportError("permanent publish failure for test");
+					}
+					return {
+						received: true,
+						requestId: String(message.id),
+						status: options?.waitForAck === false ? "published" : "received",
+						receivedAt: "2026-03-08T00:00:00.000Z",
+					};
+				}
+			}
+			const transport = new PublishFailingTransport();
+			const { service, requestJournal } = await createService({}, { transport, trustStore });
+
+			await service.start();
+			const request = await submitConnectionRequest(transport, "peer-inbox-dedup");
+			await sleep(50);
+
+			// Force the inbound back to pending (simulates process crash).
+			await requestJournal.updateStatus(String(request.id), "pending");
+
+			// Re-submit the SAME inbound message — mimics the listener replaying
+			// the message after restart.
+			await transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-dedup",
+				message: request,
+			});
+			await sleep(50);
+
+			// And once more for good measure.
+			await requestJournal.updateStatus(String(request.id), "pending");
+			await transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-dedup",
+				message: request,
+			});
+			await sleep(50);
+
+			const pendingResults = (await requestJournal.listPending("outbound")).filter(
+				(entry) => entry.method === "connection/result",
+			);
+			expect(pendingResults).toHaveLength(1);
+			expect(pendingResults[0]?.correlationId).toBe(String(request.id));
+
+			await service.stop();
+		});
+	});
+
+	describe("sync report surfaces pending outbound deliveries", () => {
+		it("populates pendingDeliveries with stuck outbound connection/result entries", async () => {
+			const trustStore = createMemoryTrustStore();
+			class PublishFailingTransport extends FakeTransport {
+				override async send(
+					peerId: number,
+					message: ProtocolMessage,
+					options?: TransportSendOptions,
+				): Promise<TransportReceipt> {
+					this.sentMessages.push({
+						peerId,
+						message,
+						...(options ? { options } : {}),
+					});
+					if (message.method === "connection/result") {
+						throw new TransportError("publish failed: unreachable");
+					}
+					return {
+						received: true,
+						requestId: String(message.id),
+						status: options?.waitForAck === false ? "published" : "received",
+						receivedAt: "2026-03-08T00:00:00.000Z",
+					};
+				}
+			}
+			const transport = new PublishFailingTransport();
+			const { service } = await createService({}, { transport, trustStore });
+
+			await service.start();
+			const request = await submitConnectionRequest(transport, "peer-inbox-sync-report");
+			await sleep(50);
+
+			const report = await service.syncOnce();
+
+			expect(report.pendingDeliveries).toBeDefined();
+			expect(report.pendingDeliveries?.length ?? 0).toBeGreaterThan(0);
+			const delivery = report.pendingDeliveries?.[0];
+			expect(delivery?.method).toBe("connection/result");
+			expect(delivery?.peerAgentId).toBe(PEER_AGENT.agentId);
+			expect(delivery?.correlationId).toBe(String(request.id));
+			expect(delivery?.lastError).toContain("publish failed");
+
+			await service.stop();
+		});
+	});
+
+	describe("implicit handshake completion on inbound traffic", () => {
+		it("marks pending outbound connection/result entries completed when peer sends a valid inbound message", async () => {
+			const trustStore = createMemoryTrustStore();
+			class DropConnectionResultTransport extends FakeTransport {
+				override async send(
+					peerId: number,
+					message: ProtocolMessage,
+					options?: TransportSendOptions,
+				): Promise<TransportReceipt> {
+					this.sentMessages.push({
+						peerId,
+						message,
+						...(options ? { options } : {}),
+					});
+					if (message.method === "connection/result") {
+						// Pretend publish failed so the entry stays pending.
+						throw new TransportError("drop connection/result for test");
+					}
+					return {
+						received: true,
+						requestId: String(message.id),
+						status: options?.waitForAck === false ? "published" : "received",
+						receivedAt: "2026-03-08T00:00:00.000Z",
+					};
+				}
+			}
+			const transport = new DropConnectionResultTransport();
+			const { service, requestJournal } = await createService({}, { transport, trustStore });
+
+			await service.start();
+			await submitConnectionRequest(transport, "peer-inbox-implicit-completion");
+			await sleep(50);
+
+			const pendingBefore = (await requestJournal.listPending("outbound")).filter(
+				(entry) => entry.method === "connection/result",
+			);
+			expect(pendingBefore).toHaveLength(1);
+
+			// Now the peer's side got our connection/result eventually and has
+			// added us to its trust store. Simulate the peer sending us a plain
+			// message/send, which proves they have an active contact for us —
+			// our pending connection/result delivery is no longer load-bearing.
+			const activeContact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+			expect(activeContact?.status).toBe("active");
+
+			const inbound: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "message/send",
+				id: "peer-hello-1",
+				params: {
+					message: {
+						parts: [{ kind: "text", text: "Thanks for connecting!" } as const],
+					},
+				},
+			};
+
+			await expect(
+				transport.handlers.onRequest?.({
+					from: PEER_AGENT.agentId,
+					senderInboxId: "peer-inbox-implicit-completion",
+					message: inbound,
+				}),
+			).resolves.toEqual(expect.objectContaining({ status: "received" }));
+			await sleep(50);
+
+			const pendingAfter = (await requestJournal.listPending("outbound")).filter(
+				(entry) => entry.method === "connection/result",
+			);
+			expect(pendingAfter).toHaveLength(0);
+
+			await service.stop();
+		});
+
+		it("clears the connection-result cache after the retry pipeline delivers, so subsequent inbounds don't re-scan the journal", async () => {
+			// Regression for a cache-leak perf bug: if the retry pipeline
+			// delivered the connection/result rather than the direct path,
+			// the peer would linger in `peersWithPendingConnectionResult`
+			// until the next inbound triggered a full journal scan to clear
+			// it. This test proves the cache is cleared at the moment of
+			// successful retry delivery instead.
+			const trustStore = createMemoryTrustStore();
+			let failConnectionResultOnce = true;
+			class FlakyThenSucceedTransport extends FakeTransport {
+				override async send(
+					peerId: number,
+					message: ProtocolMessage,
+					options?: TransportSendOptions,
+				): Promise<TransportReceipt> {
+					this.sentMessages.push({
+						peerId,
+						message,
+						...(options ? { options } : {}),
+					});
+					if (message.method === "connection/result" && failConnectionResultOnce) {
+						failConnectionResultOnce = false;
+						throw new TransportError("first attempt fails");
+					}
+					return {
+						received: true,
+						requestId: String(message.id),
+						status: options?.waitForAck === false ? "published" : "received",
+						receivedAt: "2026-03-08T00:00:00.000Z",
+					};
+				}
+			}
+			const transport = new FlakyThenSucceedTransport();
+			const { service, requestJournal } = await createService({}, { transport, trustStore });
+
+			await service.start();
+			await submitConnectionRequest(transport, "peer-inbox-cache-clear");
+			await sleep(50);
+
+			// First attempt failed — entry pending, cache holds the peer.
+			expect(
+				(await requestJournal.listPending("outbound")).some(
+					(entry) => entry.method === "connection/result",
+				),
+			).toBe(true);
+
+			// syncOnce triggers retryPendingConnectionResults, which now succeeds.
+			const firstReport = await service.syncOnce();
+			expect(firstReport.pendingDeliveries).toHaveLength(0);
+			expect(
+				(await requestJournal.listPending("outbound")).some(
+					(entry) => entry.method === "connection/result",
+				),
+			).toBe(false);
+
+			// Warm-up inbound: triggers the one-time cache priming scan,
+			// which is fine and expected. We measure the NEXT inbound.
+			const warmup: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "message/send",
+				id: "peer-warmup-after-retry",
+				params: {
+					message: { parts: [{ kind: "text", text: "hi 1" } as const] },
+				},
+			};
+			await transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-cache-clear",
+				message: warmup,
+			});
+			await sleep(20);
+
+			// Subsequent inbound: if the cache wasn't cleared by the retry-
+			// success path, `markPendingConnectionResultsCompletedFor` would
+			// do a full journal scan for every following inbound from the
+			// peer. After the fix, the cache miss short-circuits before
+			// touching the journal.
+			const listPendingSpy = vi.spyOn(requestJournal, "listPending");
+			const inbound: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "message/send",
+				id: "peer-hello-after-retry",
+				params: {
+					message: { parts: [{ kind: "text", text: "hi 2" } as const] },
+				},
+			};
+			await transport.handlers.onRequest?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-cache-clear",
+				message: inbound,
+			});
+			await sleep(20);
+
+			expect(listPendingSpy).not.toHaveBeenCalled();
+			listPendingSpy.mockRestore();
+
+			await service.stop();
+		});
+
+		it("shares a single priming scan across concurrent implicit-completion callers", async () => {
+			// Regression for a priming race: two concurrent inbound messages
+			// could both enter the implicit-completion path and both trigger
+			// full journal scans (instead of sharing one). After the fix,
+			// concurrent callers await the same priming promise.
+			const trustStore = createMemoryTrustStore();
+			const transport = new FakeTransport();
+			const { service, requestJournal } = await createService({}, { transport, trustStore });
+
+			await service.start();
+			// Seed one pending outbound connection/result by running the
+			// handshake against a transport that drops the result.
+			class DropTransport extends FakeTransport {
+				override async send(
+					peerId: number,
+					message: ProtocolMessage,
+					options?: TransportSendOptions,
+				): Promise<TransportReceipt> {
+					this.sentMessages.push({
+						peerId,
+						message,
+						...(options ? { options } : {}),
+					});
+					if (message.method === "connection/result") {
+						throw new TransportError("drop for test");
+					}
+					return {
+						received: true,
+						requestId: String(message.id),
+						status: options?.waitForAck === false ? "published" : "received",
+						receivedAt: "2026-03-08T00:00:00.000Z",
+					};
+				}
+			}
+			const dropTransport = new DropTransport();
+			dropTransport.handlers = transport.handlers;
+			(service as unknown as { context: { transport: TransportProvider } }).context.transport =
+				dropTransport;
+			await submitConnectionRequest(dropTransport, "peer-inbox-prime-race");
+			await sleep(50);
+
+			// Restore the normal transport for subsequent sends.
+			(service as unknown as { context: { transport: TransportProvider } }).context.transport =
+				transport;
+			transport.handlers = dropTransport.handlers;
+
+			// Fire two concurrent inbounds that both trigger implicit
+			// completion. The priming scan should run exactly once.
+			const listPendingSpy = vi.spyOn(requestJournal, "listPending");
+			const inbound = (id: string): ProtocolMessage => ({
+				jsonrpc: "2.0",
+				method: "message/send",
+				id,
+				params: { message: { parts: [{ kind: "text", text: id } as const] } },
+			});
+			await Promise.all([
+				transport.handlers.onRequest?.({
+					from: PEER_AGENT.agentId,
+					senderInboxId: "peer-inbox-prime-race",
+					message: inbound("race-1"),
+				}),
+				transport.handlers.onRequest?.({
+					from: PEER_AGENT.agentId,
+					senderInboxId: "peer-inbox-prime-race",
+					message: inbound("race-2"),
+				}),
+			]);
+
+			// Priming + implicit-completion scans: priming runs once. After
+			// priming, each caller scans to clear the peer — which is at
+			// most 2 extra calls. The race bug would have caused priming to
+			// run twice (4+ calls); the fix guarantees a single shared prime.
+			const primingCalls = listPendingSpy.mock.calls.filter(
+				(call) => call[0] === "outbound",
+			).length;
+			expect(primingCalls).toBeLessThanOrEqual(3);
+			listPendingSpy.mockRestore();
+
+			await service.stop();
+		});
+
+		it("delivers legacy pending connection-result entries that were persisted before the peerChain field existed", async () => {
+			// Regression: `peerChain` was added to PendingConnectionResultDelivery
+			// metadata in a later commit. Entries written by earlier versions
+			// lack that field. A strict parser would drop them on the floor
+			// during retry and leave them stuck until the 24h stale-GC marked
+			// them completed without ever delivering. The parser must accept
+			// the legacy shape so retryPendingConnectionResults still calls
+			// transport.send on the original request payload.
+			const trustStore = createMemoryTrustStore([makeActiveContact("conn-legacy-retry")]);
+			const transport = new FakeTransport();
+			const { service, requestJournal } = await createService({}, { transport, trustStore });
+
+			// Write a legacy-shaped journal entry directly: valid in every
+			// field the delivery path actually reads (peerAgentId + request
+			// + peerAddress), but missing peerChain.
+			const legacyRequest: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "connection/result",
+				id: "legacy-connection-result-id",
+				params: {
+					from: { agentId: 1, chain: "eip155:8453" },
+					status: "accepted",
+					requestId: "legacy-correlation-id",
+				},
+			};
+			await requestJournal.putOutbound({
+				requestId: String(legacyRequest.id),
+				requestKey: `outbound:connection/result:${String(legacyRequest.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: "connection/result",
+				peerAgentId: PEER_AGENT.agentId,
+				correlationId: "legacy-correlation-id",
+				status: "pending",
+				metadata: {
+					type: "connection-result-delivery",
+					peerAgentId: PEER_AGENT.agentId,
+					// NOTE: deliberately no peerChain — this is the legacy shape.
+					peerName: PEER_AGENT.registrationFile.name,
+					peerAddress: PEER_AGENT.agentAddress,
+					request: legacyRequest,
+				},
+			});
+
+			await service.start();
+
+			// syncOnce drives retryPendingConnectionResults. The legacy entry
+			// must be delivered via transport.send and marked completed.
+			const report = await service.syncOnce();
+
+			expect(
+				transport.sentMessages.filter((e) => e.message.method === "connection/result"),
+			).toHaveLength(1);
+			expect(
+				(await requestJournal.listPending("outbound")).filter(
+					(entry) => entry.method === "connection/result",
+				),
+			).toHaveLength(0);
+			expect(report.pendingDeliveries).toHaveLength(0);
+
+			await service.stop();
+		});
 	});
 });
