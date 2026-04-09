@@ -558,11 +558,11 @@ Examples:
 
 ```bash
 tap app list
-tap app install @tap/app-transfer
-tap app remove @tap/app-scheduling
+tap app install @trustedagents/app-transfer
+tap app remove @trustedagents/app-scheduling
 ```
 
-Built-in apps (`app-transfer`, `app-scheduling`) are installed automatically when you register. Third-party apps can be installed from npm by package name.
+Transfer, scheduling, and permission-request handling are built into the TAP runtime today. `tap app install` is for additional third-party TAP apps published to npm.
 
 ## Common Errors
 

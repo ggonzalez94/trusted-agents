@@ -5,10 +5,11 @@ This repository publishes packages from the `Release` GitHub Actions workflow in
 ## What gets released
 
 - `trusted-agents-core`
+- `trusted-agents-sdk`
 - `trusted-agents-cli`
 - `trusted-agents-tap`
 
-The workflow validates that all three package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base and Taiko, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
+The workflow validates that all four package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base and Taiko, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
 
 ## Prepare the release PR
 
@@ -85,7 +86,7 @@ git push origin v0.2.0-beta.1
 2. Confirm the jobs pass through:
    - version validation
    - package verification
-   - npm publish for all three packages
+   - npm publish for all four packages
    - GitHub Release creation
 3. If a rerun is needed, the workflow is designed to skip packages or GitHub releases that already exist.
 
