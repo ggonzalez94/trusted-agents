@@ -197,6 +197,12 @@ interface PendingActionResultDelivery extends Record<string, unknown> {
 interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	type: "connection-result-delivery";
 	peerAgentId: number;
+	/**
+	 * CAIP-2 chain id of the target peer. Required so implicit handshake
+	 * completion and the short-circuit cache can scope matches per-chain —
+	 * two peers on different chains can share the same numeric agentId.
+	 */
+	peerChain: string;
 	peerName: string;
 	peerAddress: `0x${string}`;
 	request: ProtocolMessage;
@@ -373,12 +379,20 @@ export class TapMessagingService {
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
 	/**
-	 * Peer ids that currently have (or recently had) a pending outbound
+	 * Peers that currently have (or recently had) a pending outbound
 	 * connection/result entry in the journal. Lets the implicit-completion
 	 * path avoid a full journal scan on every inbound DM. See
 	 * {@link markPendingConnectionResultsCompletedFor}.
+	 *
+	 * Keyed by {@link peerConnectionResultCacheKey} = `"chain:agentId"` so
+	 * two peers that happen to share a numeric agentId across chains do not
+	 * collide. Cache is authoritative as a "yes, scan the journal" hint —
+	 * false positives only cost an extra scan, false negatives could orphan
+	 * a pending entry from the implicit-completion path. We therefore prefer
+	 * stale-positive over stale-negative: the cache is updated only when we
+	 * have full certainty that no pending entries remain for the peer.
 	 */
-	private readonly peersWithPendingConnectionResult = new Set<number>();
+	private readonly peersWithPendingConnectionResult = new Set<string>();
 	private connectionResultCachePriming: Promise<void> | null = null;
 	private connectionResultCachePrimed = false;
 	private readonly decisionOverrides = {
@@ -1701,7 +1715,7 @@ export class TapMessagingService {
 		// which means they received our connection/result. Any pending outbound
 		// connection/result entries for this peer are now load-bearing no more.
 		if (contact.status === "active") {
-			await this.markPendingConnectionResultsCompletedFor(contact.peerAgentId);
+			await this.markPendingConnectionResultsCompletedFor(contact.peerAgentId, contact.peerChain);
 		}
 
 		if (envelope.message.method === PERMISSIONS_UPDATE) {
@@ -1904,13 +1918,10 @@ export class TapMessagingService {
 			return this.emitIncomingAndReturn(envelope, "duplicate");
 		}
 
-		// Implicit handshake completion (see onRequest for rationale). A
-		// non-connection result means the peer already has us as an active
-		// contact; any pending outbound connection/result for them is moot.
-		await this.markPendingConnectionResultsCompletedFor(envelope.from);
-
 		let peerName: string | undefined;
 		if (envelope.message.method === ACTION_RESULT) {
+			// Implicit handshake completion runs inside `handleActionResult`
+			// once the contact (and therefore peerChain) is resolved.
 			peerName = await this.handleActionResult(envelope.from, envelope.message);
 		} else {
 			throw new ValidationError(`Unsupported result method: ${envelope.message.method}`);
@@ -2708,6 +2719,10 @@ export class TapMessagingService {
 	): Promise<string | undefined> {
 		const contact = await findContactForMessage(this.context, from, message);
 		if (contact) {
+			// Implicit handshake completion (see `onRequest` for rationale).
+			// Scoped by (peerAgentId, peerChain) so cross-chain peers sharing
+			// a numeric tokenId don't complete each other's pending entries.
+			await this.markPendingConnectionResultsCompletedFor(contact.peerAgentId, contact.peerChain);
 			await this.appendConversationLogSafe(contact, message, "incoming");
 		}
 
@@ -2861,7 +2876,9 @@ export class TapMessagingService {
 				metadata: delivery as unknown as Record<string, unknown>,
 			});
 			persisted = true;
-			this.peersWithPendingConnectionResult.add(peer.agentId);
+			this.peersWithPendingConnectionResult.add(
+				peerConnectionResultCacheKey(peer.chain, peer.agentId),
+			);
 		} catch (error: unknown) {
 			this.log(
 				"error",
@@ -2951,7 +2968,11 @@ export class TapMessagingService {
 			// Stale cleanup — prevent indefinite accumulation for peers that
 			// have been offline so long that the delivery is no longer
 			// meaningful. The entry is marked terminal rather than deleted so
-			// the journal still carries a record of the attempt.
+			// the journal still carries a record of the attempt. We do NOT
+			// touch `peersWithPendingConnectionResult` here: a single-entry
+			// GC cannot safely prove no other pending entries remain for the
+			// same peer, and cache cleanup is owned by
+			// `markPendingConnectionResultsCompletedFor`.
 			const createdMs = Date.parse(entry.createdAt);
 			if (Number.isFinite(createdMs) && now - createdMs > PENDING_RESULT_MAX_AGE_MS) {
 				this.log(
@@ -2959,15 +2980,6 @@ export class TapMessagingService {
 					`Abandoning pending ${method} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
 				);
 				await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
-				// Keep the connection-result short-circuit cache in sync with
-				// the journal (matches `sendAndCompleteJournalEntry`): a GC'd
-				// entry is no longer pending, so remove the peer from the set.
-				// If another non-stale entry exists for the same peer the
-				// cache will be re-primed on the next `sendConnectionResult`
-				// or `markPendingConnectionResultsCompletedFor` rebuild.
-				if (entry.method === CONNECTION_RESULT) {
-					this.peersWithPendingConnectionResult.delete(entry.peerAgentId);
-				}
 				continue;
 			}
 
@@ -3076,15 +3088,25 @@ export class TapMessagingService {
 	 * connection/result entries for that peer become load-bearing no more,
 	 * and we complete them so the retry pipeline stops hammering and the
 	 * sync report stops reporting stuck handshake work.
+	 *
+	 * Matching is scoped by (chain, agentId) because two active contacts can
+	 * legitimately share the same numeric agentId across chains. Each pending
+	 * entry's metadata carries the target `peerChain`; entries whose chain
+	 * does not match the inbound peer are left untouched.
 	 */
-	private async markPendingConnectionResultsCompletedFor(peerAgentId: number): Promise<void> {
-		// Hot-path short-circuit: only pay for the journal scan if we know this
-		// peer has a pending connection/result entry. The cache is populated
-		// lazily on first miss (see `primeConnectionResultCache`), updated by
-		// `sendConnectionResult` when a new entry is persisted, and kept in
-		// sync on successful completion below.
+	private async markPendingConnectionResultsCompletedFor(
+		peerAgentId: number,
+		peerChain: string,
+	): Promise<void> {
+		// Hot-path short-circuit: only pay for the journal scan if we know
+		// this (chain, peer) has a pending connection/result entry. The
+		// cache is populated lazily on first miss (see
+		// `primeConnectionResultCache`), updated by `sendConnectionResult`
+		// when a new entry is persisted, and kept in sync on successful
+		// completion below.
 		await this.primeConnectionResultCache();
-		if (!this.peersWithPendingConnectionResult.has(peerAgentId)) {
+		const cacheKey = peerConnectionResultCacheKey(peerChain, peerAgentId);
+		if (!this.peersWithPendingConnectionResult.has(cacheKey)) {
 			return;
 		}
 
@@ -3107,11 +3129,26 @@ export class TapMessagingService {
 			if (entry.peerAgentId !== peerAgentId) {
 				continue;
 			}
+			// Chain scoping: parse the metadata to read `peerChain`.
+			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
+			if (!delivery) {
+				// Ambiguous: can't tell which chain this belongs to. Treat as
+				// possibly-ours and keep the cache entry around so a future
+				// scan can retry. The retry pipeline still handles delivery.
+				remainingForPeer = true;
+				continue;
+			}
+			if (delivery.peerChain !== peerChain) {
+				// Belongs to a different (chain, agentId) cache key. Leave it
+				// untouched — it does NOT affect whether we can delete our
+				// own cache entry.
+				continue;
+			}
 			try {
 				await this.markJournalEntryCompleted(entry.requestId);
 				this.log(
 					"info",
-					`Implicitly completed pending connection result ${entry.requestId} for agent #${peerAgentId} — peer is already sending active traffic`,
+					`Implicitly completed pending connection result ${entry.requestId} for agent #${peerAgentId} on ${peerChain} — peer is already sending active traffic`,
 				);
 			} catch (error: unknown) {
 				remainingForPeer = true;
@@ -3122,7 +3159,7 @@ export class TapMessagingService {
 			}
 		}
 		if (!remainingForPeer) {
-			this.peersWithPendingConnectionResult.delete(peerAgentId);
+			this.peersWithPendingConnectionResult.delete(cacheKey);
 		}
 	}
 
@@ -3143,9 +3180,22 @@ export class TapMessagingService {
 				try {
 					const pending = await this.context.requestJournal.listPending("outbound");
 					for (const entry of pending) {
-						if (entry.kind === "result" && entry.method === CONNECTION_RESULT) {
-							this.peersWithPendingConnectionResult.add(entry.peerAgentId);
+						if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
+							continue;
 						}
+						// Pull chain from metadata so the cache key matches
+						// the (chain, agentId) shape used by the lookup path.
+						// Legacy entries without `peerChain` in metadata are
+						// skipped — the direct retry pipeline still delivers
+						// them, at the cost of missing the implicit-completion
+						// short-circuit until they age out.
+						const delivery = parsePendingConnectionResultDelivery(entry.metadata);
+						if (!delivery) {
+							continue;
+						}
+						this.peersWithPendingConnectionResult.add(
+							peerConnectionResultCacheKey(delivery.peerChain, entry.peerAgentId),
+						);
 					}
 					this.connectionResultCachePrimed = true;
 				} catch (error: unknown) {
@@ -3171,14 +3221,14 @@ export class TapMessagingService {
 			waitForAck: false,
 		});
 		await this.markJournalEntryCompleted(String(delivery.request.id));
-		// Keep the connection-result short-circuit cache in sync with the
-		// journal: once a retry-pipeline delivery succeeds, the peer no longer
-		// has a pending outbound connection/result, so subsequent inbounds
-		// should skip the journal scan. Without this, the peer stays in the
-		// cache until an inbound triggers `markPendingConnectionResultsCompletedFor`.
-		if (delivery.request.method === CONNECTION_RESULT) {
-			this.peersWithPendingConnectionResult.delete(delivery.peerAgentId);
-		}
+		// Deliberately do NOT touch `peersWithPendingConnectionResult` here.
+		// A single-entry completion cannot tell us whether other pending
+		// connection/result entries for the same peer still exist, and an
+		// unconditional delete would cause `markPendingConnectionResultsCompletedFor`
+		// to skip the journal scan on the next inbound and orphan the
+		// remaining entries. Cache cleanup is owned by
+		// `markPendingConnectionResultsCompletedFor`, which scans before
+		// deleting. A stale-positive cache entry only costs an extra scan.
 	}
 
 	/**
@@ -3758,10 +3808,20 @@ function buildPendingConnectionResultDelivery(
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: peer.agentId,
+		peerChain: peer.chain,
 		peerName: peer.registrationFile.name,
 		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
 		request,
 	};
+}
+
+/**
+ * Cache key for the pending-connection-result short-circuit set. Peers are
+ * uniquely identified by (chain, agentId), not agentId alone — two peers on
+ * different chains can legitimately share the same numeric tokenId.
+ */
+function peerConnectionResultCacheKey(chain: string, agentId: number): string {
+	return `${chain}:${agentId}`;
 }
 
 function parsePendingConnectionResultDelivery(
@@ -3774,6 +3834,8 @@ function parsePendingConnectionResultDelivery(
 	const peerAddress = asString(metadata.peerAddress);
 	if (
 		typeof metadata.peerAgentId !== "number" ||
+		typeof metadata.peerChain !== "string" ||
+		metadata.peerChain.length === 0 ||
 		typeof metadata.peerName !== "string" ||
 		!peerAddress?.startsWith("0x") ||
 		!isProtocolMessage(metadata.request)
@@ -3784,6 +3846,7 @@ function parsePendingConnectionResultDelivery(
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: metadata.peerAgentId,
+		peerChain: metadata.peerChain,
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
