@@ -198,11 +198,17 @@ interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	type: "connection-result-delivery";
 	peerAgentId: number;
 	/**
-	 * CAIP-2 chain id of the target peer. Required so implicit handshake
+	 * CAIP-2 chain id of the target peer. Used so implicit handshake
 	 * completion and the short-circuit cache can scope matches per-chain —
 	 * two peers on different chains can share the same numeric agentId.
+	 *
+	 * Optional for backward compatibility with journal entries written by
+	 * versions before this field was introduced. Legacy entries are still
+	 * delivered via the direct retry pipeline (which only needs peerAgentId
+	 * + peerAddress); they just can't participate in the chain-scoped
+	 * implicit-completion short-circuit.
 	 */
-	peerChain: string;
+	peerChain?: string;
 	peerName: string;
 	peerAddress: `0x${string}`;
 	request: ProtocolMessage;
@@ -3131,10 +3137,12 @@ export class TapMessagingService {
 			}
 			// Chain scoping: parse the metadata to read `peerChain`.
 			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
-			if (!delivery) {
-				// Ambiguous: can't tell which chain this belongs to. Treat as
-				// possibly-ours and keep the cache entry around so a future
-				// scan can retry. The retry pipeline still handles delivery.
+			if (!delivery || delivery.peerChain === undefined) {
+				// Unparseable, or a legacy entry without peerChain — we
+				// can't tell which (chain, agentId) cache key this belongs
+				// to. Treat as possibly-ours and keep the current cache
+				// entry around so a future scan can retry. The direct
+				// retry pipeline still handles delivery.
 				remainingForPeer = true;
 				continue;
 			}
@@ -3190,7 +3198,7 @@ export class TapMessagingService {
 						// them, at the cost of missing the implicit-completion
 						// short-circuit until they age out.
 						const delivery = parsePendingConnectionResultDelivery(entry.metadata);
-						if (!delivery) {
+						if (!delivery || delivery.peerChain === undefined) {
 							continue;
 						}
 						this.peersWithPendingConnectionResult.add(
@@ -3834,8 +3842,6 @@ function parsePendingConnectionResultDelivery(
 	const peerAddress = asString(metadata.peerAddress);
 	if (
 		typeof metadata.peerAgentId !== "number" ||
-		typeof metadata.peerChain !== "string" ||
-		metadata.peerChain.length === 0 ||
 		typeof metadata.peerName !== "string" ||
 		!peerAddress?.startsWith("0x") ||
 		!isProtocolMessage(metadata.request)
@@ -3843,10 +3849,19 @@ function parsePendingConnectionResultDelivery(
 		return null;
 	}
 
+	// peerChain is optional for backward compatibility with entries written
+	// before the field was introduced. Missing/empty chain means the entry
+	// cannot participate in chain-scoped implicit completion, but the direct
+	// retry pipeline still delivers it.
+	const peerChain =
+		typeof metadata.peerChain === "string" && metadata.peerChain.length > 0
+			? metadata.peerChain
+			: undefined;
+
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: metadata.peerAgentId,
-		peerChain: metadata.peerChain,
+		...(peerChain ? { peerChain } : {}),
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,

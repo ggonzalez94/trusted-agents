@@ -3281,5 +3281,68 @@ describe("TapMessagingService", () => {
 
 			await service.stop();
 		});
+
+		it("delivers legacy pending connection-result entries that were persisted before the peerChain field existed", async () => {
+			// Regression: `peerChain` was added to PendingConnectionResultDelivery
+			// metadata in a later commit. Entries written by earlier versions
+			// lack that field. A strict parser would drop them on the floor
+			// during retry and leave them stuck until the 24h stale-GC marked
+			// them completed without ever delivering. The parser must accept
+			// the legacy shape so retryPendingConnectionResults still calls
+			// transport.send on the original request payload.
+			const trustStore = createMemoryTrustStore([makeActiveContact("conn-legacy-retry")]);
+			const transport = new FakeTransport();
+			const { service, requestJournal } = await createService({}, { transport, trustStore });
+
+			// Write a legacy-shaped journal entry directly: valid in every
+			// field the delivery path actually reads (peerAgentId + request
+			// + peerAddress), but missing peerChain.
+			const legacyRequest: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "connection/result",
+				id: "legacy-connection-result-id",
+				params: {
+					from: { agentId: 1, chain: "eip155:8453" },
+					status: "accepted",
+					requestId: "legacy-correlation-id",
+				},
+			};
+			await requestJournal.putOutbound({
+				requestId: String(legacyRequest.id),
+				requestKey: `outbound:connection/result:${String(legacyRequest.id)}`,
+				direction: "outbound",
+				kind: "result",
+				method: "connection/result",
+				peerAgentId: PEER_AGENT.agentId,
+				correlationId: "legacy-correlation-id",
+				status: "pending",
+				metadata: {
+					type: "connection-result-delivery",
+					peerAgentId: PEER_AGENT.agentId,
+					// NOTE: deliberately no peerChain — this is the legacy shape.
+					peerName: PEER_AGENT.registrationFile.name,
+					peerAddress: PEER_AGENT.agentAddress,
+					request: legacyRequest,
+				},
+			});
+
+			await service.start();
+
+			// syncOnce drives retryPendingConnectionResults. The legacy entry
+			// must be delivered via transport.send and marked completed.
+			const report = await service.syncOnce();
+
+			expect(
+				transport.sentMessages.filter((e) => e.message.method === "connection/result"),
+			).toHaveLength(1);
+			expect(
+				(await requestJournal.listPending("outbound")).filter(
+					(entry) => entry.method === "connection/result",
+				),
+			).toHaveLength(0);
+			expect(report.pendingDeliveries).toHaveLength(0);
+
+			await service.stop();
+		});
 	});
 });
