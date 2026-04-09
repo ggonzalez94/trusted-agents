@@ -3138,7 +3138,7 @@ export class TapMessagingService {
 			// Chain scoping: parse the metadata to read `peerChain`.
 			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
 			if (!delivery || delivery.peerChain === undefined) {
-				// Unparseable, or a legacy entry without peerChain — we
+				// Unparsable, or a legacy entry without peerChain — we
 				// can't tell which (chain, agentId) cache key this belongs
 				// to. Treat as possibly-ours and keep the current cache
 				// entry around so a future scan can retry. The direct
