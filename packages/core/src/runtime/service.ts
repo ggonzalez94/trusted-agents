@@ -1471,20 +1471,6 @@ export class TapMessagingService {
 		};
 	}
 
-	/**
-	 * Pending outbound "result" deliveries — connection/result, action/result,
-	 * scheduling responses — whose publication has failed or not yet been
-	 * attempted. Surfaces the retry pipeline's backlog so operators and host
-	 * agents see real stuck work, not a misleading "processed: 0".
-	 */
-	async listPendingDeliveries(): Promise<TapPendingDelivery[]> {
-		const pending = await this.context.requestJournal.listPending("outbound");
-		const now = Date.now();
-		return pending
-			.filter((entry) => entry.kind === "result")
-			.map((entry) => toPendingDeliveryView(entry, now));
-	}
-
 	private emitEvent(payload: Record<string, unknown>): void {
 		try {
 			this.hooks.emitEvent?.({
