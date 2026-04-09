@@ -12,7 +12,10 @@
 import { Client, type Signer, getInboxIdForIdentifier } from "@xmtp/node-sdk";
 import { OwsSigningProvider } from "trusted-agents-core";
 
-const REVOKE_THRESHOLD = 8;
+// Always revoke in CI to guarantee a clean slate. The transport's start()
+// also has a retry that handles the 10/10 limit, but starting with zero
+// installations avoids unnecessary retries and installation churn.
+const REVOKE_THRESHOLD = 1;
 
 async function createSigner(provider: OwsSigningProvider): Promise<Signer> {
 	const address = await provider.getAddress();

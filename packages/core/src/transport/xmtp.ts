@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { Client } from "@xmtp/node-sdk";
-import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
+import { Client, getInboxIdForIdentifier } from "@xmtp/node-sdk";
+import type { DecodedMessage, Dm, Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
 import { TransportError, isEthereumAddress, nowISO, toErrorMessage } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
@@ -107,14 +107,30 @@ export class XmtpTransport implements TransportProvider {
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
 		};
-		const clientPromise = Client.create(signer, clientOptions);
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			setTimeout(
-				() => reject(new TransportError("XMTP Client.create() timed out")),
-				CLIENT_CREATE_TIMEOUT_MS,
-			);
-		});
-		this.client = await Promise.race([clientPromise, timeoutPromise]);
+		const createClient = () =>
+			Promise.race([
+				Client.create(signer, clientOptions),
+				new Promise<never>((_, reject) => {
+					setTimeout(
+						() => reject(new TransportError("XMTP Client.create() timed out")),
+						CLIENT_CREATE_TIMEOUT_MS,
+					);
+				}),
+			]);
+
+		try {
+			this.client = await createClient();
+		} catch (error: unknown) {
+			// If the inbox hit the 10-installation limit, Client.create() fails
+			// before we get a chance to call revokeAllOtherInstallations().
+			// Revoke all installations using static SDK methods and retry once.
+			if (isInstallationLimitError(error)) {
+				await revokeAllInstallationsStatic(signer);
+				this.client = await createClient();
+			} else {
+				throw error;
+			}
+		}
 
 		// Revoke stale installations after successfully registering so the NEXT
 		// start has room.  This keeps the inbox clean over repeated sessions.
@@ -918,4 +934,36 @@ function isMessageAlreadyCheckpointed(
 		return false;
 	}
 	return checkpoint.lastMessageIds.includes(message.id);
+}
+
+/**
+ * Detect the XMTP "10/10 installations" error that occurs when
+ * Client.create() tries to register a new installation but the inbox
+ * has already reached its maximum.
+ */
+function isInstallationLimitError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /registered \d+\/\d+ installations/i.test(message);
+}
+
+/**
+ * Revoke ALL installations for a signer's inbox using static SDK methods.
+ * This does not require a Client instance, so it works even when
+ * Client.create() fails due to the installation limit.
+ */
+async function revokeAllInstallationsStatic(signer: Signer): Promise<void> {
+	const identifier = await signer.getIdentifier();
+	const inboxId = await getInboxIdForIdentifier(identifier, "production");
+	if (!inboxId) {
+		return;
+	}
+
+	const states = await Client.fetchInboxStates([inboxId], "production");
+	const installations = states[0]?.installations;
+	if (!installations || installations.length === 0) {
+		return;
+	}
+
+	const installationBytes = installations.map((i) => i.bytes);
+	await Client.revokeInstallations(signer, inboxId, installationBytes, "production");
 }
