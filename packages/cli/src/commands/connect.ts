@@ -104,12 +104,16 @@ export async function connectCommand(
 		}
 
 		const { service } = runtime;
-		const connectInput = { inviteUrl };
+		// Task 4.3 will wire --wait-seconds into waitMs. Until then, fire-and-forget
+		// (waitMs: 0) preserves the CLI's pre-4.2 behavior: connect() returns after
+		// the send, status is "pending" unless a result arrived synchronously.
+		// The --wait-seconds flag continues to poll via pollForActiveContact below.
+		const connectInput = { inviteUrl, waitMs: 0 };
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
 			{
 				type: "connect",
-				payload: connectInput,
+				payload: { inviteUrl },
 			},
 			async () => await service.connect(connectInput),
 			{

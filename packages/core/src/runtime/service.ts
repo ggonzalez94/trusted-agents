@@ -127,7 +127,6 @@ import {
 } from "./transport-owner-lock.js";
 
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
-const CONNECT_RECEIPT_TIMEOUT_MS = 5_000;
 /**
  * Pending outbound result entries older than this are garbage-collected by the
  * retry pipeline. Prevents accumulation when a peer is permanently unreachable
@@ -197,6 +196,37 @@ interface PendingActionResultDelivery extends Record<string, unknown> {
 	peerAddress: `0x${string}`;
 	request: ProtocolMessage;
 }
+
+// ──────────────────────────────────────────────────────────────
+// Connect waiter infrastructure (spec §3.2)
+// ──────────────────────────────────────────────────────────────
+
+interface ConnectWaiter {
+	requestId: string;
+	peerAgentId: number;
+	resolve: () => void;
+	reject: (error: Error) => void;
+	timer: ReturnType<typeof setTimeout>;
+}
+
+class ConnectWaiterTimeoutError extends Error {
+	constructor(public readonly requestId: string) {
+		super(`connect waiter timed out for requestId=${requestId}`);
+		this.name = "ConnectWaiterTimeoutError";
+	}
+}
+
+class ConnectWaiterRejectedError extends Error {
+	constructor(
+		public readonly requestId: string,
+		reason?: string,
+	) {
+		super(reason ?? "Connection rejected by peer");
+		this.name = "ConnectWaiterRejectedError";
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
 
 interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	type: "connection-result-delivery";
@@ -425,6 +455,12 @@ export class TapMessagingService {
 		scheduling: new Map<string, { approve: boolean; reason?: string }>(),
 	};
 	private readonly waiters = new Map<string, (value: TransferActionResponse) => void>();
+	/**
+	 * In-memory waiters keyed by requestId. Populated by connect() when
+	 * waitMs > 0 and cleared by resolveConnectWaiter / rejectConnectWaiter /
+	 * rejectAllConnectWaiters (on service stop). See spec §3.2.
+	 */
+	private readonly inFlightConnectWaiters = new Map<string, ConnectWaiter>();
 	private readonly schedulingHandler: SchedulingHandler | undefined;
 	private readonly handlers: TransportHandlers;
 	private running = false;
@@ -566,6 +602,7 @@ export class TapMessagingService {
 
 		try {
 			this.clearOutboxPoller();
+			this.rejectAllConnectWaiters(new Error("TapMessagingService stopped"));
 			await this.drain();
 			await this.context.transport.stop?.();
 		} finally {
@@ -573,6 +610,56 @@ export class TapMessagingService {
 			await this.ownerLock.release().catch(() => {});
 		}
 	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Connect waiter helpers (spec §3.2)
+	// ──────────────────────────────────────────────────────────────
+
+	private registerConnectWaiter(
+		requestId: string,
+		peerAgentId: number,
+		timeoutMs: number,
+	): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.inFlightConnectWaiters.delete(requestId);
+				reject(new ConnectWaiterTimeoutError(requestId));
+			}, timeoutMs);
+			this.inFlightConnectWaiters.set(requestId, {
+				requestId,
+				peerAgentId,
+				resolve: () => resolve(),
+				reject,
+				timer,
+			});
+		});
+	}
+
+	private resolveConnectWaiter(requestId: string): void {
+		const waiter = this.inFlightConnectWaiters.get(requestId);
+		if (!waiter) return;
+		clearTimeout(waiter.timer);
+		this.inFlightConnectWaiters.delete(requestId);
+		waiter.resolve();
+	}
+
+	private rejectConnectWaiter(requestId: string, reason: Error): void {
+		const waiter = this.inFlightConnectWaiters.get(requestId);
+		if (!waiter) return;
+		clearTimeout(waiter.timer);
+		this.inFlightConnectWaiters.delete(requestId);
+		waiter.reject(reason);
+	}
+
+	private rejectAllConnectWaiters(reason: Error): void {
+		for (const waiter of this.inFlightConnectWaiters.values()) {
+			clearTimeout(waiter.timer);
+			waiter.reject(reason);
+		}
+		this.inFlightConnectWaiters.clear();
+	}
+
+	// ──────────────────────────────────────────────────────────────
 
 	async syncOnce(): Promise<TapSyncReport> {
 		const processed = await this.executionMutex.runExclusive(
@@ -745,7 +832,7 @@ export class TapMessagingService {
 		}
 	}
 
-	async connect(params: { inviteUrl: string }): Promise<TapConnectResult> {
+	async connect(params: { inviteUrl: string; waitMs?: number }): Promise<TapConnectResult> {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
 	}
 
@@ -867,7 +954,11 @@ export class TapMessagingService {
 		);
 	}
 
-	private async connectInternal(params: { inviteUrl: string }): Promise<TapConnectResult> {
+	private async connectInternal(params: {
+		inviteUrl: string;
+		waitMs?: number;
+	}): Promise<TapConnectResult> {
+		const waitMs = params.waitMs ?? 30_000;
 		const { config, resolver } = this.context;
 		const chainId = caip2ToChainId(config.chain);
 		if (chainId === null) {
@@ -901,7 +992,21 @@ export class TapMessagingService {
 				timestamp: requestedAt,
 			};
 
-			const rpcRequest = buildConnectionRequest(requestParams);
+			// §3.2 wire-level idempotency: reuse the requestId from an existing
+			// non-terminal outbound connection/request journal entry if one exists for
+			// this peer. This prevents duplicate wire requests when connect() is retried
+			// before the previous attempt has received a result.
+			const existingOutboundEntry = (
+				await this.context.requestJournal.listPending("outbound")
+			).find(
+				(entry) =>
+					entry.method === CONNECTION_REQUEST &&
+					entry.peerAgentId === peerAgent.agentId &&
+					entry.kind === "request",
+			);
+			const requestId = existingOutboundEntry?.requestId ?? generateNonce();
+
+			const rpcRequest = buildConnectionRequest(requestParams, requestId);
 
 			// Upsert a "connecting" contact as the durable "I asked" record before
 			// any wire traffic. Per spec §1.1, the connecting contact is sticky —
@@ -930,36 +1035,99 @@ export class TapMessagingService {
 				}
 			}
 
+			// Register a waiter before sending so that a result arriving during or
+			// immediately after send() can resolve it. waitMs === 0 means fire-and-forget.
+			//
+			// Attach a no-op .catch() immediately to suppress Node.js unhandled-
+			// rejection warnings in cases where the result arrives synchronously
+			// inside send() (e.g. ImmediateRejectTransport in tests). The real
+			// rejection handler is in the try/catch below when we await the promise.
+			const waiterPromise =
+				waitMs > 0 ? this.registerConnectWaiter(requestId, peerAgent.agentId, waitMs) : null;
+			waiterPromise?.catch(() => {
+				/* handled in await below */
+			});
+
 			let receipt: TransportReceipt | undefined;
 			try {
 				receipt = await transport.send(peerAgent.agentId, rpcRequest, {
 					peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
-					timeout: CONNECT_RECEIPT_TIMEOUT_MS,
 				});
 			} catch (error: unknown) {
-				if (!isTransportReceiptTimeout(error)) {
-					// Non-timeout send failure. The connecting contact remains in place
-					// (sticky per spec §1.1) so a future sync can still complete the
-					// handshake. Propagate the error to the caller.
-					throw error;
+				// Send failure: clean up the waiter (it will never resolve via the
+				// normal result path) and leave the connecting contact in place so a
+				// future sync can complete the handshake.
+				if (waiterPromise) {
+					const waiter = this.inFlightConnectWaiters.get(requestId);
+					if (waiter) {
+						clearTimeout(waiter.timer);
+						this.inFlightConnectWaiters.delete(requestId);
+					}
 				}
+				throw error;
 			}
 
-			const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-			if (!latestContact) {
-				throw new ValidationError(
-					`Connection rejected by ${peerAgent.registrationFile.name} (#${peerAgent.agentId})`,
-				);
+			// Persist the outbound journal entry (skipped if reusing an existing entry).
+			if (!existingOutboundEntry) {
+				await this.context.requestJournal.putOutbound({
+					requestId,
+					requestKey: `outbound:${CONNECTION_REQUEST}:${requestId}`,
+					direction: "outbound",
+					kind: "request",
+					method: CONNECTION_REQUEST,
+					peerAgentId: peerAgent.agentId,
+					status: "pending",
+				});
 			}
-			const status = latestContact.status === "active" ? "active" : "pending";
 
-			return {
-				connectionId: latestContact.connectionId,
-				peerName: latestContact.peerDisplayName,
-				peerAgentId: peerAgent.agentId,
-				status,
-				receipt,
-			};
+			// Fire-and-forget: return the current state without waiting.
+			if (waitMs === 0 || !waiterPromise) {
+				const currentContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+				const status = currentContact?.status === "active" ? "active" : "pending";
+				return {
+					connectionId: currentContact?.connectionId,
+					peerName: currentContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+					peerAgentId: peerAgent.agentId,
+					status,
+					receipt,
+				};
+			}
+
+			// Await the waiter: resolves when connection/result arrives, times out
+			// after waitMs, or rejects immediately on explicit peer rejection.
+			try {
+				await waiterPromise;
+				// Waiter resolved — the peer accepted and handleConnectionResult already
+				// flipped the contact to active. Re-read for the latest state.
+				const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+				return {
+					connectionId: latestContact?.connectionId,
+					peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+					peerAgentId: peerAgent.agentId,
+					status: "active",
+					receipt,
+				};
+			} catch (error: unknown) {
+				if (error instanceof ConnectWaiterTimeoutError) {
+					// Timeout: return pending. The connecting contact is still in place
+					// and the journal entry will be retried on the next sync.
+					const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+					return {
+						connectionId: latestContact?.connectionId,
+						peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+						peerAgentId: peerAgent.agentId,
+						status: "pending",
+						receipt,
+					};
+				}
+				if (error instanceof ConnectWaiterRejectedError) {
+					// Peer explicitly rejected: surface as ValidationError so the caller
+					// gets a clear message.
+					throw new ValidationError(error.message);
+				}
+				// Unexpected error (e.g. service stopped) — propagate.
+				throw error;
+			}
 		});
 	}
 
@@ -1415,7 +1583,10 @@ export class TapMessagingService {
 	): Promise<TapCommandJobResultPayload> {
 		switch (job.type) {
 			case "connect":
-				return await this.connectInternal(job.payload);
+				// Outbox jobs are fire-and-forget: the caller (another process or
+				// the outbox poller) does not block waiting for the result. Pass
+				// waitMs: 0 so connectInternal returns immediately after send.
+				return await this.connectInternal({ ...job.payload, waitMs: 0 });
 			case "send-message":
 				return await this.sendMessageInternal(
 					job.payload.peer,
@@ -2741,6 +2912,15 @@ export class TapMessagingService {
 				if (journalEntry) {
 					await this.context.requestJournal.updateStatus(result.requestId, "completed");
 				}
+				// Notify any in-flight connect() waiter so it surfaces the rejection
+				// immediately rather than waiting for the full waitMs timeout.
+				this.rejectConnectWaiter(
+					result.requestId,
+					new ConnectWaiterRejectedError(
+						result.requestId,
+						`Connection rejected by ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
+					),
+				);
 				return "received";
 			}
 			// No connecting contact: stale or unsolicited rejection — ignore.
@@ -2765,6 +2945,8 @@ export class TapMessagingService {
 			if (journalEntry) {
 				await this.context.requestJournal.updateStatus(result.requestId, "completed");
 			}
+			// Resolve any in-flight connect() waiter — the peer is already active.
+			this.resolveConnectWaiter(result.requestId);
 			return "duplicate";
 		}
 
@@ -2830,6 +3012,8 @@ export class TapMessagingService {
 				await this.context.requestJournal.updateStatus(result.requestId, "completed");
 			}
 			this.log("info", `Connection accepted by ${peerLabel(freshContact)}`);
+			// Notify any in-flight connect() waiter.
+			this.resolveConnectWaiter(result.requestId);
 			return "received";
 		}
 
@@ -2860,6 +3044,8 @@ export class TapMessagingService {
 		}
 
 		this.log("info", `Connection accepted by ${peerLabel(nextContact)}`);
+		// Notify any in-flight connect() waiter.
+		this.resolveConnectWaiter(result.requestId);
 		return "received";
 	}
 

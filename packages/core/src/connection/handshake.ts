@@ -16,8 +16,11 @@ import type {
 } from "../protocol/index.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 
-export function buildConnectionRequest(params: ConnectionRequestParams): JsonRpcRequest {
-	return createJsonRpcRequest(CONNECTION_REQUEST, params);
+export function buildConnectionRequest(
+	params: ConnectionRequestParams,
+	id?: JsonRpcId,
+): JsonRpcRequest {
+	return createJsonRpcRequest(CONNECTION_REQUEST, params, id);
 }
 
 export function buildConnectionResult(
