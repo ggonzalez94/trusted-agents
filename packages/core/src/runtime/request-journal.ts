@@ -51,6 +51,8 @@ export interface IRequestJournal {
 	updateMetadata(requestId: string, metadata: RequestJournalMetadata | undefined): Promise<void>;
 	listQueued(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
 	listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
+	/** Optional: rewrite legacy on-disk 'acked' entries to 'pending'. */
+	migrateLegacyAcked?(): Promise<void>;
 }
 
 export class FileRequestJournal implements IRequestJournal {
@@ -170,6 +172,28 @@ export class FileRequestJournal implements IRequestJournal {
 			(entry) =>
 				entry.status === "pending" && (direction === undefined || entry.direction === direction),
 		);
+	}
+
+	/**
+	 * Rewrite legacy on-disk "acked" entries (written before Phase 2 removed
+	 * the status) to "pending". Safe to call at startup; is a no-op if the
+	 * file contains no such entries or doesn't exist.
+	 * See spec §1.3 and §6 step 3.
+	 */
+	async migrateLegacyAcked(): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const file = await this.load();
+			let migrated = false;
+			for (const entry of file.entries) {
+				if ((entry.status as string) === "acked") {
+					entry.status = "pending";
+					migrated = true;
+				}
+			}
+			if (migrated) {
+				await this.save(file);
+			}
+		});
 	}
 
 	private async load(): Promise<RequestJournalFile> {

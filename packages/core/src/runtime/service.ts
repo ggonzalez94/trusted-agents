@@ -1755,6 +1755,7 @@ export class TapMessagingService {
 
 	private async runLegacyStateMigrations(): Promise<void> {
 		await this.migratePendingConnects();
+		await this.context.requestJournal.migrateLegacyAcked?.();
 		// Additional migrations (outbox → queued journal entries) added in Phase 5.
 	}
 

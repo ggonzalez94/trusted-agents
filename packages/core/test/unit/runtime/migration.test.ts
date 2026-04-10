@@ -206,3 +206,72 @@ describe("legacy state migration — pending-connects.json", () => {
 		await service.stop();
 	});
 });
+
+describe("legacy state migration — acked status rewrite", () => {
+	it("rewrites legacy acked entries to pending on start", async () => {
+		const dir = makeTempDir();
+		writeFileSync(
+			join(dir, "request-journal.json"),
+			JSON.stringify({
+				entries: [
+					{
+						requestId: "req-legacy",
+						requestKey: "outbound:req-legacy",
+						direction: "outbound",
+						kind: "request",
+						method: "message/send",
+						peerAgentId: 42,
+						status: "acked",
+						createdAt: "2026-04-09T00:00:00Z",
+						updatedAt: "2026-04-09T00:00:00Z",
+					},
+				],
+			}),
+		);
+
+		const { service } = makeServiceHarness(dir);
+		await service.start();
+		await service.stop();
+
+		// Re-read the file directly via a fresh journal instance
+		const journal = new FileRequestJournal(dir);
+		const entry = await journal.getByRequestId("req-legacy");
+		expect(entry?.status).toBe("pending");
+	});
+
+	it("is idempotent — a second start does not re-migrate", async () => {
+		const dir = makeTempDir();
+		writeFileSync(
+			join(dir, "request-journal.json"),
+			JSON.stringify({
+				entries: [
+					{
+						requestId: "req-legacy-2",
+						requestKey: "outbound:req-legacy-2",
+						direction: "outbound",
+						kind: "request",
+						method: "message/send",
+						peerAgentId: 42,
+						status: "acked",
+						createdAt: "2026-04-09T00:00:00Z",
+						updatedAt: "2026-04-09T00:00:00Z",
+					},
+				],
+			}),
+		);
+
+		// First start: migrates the entry.
+		const h1 = makeServiceHarness(dir);
+		await h1.service.start();
+		await h1.service.stop();
+
+		// Second start: no errors, status still pending.
+		const h2 = makeServiceHarness(dir);
+		await expect(h2.service.start()).resolves.toBeUndefined();
+		await h2.service.stop();
+
+		const journal = new FileRequestJournal(dir);
+		const entry = await journal.getByRequestId("req-legacy-2");
+		expect(entry?.status).toBe("pending");
+	});
+});
