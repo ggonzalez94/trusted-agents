@@ -79,7 +79,6 @@ export {
 	TapMessagingService,
 	type TapCancelMeetingResult,
 	type TapConnectResult,
-	type TapConnectionApprovalContext,
 	type TapPendingDelivery,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,

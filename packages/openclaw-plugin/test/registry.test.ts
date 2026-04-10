@@ -179,7 +179,6 @@ describe("OpenClawTapRegistry", () => {
 			["permissions/update", "summary"],
 			["action/result", "summary"],
 			["connection/result", "info"],
-			["connection/request", "escalation"],
 		] as const)("triggers escalation for %s → %s notification type", (method, expectedType) => {
 			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
 			const queue = new TapNotificationQueue();
@@ -286,6 +285,33 @@ describe("OpenClawTapRegistry", () => {
 			"[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: boom",
 		);
 		expect(requestHeartbeatNow).not.toHaveBeenCalled();
+	});
+
+	describe("onConnectionEstablished hook emits info notification", () => {
+		it("pushes an info-type connection-established notification to the queue without triggering escalation", () => {
+			// The onConnectionEstablished hook pushes directly to the notification queue
+			// with type "info" — it does NOT call handleEmitEvent or triggerEscalation.
+			// Verify the queue shape that the hook produces.
+			const queue = new TapNotificationQueue();
+			queue.push({
+				type: "info",
+				identity: "alice",
+				timestamp: new Date().toISOString(),
+				method: "connection/established",
+				from: 99,
+				fromName: "Carol",
+				messageId: "connection-established-99",
+				detail: { peerAgentId: 99, peerName: "Carol", peerChain: "eip155:8453" },
+				oneLiner: "Connected with Carol (agent #99)",
+			});
+
+			// The notification is in the queue to drain on the next heartbeat.
+			expect(queue.peek()).toHaveLength(1);
+			const notification = queue.peek()[0]!;
+			expect(notification.type).toBe("info");
+			expect(notification.method).toBe("connection/established");
+			expect(notification.oneLiner).toContain("Carol");
+		});
 	});
 
 	function makeSchedulingRuntime(

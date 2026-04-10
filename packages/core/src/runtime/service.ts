@@ -252,14 +252,7 @@ interface SchedulingTrackingMetadata extends Record<string, unknown> {
 	schedulingState?: SchedulingRequestState;
 }
 
-export interface TapConnectionApprovalContext {
-	peerAgentId: number;
-	peerName: string;
-	peerChain: string;
-}
-
 export interface TapServiceHooks {
-	approveConnection?: (context: TapConnectionApprovalContext) => Promise<boolean | null>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null>;
 	approveScheduling?: (context: SchedulingApprovalContext) => Promise<boolean | null>;
 	confirmMeeting?: (meeting: ProposedMeeting) => Promise<boolean>;
@@ -271,6 +264,17 @@ export interface TapServiceHooks {
 	appendLedgerEntry?: (dataDir: string, entry: PermissionLedgerEntry) => Promise<string>;
 	log?: (level: "info" | "warn" | "error", message: string) => void;
 	emitEvent?: (payload: Record<string, unknown>) => void;
+	/**
+	 * Called after a connection has been established via an inbound
+	 * `connection/request` — the contact has been written as active and the
+	 * `connection/result` has been delivered. The hook is non-blocking and
+	 * informational; it should NOT modify state or throw.
+	 */
+	onConnectionEstablished?: (info: {
+		peerAgentId: number;
+		peerName: string;
+		peerChain: string;
+	}) => void | Promise<void>;
 }
 
 export interface TapServiceOptions {
@@ -686,17 +690,15 @@ export class TapMessagingService {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
 		}
 
-		if (entry.method !== ACTION_REQUEST && entry.method !== CONNECTION_REQUEST) {
+		if (entry.method !== ACTION_REQUEST) {
 			throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 		}
 
 		const isScheduling = entry.method === ACTION_REQUEST && entry.metadata?.type === "scheduling";
-		if (entry.method === ACTION_REQUEST) {
-			if (isScheduling) {
-				this.decisionOverrides.scheduling.set(requestId, { approve, reason });
-			} else {
-				this.decisionOverrides.transfers.set(requestId, approve);
-			}
+		if (isScheduling) {
+			this.decisionOverrides.scheduling.set(requestId, { approve, reason });
+		} else {
+			this.decisionOverrides.transfers.set(requestId, approve);
 		}
 		try {
 			return await this.executionMutex.runExclusive(
@@ -722,8 +724,6 @@ export class TapMessagingService {
 							} else {
 								await this.resolvePendingTransferRequest(latestEntry);
 							}
-						} else if (latestEntry.method === CONNECTION_REQUEST) {
-							await this.resolvePendingConnectionRequest(latestEntry, approve);
 						} else {
 							throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 						}
@@ -733,12 +733,10 @@ export class TapMessagingService {
 					}),
 			);
 		} finally {
-			if (entry.method === ACTION_REQUEST) {
-				if (isScheduling) {
-					this.decisionOverrides.scheduling.delete(requestId);
-				} else {
-					this.decisionOverrides.transfers.delete(requestId);
-				}
+			if (isScheduling) {
+				this.decisionOverrides.scheduling.delete(requestId);
+			} else {
+				this.decisionOverrides.transfers.delete(requestId);
 			}
 		}
 	}
@@ -1946,10 +1944,7 @@ export class TapMessagingService {
 		);
 	}
 
-	private async processConnectionRequest(
-		message: ProtocolMessage,
-		options?: { skipApprovalHook?: boolean },
-	): Promise<"processed" | "deferred"> {
+	private async processConnectionRequest(message: ProtocolMessage): Promise<"processed"> {
 		const params = parseConnectionRequest(message);
 
 		// Cheap local check first — avoids resolving a peer for misrouted requests
@@ -1971,39 +1966,6 @@ export class TapMessagingService {
 				`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}): ${inviteRejectionReason}`,
 			);
 			return "processed";
-		}
-
-		if (this.hooks.approveConnection && !options?.skipApprovalHook) {
-			const peer = await this.context.resolver.resolveWithCache(
-				params.from.agentId,
-				params.from.chain,
-			);
-			const decision = await this.hooks.approveConnection({
-				peerAgentId: peer.agentId,
-				peerName: peer.registrationFile.name,
-				peerChain: peer.chain,
-			});
-			if (decision === null) {
-				this.log(
-					"info",
-					`Deferred connection request from ${peer.registrationFile.name} (#${peer.agentId}); resolve it later with resolvePending`,
-				);
-				return "deferred";
-			}
-			if (decision === false) {
-				await this.sendConnectionResult(peer, {
-					requestId: String(message.id),
-					from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-					status: "rejected",
-					reason: "Connection request declined by operator",
-					timestamp: nowISO(),
-				});
-				this.log(
-					"info",
-					`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}) via approveConnection hook`,
-				);
-				return "processed";
-			}
 		}
 
 		// 1. Plan — pure, no trust store writes.
@@ -2045,6 +2007,21 @@ export class TapMessagingService {
 			"info",
 			`Accepted connection request from ${plan.peer.registrationFile.name} (#${plan.peer.agentId})`,
 		);
+
+		// 5. Notify the host (non-blocking, informational).
+		try {
+			await this.hooks.onConnectionEstablished?.({
+				peerAgentId: plan.peer.agentId,
+				peerName: plan.peer.registrationFile.name,
+				peerChain: plan.peer.chain,
+			});
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`onConnectionEstablished hook threw: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+
 		return "processed";
 	}
 
@@ -2146,34 +2123,6 @@ export class TapMessagingService {
 			"action request",
 			(contact, requestId, request) => this.processTransferRequest(contact, requestId, request),
 		);
-	}
-
-	private async resolvePendingConnectionRequest(
-		entry: RequestJournalEntry,
-		approve: boolean,
-	): Promise<void> {
-		const pendingRequest = parsePendingConnectionRequest(entry.metadata);
-		if (!pendingRequest) {
-			throw new ValidationError(`Cannot parse pending connection request: ${entry.requestId}`);
-		}
-
-		if (approve) {
-			await this.processConnectionRequest(pendingRequest.message, { skipApprovalHook: true });
-		} else {
-			const params = parseConnectionRequest(pendingRequest.message);
-			const peer = await this.context.resolver.resolveWithCache(
-				params.from.agentId,
-				params.from.chain,
-			);
-			await this.sendConnectionResult(peer, {
-				requestId: entry.requestId,
-				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-				status: "rejected",
-				reason: "Connection request declined by operator",
-				timestamp: nowISO(),
-			});
-		}
-		await this.context.requestJournal.updateStatus(entry.requestId, "completed");
 	}
 
 	private async resolvePendingSchedulingRequest(entry: RequestJournalEntry): Promise<void> {
