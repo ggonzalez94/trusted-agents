@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { parseEther, parseUnits } from "viem";
 import { buildActionContext } from "../app/context.js";
@@ -94,11 +94,7 @@ import {
 	parseTransferActionResponse,
 } from "./actions.js";
 import { getUsdcAsset } from "./assets.js";
-import {
-	FileTapCommandOutbox,
-	type ProcessingTapCommandJob,
-	type TapCommandJobResultPayload,
-} from "./command-outbox.js";
+import type { TapCommandJob, TapCommandJobResultPayload } from "./command-job.js";
 import type { TapRuntimeContext } from "./default-context.js";
 import {
 	findActiveGrantsByScope,
@@ -138,9 +134,7 @@ const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
  */
 const PENDING_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const OUTBOX_POLL_INTERVAL_MS = 1_000;
-const OUTBOX_RESULT_RETENTION_MS = 60 * 60 * 1000;
-const OUTBOX_RESULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-const OUTBOX_STALE_LEASE_MS = 60_000;
+const QUEUED_JOURNAL_STALE_CLAIM_MS = 5 * 60 * 1000;
 
 export interface TapTransferApprovalContext {
 	requestId: string;
@@ -327,10 +321,7 @@ export interface TapServiceHooks {
 
 export interface TapServiceOptions {
 	ownerLabel?: string;
-	commandOutbox?: FileTapCommandOutbox;
 	outboxPollIntervalMs?: number;
-	outboxResultRetentionMs?: number;
-	outboxStaleLeaseMs?: number;
 	hooks?: TapServiceHooks;
 	schedulingHandler?: SchedulingHandler;
 }
@@ -441,10 +432,7 @@ export class TapMessagingService {
 	private readonly ownerLock: TransportOwnerLock;
 	private localAgentAddress: `0x${string}` | undefined;
 	private readonly executionMutex = new AsyncMutex();
-	private readonly commandOutbox: FileTapCommandOutbox;
 	private readonly outboxPollIntervalMs: number;
-	private readonly outboxResultRetentionMs: number;
-	private readonly outboxStaleLeaseMs: number;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
 	/**
@@ -479,7 +467,6 @@ export class TapMessagingService {
 	private readonly handlers: TransportHandlers;
 	private running = false;
 	private lastSyncAt: string | undefined;
-	private lastOutboxCleanupAt = 0;
 	private outboxPoller: ReturnType<typeof setInterval> | null = null;
 	private outboxPollInFlight = false;
 	private transportSessionReentryDepth = 0;
@@ -491,10 +478,7 @@ export class TapMessagingService {
 		this.hooks = options.hooks ?? {};
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
-		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
-		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
-		this.outboxStaleLeaseMs = options.outboxStaleLeaseMs ?? OUTBOX_STALE_LEASE_MS;
 		this.schedulingHandler = options.schedulingHandler;
 		this.handlers = {
 			onRequest: async (envelope) => await this.onRequest(envelope),
@@ -1565,69 +1549,164 @@ export class TapMessagingService {
 	}
 
 	private async processOutboxInternal(): Promise<number> {
-		await this.cleanupOutboxResultsIfDue();
 		let processed = await this.retryPendingConnectionRequests();
 		processed += await this.retryPendingConnectionResults();
 		processed += await this.retryPendingActionResults();
-		while (true) {
-			const job = await this.commandOutbox.claimNext({
-				owner: this.ownerLabel,
-				staleLeaseMs: this.outboxStaleLeaseMs,
-			});
-			if (!job) {
-				return processed;
+		processed += await this.drainQueuedJournalCommands();
+		return processed;
+	}
+
+	/**
+	 * Drain `queued` outbound journal entries that represent command intents
+	 * written by another process (or by connect() when transport was busy).
+	 *
+	 * Claim protocol: transition queued → pending with claim metadata, execute,
+	 * then write commandResult and transition to completed (even on failure).
+	 *
+	 * Stale claim recovery: pending entries with claim.claimedAt older than
+	 * QUEUED_JOURNAL_STALE_CLAIM_MS are reset to queued so they can be retried.
+	 */
+	private async drainQueuedJournalCommands(): Promise<number> {
+		const journal = this.context.requestJournal;
+
+		// Recover stale claims from a previous crashed run before looking for
+		// new work. This prevents a crashed entry from blocking the queue.
+		const allPending = await journal.listPending("outbound");
+		for (const entry of allPending) {
+			if (!entry.method.startsWith("command/")) continue;
+			const claim = (entry.metadata as Record<string, unknown> | undefined)?.claim as
+				| { claimedAt?: string }
+				| undefined;
+			if (!claim?.claimedAt) continue;
+			const claimedAt = Date.parse(claim.claimedAt);
+			if (Number.isFinite(claimedAt) && Date.now() - claimedAt >= QUEUED_JOURNAL_STALE_CLAIM_MS) {
+				const { claim: _dropped, ...rest } = (entry.metadata ?? {}) as Record<string, unknown>;
+				await journal.updateStatus(entry.requestId, "queued");
+				await journal.updateMetadata(entry.requestId, rest);
+			}
+		}
+
+		const queued = await journal.listQueued("outbound");
+		let processed = 0;
+		for (const entry of queued) {
+			if (!entry.method.startsWith("command/")) continue;
+
+			// Claim the entry: queued → pending with claim metadata.
+			const claimMeta: Record<string, unknown> = {
+				...(entry.metadata ?? {}),
+				claim: {
+					owner: this.ownerLabel,
+					claimedAt: nowISO(),
+					pid: process.pid,
+				},
+			};
+			await journal.updateStatus(entry.requestId, "pending");
+			await journal.updateMetadata(entry.requestId, claimMeta);
+
+			const commandType = (entry.metadata as Record<string, unknown> | undefined)?.commandType as
+				| TapCommandJob["type"]
+				| undefined;
+			const commandPayload = (entry.metadata as Record<string, unknown> | undefined)
+				?.commandPayload as TapCommandJob["payload"] | undefined;
+
+			if (!commandType || commandPayload === undefined) {
+				this.log(
+					"warn",
+					`Queued journal entry ${entry.requestId} missing commandType or commandPayload — skipping`,
+				);
+				continue;
 			}
 
 			try {
-				const result = await this.executeOutboxJob(job);
-				await this.commandOutbox.complete(job, result);
+				const result = await this.executeJournalCommand(commandType, commandPayload);
+				await journal.updateMetadata(entry.requestId, {
+					...claimMeta,
+					commandResult: {
+						jobId: entry.requestId,
+						type: commandType,
+						finishedAt: nowISO(),
+						status: "completed",
+						result,
+					},
+				});
+				await journal.updateStatus(entry.requestId, "completed");
 			} catch (error: unknown) {
 				const message = toErrorMessage(error);
-				await this.commandOutbox.fail(
-					job,
-					message,
-					error instanceof TrustedAgentError ? error.code : undefined,
+				this.log(
+					"error",
+					`Failed queued TAP command ${entry.requestId} (${commandType}): ${message}`,
 				);
-				this.log("error", `Failed queued TAP job ${job.jobId} (${job.type}): ${message}`);
+				await journal.updateMetadata(entry.requestId, {
+					...claimMeta,
+					commandResult: {
+						jobId: entry.requestId,
+						type: commandType,
+						finishedAt: nowISO(),
+						status: "failed",
+						error: message,
+						errorCode: error instanceof TrustedAgentError ? error.code : "UNKNOWN",
+					},
+				});
+				await journal.updateStatus(entry.requestId, "completed");
 			}
 			processed += 1;
 		}
+		return processed;
 	}
 
-	private async executeOutboxJob(
-		job: ProcessingTapCommandJob,
+	private async executeJournalCommand(
+		commandType: TapCommandJob["type"],
+		commandPayload: TapCommandJob["payload"],
 	): Promise<TapCommandJobResultPayload> {
-		switch (job.type) {
+		switch (commandType) {
 			case "connect":
-				// Outbox jobs are fire-and-forget: the caller (another process or
-				// the outbox poller) does not block waiting for the result. Pass
-				// waitMs: 0 so connectInternal returns immediately after send.
-				return await this.connectInternal({ ...job.payload, waitMs: 0 });
-			case "send-message":
+				// Journal commands are fire-and-forget: the caller polls the journal
+				// entry for the result. Pass waitMs: 0 so connectInternal returns
+				// immediately after send.
+				return await this.connectInternal({
+					...(commandPayload as { inviteUrl: string }),
+					waitMs: 0,
+				});
+			case "send-message": {
+				const p = commandPayload as {
+					peer: string;
+					text: string;
+					scope: string;
+					autoGenerated?: boolean;
+				};
 				return await this.sendMessageInternal(
-					job.payload.peer,
-					job.payload.text,
-					job.payload.scope,
-					job.payload.autoGenerated ? { autoGenerated: true } : undefined,
+					p.peer,
+					p.text,
+					p.scope,
+					p.autoGenerated ? { autoGenerated: true } : undefined,
 				);
-			case "publish-grant-set":
-				return await this.publishGrantSetInternal(
-					job.payload.peer,
-					job.payload.grantSet,
-					job.payload.note,
-				);
-			case "request-grant-set":
-				return await this.requestGrantSetInternal(
-					job.payload.peer,
-					job.payload.grantSet,
-					job.payload.note,
-				);
-			case "request-funds":
-				return await this.requestFundsInternal(job.payload.input);
-			case "request-meeting":
-				return await this.requestMeetingInternal(job.payload.input);
+			}
+			case "publish-grant-set": {
+				const p = commandPayload as {
+					peer: string;
+					grantSet: import("../permissions/types.js").PermissionGrantSet;
+					note?: string;
+				};
+				return await this.publishGrantSetInternal(p.peer, p.grantSet, p.note);
+			}
+			case "request-grant-set": {
+				const p = commandPayload as {
+					peer: string;
+					grantSet: import("../permissions/types.js").PermissionGrantSet;
+					note?: string;
+				};
+				return await this.requestGrantSetInternal(p.peer, p.grantSet, p.note);
+			}
+			case "request-funds": {
+				const p = commandPayload as { input: import("./service.js").TapRequestFundsInput };
+				return await this.requestFundsInternal(p.input);
+			}
+			case "request-meeting": {
+				const p = commandPayload as { input: import("./service.js").TapRequestMeetingInput };
+				return await this.requestMeetingInternal(p.input);
+			}
 			default:
-				return assertNever(job);
+				throw new Error(`Unknown command type: ${String(commandType)}`);
 		}
 	}
 
@@ -1683,15 +1762,6 @@ export class TapMessagingService {
 			this.transportSessionReentryDepth -= 1;
 			await this.ownerLock.release().catch(() => {});
 		}
-	}
-
-	private async cleanupOutboxResultsIfDue(): Promise<void> {
-		const now = Date.now();
-		if (now - this.lastOutboxCleanupAt < OUTBOX_RESULT_CLEANUP_INTERVAL_MS) {
-			return;
-		}
-		await this.commandOutbox.cleanupResults(this.outboxResultRetentionMs);
-		this.lastOutboxCleanupAt = now;
 	}
 
 	private async runReconcile(): Promise<number> {
@@ -1755,8 +1825,8 @@ export class TapMessagingService {
 
 	private async runLegacyStateMigrations(): Promise<void> {
 		await this.migratePendingConnects();
+		await this.migrateOutbox();
 		await this.context.requestJournal.migrateLegacyAcked?.();
-		// Additional migrations (outbox → queued journal entries) added in Phase 5.
 	}
 
 	private async migratePendingConnects(): Promise<void> {
@@ -1816,6 +1886,112 @@ export class TapMessagingService {
 				"info",
 				`Migrated ${migrated} pending-connects.json record(s) to connecting contacts`,
 			);
+		}
+	}
+
+	/**
+	 * Migrate legacy `outbox/` directory-based queue entries into the request
+	 * journal as `queued` outbound entries. Called on service start.
+	 *
+	 * Reads files from `outbox/queued/` and `outbox/processing/` (both become
+	 * `queued` journal entries — processing entries failed to complete last time).
+	 * Files in `outbox/results/` are discarded.
+	 * Deletes the migrated files and removes the outbox directory if empty.
+	 * Idempotent: no-op if the outbox directory does not exist.
+	 */
+	private async migrateOutbox(): Promise<void> {
+		const dataDir = this.context.config.dataDir;
+		const outboxDir = join(dataDir, "outbox");
+		const queuedDir = join(outboxDir, "queued");
+		const processingDir = join(outboxDir, "processing");
+		const resultsDir = join(outboxDir, "results");
+
+		// Idempotent: nothing to do if the legacy outbox directory doesn't exist.
+		let queuedFiles: string[] = [];
+		let processingFiles: string[] = [];
+		try {
+			queuedFiles = (await readdir(queuedDir)).filter((f) => f.endsWith(".json")).sort();
+		} catch (error: unknown) {
+			if (fsErrorCode(error) !== "ENOENT") throw error;
+		}
+		try {
+			processingFiles = (await readdir(processingDir)).filter((f) => f.endsWith(".json")).sort();
+		} catch (error: unknown) {
+			if (fsErrorCode(error) !== "ENOENT") throw error;
+		}
+		// Delete results without preserving — they were short-lived blobs.
+		try {
+			const resultFiles = (await readdir(resultsDir)).filter((f) => f.endsWith(".json"));
+			await Promise.all(resultFiles.map((f) => rm(join(resultsDir, f), { force: true })));
+			await rm(resultsDir, { force: true, recursive: true });
+		} catch (error: unknown) {
+			if (fsErrorCode(error) !== "ENOENT") throw error;
+		}
+
+		if (queuedFiles.length === 0 && processingFiles.length === 0) {
+			// Nothing in queued or processing; clean up empty dirs if they exist.
+			await rm(outboxDir, { force: true, recursive: true });
+			return;
+		}
+
+		const journal = this.context.requestJournal;
+		let migrated = 0;
+
+		const migrateFile = async (filePath: string): Promise<void> => {
+			let raw: string;
+			try {
+				raw = await readFile(filePath, "utf-8");
+			} catch (error: unknown) {
+				if (fsErrorCode(error) === "ENOENT") return; // Already deleted
+				throw error;
+			}
+			let job: Record<string, unknown>;
+			try {
+				job = JSON.parse(raw) as Record<string, unknown>;
+			} catch {
+				this.log("warn", `Failed to parse legacy outbox file ${filePath} — skipping`);
+				await rm(filePath, { force: true });
+				return;
+			}
+			const commandType = job.type as string | undefined;
+			const commandPayload = job.payload;
+			const requestedBy = job.requestedBy as string | undefined;
+			if (!commandType || commandPayload === undefined) {
+				this.log("warn", `Legacy outbox file ${filePath} missing type/payload — discarding`);
+				await rm(filePath, { force: true });
+				return;
+			}
+			const requestId = generateNonce();
+			await journal.putOutbound({
+				requestId,
+				requestKey: `outbound:command:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: `command/${commandType}`,
+				peerAgentId: 0,
+				status: "queued",
+				metadata: {
+					commandType,
+					commandPayload,
+					...(requestedBy !== undefined ? { commandRequestedBy: requestedBy } : {}),
+				},
+			});
+			await rm(filePath, { force: true });
+			migrated += 1;
+		};
+
+		for (const name of queuedFiles) {
+			await migrateFile(join(queuedDir, name));
+		}
+		for (const name of processingFiles) {
+			await migrateFile(join(processingDir, name));
+		}
+
+		// Remove the outbox directory tree now that files are migrated.
+		await rm(outboxDir, { force: true, recursive: true });
+
+		if (migrated > 0) {
+			this.log("info", `Migrated ${migrated} legacy outbox job(s) to queued journal entries`);
 		}
 	}
 
@@ -4720,10 +4896,6 @@ async function applyConnectionResultContact(
 	} else {
 		await trustStore.addContact(plan.plannedContact);
 	}
-}
-
-function assertNever(value: never): never {
-	throw new ValidationError(`Unsupported queued TAP job type: ${String(value)}`);
 }
 
 export { TransportOwnershipError };

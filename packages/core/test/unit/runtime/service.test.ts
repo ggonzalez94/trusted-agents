@@ -18,7 +18,6 @@ import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
 import { createEmptyPermissionState, createGrantSet } from "../../../src/permissions/types.js";
 import {
-	FileTapCommandOutbox,
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
 	parseTransferActionRequest,
@@ -900,21 +899,31 @@ describe("TapMessagingService", () => {
 
 	it("processes queued outbound commands during syncOnce", async () => {
 		const activeContact = makeActiveContact("conn-message-1");
-		const { service, transport, dataDir } = await createService(
+		const { service, transport, requestJournal } = await createService(
 			{},
 			{
 				trustStore: createMemoryTrustStore([activeContact]),
 			},
 		);
-		const outbox = new FileTapCommandOutbox(dataDir);
-		const queued = await outbox.enqueue({
-			type: "send-message",
-			payload: {
-				peer: activeContact.peerDisplayName,
-				text: "queued hello",
-				scope: "general-chat",
+		// Write a queued journal entry directly (as runOrQueueTapCommand would do).
+		const requestId = `test-msg-${Date.now()}`;
+		await requestJournal.putOutbound({
+			requestId,
+			requestKey: `outbound:command:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: "command/send-message",
+			peerAgentId: 0,
+			status: "queued",
+			metadata: {
+				commandType: "send-message",
+				commandPayload: {
+					peer: activeContact.peerDisplayName,
+					text: "queued hello",
+					scope: "general-chat",
+				},
+				commandRequestedBy: "test",
 			},
-			requestedBy: "test",
 		});
 
 		const report = await service.syncOnce();
@@ -922,28 +931,35 @@ describe("TapMessagingService", () => {
 		expect(report.processed).toBe(1);
 		expect(transport.sentMessages).toHaveLength(1);
 		expect(transport.sentMessages[0]?.message.method).toBe("message/send");
-		expect(await outbox.getResult(queued.jobId)).toEqual(
-			expect.objectContaining({
-				status: "completed",
-			}),
+		const entry = await requestJournal.getByRequestId(requestId);
+		expect(entry?.status).toBe("completed");
+		expect((entry?.metadata as Record<string, unknown>)?.commandResult).toEqual(
+			expect.objectContaining({ status: "completed" }),
 		);
 	});
 
 	it("processes queued connect commands during syncOnce", async () => {
-		const { service, transport, dataDir } = await createService();
-		const outbox = new FileTapCommandOutbox(dataDir);
+		const { service, transport, requestJournal } = await createService();
 		const invite = await generateInvite({
 			agentId: PEER_AGENT.agentId,
 			chain: PEER_AGENT.chain,
 			signingProvider: BOB_SIGNING_PROVIDER,
 			expirySeconds: 3600,
 		});
-		const queued = await outbox.enqueue({
-			type: "connect",
-			payload: {
-				inviteUrl: invite.url,
+		const requestId = `test-connect-${Date.now()}`;
+		await requestJournal.putOutbound({
+			requestId,
+			requestKey: `outbound:command:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: "command/connect",
+			peerAgentId: 0,
+			status: "queued",
+			metadata: {
+				commandType: "connect",
+				commandPayload: { inviteUrl: invite.url },
+				commandRequestedBy: "test",
 			},
-			requestedBy: "test",
 		});
 
 		const report = await service.syncOnce();
@@ -951,19 +967,19 @@ describe("TapMessagingService", () => {
 		expect(report.processed).toBe(1);
 		expect(transport.sentMessages).toHaveLength(1);
 		expect(transport.sentMessages[0]?.message.method).toBe("connection/request");
-		expect(await outbox.getResult(queued.jobId)).toEqual(
+		const entry = await requestJournal.getByRequestId(requestId);
+		expect(entry?.status).toBe("completed");
+		expect((entry?.metadata as Record<string, unknown>)?.commandResult).toEqual(
 			expect.objectContaining({
 				status: "completed",
-				result: expect.objectContaining({
-					status: "pending",
-				}),
+				result: expect.objectContaining({ status: "pending" }),
 			}),
 		);
 	});
 
 	it("polls queued outbound commands while the listener is running", async () => {
 		const activeContact = makeActiveContact("conn-grants-1");
-		const { service, transport, dataDir } = await createService(
+		const { service, transport, requestJournal } = await createService(
 			{},
 			{
 				trustStore: createMemoryTrustStore([activeContact]),
@@ -972,21 +988,30 @@ describe("TapMessagingService", () => {
 				},
 			},
 		);
-		const outbox = new FileTapCommandOutbox(dataDir);
 
 		await service.start();
-		const queued = await outbox.enqueue({
-			type: "publish-grant-set",
-			payload: {
-				peer: activeContact.peerDisplayName,
-				grantSet: {
-					version: "tap-grants/v1",
-					updatedAt: "2026-03-08T00:00:00.000Z",
-					grants: [{ grantId: "queued-chat", scope: "general-chat" }],
+		const requestId = `test-grants-${Date.now()}`;
+		await requestJournal.putOutbound({
+			requestId,
+			requestKey: `outbound:command:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: "command/publish-grant-set",
+			peerAgentId: 0,
+			status: "queued",
+			metadata: {
+				commandType: "publish-grant-set",
+				commandPayload: {
+					peer: activeContact.peerDisplayName,
+					grantSet: {
+						version: "tap-grants/v1",
+						updatedAt: "2026-03-08T00:00:00.000Z",
+						grants: [{ grantId: "queued-chat", scope: "general-chat" }],
+					},
+					note: "queued publish",
 				},
-				note: "queued publish",
+				commandRequestedBy: "test",
 			},
-			requestedBy: "test",
 		});
 
 		await sleep(150);
@@ -994,10 +1019,10 @@ describe("TapMessagingService", () => {
 
 		expect(transport.sentMessages).toHaveLength(1);
 		expect(transport.sentMessages[0]?.message.method).toBe("permissions/update");
-		expect(await outbox.getResult(queued.jobId)).toEqual(
-			expect.objectContaining({
-				status: "completed",
-			}),
+		const entry = await requestJournal.getByRequestId(requestId);
+		expect(entry?.status).toBe("completed");
+		expect((entry?.metadata as Record<string, unknown>)?.commandResult).toEqual(
+			expect.objectContaining({ status: "completed" }),
 		);
 	});
 
