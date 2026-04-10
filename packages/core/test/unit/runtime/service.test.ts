@@ -1538,13 +1538,18 @@ describe("TapMessagingService", () => {
 		);
 	});
 
-	it("creates a fresh active contact for a missing-contact connection result (§5.3 missing path)", async () => {
-		// Under the new design, the pending-connect cross-peer check is handled at
-		// the XMTP transport layer (sender inbox verification). At the service layer,
-		// an accepted result from an unknown agent that passes transport-layer
-		// verification creates a fresh active contact per spec §5.3.
-		// The handler must resolve peer identity on-chain to populate load-bearing
-		// fields (peerAgentAddress, peerOwnerAddress) with correct non-zero values.
+	it("rejects an unsolicited connection result when no outbound request exists (§5.3 security gate)", async () => {
+		// REGRESSION TEST for a critical security issue: before this fix,
+		// handleConnectionResult would create a fresh active contact for ANY
+		// accepted result that passed XMTP transport sender verification. That
+		// meant a remote agent who knew another agent's XMTP inbox ID could
+		// self-establish trust by sending an unsolicited `connection/result`,
+		// because identity verification proves the sender IS who they claim to
+		// be — not that we CONSENTED to connect to them.
+		//
+		// The fix requires a matching outbound connection/request in the local
+		// journal before accepting any "missing contact" result. Without that
+		// proof of initiation, the result is rejected as unsolicited.
 		const transport = new FakeTransport();
 		const trustStore = createMemoryTrustStore();
 
@@ -1559,7 +1564,7 @@ describe("TapMessagingService", () => {
 			registrationFile: {
 				type: "eip-8004-registration-v1",
 				name: "Unknown Agent",
-				description: "A newly discovered peer",
+				description: "Attacker claiming to be a newly discovered peer",
 				services: [{ name: "xmtp", endpoint: ALICE.address }],
 				trustedAgentProtocol: {
 					version: "1.0",
@@ -1571,19 +1576,18 @@ describe("TapMessagingService", () => {
 		};
 		const resolver = createStaticResolver(unknownAgentResolved);
 
-		const { service } = await createService(
+		const { service, requestJournal } = await createService(
 			{},
-			{
-				transport,
-				trustStore,
-				resolver,
-			},
+			{ transport, trustStore, resolver },
 		);
-
 		await service.start();
 
+		// No outbound connection/request exists in the journal — we never asked
+		// to connect to this agent.
+		expect(await requestJournal.getByRequestId("req-unsolicited")).toBeNull();
+
 		const acceptedResult = buildConnectionResult({
-			requestId: "req-from-unknown",
+			requestId: "req-unsolicited",
 			from: { agentId: unknownAgentId, chain: unknownChain },
 			status: "accepted",
 			timestamp: "2026-03-08T00:00:01.000Z",
@@ -1592,27 +1596,216 @@ describe("TapMessagingService", () => {
 		await expect(
 			transport.handlers.onResult?.({
 				from: unknownAgentId,
-				senderInboxId: "peer-inbox-unknown",
+				senderInboxId: "peer-inbox-attacker",
 				message: acceptedResult,
 			}),
-		).resolves.toEqual({ status: "received" });
+		).resolves.toEqual({ status: "duplicate" });
 
-		// A fresh active contact is created for the unknown agent with correct
-		// on-chain resolved fields — not zero-address placeholders.
-		const contact = await trustStore.findByAgentId(unknownAgentId, unknownChain);
-		expect(contact?.status).toBe("active");
-		expect(contact?.peerAgentId).toBe(unknownAgentId);
-		expect(contact?.peerAgentAddress).toBe(ALICE.address);
-		expect(contact?.peerOwnerAddress).toBe(ALICE.address);
-		expect(contact?.peerDisplayName).toBe("Unknown Agent");
+		// Critical assertion: NO contact was created.
+		expect(await trustStore.findByAgentId(unknownAgentId, unknownChain)).toBeNull();
+		expect(await trustStore.getContacts()).toHaveLength(0);
 
 		await service.stop();
 	});
 
-	it("returns duplicate and skips contact creation when resolver fails in missing-contact path (§5.3 graceful fallback)", async () => {
-		// If the resolver throws (e.g. peer deregistered or network error), the
-		// handler must not create a broken zero-address contact — it logs a warning
-		// and returns "duplicate" so the caller treats the result as unactionable.
+	it("accepts a connection result for partial-wipe recovery when outbound journal entry exists (§5.3 recovery path)", async () => {
+		// Legitimate recovery scenario: the user previously ran `tap connect`
+		// (creating an outbound connection/request journal entry) but then
+		// lost or deleted their contacts.json. The journal entry is proof of
+		// initiation, so when the result arrives the handler should rebuild
+		// the contact via on-chain resolution.
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+
+		const peerAgentId = 999;
+		const peerChain = PEER_AGENT.chain;
+		const peerResolved: ResolvedAgent = {
+			agentId: peerAgentId,
+			chain: peerChain,
+			ownerAddress: ALICE.address,
+			agentAddress: ALICE.address,
+			capabilities: ["chat"],
+			registrationFile: {
+				type: "eip-8004-registration-v1",
+				name: "Previously Connected Peer",
+				description: "A peer we asked to connect to",
+				services: [{ name: "xmtp", endpoint: ALICE.address }],
+				trustedAgentProtocol: {
+					version: "1.0",
+					agentAddress: ALICE.address,
+					capabilities: ["chat"],
+				},
+			},
+			resolvedAt: "2026-03-08T00:00:00.000Z",
+		};
+		const resolver = createStaticResolver(peerResolved);
+
+		const { service, requestJournal } = await createService(
+			{},
+			{ transport, trustStore, resolver },
+		);
+		await service.start();
+
+		// Simulate a prior `connect()` call that left a pending outbound entry
+		// in the journal. The contact was then (hypothetically) wiped.
+		await requestJournal.putOutbound({
+			requestId: "req-recovered",
+			requestKey: "outbound:req-recovered",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId,
+			status: "pending",
+		});
+		expect(await trustStore.findByAgentId(peerAgentId, peerChain)).toBeNull();
+
+		const acceptedResult = buildConnectionResult({
+			requestId: "req-recovered",
+			from: { agentId: peerAgentId, chain: peerChain },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: peerAgentId,
+				senderInboxId: "peer-inbox-recovered",
+				message: acceptedResult,
+			}),
+		).resolves.toEqual({ status: "received" });
+
+		// Contact rebuilt from on-chain resolution, with correct fields.
+		const contact = await trustStore.findByAgentId(peerAgentId, peerChain);
+		expect(contact?.status).toBe("active");
+		expect(contact?.peerAgentAddress).toBe(ALICE.address);
+		expect(contact?.peerDisplayName).toBe("Previously Connected Peer");
+
+		// Journal entry marked completed.
+		expect((await requestJournal.getByRequestId("req-recovered"))?.status).toBe("completed");
+
+		await service.stop();
+	});
+
+	it("ignores a stale connection result when the outbound request is already completed (§5.3 replay protection)", async () => {
+		// If the journal entry for the original connection/request is already
+		// `completed` and the contact is now missing, the user must have
+		// intentionally deleted the contact after a successful handshake. A
+		// redelivered stale result should NOT recreate the contact silently —
+		// that would undo the user's explicit deletion.
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+
+		const peerAgentId = 555;
+		const peerChain = PEER_AGENT.chain;
+		const { service, requestJournal } = await createService(
+			{},
+			{ transport, trustStore, resolver: createStaticResolver() },
+		);
+		await service.start();
+
+		await requestJournal.putOutbound({
+			requestId: "req-stale",
+			requestKey: "outbound:req-stale",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId,
+			status: "completed",
+		});
+
+		const stale = buildConnectionResult({
+			requestId: "req-stale",
+			from: { agentId: peerAgentId, chain: peerChain },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: peerAgentId,
+				senderInboxId: "peer-inbox-stale",
+				message: stale,
+			}),
+		).resolves.toEqual({ status: "duplicate" });
+
+		expect(await trustStore.findByAgentId(peerAgentId, peerChain)).toBeNull();
+
+		await service.stop();
+	});
+
+	it("rejects unsolicited connection result even when sender identity resolves on-chain (§5.3 security gate)", async () => {
+		// Extra defense-in-depth: even if the resolver successfully resolves the
+		// sender's on-chain identity (as would happen for any real attacker with
+		// a real agent ID), the gate must still reject the result because there
+		// is no outbound journal proof of initiation. The resolver is only
+		// consulted AFTER the journal check passes.
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+
+		const attackerAgentId = 13337;
+		const attackerResolved: ResolvedAgent = {
+			agentId: attackerAgentId,
+			chain: PEER_AGENT.chain,
+			ownerAddress: ALICE.address,
+			agentAddress: ALICE.address,
+			capabilities: ["chat"],
+			registrationFile: {
+				type: "eip-8004-registration-v1",
+				name: "Real Attacker",
+				description: "Legitimate on-chain identity used for spoofing",
+				services: [{ name: "xmtp", endpoint: ALICE.address }],
+				trustedAgentProtocol: {
+					version: "1.0",
+					agentAddress: ALICE.address,
+					capabilities: ["chat"],
+				},
+			},
+			resolvedAt: "2026-03-08T00:00:00.000Z",
+		};
+
+		let resolverCalled = false;
+		const spyingResolver: IAgentResolver = {
+			resolve: async () => {
+				resolverCalled = true;
+				return attackerResolved;
+			},
+			resolveWithCache: async () => {
+				resolverCalled = true;
+				return attackerResolved;
+			},
+		};
+
+		const { service } = await createService(
+			{},
+			{ transport, trustStore, resolver: spyingResolver },
+		);
+		await service.start();
+
+		await transport.handlers.onResult?.({
+			from: attackerAgentId,
+			senderInboxId: "attacker-inbox",
+			message: buildConnectionResult({
+				requestId: "req-attacker-chosen",
+				from: { agentId: attackerAgentId, chain: PEER_AGENT.chain },
+				status: "accepted",
+				timestamp: "2026-03-08T00:00:01.000Z",
+			}),
+		});
+
+		// Gate blocks the request before the resolver is even called.
+		expect(resolverCalled).toBe(false);
+		expect(await trustStore.findByAgentId(attackerAgentId, PEER_AGENT.chain)).toBeNull();
+
+		await service.stop();
+	});
+
+	it("returns duplicate and skips contact creation when resolver fails during partial-wipe recovery (§5.3 graceful fallback)", async () => {
+		// During partial-wipe recovery the outbound journal entry is present
+		// (proof of initiation), so the handler proceeds past the security gate
+		// and tries to resolve the peer on-chain to rebuild the contact. If the
+		// resolver throws (e.g. peer deregistered or network error), the handler
+		// must not create a broken zero-address contact — it logs a warning and
+		// returns "duplicate" so the caller treats the result as unactionable.
 		const transport = new FakeTransport();
 		const trustStore = createMemoryTrustStore();
 		const failingResolver: IAgentResolver = {
@@ -1624,7 +1817,7 @@ describe("TapMessagingService", () => {
 			},
 		};
 
-		const { service } = await createService(
+		const { service, requestJournal } = await createService(
 			{},
 			{
 				transport,
@@ -1636,6 +1829,17 @@ describe("TapMessagingService", () => {
 		await service.start();
 
 		const unknownAgentId = 888;
+		// Seed proof-of-initiation so we reach the resolver-fails path.
+		await requestJournal.putOutbound({
+			requestId: "req-resolver-fail",
+			requestKey: "outbound:req-resolver-fail",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: unknownAgentId,
+			status: "pending",
+		});
+
 		const acceptedResult = buildConnectionResult({
 			requestId: "req-resolver-fail",
 			from: { agentId: unknownAgentId, chain: PEER_AGENT.chain },

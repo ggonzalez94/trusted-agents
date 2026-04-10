@@ -3219,20 +3219,45 @@ export class TapMessagingService {
 		}
 
 		// connecting / idle / stale → flip to active.
-		// missing → create fresh active contact.
+		// missing → gated recovery (see below) or rejected as unsolicited.
 		//
-		// spec §5.3: missing local contact — create fresh active contact. Safe because
-		// the XMTP transport layer's bootstrap sender verification (see XmtpTransport)
-		// has already confirmed the message's sender inbox ID matches the on-chain
-		// resolved agent address. A spoofed result with a mismatched sender would
-		// have been rejected before reaching this handler.
-		//
-		// For the "missing" case, resolve the peer on-chain to populate contact fields
-		// correctly. peerAgentAddress is load-bearing for transport routing; a zero-
-		// address would cause silent failures on subsequent messaging. This adds one
-		// on-chain resolver call in the recovery path, acceptable because the wipe
-		// scenario is rare and the resolver is cached.
+		// SECURITY GATE (spec §5.3, corrected): before creating a contact from an
+		// incoming result, require local proof that WE initiated this handshake.
+		// Transport-layer sender verification proves the sender's IDENTITY, not
+		// our CONSENT to be connected to them — without this gate any agent who
+		// knows another agent's XMTP inbox could self-establish trust by sending
+		// an unsolicited accepted result. Proof of initiation = a matching
+		// outbound connection/request journal entry whose requestId correlates
+		// to result.requestId and whose peerAgentId matches the sender. This
+		// preserves the partial-wipe recovery scenario (contact deleted, journal
+		// entry survived) while closing the self-establishment hole.
 		if (!existingContact) {
+			const outboundEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			const hasValidOutboundProof =
+				outboundEntry !== null &&
+				outboundEntry.direction === "outbound" &&
+				outboundEntry.method === CONNECTION_REQUEST &&
+				outboundEntry.peerAgentId === result.from.agentId;
+			if (!hasValidOutboundProof) {
+				this.log(
+					"warn",
+					`Ignoring unsolicited connection/result from agent #${result.from.agentId} on ${result.from.chain}: no matching outbound request in journal`,
+				);
+				return "duplicate";
+			}
+			// If the outbound request already completed, the result is a replay or
+			// the user explicitly deleted the contact after a successful handshake.
+			// Do NOT recreate the contact — that would silently undo a deletion.
+			if (outboundEntry.status === "completed") {
+				this.log(
+					"info",
+					`Ignoring stale connection/result for already-completed request ${result.requestId}; not recreating missing contact`,
+				);
+				return "duplicate";
+			}
+			// Partial-wipe recovery: journal says we asked, contact is gone.
+			// Resolve the peer on-chain to populate load-bearing fields
+			// (peerAgentAddress is required for transport routing).
 			let resolved: ResolvedAgent;
 			try {
 				resolved = await this.context.resolver.resolveWithCache(
@@ -3260,12 +3285,8 @@ export class TapMessagingService {
 				status: "active",
 			};
 			await this.context.trustStore.addContact(freshContact);
-			// Best-effort journal correlation: mark matching outbound entry completed.
-			const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
-			if (journalEntry) {
-				await this.context.requestJournal.updateStatus(result.requestId, "completed");
-			}
-			this.log("info", `Connection accepted by ${peerLabel(freshContact)}`);
+			await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			this.log("info", `Connection accepted by ${peerLabel(freshContact)} (partial-wipe recovery)`);
 			// Notify any in-flight connect() waiter.
 			this.resolveConnectWaiter(result.requestId);
 			return "received";
