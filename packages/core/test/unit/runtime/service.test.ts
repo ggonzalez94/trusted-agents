@@ -1633,6 +1633,135 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
+	it("flips an idle contact to active on accepted connection result (§5.3 idle row)", async () => {
+		// Spec §5.3: idle status should flip to active, treated identically to connecting.
+		const idleContact: Contact = {
+			...makeActiveContact("conn-idle-flip"),
+			status: "idle",
+		};
+		const trustStore = createMemoryTrustStore([idleContact]);
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+
+		const acceptedResult = buildConnectionResult({
+			requestId: "req-idle-flip",
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-idle-flip",
+				message: acceptedResult,
+			}),
+		).resolves.toEqual({ status: "received" });
+
+		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		expect(contact?.status).toBe("active");
+		// Journal entry (if present) should be completed.
+		const journalEntry = await requestJournal.getByRequestId("req-idle-flip");
+		if (journalEntry) {
+			expect(journalEntry.status).toBe("completed");
+		}
+
+		await service.stop();
+	});
+
+	it("flips a stale contact to active on accepted connection result (§5.3 stale row)", async () => {
+		// Spec §5.3: stale status should flip to active, treated identically to connecting.
+		const staleContact: Contact = {
+			...makeActiveContact("conn-stale-flip"),
+			status: "stale",
+		};
+		const trustStore = createMemoryTrustStore([staleContact]);
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+
+		const acceptedResult = buildConnectionResult({
+			requestId: "req-stale-flip",
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-stale-flip",
+				message: acceptedResult,
+			}),
+		).resolves.toEqual({ status: "received" });
+
+		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		expect(contact?.status).toBe("active");
+		// Journal entry (if present) should be completed.
+		const journalEntry = await requestJournal.getByRequestId("req-stale-flip");
+		if (journalEntry) {
+			expect(journalEntry.status).toBe("completed");
+		}
+
+		await service.stop();
+	});
+
+	it("ignores accepted connection result when local contact is revoked (§5.3 revoked row)", async () => {
+		// Spec §5.3: revoked status — log and ignore. A stale result must not
+		// resurrect a contact that was explicitly revoked.
+		const revokedContact: Contact = {
+			...makeActiveContact("conn-revoked-ignore"),
+			status: "revoked",
+		};
+		const trustStore = createMemoryTrustStore([revokedContact]);
+		const transport = new FakeTransport();
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+
+		const acceptedResult = buildConnectionResult({
+			requestId: "req-revoked-ignore",
+			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: PEER_AGENT.agentId,
+				senderInboxId: "peer-inbox-revoked-ignore",
+				message: acceptedResult,
+			}),
+		).resolves.toEqual({ status: "duplicate" });
+
+		// Contact must remain revoked — not resurrected.
+		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		expect(contact?.status).toBe("revoked");
+
+		await service.stop();
+	});
+
 	it("rejects permission updates that do not involve the local agent", async () => {
 		const contact = makeActiveContact("conn-grants-invalid");
 		const trustStore = createMemoryTrustStore([contact]);

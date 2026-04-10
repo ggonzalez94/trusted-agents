@@ -3013,7 +3013,7 @@ export class TapMessagingService {
 			return "received";
 		}
 
-		const establishedAt = result.timestamp;
+		const establishedAt = result.timestamp ?? nowISO();
 		const nextContact: Contact = {
 			connectionId: existingContact.connectionId,
 			peerAgentId: result.from.agentId,
