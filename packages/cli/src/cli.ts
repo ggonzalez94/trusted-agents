@@ -335,29 +335,32 @@ Examples:
 		.command("connect <invite-url>")
 		.description("Send a connection request from an invite")
 		.option("--dry-run", "Validate the invite and preview the connection without sending it")
-		.option("--yes", "Auto-approve connection (no interactive prompt)")
-		.option("--wait [seconds]", "Wait for connection to become active (default: 60s)")
+		.option("--no-wait", "Return immediately without waiting for the peer to respond")
+		.option("--wait-seconds <seconds>", "Override the default 30s wait timeout", Number.parseInt)
 		.addHelpText(
 			"after",
 			`
 Connect establishes trust only. Publish or request grants separately after the contact is active.
 
+By default, blocks up to 30s waiting for the peer to accept. Exit 0 on active, exit 2 on timeout.
+
 Examples:
-  tap connect "<invite-url>" --yes
-  tap connect "<invite-url>" --yes --wait
-  tap connect "<invite-url>" --yes --wait 120
+  tap connect "<invite-url>"
+  tap connect "<invite-url>" --no-wait
+  tap connect "<invite-url>" --wait-seconds 120
 `,
 		)
 		.action(
 			async (
 				inviteUrl: string,
-				cmdOpts: { dryRun?: boolean; yes?: boolean; wait?: string | boolean },
+				// Commander stores --no-wait as `wait: false` (boolean negation pattern)
+				cmdOpts: { dryRun?: boolean; wait?: boolean; waitSeconds?: number },
 			) => {
 				const opts = program.opts<GlobalOptions>();
 				const { connectCommand } = await import("./commands/connect.js");
-				const waitSeconds =
-					cmdOpts.wait === true ? 60 : cmdOpts.wait ? Number(cmdOpts.wait) : undefined;
-				await connectCommand(inviteUrl, !!cmdOpts.yes, opts, waitSeconds, !!cmdOpts.dryRun);
+				// noWait is true when --no-wait was passed (commander sets wait=false)
+				const noWait = cmdOpts.wait === false;
+				await connectCommand(inviteUrl, opts, cmdOpts.waitSeconds, noWait, !!cmdOpts.dryRun);
 			},
 		);
 

@@ -256,7 +256,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				agentBDir,
 				"connect",
 				inviteUrl,
-				"--yes",
+				"--no-wait",
 			]);
 			expect(result.exitCode, `Agent B connect failed:\n${result.stderr}`).toBe(0);
 			expect(result.stdout).toContain("Status:");
@@ -607,7 +607,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				pendingDir,
 				"connect",
 				invite.url,
-				"--yes",
+				"--no-wait",
 			]);
 			expect(connect.exitCode).toBe(0);
 
@@ -703,7 +703,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				queueBDir,
 				"connect",
 				inviteUrl.url,
-				"--yes",
+				"--no-wait",
 			]);
 			expect(connect.exitCode).toBe(0);
 			const connectData = parseJsonOutput(connect.stdout).data as {
