@@ -61,9 +61,13 @@ export async function handleConnectionRequest(
 	// revoked: create a fresh active contact, overwriting the revoked record.
 	//   Rationale: revokes are one-shot cleanup, not permanent blocks.
 	//   A new valid signed invite counts as renewed consent with a clean slate.
-	const isRevoked = existing?.status === "revoked";
-	const freshSlate = !existing || isRevoked;
+	const freshSlate = !existing || existing.status === "revoked";
 
+	// connectionId is reused when upgrading from any state, including revoked:
+	// the row is overwritten in place rather than replaced. Consumers treating
+	// connectionId as a stable opaque token should expect its meaning to "un-revoke"
+	// when a new invite reconnects the peer — revokes are one-shot cleanup, not
+	// permanent blocks.
 	const nextContact: Contact = {
 		connectionId: existing?.connectionId ?? generateConnectionId(),
 		peerAgentId: resolved.agentId,
