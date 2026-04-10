@@ -225,13 +225,6 @@ interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	 * the contact write is skipped if the field is absent.
 	 */
 	plannedContact?: Contact;
-	/**
-	 * connectionId of the existing contact if one was present before this
-	 * connection was processed (`null` = no prior contact, `undefined` =
-	 * legacy entry without this field). Used by the retry pipeline to
-	 * choose `addContact` vs `updateContact` / `touchContact`.
-	 */
-	existingContactConnectionId?: string | null;
 }
 
 const DELIVERY_FAILURE_METADATA_KEY = "__deliveryFailure";
@@ -3916,7 +3909,6 @@ function buildPendingConnectionResultDelivery(
 	};
 	if (plan) {
 		base.plannedContact = plan.plannedContact;
-		base.existingContactConnectionId = plan.existingContact?.connectionId ?? null;
 	}
 	return base;
 }
@@ -3928,6 +3920,22 @@ function buildPendingConnectionResultDelivery(
  */
 function peerConnectionResultCacheKey(chain: string, agentId: number): string {
 	return `${chain}:${agentId}`;
+}
+
+function isPlausiblePlannedContact(value: unknown): value is Contact {
+	if (typeof value !== "object" || value === null) return false;
+	const c = value as Partial<Contact>;
+	return (
+		typeof c.connectionId === "string" &&
+		typeof c.peerAgentId === "number" &&
+		typeof c.peerChain === "string" &&
+		typeof c.peerOwnerAddress === "string" &&
+		typeof c.peerDisplayName === "string" &&
+		typeof c.peerAgentAddress === "string" &&
+		typeof c.establishedAt === "string" &&
+		typeof c.lastContactAt === "string" &&
+		typeof c.status === "string"
+	);
 }
 
 function parsePendingConnectionResultDelivery(
@@ -3956,20 +3964,23 @@ function parsePendingConnectionResultDelivery(
 			? metadata.peerChain
 			: undefined;
 
-	// plannedContact and existingContactConnectionId are optional — entries
-	// written before this field was introduced do not carry the planned
-	// contact and therefore cannot write the contact on retry. The retry
-	// pipeline will deliver the send but skip the contact write for such
-	// legacy entries (the implicit handshake completion or a future
-	// connection/request from the peer will eventually write the contact).
-	const plannedContact =
-		metadata.plannedContact && typeof metadata.plannedContact === "object"
-			? (metadata.plannedContact as Contact)
-			: undefined;
-	const existingContactConnectionId =
-		"existingContactConnectionId" in metadata
-			? (metadata.existingContactConnectionId as string | null)
-			: undefined;
+	// plannedContact is optional — entries written before this field was
+	// introduced do not carry the planned contact and therefore cannot write
+	// the contact on retry. The retry pipeline will deliver the send but skip
+	// the contact write for such legacy entries (the implicit handshake
+	// completion or a future connection/request from the peer will eventually
+	// write the contact).
+	const plannedContact = isPlausiblePlannedContact(metadata.plannedContact)
+		? metadata.plannedContact
+		: undefined;
+	if (metadata.plannedContact !== undefined && !plannedContact) {
+		// The field is present but failed validation — warn so the journal
+		// entry is still retried for delivery, but the unexpected shape is
+		// surfaced for debugging.
+		console.warn(
+			"[TAP] parsePendingConnectionResultDelivery: plannedContact failed validation, skipping contact write",
+		);
+	}
 
 	return {
 		type: "connection-result-delivery",
@@ -3978,7 +3989,7 @@ function parsePendingConnectionResultDelivery(
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
-		...(plannedContact ? { plannedContact, existingContactConnectionId } : {}),
+		...(plannedContact ? { plannedContact } : {}),
 	};
 }
 
