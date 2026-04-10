@@ -616,17 +616,17 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				status: string;
 			};
 			expect(output.status).toBe("pending");
-			expect(output.connection_id).toBeUndefined();
+			// connection_id is now defined — the connecting contact is written
+			// to the trust store before any wire traffic (spec §1.1).
+			expect(output.connection_id).toBeDefined();
 
 			const trustStore = new FileTrustStore(pendingDir);
-			expect(await trustStore.getContacts()).toEqual([]);
-
-			const pendingConnects = JSON.parse(
-				await readFile(join(pendingDir, "pending-connects.json"), "utf-8"),
-			) as { pendingConnects?: Array<{ peerAgentId: number }> };
-			expect(pendingConnects.pendingConnects).toEqual([
-				expect.objectContaining({ peerAgentId: pendingAgentId }),
-			]);
+			const contacts = await trustStore.getContacts();
+			expect(contacts).toHaveLength(1);
+			expect(contacts[0]).toMatchObject({
+				peerAgentId: pendingAgentId,
+				status: "connecting",
+			});
 		} finally {
 			clearCliRuntimeOverride(pendingDir);
 			await rm(pendingRoot, { recursive: true, force: true });

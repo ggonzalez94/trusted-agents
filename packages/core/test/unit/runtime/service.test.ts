@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -691,30 +691,70 @@ describe("TapMessagingService", () => {
 		const transport = new FakeTransport({
 			sendError: new TransportError("Response timeout for message connect-timeout-1"),
 		});
-		const { service, requestJournal, dataDir } = await createService(
+		const trustStore = createMemoryTrustStore();
+		const { service, requestJournal } = await createService(
 			{},
 			{
 				transport,
+				trustStore,
 			},
 		);
 
 		const result = await service.connect({ inviteUrl: url });
-		const pendingFile = JSON.parse(
-			await readFile(join(dataDir, "pending-connects.json"), "utf-8"),
-		) as { pendingConnects?: Array<{ requestId: string; peerAgentId: number }> };
+		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
 
+		// connectInternal upserts the connecting contact before sending, so
+		// the contact exists even when the receipt times out.
 		expect(result.status).toBe("pending");
 		expect(result.receipt).toBeUndefined();
-		expect(result.connectionId).toBeUndefined();
+		// connectionId is now defined — the connecting contact was written before send.
+		expect(result.connectionId).toBeDefined();
+		expect(result.connectionId).toBe(contact?.connectionId);
+
+		// The contact is in the "connecting" state — sticky per spec §1.1.
+		expect(contact?.status).toBe("connecting");
+		expect(contact?.peerAgentId).toBe(PEER_AGENT.agentId);
+		expect(contact?.expiresAt).toBeDefined();
+
+		// No journal entry written (not wired up in this task yet).
 		expect(
 			await requestJournal.getByRequestId(String(transport.sentMessages[0]!.message.id)),
 		).toBeNull();
-		expect(pendingFile.pendingConnects).toEqual([
-			expect.objectContaining({
-				requestId: String(transport.sentMessages[0]!.message.id),
-				peerAgentId: PEER_AGENT.agentId,
-			}),
-		]);
+	});
+
+	it("connectInternal upserts a connecting contact before sending (spec §1.1)", async () => {
+		// The connecting contact must be written before any wire traffic so that
+		// a process restart or send failure still leaves durable "I asked" state.
+		const { url, invite } = await generateInvite({
+			agentId: PEER_AGENT.agentId,
+			chain: PEER_AGENT.chain,
+			signingProvider: BOB_SIGNING_PROVIDER,
+			expirySeconds: 3600,
+		});
+
+		let contactAtSendTime: Contact | null = null;
+		class ObservingTransport extends FakeTransport {
+			override async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
+				// Capture trust store state at the moment send is called.
+				contactAtSendTime = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+				return await super.send(peerId, message);
+			}
+		}
+
+		const transport = new ObservingTransport();
+		const trustStore = createMemoryTrustStore();
+		const { service } = await createService({}, { transport, trustStore });
+
+		await service.connect({ inviteUrl: url });
+
+		// The contact was already in the trust store when send was called.
+		expect(contactAtSendTime).not.toBeNull();
+		expect(contactAtSendTime?.status).toBe("connecting");
+		expect(contactAtSendTime?.peerAgentId).toBe(PEER_AGENT.agentId);
+
+		// expiresAt matches the invite's expires field.
+		const expectedExpiresAt = new Date(invite.expires * 1000).toISOString();
+		expect(contactAtSendTime?.expiresAt).toBe(expectedExpiresAt);
 	});
 
 	it("returns active when the peer accepts during the same transport session", async () => {
@@ -752,7 +792,7 @@ describe("TapMessagingService", () => {
 
 		const transport = new ImmediateAcceptTransport();
 		const trustStore = createMemoryTrustStore();
-		const { service, dataDir } = await createService(
+		const { service } = await createService(
 			{},
 			{
 				transport,
@@ -762,14 +802,12 @@ describe("TapMessagingService", () => {
 
 		const result = await service.connect({ inviteUrl: url });
 		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
-		const pendingFile = JSON.parse(
-			await readFile(join(dataDir, "pending-connects.json"), "utf-8"),
-		) as { pendingConnects?: unknown[] };
 
 		expect(result.status).toBe("active");
 		expect(result.connectionId).toBe(contact?.connectionId);
 		expect(contact?.status).toBe("active");
-		expect(pendingFile.pendingConnects).toEqual([]);
+		// expiresAt is cleared when contact transitions to active.
+		expect(contact?.expiresAt).toBeUndefined();
 		expect(transport.sentMessages.map((entry) => entry.message.method)).toContain(
 			"connection/request",
 		);
@@ -810,24 +848,23 @@ describe("TapMessagingService", () => {
 		}
 
 		const transport = new ImmediateRejectTransport();
-		const { service, requestJournal, dataDir } = await createService(
+		const trustStore = createMemoryTrustStore();
+		const { service, requestJournal } = await createService(
 			{},
 			{
 				transport,
+				trustStore,
 			},
 		);
 
 		await expect(service.connect({ inviteUrl: url })).rejects.toThrow(
 			"Connection rejected by Bob (#10)",
 		);
+		// The connecting contact is removed when a rejection is received.
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
 		expect(
 			await requestJournal.getByRequestId(String(transport.sentMessages[0]!.message.id)),
 		).toBeNull();
-		expect(
-			JSON.parse(await readFile(join(dataDir, "pending-connects.json"), "utf-8")) as {
-				pendingConnects?: unknown[];
-			},
-		).toEqual({ pendingConnects: [] });
 	});
 
 	it("ignores unsolicited connection results that do not match a pending outbound request", async () => {
@@ -1478,10 +1515,14 @@ describe("TapMessagingService", () => {
 		);
 	});
 
-	it("rejects connection results from a different peer than the pending outbound request", async () => {
+	it("creates a fresh active contact for a missing-contact connection result (§5.3 missing path)", async () => {
+		// Under the new design, the pending-connect cross-peer check is handled at
+		// the XMTP transport layer (sender inbox verification). At the service layer,
+		// an accepted result from an unknown agent that passes transport-layer
+		// verification creates a fresh active contact per spec §5.3.
 		const transport = new FakeTransport();
 		const trustStore = createMemoryTrustStore();
-		const { service, requestJournal, dataDir } = await createService(
+		const { service } = await createService(
 			{},
 			{
 				transport,
@@ -1490,45 +1531,29 @@ describe("TapMessagingService", () => {
 		);
 
 		await service.start();
-		await writeFile(
-			join(dataDir, "pending-connects.json"),
-			JSON.stringify(
-				{
-					pendingConnects: [
-						{
-							requestId: "req-wrong-peer",
-							peerAgentId: PEER_AGENT.agentId,
-							peerChain: PEER_AGENT.chain,
-							peerOwnerAddress: PEER_AGENT.ownerAddress,
-							peerDisplayName: PEER_AGENT.registrationFile.name,
-							peerAgentAddress: PEER_AGENT.agentAddress,
-							createdAt: "2026-03-08T00:00:00.000Z",
-						},
-					],
-				},
-				null,
-				"\t",
-			),
-			"utf-8",
-		);
 
-		const wrongNonceResult = buildConnectionResult({
-			requestId: "req-wrong-peer",
-			from: { agentId: 999, chain: PEER_AGENT.chain },
+		const unknownAgentId = 999;
+		const acceptedResult = buildConnectionResult({
+			requestId: "req-from-unknown",
+			from: { agentId: unknownAgentId, chain: PEER_AGENT.chain },
 			status: "accepted",
 			timestamp: "2026-03-08T00:00:01.000Z",
 		});
 
 		await expect(
 			transport.handlers.onResult?.({
-				from: 999,
-				senderInboxId: "peer-inbox-wrong-peer",
-				message: wrongNonceResult,
+				from: unknownAgentId,
+				senderInboxId: "peer-inbox-unknown",
+				message: acceptedResult,
 			}),
-		).rejects.toThrow("sender does not match the pending connect");
+		).resolves.toEqual({ status: "received" });
 
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
-		expect(await requestJournal.getByRequestId("req-wrong-peer")).toBeNull();
+		// A fresh active contact is created for the unknown agent.
+		const contact = await trustStore.findByAgentId(unknownAgentId, PEER_AGENT.chain);
+		expect(contact?.status).toBe("active");
+		expect(contact?.peerAgentId).toBe(unknownAgentId);
+
+		await service.stop();
 	});
 
 	it("rejects permission updates that do not involve the local agent", async () => {

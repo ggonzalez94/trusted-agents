@@ -110,7 +110,6 @@ import {
 	findContactForPeer,
 	findUniqueContactForAgentId,
 } from "./message-conversations.js";
-import { FilePendingConnectStore, type PendingConnectRecord } from "./pending-connect-store.js";
 import {
 	type PermissionLedgerEntry,
 	appendPermissionLedgerEntry,
@@ -388,7 +387,6 @@ export class TapMessagingService {
 	private readonly ownerLabel: string;
 	private readonly signingProvider: SigningProvider;
 	private readonly ownerLock: TransportOwnerLock;
-	private readonly pendingConnectStore: FilePendingConnectStore;
 	private localAgentAddress: `0x${string}` | undefined;
 	private readonly executionMutex = new AsyncMutex();
 	private readonly commandOutbox: FileTapCommandOutbox;
@@ -435,7 +433,6 @@ export class TapMessagingService {
 		this.hooks = options.hooks ?? {};
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
-		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
 		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
 		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
@@ -893,14 +890,6 @@ export class TapMessagingService {
 			const { trustStore, transport } = this.context;
 
 			const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-			if (existing?.status === "active") {
-				return {
-					connectionId: existing.connectionId,
-					peerName: existing.peerDisplayName,
-					peerAgentId: existing.peerAgentId,
-					status: "active",
-				};
-			}
 
 			const from: AgentIdentifier = { agentId: config.agentId, chain: config.chain };
 			const requestedAt = nowISO();
@@ -911,17 +900,33 @@ export class TapMessagingService {
 			};
 
 			const rpcRequest = buildConnectionRequest(requestParams);
-			const requestId = String(rpcRequest.id);
-			const pendingConnect: PendingConnectRecord = {
-				requestId,
-				peerAgentId: peerAgent.agentId,
-				peerChain: peerAgent.chain,
-				peerOwnerAddress: peerAgent.ownerAddress,
-				peerDisplayName: peerAgent.registrationFile.name,
-				peerAgentAddress: peerAgent.agentAddress,
-				createdAt: requestedAt,
-			};
-			await this.pendingConnectStore.replaceForPeer(pendingConnect);
+
+			// Upsert a "connecting" contact as the durable "I asked" record before
+			// any wire traffic. Per spec §1.1, the connecting contact is sticky —
+			// it persists across restarts and survives send failures. Only written
+			// if the contact is not already active (we do not downgrade an active
+			// peer to connecting while a re-handshake is in flight — see spec §3.1.1).
+			if (existing?.status !== "active") {
+				const expiresAt = new Date(invite.expires * 1000).toISOString();
+				const connectingContact: Contact = {
+					connectionId: existing?.connectionId ?? generateConnectionId(),
+					peerAgentId: peerAgent.agentId,
+					peerChain: peerAgent.chain,
+					peerOwnerAddress: peerAgent.ownerAddress,
+					peerDisplayName: peerAgent.registrationFile.name,
+					peerAgentAddress: peerAgent.agentAddress,
+					permissions: existing?.permissions ?? createEmptyPermissionState(requestedAt),
+					establishedAt: existing?.establishedAt ?? requestedAt,
+					lastContactAt: requestedAt,
+					status: "connecting",
+					expiresAt,
+				};
+				if (existing) {
+					await trustStore.updateContact(existing.connectionId, connectingContact);
+				} else {
+					await trustStore.addContact(connectingContact);
+				}
+			}
 
 			let receipt: TransportReceipt | undefined;
 			try {
@@ -931,23 +936,24 @@ export class TapMessagingService {
 				});
 			} catch (error: unknown) {
 				if (!isTransportReceiptTimeout(error)) {
-					await this.pendingConnectStore.delete(requestId);
+					// Non-timeout send failure. The connecting contact remains in place
+					// (sticky per spec §1.1) so a future sync can still complete the
+					// handshake. Propagate the error to the caller.
 					throw error;
 				}
 			}
 
 			const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-			const pendingRecord = await this.pendingConnectStore.get(requestId);
-			if (!latestContact && !pendingRecord) {
+			if (!latestContact) {
 				throw new ValidationError(
 					`Connection rejected by ${peerAgent.registrationFile.name} (#${peerAgent.agentId})`,
 				);
 			}
-			const status = latestContact?.status === "active" ? "active" : "pending";
+			const status = latestContact.status === "active" ? "active" : "pending";
 
 			return {
-				connectionId: latestContact?.connectionId,
-				peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+				connectionId: latestContact.connectionId,
+				peerName: latestContact.peerDisplayName,
 				peerAgentId: peerAgent.agentId,
 				status,
 				receipt,
@@ -2691,48 +2697,94 @@ export class TapMessagingService {
 		message: ProtocolMessage,
 	): Promise<"received" | "duplicate"> {
 		const result = parseConnectionResult(message);
-		const [pendingConnect, existingContact] = await Promise.all([
-			this.pendingConnectStore.get(result.requestId),
-			this.context.trustStore.findByAgentId(result.from.agentId, result.from.chain),
-		]);
+		const existingContact = await this.context.trustStore.findByAgentId(
+			result.from.agentId,
+			result.from.chain,
+		);
 
-		if (!pendingConnect) {
-			if (existingContact?.status === "active") {
-				this.log("info", `Ignoring duplicate connection result from ${peerLabel(existingContact)}`);
-				return "duplicate";
+		// §5.3 idempotency table: apply the correct action based on local contact state.
+
+		if (result.status === "rejected") {
+			// Rejection path: delete any connecting contact so the user knows to
+			// obtain a fresh invite. Active contacts are left unchanged.
+			if (existingContact?.status === "connecting") {
+				await this.context.trustStore.removeContact(existingContact.connectionId);
+				this.log("info", `Connection rejected by ${peerLabel(existingContact)}`);
+				// Best-effort journal correlation: mark matching outbound entry completed.
+				const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+				if (journalEntry) {
+					await this.context.requestJournal.updateStatus(result.requestId, "completed");
+				}
+				return "received";
 			}
+			// No connecting contact: stale or unsolicited rejection — ignore.
 			this.log(
-				"warn",
-				`Ignoring unsolicited connection result from agent #${result.from.agentId} on ${result.from.chain}`,
+				"info",
+				`Ignoring stale rejected connection result from agent #${result.from.agentId} on ${result.from.chain}`,
 			);
 			return "duplicate";
 		}
 
-		if (
-			pendingConnect.peerAgentId !== result.from.agentId ||
-			pendingConnect.peerChain !== result.from.chain
-		) {
-			throw new ValidationError("Connection result sender does not match the pending connect");
+		// result.status === "accepted" — apply the idempotency table.
+
+		if (existingContact?.status === "active") {
+			// Already active: no-op on the contact. Touch lastContactAt and mark
+			// any matching journal entry completed. Retry-safe.
+			await this.context.trustStore.touchContact(existingContact.connectionId);
+			this.log(
+				"info",
+				`Duplicate connection result from ${peerLabel(existingContact)} — already active`,
+			);
+			const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			if (journalEntry) {
+				await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			}
+			return "duplicate";
 		}
 
-		if (result.status === "rejected") {
-			await this.pendingConnectStore.delete(result.requestId);
-			this.log("info", `Connection rejected by ${peerLabel(pendingConnect)}`);
-			return "received";
+		if (existingContact?.status === "revoked") {
+			// Revoked: log and ignore. Bob explicitly revoked; a stale result should
+			// not resurrect the contact. Mark matching journal entry completed.
+			this.log(
+				"info",
+				`Ignoring connection result from revoked peer ${peerLabel(existingContact)}`,
+			);
+			const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			if (journalEntry) {
+				await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			}
+			return "duplicate";
 		}
+
+		// connecting / idle / stale → flip to active.
+		// missing → create fresh active contact.
+		//
+		// spec §5.3: missing local contact — create fresh active contact. Safe because
+		// the XMTP transport layer's bootstrap sender verification (see XmtpTransport)
+		// has already confirmed the message's sender inbox ID matches the on-chain
+		// resolved agent address. A spoofed result with a mismatched sender would
+		// have been rejected before reaching this handler.
 
 		const establishedAt = result.timestamp;
 		const nextContact: Contact = {
 			connectionId: existingContact?.connectionId ?? generateConnectionId(),
-			peerAgentId: pendingConnect.peerAgentId,
-			peerChain: pendingConnect.peerChain,
-			peerOwnerAddress: pendingConnect.peerOwnerAddress,
-			peerDisplayName: pendingConnect.peerDisplayName,
-			peerAgentAddress: pendingConnect.peerAgentAddress,
+			peerAgentId: result.from.agentId,
+			peerChain: result.from.chain,
+			// For the "missing" case we only have the resolved identity from the
+			// result.from field. peerOwnerAddress and peerDisplayName are filled
+			// from the existing connecting contact when available, otherwise set
+			// to reasonable defaults sourced from the result envelope.
+			peerOwnerAddress:
+				existingContact?.peerOwnerAddress ?? (`0x${"0".repeat(40)}` as `0x${string}`),
+			peerDisplayName: existingContact?.peerDisplayName ?? `Agent #${result.from.agentId}`,
+			peerAgentAddress:
+				existingContact?.peerAgentAddress ?? (`0x${"0".repeat(40)}` as `0x${string}`),
 			permissions: existingContact?.permissions ?? createEmptyPermissionState(establishedAt),
 			establishedAt: existingContact?.establishedAt ?? establishedAt,
 			lastContactAt: establishedAt,
 			status: "active",
+			// Clear expiresAt when transitioning to active — no longer needed.
+			expiresAt: undefined,
 		};
 
 		if (existingContact) {
@@ -2740,8 +2792,14 @@ export class TapMessagingService {
 		} else {
 			await this.context.trustStore.addContact(nextContact);
 		}
-		await this.pendingConnectStore.delete(result.requestId);
-		this.log("info", `Connection accepted by ${peerLabel(pendingConnect)}`);
+
+		// Best-effort journal correlation: mark matching outbound entry completed.
+		const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+		if (journalEntry) {
+			await this.context.requestJournal.updateStatus(result.requestId, "completed");
+		}
+
+		this.log("info", `Connection accepted by ${peerLabel(nextContact)}`);
 		return "received";
 	}
 
