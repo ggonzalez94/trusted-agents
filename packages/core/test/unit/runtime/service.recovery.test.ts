@@ -296,7 +296,7 @@ describe("connect() self-healing (spec §3.1.1)", () => {
 		// "already active" in Bob's store, but connect() must still send a
 		// connection/request (no early-return, spec §3.1.1).
 		const inviteUrl = await aliceInvite();
-		await service.connect({ inviteUrl });
+		await service.connect({ inviteUrl, waitMs: 0 });
 
 		const connectionRequests = transport.sentMessages.filter(
 			(m) => m.message.method === "connection/request",
@@ -334,7 +334,7 @@ describe("connect() self-healing (spec §3.1.1)", () => {
 		).length;
 
 		const inviteUrl = await aliceInvite();
-		await service.connect({ inviteUrl });
+		await service.connect({ inviteUrl, waitMs: 0 });
 
 		const contactsAfter = (await trustStore.getContacts()).filter(
 			(c) => c.peerAgentId === ALICE_RESOLVED.agentId,
@@ -357,7 +357,7 @@ describe("connect() self-healing (spec §3.1.1)", () => {
 
 		// Initial connect — both sides become active.
 		const firstUrl = await aliceInvite();
-		const firstResult = await service.connect({ inviteUrl: firstUrl });
+		const firstResult = await service.connect({ inviteUrl: firstUrl, waitMs: 0 });
 		expect(firstResult.status).toBe("active");
 
 		// Verify Bob's trust store shows Alice as active.
@@ -377,7 +377,7 @@ describe("connect() self-healing (spec §3.1.1)", () => {
 		// Bob's local contact for Alice is active.
 		const sentBefore = transport.sentMessages.length;
 		const secondUrl = await aliceInvite();
-		const secondResult = await service.connect({ inviteUrl: secondUrl });
+		const secondResult = await service.connect({ inviteUrl: secondUrl, waitMs: 0 });
 
 		// connect() must have sent at least one new connection/request.
 		const newConnectionRequests = transport.sentMessages
@@ -438,7 +438,7 @@ describe("connect() self-healing (spec §3.1.1)", () => {
 		const { service } = await createBobService({ trustStore, transport });
 
 		const inviteUrl = await aliceInvite();
-		await service.connect({ inviteUrl });
+		await service.connect({ inviteUrl, waitMs: 0 });
 
 		// The contact was NOT downgraded to "connecting" during the send.
 		expect(statusAtSendTime).toBe("active");
