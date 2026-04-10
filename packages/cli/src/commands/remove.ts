@@ -95,10 +95,10 @@ export interface RemovePlan {
 	blockingReasons: string[];
 }
 
-// A TAP data dir is identified by a parseable config.yaml with a `chain` field.
-// This has been true for every TAP version — init writes `chain` unconditionally
-// and no subsequent migration removes it — so the check works across versions
-// without needing a maintained whitelist of known files.
+// A TAP data dir is identified by a parseable config.yaml that contains any
+// field init has ever written — `agent_id` or `chain`. Both have been present
+// in every version since the first release, and no migration removes them, so
+// the check works across versions without a maintained whitelist.
 async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 	try {
 		const raw = await readFile(configPath, "utf-8");
@@ -106,7 +106,8 @@ async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
 			return false;
 		}
-		return typeof (parsed as { chain?: unknown }).chain === "string";
+		const obj = parsed as { chain?: unknown; agent_id?: unknown };
+		return typeof obj.chain === "string" || typeof obj.agent_id === "number";
 	} catch {
 		return false;
 	}
@@ -506,17 +507,23 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 		);
 	}
 	if (inspection.exists && !inspection.empty && !hasSignature) {
-		const message = `Refusing to remove ${dataDir} because it is not a TAP data dir. Expected ${configPath} to exist and contain a 'chain' field. Check --data-dir or TAP_DATA_DIR.`;
+		const message = `Refusing to remove ${dataDir} because it is not a TAP data dir. Expected ${configPath} to exist and contain an 'agent_id' or 'chain' field. Check --data-dir or TAP_DATA_DIR.`;
 		blockingReasons.push(message);
 		warnings.push(message);
 	}
+
+	// Skip enumeration when the dir will be rejected anyway — otherwise a typo'd
+	// --data-dir that points at a huge tree (e.g. $HOME, or a dir with node_modules)
+	// would recursively walk it before surfacing the blocking message.
+	const pathsToRemove =
+		blockingReasons.length === 0 ? await collectPlannedRemovalPaths(dataDir, inspection) : [];
 
 	return {
 		dataDir,
 		configPath,
 		agentId,
 		address,
-		pathsToRemove: await collectPlannedRemovalPaths(dataDir, inspection),
+		pathsToRemove,
 		warnings,
 		liveTransportOwner,
 		blockingReasons,

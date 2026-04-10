@@ -295,12 +295,12 @@ describe("tap remove", () => {
 		expect(existsSync(join(strayDir, "README.md"))).toBe(true);
 	});
 
-	it("refuses to wipe a directory whose config.yaml has no chain field", async () => {
+	it("refuses to wipe a directory whose config.yaml has neither agent_id nor chain", async () => {
 		const badDataDir = join(tmpDir, "bad-agent");
 		await mkdir(badDataDir, { recursive: true });
 		await writeFile(
 			join(badDataDir, "config.yaml"),
-			"agent_id: 42\nows:\n  wallet: w\n  api_key: k\n",
+			"some_unrelated_field: value\nanother: thing\n",
 			"utf-8",
 		);
 		await writeFile(join(badDataDir, "contacts.json"), "[]\n", "utf-8");
@@ -332,6 +332,41 @@ describe("tap remove", () => {
 		expect(output.status).toBe("ok");
 		expect(output.data.removed).toBe(true);
 		expect(existsSync(legacyDataDir)).toBe(false);
+	});
+
+	it("accepts a chainless config.yaml that has only agent_id (config loader defaults chain)", async () => {
+		const chainlessDataDir = join(tmpDir, "chainless-agent");
+		await mkdir(chainlessDataDir, { recursive: true });
+		await writeFile(join(chainlessDataDir, "config.yaml"), "agent_id: 42\n", "utf-8");
+		await writeFile(join(chainlessDataDir, "contacts.json"), "[]\n", "utf-8");
+
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir: chainlessDataDir },
+		);
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.status).toBe("ok");
+		expect(output.data.removed).toBe(true);
+		expect(existsSync(chainlessDataDir)).toBe(false);
+	});
+
+	it("does not enumerate the data dir when removal is going to be blocked", async () => {
+		const strayDir = join(tmpDir, "stray-tree");
+		await mkdir(join(strayDir, "nested", "deeper"), { recursive: true });
+		await writeFile(join(strayDir, "file1.txt"), "x", "utf-8");
+		await writeFile(join(strayDir, "nested", "file2.txt"), "y", "utf-8");
+		await writeFile(join(strayDir, "nested", "deeper", "file3.txt"), "z", "utf-8");
+
+		await removeCommandModule.removeCommand({ dryRun: true }, { json: true, dataDir: strayDir });
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.status).toBe("ok");
+		expect(output.data.can_remove).toBe(false);
+		expect(output.data.blocking_reasons[0]).toContain("not a TAP data dir");
+		// The tree under the non-TAP dir must not be enumerated — otherwise a
+		// typo'd --data-dir pointing at $HOME or a node_modules tree would hang.
+		expect(output.data.paths_to_remove).toEqual([]);
 	});
 
 	it("resolves symlinked data dirs to the real TAP directory before removing", async () => {
