@@ -12,14 +12,26 @@ export interface TapNotification {
 }
 
 const DEFAULT_MAX_SIZE = 1000;
+const HARD_CAP_MULTIPLIER = 2;
 const EVICTION_PRIORITY: TapNotification["type"][] = ["info", "summary", "auto-reply"];
+
+export interface TapNotificationQueueOptions {
+	maxSize?: number;
+	onHardCapDrop?: (dropped: TapNotification) => void;
+}
 
 export class TapNotificationQueue {
 	private readonly items: TapNotification[] = [];
 	private readonly maxSize: number;
+	private readonly hardCap: number;
+	private readonly onHardCapDrop?: (dropped: TapNotification) => void;
 
-	constructor(maxSize = DEFAULT_MAX_SIZE) {
-		this.maxSize = maxSize;
+	constructor(optionsOrMaxSize: TapNotificationQueueOptions | number = {}) {
+		const options =
+			typeof optionsOrMaxSize === "number" ? { maxSize: optionsOrMaxSize } : optionsOrMaxSize;
+		this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
+		this.hardCap = this.maxSize * HARD_CAP_MULTIPLIER;
+		this.onHardCapDrop = options.onHardCapDrop;
 	}
 
 	/** Returns true if the notification was newly enqueued, false if it replaced
@@ -52,6 +64,18 @@ export class TapNotificationQueue {
 				return;
 			}
 		}
-		// Only escalations remain — allow overflow
+		// Only escalations remain. Allow a bounded overflow so transient bursts
+		// don't lose critical notifications, but enforce a hard cap to prevent
+		// unbounded memory growth if the operator never drains the queue.
+		if (this.items.length > this.hardCap) {
+			const dropped = this.items.shift();
+			if (dropped && this.onHardCapDrop) {
+				try {
+					this.onHardCapDrop(dropped);
+				} catch {
+					// Drop hook errors — notification loss is already being reported.
+				}
+			}
+		}
 	}
 }

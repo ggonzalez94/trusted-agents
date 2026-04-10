@@ -37,6 +37,7 @@ interface ManagedTapRuntime {
 	runtime: TapRuntime;
 	mutex: AsyncMutex;
 	interval: NodeJS.Timeout | null;
+	reconcileInFlight: boolean;
 	lastError?: string;
 }
 
@@ -552,6 +553,8 @@ export class OpenClawTapRegistry {
 
 		const config = await loadTrustedAgentConfigFromDataDir(definition.dataDir, {
 			requireAgentId: true,
+			owsWallet: process.env.TAP_OWS_WALLET,
+			owsApiKey: process.env.TAP_OWS_API_KEY,
 		});
 		const signingProvider = new OwsSigningProvider(
 			config.ows.wallet,
@@ -559,18 +562,57 @@ export class OpenClawTapRegistry {
 			config.ows.apiKey,
 		);
 
-		const notificationQueue = new TapNotificationQueue();
+		const notificationQueue = new TapNotificationQueue({
+			onHardCapDrop: (dropped) => {
+				this.logger.warn(
+					`[trusted-agents-tap:${name}] Notification queue hard cap reached — dropped oldest escalation: ${dropped.method} from ${dropped.fromName ?? `agent #${dropped.from}`} (messageId=${dropped.messageId}). Drain the queue via the agent or restart the plugin.`,
+				);
+			},
+		});
 		this.notificationQueues.set(name, notificationQueue);
 
 		const tapRuntime = await createTapRuntime({
 			dataDir: definition.dataDir,
-			configOptions: { requireAgentId: true },
+			configOptions: {
+				requireAgentId: true,
+				owsWallet: process.env.TAP_OWS_WALLET,
+				owsApiKey: process.env.TAP_OWS_API_KEY,
+			},
 			ownerLabel: `openclaw:${definition.name}`,
 			createSigningProvider: async () => signingProvider,
 			schedulingHandler: new SchedulingHandler({
 				hooks: {
-					approveScheduling: async () => {
-						return null; // Defer for operator approval
+					approveScheduling: async ({ requestId, contact, proposal }) => {
+						// Mirror approveTransfer: the hook owns the notification because
+						// the classifier does not emit action/request with receipt_status
+						// "queued" (see event-classifier.ts). Without this push, deferred
+						// scheduling proposals are invisible to the operator.
+						const firstSlot = proposal.slots[0];
+						const slotLabel = firstSlot
+							? `${firstSlot.start} → ${firstSlot.end}`
+							: "no slot proposed";
+						const enqueued = notificationQueue.push({
+							type: "escalation",
+							identity: name,
+							timestamp: new Date().toISOString(),
+							method: "scheduling/propose",
+							from: contact.peerAgentId,
+							fromName: contact.peerDisplayName,
+							messageId: requestId,
+							detail: {
+								schedulingId: proposal.schedulingId,
+								title: proposal.title,
+								duration: proposal.duration,
+								slots: proposal.slots,
+							},
+							oneLiner: `Meeting request from ${contact.peerDisplayName}: "${proposal.title}" (${slotLabel}) — needs approval`,
+						});
+						if (enqueued) {
+							void this.triggerEscalation(
+								`Meeting request from ${contact.peerDisplayName}: "${proposal.title}" requires approval`,
+							);
+						}
+						return null;
 					},
 				},
 			}),
@@ -664,6 +706,7 @@ export class OpenClawTapRegistry {
 			runtime: tapRuntime,
 			mutex: new AsyncMutex(),
 			interval: null,
+			reconcileInFlight: false,
 		};
 		this.runtimes.set(name, runtime);
 		return runtime;
@@ -705,17 +748,31 @@ export class OpenClawTapRegistry {
 		}
 
 		runtime.interval = setInterval(() => {
-			void runtime.mutex.runExclusive(async () => {
-				try {
-					await runtime.runtime.syncOnce();
-					runtime.lastError = undefined;
-				} catch (error: unknown) {
-					runtime.lastError = toErrorMessage(error);
-					this.logger.warn(
-						`[trusted-agents-tap:${runtime.definition.name}] Periodic reconcile failed: ${runtime.lastError}`,
-					);
-				}
-			});
+			// Skip if the previous reconcile is still running. Without this guard,
+			// a slow syncOnce (longer than the interval) causes ticks to pile up on
+			// the runtime mutex instead of being dropped.
+			if (runtime.reconcileInFlight) {
+				this.logger.warn(
+					`[trusted-agents-tap:${runtime.definition.name}] Skipping periodic reconcile — previous run still in flight`,
+				);
+				return;
+			}
+			runtime.reconcileInFlight = true;
+			void runtime.mutex
+				.runExclusive(async () => {
+					try {
+						await runtime.runtime.syncOnce();
+						runtime.lastError = undefined;
+					} catch (error: unknown) {
+						runtime.lastError = toErrorMessage(error);
+						this.logger.warn(
+							`[trusted-agents-tap:${runtime.definition.name}] Periodic reconcile failed: ${runtime.lastError}`,
+						);
+					}
+				})
+				.finally(() => {
+					runtime.reconcileInFlight = false;
+				});
 		}, runtime.definition.reconcileIntervalMinutes * 60_000);
 	}
 

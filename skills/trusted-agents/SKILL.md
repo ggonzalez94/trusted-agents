@@ -440,6 +440,7 @@ In fallback mode, use `tap message sync` on heartbeat. Do not run `tap message l
 | `publish_grants` | `peer`, `grantSet`, `note` (opt) | Publish grants (sets `grantedByMe`). |
 | `request_grants` | `peer`, `grantSet`, `note` (opt) | Ask peer to publish grants to you. |
 | `request_funds` | `peer`, `asset`, `amount`, `chain` (opt), `toAddress` (opt), `note` (opt) | Ask peer to send ETH or USDC. Hard-blocked without matching grant. |
+| `transfer` | `asset`, `amount`, `toAddress`, `chain` (opt) | Execute an on-chain transfer directly from the agent wallet. Requires live signing provider. |
 | `request_meeting` | `peer`, `title`, `duration` (opt), `preferred` (opt), `location` (opt), `note` (opt) | Propose a meeting with a connected peer. |
 | `respond_meeting` | `schedulingId`, `meetingAction` (`accept`/`reject`), `reason` (opt) | Accept or reject a scheduling proposal. |
 | `cancel_meeting` | `schedulingId`, `reason` (opt) | Cancel a confirmed meeting. |
