@@ -1,3 +1,5 @@
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { parseEther, parseUnits } from "viem";
 import { buildActionContext } from "../app/context.js";
 import type { TapActionContext, TapActionResult } from "../app/types.js";
@@ -9,6 +11,7 @@ import {
 	TrustedAgentError,
 	ValidationError,
 	caip2ToChainId,
+	fsErrorCode,
 	generateConnectionId,
 	generateNonce,
 	nowISO,
@@ -280,6 +283,17 @@ interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 }
 
 type SchedulingRequestState = "accepted" | "cancelled" | "rejected";
+
+/** Shape of entries in the legacy pending-connects.json file (pre-connection-flow-simplification). */
+interface LegacyPendingConnect {
+	requestId: string;
+	peerAgentId: number;
+	peerChain: string;
+	peerOwnerAddress: `0x${string}`;
+	peerDisplayName: string;
+	peerAgentAddress: `0x${string}`;
+	createdAt: string;
+}
 
 interface SchedulingTrackingMetadata extends Record<string, unknown> {
 	localEventId?: string;
@@ -577,6 +591,8 @@ export class TapMessagingService {
 		if (this.running) {
 			return;
 		}
+
+		await this.runLegacyStateMigrations();
 
 		await this.ensureManifestLoaded();
 
@@ -1735,6 +1751,71 @@ export class TapMessagingService {
 
 	private log(level: "info" | "warn" | "error", message: string): void {
 		this.hooks.log?.(level, message);
+	}
+
+	private async runLegacyStateMigrations(): Promise<void> {
+		await this.migratePendingConnects();
+		// Additional migrations (outbox → queued journal entries) added in Phase 5.
+	}
+
+	private async migratePendingConnects(): Promise<void> {
+		const path = join(this.context.config.dataDir, "pending-connects.json");
+		let raw: string;
+		try {
+			raw = await readFile(path, "utf-8");
+		} catch (error: unknown) {
+			if (fsErrorCode(error) === "ENOENT") return; // Nothing to migrate
+			throw error;
+		}
+
+		let parsed: { pendingConnects?: LegacyPendingConnect[] };
+		try {
+			parsed = JSON.parse(raw) as { pendingConnects?: LegacyPendingConnect[] };
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to parse legacy pending-connects.json: ${toErrorMessage(error)}. Skipping migration.`,
+			);
+			return;
+		}
+
+		const records = parsed.pendingConnects ?? [];
+		let migrated = 0;
+		for (const legacy of records) {
+			// Idempotent: if a contact already exists for this peer (from a previous
+			// migration run or new flow), skip this legacy record.
+			const existing = await this.context.trustStore.findByAgentId(
+				legacy.peerAgentId,
+				legacy.peerChain,
+			);
+			if (existing) continue;
+
+			await this.context.trustStore.addContact({
+				connectionId: generateConnectionId(),
+				peerAgentId: legacy.peerAgentId,
+				peerChain: legacy.peerChain,
+				peerOwnerAddress: legacy.peerOwnerAddress,
+				peerDisplayName: legacy.peerDisplayName,
+				peerAgentAddress: legacy.peerAgentAddress,
+				permissions: createEmptyPermissionState(legacy.createdAt),
+				establishedAt: legacy.createdAt,
+				lastContactAt: legacy.createdAt,
+				status: "connecting",
+				// Note: legacy records did not carry expiresAt; leave it undefined.
+				// These old connecting rows will never expire on their own but can be
+				// cleaned up manually via `tap contacts remove`.
+			});
+			migrated += 1;
+		}
+
+		await rm(path);
+
+		if (migrated > 0) {
+			this.log(
+				"info",
+				`Migrated ${migrated} pending-connects.json record(s) to connecting contacts`,
+			);
+		}
 	}
 
 	private appendLedger(entry: PermissionLedgerEntry): Promise<string> {
