@@ -334,6 +334,32 @@ describe("tap remove", () => {
 		expect(existsSync(legacyDataDir)).toBe(false);
 	});
 
+	it("refuses a non-TAP config.yaml whose chain value is not CAIP-2", async () => {
+		const foreignDataDir = join(tmpDir, "foreign-tool");
+		await mkdir(foreignDataDir, { recursive: true });
+		// A different tool's config that happens to have a top-level `chain` field.
+		// TAP always writes CAIP-2 (`eip155:<id>`), so a colonless value like
+		// `mainnet` must not match the signature and trigger a wipe.
+		await writeFile(
+			join(foreignDataDir, "config.yaml"),
+			"chain: mainnet\nsome_other_tool_field: value\n",
+			"utf-8",
+		);
+		await writeFile(join(foreignDataDir, "important.json"), "{}\n", "utf-8");
+
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir: foreignDataDir },
+		);
+
+		expect(process.exitCode).toBe(2);
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.status).toBe("error");
+		expect(output.error.message).toContain("not a TAP data dir");
+		expect(existsSync(foreignDataDir)).toBe(true);
+		expect(existsSync(join(foreignDataDir, "important.json"))).toBe(true);
+	});
+
 	it("accepts a chainless config.yaml that has only agent_id (config loader defaults chain)", async () => {
 		const chainlessDataDir = join(tmpDir, "chainless-agent");
 		await mkdir(chainlessDataDir, { recursive: true });

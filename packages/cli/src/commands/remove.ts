@@ -95,10 +95,14 @@ export interface RemovePlan {
 	blockingReasons: string[];
 }
 
-// A TAP data dir is identified by a parseable config.yaml that contains any
-// field init has ever written — `agent_id` or `chain`. Both have been present
-// in every version since the first release, and no migration removes them, so
-// the check works across versions without a maintained whitelist.
+// A TAP data dir is identified by a parseable config.yaml whose shape matches
+// what init has always written: `agent_id` as a number (e.g. -1 or a registered
+// token ID) or `chain` as a CAIP-2 string (e.g. `eip155:8453`). Both have been
+// present in every version since the first release and are always normalized
+// to these forms before being written (see resolveChainAlias). That makes the
+// check work across versions without a maintained whitelist, while still being
+// specific enough to reject a foreign config.yaml that happens to contain a
+// generic `chain: mainnet` field.
 async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 	try {
 		const raw = await readFile(configPath, "utf-8");
@@ -107,7 +111,9 @@ async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 			return false;
 		}
 		const obj = parsed as { chain?: unknown; agent_id?: unknown };
-		return typeof obj.chain === "string" || typeof obj.agent_id === "number";
+		const hasAgentId = typeof obj.agent_id === "number";
+		const hasCaip2Chain = typeof obj.chain === "string" && obj.chain.includes(":");
+		return hasAgentId || hasCaip2Chain;
 	} catch {
 		return false;
 	}
@@ -507,7 +513,7 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 		);
 	}
 	if (inspection.exists && !inspection.empty && !hasSignature) {
-		const message = `Refusing to remove ${dataDir} because it is not a TAP data dir. Expected ${configPath} to exist and contain an 'agent_id' or 'chain' field. Check --data-dir or TAP_DATA_DIR.`;
+		const message = `Refusing to remove ${dataDir} because it is not a TAP data dir. Expected ${configPath} to contain a numeric 'agent_id' or a CAIP-2 'chain' field (e.g. eip155:8453). Check --data-dir or TAP_DATA_DIR.`;
 		blockingReasons.push(message);
 		warnings.push(message);
 	}
