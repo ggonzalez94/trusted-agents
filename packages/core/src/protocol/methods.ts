@@ -1,5 +1,6 @@
 export const CONNECTION_REQUEST = "connection/request" as const;
 export const CONNECTION_RESULT = "connection/result" as const;
+export const CONNECTION_REVOKE = "connection/revoke" as const;
 export const PERMISSIONS_UPDATE = "permissions/update" as const;
 export const MESSAGE_SEND = "message/send" as const;
 export const ACTION_REQUEST = "action/request" as const;

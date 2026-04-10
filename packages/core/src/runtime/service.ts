@@ -18,10 +18,12 @@ import type { TrustedAgentsConfig } from "../config/types.js";
 import {
 	buildConnectionRequest,
 	buildConnectionResult,
+	buildConnectionRevoke,
 	buildPermissionsUpdate,
 	deriveConnectionResultId,
 	handleConnectionRequest,
 	isSelfInvite,
+	parseConnectionRevoke,
 	parseInviteUrl,
 	verifyInvite,
 } from "../connection/index.js";
@@ -34,6 +36,7 @@ import {
 	ACTION_RESULT,
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
+	CONNECTION_REVOKE,
 	MESSAGE_SEND,
 	PERMISSIONS_UPDATE,
 } from "../protocol/methods.js";
@@ -41,6 +44,7 @@ import type {
 	AgentIdentifier,
 	ConnectionRequestParams,
 	ConnectionResultParams,
+	ConnectionRevokeParams,
 	MessageSendParams,
 	PermissionsUpdateParams,
 	TextPart,
@@ -959,6 +963,49 @@ export class TapMessagingService {
 		});
 	}
 
+	/**
+	 * Send a `connection/revoke` to the peer. Persists the message as a pending
+	 * outbound journal entry so reconciliation can retry on transport failures.
+	 * The caller is responsible for deleting the local contact AFTER this method
+	 * returns (success or failure — the local delete always happens per spec §3.4).
+	 */
+	async revokeConnection(contact: Contact, reason?: string): Promise<void> {
+		return await this.withTransportSession(async () => {
+			const revokeParams: ConnectionRevokeParams = {
+				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+				reason,
+				timestamp: nowISO(),
+			};
+			const rpcRequest = buildConnectionRevoke(revokeParams);
+			const requestId = String(rpcRequest.id);
+
+			await this.context.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${CONNECTION_REVOKE}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: CONNECTION_REVOKE,
+				peerAgentId: contact.peerAgentId,
+				status: "pending",
+			});
+
+			try {
+				await this.context.transport.send(contact.peerAgentId, rpcRequest, {
+					peerAddress: contact.peerAgentAddress,
+				});
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+			} catch (error: unknown) {
+				// Best-effort: leave the journal entry pending so reconciliation can retry.
+				// Do not rethrow — the CLI flow should still delete the local contact.
+				await this.recordDeliveryFailure(requestId, undefined, error);
+				this.log(
+					"warn",
+					`Failed to send connection/revoke to ${peerLabel(contact)}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		});
+	}
+
 	async sendMessage(
 		peer: string,
 		text: string,
@@ -1727,6 +1774,14 @@ export class TapMessagingService {
 			await this.markPendingConnectionResultsCompletedFor(contact.peerAgentId, contact.peerChain);
 		}
 
+		if (envelope.message.method === CONNECTION_REVOKE) {
+			await this.processConnectionRevoke(envelope.message);
+			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
+				fromName: contact.peerDisplayName,
+			});
+		}
+
 		if (envelope.message.method === PERMISSIONS_UPDATE) {
 			await this.handlePermissionsUpdate(contact, envelope.message);
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
@@ -2022,6 +2077,28 @@ export class TapMessagingService {
 			);
 		}
 
+		return "processed";
+	}
+
+	private async processConnectionRevoke(message: ProtocolMessage): Promise<"processed"> {
+		const params = parseConnectionRevoke(message);
+		const existing = await this.context.trustStore.findByAgentId(
+			params.from.agentId,
+			params.from.chain,
+		);
+		if (!existing) {
+			this.log(
+				"info",
+				`Received connection/revoke from unknown peer agent #${params.from.agentId}; ignoring.`,
+			);
+			return "processed";
+		}
+		await this.context.trustStore.removeContact(existing.connectionId);
+		const reasonSuffix = params.reason ? `: ${params.reason}` : "";
+		this.log(
+			"info",
+			`Peer ${peerLabel(existing)} revoked the connection${reasonSuffix}; contact removed.`,
+		);
 		return "processed";
 	}
 
