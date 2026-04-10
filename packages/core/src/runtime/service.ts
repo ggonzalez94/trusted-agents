@@ -71,6 +71,7 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "../transport/interface.js";
+import type { ITrustStore } from "../trust/trust-store.js";
 import { peerLabel } from "../trust/types.js";
 import type { Contact } from "../trust/types.js";
 import {
@@ -212,6 +213,25 @@ interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	peerName: string;
 	peerAddress: `0x${string}`;
 	request: ProtocolMessage;
+	/**
+	 * The contact to write to the trust store after a successful send.
+	 * Present only for accepted (non-rejected) connection results — rejection
+	 * results do not write a contact. Stored so the retry pipeline can
+	 * complete the contact write on reconciliation without re-running the
+	 * full handler.
+	 *
+	 * Optional for backward compatibility with entries written before this
+	 * field was introduced. Legacy entries are retried for delivery only;
+	 * the contact write is skipped if the field is absent.
+	 */
+	plannedContact?: Contact;
+	/**
+	 * connectionId of the existing contact if one was present before this
+	 * connection was processed (`null` = no prior contact, `undefined` =
+	 * legacy entry without this field). Used by the retry pipeline to
+	 * choose `addContact` vs `updateContact` / `touchContact`.
+	 */
+	existingContactConnectionId?: string | null;
 }
 
 const DELIVERY_FAILURE_METADATA_KEY = "__deliveryFailure";
@@ -1987,17 +2007,44 @@ export class TapMessagingService {
 			}
 		}
 
-		const outcome = await handleConnectionRequest({
+		// 1. Plan — pure, no trust store writes.
+		const plan = await handleConnectionRequest({
 			message,
 			resolver: this.context.resolver,
 			trustStore: this.context.trustStore,
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
 		});
-		await this.sendConnectionResult(outcome.peer, outcome.result);
+
+		// 2. Persist outbound journal entry + send wire (plan is stored in metadata
+		//    so the retry pipeline can write the contact if this send fails).
+		await this.sendConnectionResult(plan.peer, plan.result, {
+			plannedContact: plan.plannedContact,
+			existingContact: plan.existingContact,
+		});
+
+		// 3. Verify the send succeeded — the journal entry must be completed.
+		//    If it is still pending the send failed and the contact must not be
+		//    written yet; the retry pipeline will resend and write the contact.
+		const deliveryRequestId = deriveConnectionResultId({
+			chain: plan.peer.chain,
+			peerAgentId: plan.peer.agentId,
+			correlationId: plan.result.requestId,
+		});
+		const delivery = await this.context.requestJournal.getByRequestId(deliveryRequestId);
+		if (delivery?.status !== "completed") {
+			this.log(
+				"warn",
+				`Connection result send failed for ${plan.peer.registrationFile.name} (#${plan.peer.agentId}); contact will remain unwritten until reconciliation`,
+			);
+			return "processed";
+		}
+
+		// 4. Send succeeded — write the contact to the trust store.
+		await applyConnectionResultContact(this.context.trustStore, plan);
 
 		this.log(
 			"info",
-			`Accepted connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
+			`Accepted connection request from ${plan.peer.registrationFile.name} (#${plan.peer.agentId})`,
 		);
 		return "processed";
 	}
@@ -2851,8 +2898,9 @@ export class TapMessagingService {
 	private async sendConnectionResult(
 		peer: ResolvedAgent,
 		result: ConnectionResultParams,
+		plan?: { plannedContact: Contact; existingContact: Contact | null },
 	): Promise<void> {
-		const delivery = buildPendingConnectionResultDelivery(peer, result);
+		const delivery = buildPendingConnectionResultDelivery(peer, result, plan);
 		const deliveryRequestId = String(delivery.request.id);
 		let persisted = false;
 		try {
@@ -3062,13 +3110,71 @@ export class TapMessagingService {
 		return processed;
 	}
 
-	private retryPendingConnectionResults(): Promise<number> {
-		return this.retryPendingResults(
-			CONNECTION_RESULT,
-			parsePendingConnectionResultDelivery,
-			(d) => this.sendAndCompleteJournalEntry(d),
-			() => "Connection result",
-		);
+	private async retryPendingConnectionResults(): Promise<number> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		let processed = 0;
+		const now = Date.now();
+		for (const entry of pending) {
+			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
+				continue;
+			}
+
+			// Stale cleanup — prevent indefinite accumulation for peers that
+			// have been offline so long that the delivery is no longer
+			// meaningful.
+			const createdMs = Date.parse(entry.createdAt);
+			if (Number.isFinite(createdMs) && now - createdMs > PENDING_RESULT_MAX_AGE_MS) {
+				this.log(
+					"warn",
+					`Abandoning pending ${CONNECTION_RESULT} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
+				);
+				await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
+				continue;
+			}
+
+			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
+			if (!delivery) {
+				continue;
+			}
+
+			try {
+				// Send the wire message and mark the journal entry completed.
+				await this.sendAndCompleteJournalEntry(delivery);
+
+				// Send succeeded — write the contact if the planned contact was
+				// stored in the metadata. Legacy entries (written before the plan
+				// was added) skip the contact write; the contact will eventually
+				// be written by the implicit handshake completion or a future
+				// connection/request from the peer.
+				if (delivery.plannedContact && delivery.peerChain) {
+					// Re-read the current trust store state at retry time (more
+					// accurate than the state stored at plan time, and ensures
+					// the write is idempotent across retries).
+					const currentContact = await this.context.trustStore.findByAgentId(
+						delivery.peerAgentId,
+						delivery.peerChain,
+					);
+					await applyConnectionResultContact(this.context.trustStore, {
+						plannedContact: delivery.plannedContact,
+						existingContact: currentContact,
+					});
+					this.log(
+						"info",
+						`Reconciled connection result contact for ${delivery.peerName} (#${delivery.peerAgentId})`,
+					);
+				}
+
+				processed += 1;
+			} catch (error: unknown) {
+				this.logResultDeliveryFailure(
+					"Connection result",
+					`${delivery.peerName} (#${delivery.peerAgentId})`,
+					error,
+				);
+				await this.recordDeliveryFailure(entry.requestId, entry.metadata, error);
+			}
+		}
+		return processed;
 	}
 
 	/**
@@ -3785,6 +3891,7 @@ function serializePendingConnectionRequest(message: ProtocolMessage): Record<str
 function buildPendingConnectionResultDelivery(
 	peer: ResolvedAgent,
 	result: ConnectionResultParams,
+	plan?: { plannedContact: Contact; existingContact: Contact | null },
 ): PendingConnectionResultDelivery {
 	// Deterministic id keyed by (chain, peer agentId, correlation) so repeated
 	// calls upsert a single journal entry instead of accumulating one per retry
@@ -3799,7 +3906,7 @@ function buildPendingConnectionResultDelivery(
 			correlationId: result.requestId,
 		}),
 	);
-	return {
+	const base: PendingConnectionResultDelivery = {
 		type: "connection-result-delivery",
 		peerAgentId: peer.agentId,
 		peerChain: peer.chain,
@@ -3807,6 +3914,11 @@ function buildPendingConnectionResultDelivery(
 		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
 		request,
 	};
+	if (plan) {
+		base.plannedContact = plan.plannedContact;
+		base.existingContactConnectionId = plan.existingContact?.connectionId ?? null;
+	}
+	return base;
 }
 
 /**
@@ -3844,6 +3956,21 @@ function parsePendingConnectionResultDelivery(
 			? metadata.peerChain
 			: undefined;
 
+	// plannedContact and existingContactConnectionId are optional — entries
+	// written before this field was introduced do not carry the planned
+	// contact and therefore cannot write the contact on retry. The retry
+	// pipeline will deliver the send but skip the contact write for such
+	// legacy entries (the implicit handshake completion or a future
+	// connection/request from the peer will eventually write the contact).
+	const plannedContact =
+		metadata.plannedContact && typeof metadata.plannedContact === "object"
+			? (metadata.plannedContact as Contact)
+			: undefined;
+	const existingContactConnectionId =
+		"existingContactConnectionId" in metadata
+			? (metadata.existingContactConnectionId as string | null)
+			: undefined;
+
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: metadata.peerAgentId,
@@ -3851,6 +3978,7 @@ function parsePendingConnectionResultDelivery(
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
+		...(plannedContact ? { plannedContact, existingContactConnectionId } : {}),
 	};
 }
 
@@ -4156,6 +4284,30 @@ async function findContactForMessage(
 	}
 
 	return findUniqueContactForAgentId(contacts, from) ?? null;
+}
+
+/**
+ * Write the planned contact to the trust store after a successful
+ * `connection/result` send. This is shared between `processConnectionRequest`
+ * (immediate path) and `retryPendingConnectionResults` (reconciliation path).
+ *
+ * The active case uses `touchContact` rather than `updateContact` because the
+ * handler returns the existing contact as `plannedContact` and only the
+ * `lastContactAt` timestamp should advance.
+ */
+async function applyConnectionResultContact(
+	trustStore: ITrustStore,
+	plan: { plannedContact: Contact; existingContact: Contact | null },
+): Promise<void> {
+	if (plan.existingContact) {
+		if (plan.existingContact.status === "active") {
+			await trustStore.touchContact(plan.existingContact.connectionId);
+		} else {
+			await trustStore.updateContact(plan.existingContact.connectionId, plan.plannedContact);
+		}
+	} else {
+		await trustStore.addContact(plan.plannedContact);
+	}
 }
 
 function assertNever(value: never): never {

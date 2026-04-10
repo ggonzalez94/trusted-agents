@@ -2,24 +2,19 @@
  * Table-driven idempotency tests for handleConnectionRequest.
  * Covers every row of spec §5.2 from the connection-flow-simplification design doc.
  *
- * Each case seeds a FileTrustStore with the initial contact state (or no contact for
- * "missing"), invokes handleConnectionRequest, then asserts on the trust store's
- * post-call state.
+ * handleConnectionRequest is now pure — it performs no trust store writes.
+ * These tests assert on the returned plannedContact / existingContact values
+ * (option b per the task spec). Trust store integration is verified at the
+ * service layer (service.test.ts).
  */
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { handleConnectionRequest } from "../../../src/connection/request-handler.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
 import { createGrantSet } from "../../../src/permissions/types.js";
-import { FileTrustStore } from "../../../src/trust/file-trust-store.js";
+import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
 import { ALICE } from "../../fixtures/test-keys.js";
-import { useTempDirs } from "../../helpers/temp-dir.js";
-
-const { track: trackDir } = useTempDirs();
 
 // ──────────────────────────────────────────────────────────────
 // Shared fixtures
@@ -76,10 +71,33 @@ function makeMockResolver(): IAgentResolver {
 	};
 }
 
-async function createStore(): Promise<FileTrustStore> {
-	const dataDir = await mkdtemp(join(tmpdir(), "tap-idempotency-"));
-	trackDir(dataDir);
-	return new FileTrustStore(dataDir);
+function makeMockTrustStore(existing: Contact | null = null): ITrustStore {
+	return {
+		getContacts: vi.fn<ITrustStore["getContacts"]>().mockResolvedValue(existing ? [existing] : []),
+		getContact: vi.fn<ITrustStore["getContact"]>().mockResolvedValue(null),
+		findByAgentAddress: vi.fn<ITrustStore["findByAgentAddress"]>().mockResolvedValue(null),
+		findByAgentId: vi.fn<ITrustStore["findByAgentId"]>().mockResolvedValue(existing),
+		addContact: vi.fn<ITrustStore["addContact"]>().mockResolvedValue(undefined),
+		updateContact: vi.fn<ITrustStore["updateContact"]>().mockResolvedValue(undefined),
+		removeContact: vi.fn<ITrustStore["removeContact"]>().mockResolvedValue(undefined),
+		touchContact: vi.fn<ITrustStore["touchContact"]>().mockResolvedValue(undefined),
+	};
+}
+
+function makeContact(status: Contact["status"], extra: Partial<Contact> = {}): Contact {
+	return {
+		connectionId: "existing-conn-001",
+		peerAgentId: PEER_AGENT_ID,
+		peerChain: PEER_CHAIN,
+		peerOwnerAddress: ALICE.address,
+		peerDisplayName: "Alice",
+		peerAgentAddress: ALICE.address,
+		permissions: PRIOR_PERMISSIONS,
+		establishedAt: PRIOR_ESTABLISHED_AT,
+		lastContactAt: PRIOR_ESTABLISHED_AT,
+		status,
+		...extra,
+	};
 }
 
 function makeRequest() {
@@ -100,29 +118,6 @@ function makeRequest() {
 	};
 }
 
-/** Seed a contact with the given status into the store. Returns the seeded contact. */
-async function seedContact(
-	store: FileTrustStore,
-	status: Contact["status"],
-	extra: Partial<Contact> = {},
-): Promise<Contact> {
-	const contact: Contact = {
-		connectionId: "existing-conn-001",
-		peerAgentId: PEER_AGENT_ID,
-		peerChain: PEER_CHAIN,
-		peerOwnerAddress: ALICE.address,
-		peerDisplayName: "Alice",
-		peerAgentAddress: ALICE.address,
-		permissions: PRIOR_PERMISSIONS,
-		establishedAt: PRIOR_ESTABLISHED_AT,
-		lastContactAt: PRIOR_ESTABLISHED_AT,
-		status,
-		...extra,
-	};
-	await store.addContact(contact);
-	return contact;
-}
-
 /** Checks that the given ContactPermissionState looks like createEmptyPermissionState output. */
 function isEmptyPermissions(permissions: Contact["permissions"]): boolean {
 	return (
@@ -131,186 +126,203 @@ function isEmptyPermissions(permissions: Contact["permissions"]): boolean {
 }
 
 // ──────────────────────────────────────────────────────────────
-// §5.2 idempotency table
+// §5.2 idempotency table — asserts on PLANNING LOGIC only.
+// The handler is pure; these tests verify the returned
+// plannedContact and existingContact fields without touching
+// the trust store. Service-layer integration is in service.test.ts.
 // ──────────────────────────────────────────────────────────────
 
 describe("handleConnectionRequest — §5.2 idempotency table", () => {
 	// ── missing ────────────────────────────────────────────────
-	it("missing → creates a fresh active contact with empty permissions", async () => {
-		const store = await createStore();
-		// No seed — trust store is empty.
+	it("missing → plans a fresh active contact with empty permissions", async () => {
+		const trustStore = makeMockTrustStore(null);
 
 		const outcome = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver: makeMockResolver(),
-			trustStore: store,
+			trustStore,
 			ownAgent: OWN_AGENT,
 		});
 
 		// result is accepted
 		expect(outcome.result.status).toBe("accepted");
 
-		// post-call: contact is active
-		const saved = await store.findByAgentId(PEER_AGENT_ID, PEER_CHAIN);
-		expect(saved).not.toBeNull();
-		expect(saved!.status).toBe("active");
+		// no prior contact
+		expect(outcome.existingContact).toBeNull();
 
-		// permissions are empty (fresh slate)
-		expect(isEmptyPermissions(saved!.permissions)).toBe(true);
+		// planned contact is fresh active with empty permissions
+		expect(outcome.plannedContact.status).toBe("active");
+		expect(isEmptyPermissions(outcome.plannedContact.permissions)).toBe(true);
+		// connectionId is a fresh UUID
+		expect(outcome.plannedContact.connectionId).toBeDefined();
+		expect(outcome.plannedContact.connectionId).not.toBe("existing-conn-001");
 
-		// outcome contact matches what was written
-		expect(outcome.contact?.status).toBe("active");
-		expect(outcome.contact?.connectionId).toBe(saved!.connectionId);
+		// pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
 	// ── connecting ─────────────────────────────────────────────
-	it("connecting → upgrades to active, preserving permissions and establishedAt", async () => {
-		const store = await createStore();
-		await seedContact(store, "connecting", { expiresAt: "2099-01-01T00:00:00.000Z" });
+	it("connecting → plans upgrade to active, preserving permissions and establishedAt", async () => {
+		const existing = makeContact("connecting", { expiresAt: "2099-01-01T00:00:00.000Z" });
+		const trustStore = makeMockTrustStore(existing);
 
 		const outcome = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver: makeMockResolver(),
-			trustStore: store,
+			trustStore,
 			ownAgent: OWN_AGENT,
 		});
 
 		expect(outcome.result.status).toBe("accepted");
+		expect(outcome.existingContact?.connectionId).toBe("existing-conn-001");
+		expect(outcome.existingContact?.status).toBe("connecting");
 
-		const saved = await store.findByAgentId(PEER_AGENT_ID, PEER_CHAIN);
-		expect(saved).not.toBeNull();
-		expect(saved!.status).toBe("active");
+		// planned contact is active
+		expect(outcome.plannedContact.status).toBe("active");
 
-		// permissions preserved
-		expect(saved!.permissions.grantedByMe.grants.length).toBe(1);
-		expect(saved!.permissions.grantedByPeer.grants.length).toBe(1);
+		// permissions preserved (connecting is not a fresh slate)
+		expect(outcome.plannedContact.permissions.grantedByMe.grants.length).toBe(1);
+		expect(outcome.plannedContact.permissions.grantedByPeer.grants.length).toBe(1);
 
 		// establishedAt preserved
-		expect(saved!.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
+		expect(outcome.plannedContact.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
 
-		// expiresAt is NOT carried forward to the active contact
-		expect(saved!.expiresAt).toBeUndefined();
+		// expiresAt cleared for active contacts
+		expect(outcome.plannedContact.expiresAt).toBeUndefined();
 
 		// connectionId reused
-		expect(saved!.connectionId).toBe("existing-conn-001");
+		expect(outcome.plannedContact.connectionId).toBe("existing-conn-001");
+
+		// pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
 	// ── active ─────────────────────────────────────────────────
-	it("active → touches lastContactAt, preserves everything else, result is accepted", async () => {
-		const store = await createStore();
-		await seedContact(store, "active");
+	it("active → plans a touch (plannedContact = existing), result is accepted", async () => {
+		const existing = makeContact("active");
+		const trustStore = makeMockTrustStore(existing);
 
 		const outcome = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver: makeMockResolver(),
-			trustStore: store,
+			trustStore,
 			ownAgent: OWN_AGENT,
 		});
 
 		expect(outcome.result.status).toBe("accepted");
+		// plannedContact IS the existing contact — caller should touchContact
+		expect(outcome.plannedContact.connectionId).toBe("existing-conn-001");
+		expect(outcome.existingContact?.status).toBe("active");
 
-		const saved = await store.findByAgentId(PEER_AGENT_ID, PEER_CHAIN);
-		expect(saved).not.toBeNull();
-		expect(saved!.status).toBe("active");
-
-		// permissions preserved (touchContact only updates lastContactAt)
-		expect(saved!.permissions.grantedByMe.grants.length).toBe(1);
-		expect(saved!.permissions.grantedByPeer.grants.length).toBe(1);
+		// permissions preserved
+		expect(outcome.plannedContact.permissions.grantedByMe.grants.length).toBe(1);
+		expect(outcome.plannedContact.permissions.grantedByPeer.grants.length).toBe(1);
 
 		// establishedAt unchanged
-		expect(saved!.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
+		expect(outcome.plannedContact.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
 
-		// connectionId unchanged
-		expect(saved!.connectionId).toBe("existing-conn-001");
+		// pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
 	// ── idle ───────────────────────────────────────────────────
-	it("idle → upgrades to active, preserving permissions and establishedAt", async () => {
-		const store = await createStore();
-		await seedContact(store, "idle");
+	it("idle → plans upgrade to active, preserving permissions and establishedAt", async () => {
+		const existing = makeContact("idle");
+		const trustStore = makeMockTrustStore(existing);
 
 		const outcome = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver: makeMockResolver(),
-			trustStore: store,
+			trustStore,
 			ownAgent: OWN_AGENT,
 		});
 
 		expect(outcome.result.status).toBe("accepted");
-
-		const saved = await store.findByAgentId(PEER_AGENT_ID, PEER_CHAIN);
-		expect(saved).not.toBeNull();
-		expect(saved!.status).toBe("active");
+		expect(outcome.plannedContact.status).toBe("active");
 
 		// permissions preserved
-		expect(saved!.permissions.grantedByMe.grants.length).toBe(1);
-		expect(saved!.permissions.grantedByPeer.grants.length).toBe(1);
+		expect(outcome.plannedContact.permissions.grantedByMe.grants.length).toBe(1);
+		expect(outcome.plannedContact.permissions.grantedByPeer.grants.length).toBe(1);
 
 		// establishedAt preserved
-		expect(saved!.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
+		expect(outcome.plannedContact.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
 
 		// connectionId reused
-		expect(saved!.connectionId).toBe("existing-conn-001");
+		expect(outcome.plannedContact.connectionId).toBe("existing-conn-001");
+
+		// pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
 	// ── stale ──────────────────────────────────────────────────
-	it("stale → upgrades to active, preserving permissions and establishedAt", async () => {
-		const store = await createStore();
-		await seedContact(store, "stale");
+	it("stale → plans upgrade to active, preserving permissions and establishedAt", async () => {
+		const existing = makeContact("stale");
+		const trustStore = makeMockTrustStore(existing);
 
 		const outcome = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver: makeMockResolver(),
-			trustStore: store,
+			trustStore,
 			ownAgent: OWN_AGENT,
 		});
 
 		expect(outcome.result.status).toBe("accepted");
-
-		const saved = await store.findByAgentId(PEER_AGENT_ID, PEER_CHAIN);
-		expect(saved).not.toBeNull();
-		expect(saved!.status).toBe("active");
+		expect(outcome.plannedContact.status).toBe("active");
 
 		// permissions preserved
-		expect(saved!.permissions.grantedByMe.grants.length).toBe(1);
-		expect(saved!.permissions.grantedByPeer.grants.length).toBe(1);
+		expect(outcome.plannedContact.permissions.grantedByMe.grants.length).toBe(1);
+		expect(outcome.plannedContact.permissions.grantedByPeer.grants.length).toBe(1);
 
 		// establishedAt preserved
-		expect(saved!.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
+		expect(outcome.plannedContact.establishedAt).toBe(PRIOR_ESTABLISHED_AT);
 
 		// connectionId reused
-		expect(saved!.connectionId).toBe("existing-conn-001");
+		expect(outcome.plannedContact.connectionId).toBe("existing-conn-001");
+
+		// pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
 	// ── revoked ────────────────────────────────────────────────
-	it("revoked → creates a fresh active contact with empty permissions (clean slate)", async () => {
-		const store = await createStore();
-		await seedContact(store, "revoked");
+	it("revoked → plans a fresh active contact with empty permissions (clean slate)", async () => {
+		const existing = makeContact("revoked");
+		const trustStore = makeMockTrustStore(existing);
 
 		const outcome = await handleConnectionRequest({
 			message: makeRequest(),
 			resolver: makeMockResolver(),
-			trustStore: store,
+			trustStore,
 			ownAgent: OWN_AGENT,
 		});
 
 		expect(outcome.result.status).toBe("accepted");
-
-		const saved = await store.findByAgentId(PEER_AGENT_ID, PEER_CHAIN);
-		expect(saved).not.toBeNull();
-		expect(saved!.status).toBe("active");
+		expect(outcome.existingContact?.status).toBe("revoked");
 
 		// permissions reset — revoke is a clean slate; prior grants are gone
-		expect(isEmptyPermissions(saved!.permissions)).toBe(true);
+		expect(isEmptyPermissions(outcome.plannedContact.permissions)).toBe(true);
 
 		// establishedAt is reset (fresh connection)
-		expect(saved!.establishedAt).not.toBe(PRIOR_ESTABLISHED_AT);
+		expect(outcome.plannedContact.establishedAt).not.toBe(PRIOR_ESTABLISHED_AT);
 
-		// connectionId is reused (the row is overwritten, not a new row)
-		expect(saved!.connectionId).toBe("existing-conn-001");
+		// connectionId is reused (the row is overwritten in place)
+		expect(outcome.plannedContact.connectionId).toBe("existing-conn-001");
 
-		// outcome contact reflects the fresh state
-		expect(outcome.contact?.status).toBe("active");
-		expect(isEmptyPermissions(outcome.contact!.permissions)).toBe(true);
+		// planned contact status is active
+		expect(outcome.plannedContact.status).toBe("active");
+
+		// pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 });

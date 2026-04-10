@@ -18,10 +18,25 @@ export interface ConnectionRequestContext {
 	ownAgent: AgentIdentifier;
 }
 
-interface ConnectionRequestOutcome {
+export interface ConnectionRequestOutcome {
 	peer: ResolvedAgent;
 	result: ConnectionResultParams;
-	contact: Contact | null;
+	/**
+	 * The contact that should be written to the trust store if the outbound
+	 * `connection/result` send succeeds. The caller is responsible for writing it
+	 * (add or update) only after confirming delivery — this function is pure and
+	 * performs no trust store writes.
+	 *
+	 * For the `active` case, `plannedContact` is the existing contact (caller
+	 * should call `touchContact` rather than `updateContact`).
+	 */
+	plannedContact: Contact;
+	/**
+	 * The contact as it existed in the trust store before this call, or null if
+	 * no contact existed. Callers use this to decide between `addContact` (null)
+	 * and `updateContact` / `touchContact` (non-null).
+	 */
+	existingContact: Contact | null;
 }
 
 export async function handleConnectionRequest(
@@ -51,9 +66,9 @@ export async function handleConnectionRequest(
 	};
 
 	// active: touch lastContactAt; no other changes needed.
+	// Return the existing contact as the plan — the caller should call touchContact.
 	if (existing?.status === "active") {
-		await ctx.trustStore.touchContact(existing.connectionId);
-		return { peer: resolved, contact: existing, result };
+		return { peer: resolved, plannedContact: existing, existingContact: existing, result };
 	}
 
 	// missing: create a fresh active contact with empty permissions.
@@ -88,11 +103,7 @@ export async function handleConnectionRequest(
 		expiresAt: undefined,
 	};
 
-	if (existing) {
-		await ctx.trustStore.updateContact(existing.connectionId, nextContact);
-	} else {
-		await ctx.trustStore.addContact(nextContact);
-	}
-
-	return { peer: resolved, contact: nextContact, result };
+	// Pure — no trust store writes. The caller writes the contact only after the
+	// outbound connection/result send succeeds.
+	return { peer: resolved, plannedContact: nextContact, existingContact: existing, result };
 }

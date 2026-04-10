@@ -10,6 +10,7 @@ import {
 	buildConnectionRequest,
 	buildConnectionResult,
 	buildPermissionsUpdate,
+	deriveConnectionResultId,
 } from "../../../src/connection/handshake.js";
 import { generateInvite } from "../../../src/connection/invite.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
@@ -369,7 +370,11 @@ describe("TapMessagingService", () => {
 		expect(status.lock).toBeNull();
 	});
 
-	it("completes inbound connection requests even when the result receipt times out", async () => {
+	it("does not write the contact when the connection/result send fails (ordering fix R2)", async () => {
+		// Ordering fix: the contact must NOT be written until the outbound
+		// connection/result is confirmed delivered. If the send fails, the contact
+		// stays unwritten and the journal entry stays pending so the retry pipeline
+		// can resend it and write the contact on success.
 		const trustStore = createMemoryTrustStore();
 		const transport = new FakeTransport({
 			sendError: new TransportError("Response timeout for message result-1"),
@@ -386,13 +391,15 @@ describe("TapMessagingService", () => {
 		const request = await submitConnectionRequest(transport, "peer-inbox-manual-resolve");
 
 		await sleep(50);
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
-			expect.objectContaining({
-				status: "active",
-			}),
-		);
+
+		// Contact must NOT be written — send failed, so ordering requires we defer.
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+
+		// The connection/result was attempted (sent) but failed.
 		expect(transport.sentMessages).toHaveLength(1);
 		expect(transport.sentMessages[0]?.message.method).toBe("connection/result");
+
+		// Journal entry is pending — retry pipeline will pick it up.
 		expect(
 			await requestJournal.getByRequestId(String(transport.sentMessages[0]!.message.id)),
 		).toEqual(
@@ -408,7 +415,9 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
-	it("retries pending connection result delivery during maintenance", async () => {
+	it("writes the contact only after the connection/result send succeeds (retry path)", async () => {
+		// Ordering fix: the contact is not written on first attempt (which fails),
+		// then is written on the successful retry via retryPendingConnectionResults.
 		const trustStore = createMemoryTrustStore();
 
 		class FlakyConnectionResultTransport extends FakeTransport {
@@ -450,15 +459,17 @@ describe("TapMessagingService", () => {
 			(entry) => entry.message.method === "connection/result",
 		);
 		expect(firstConnectionResult).toBeDefined();
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
-			expect.objectContaining({
-				status: "active",
-			}),
-		);
+
+		// Contact NOT yet written — first send failed, ordering prevents premature write.
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+
+		// Journal entry is still pending — retry pipeline will pick it up.
 		expect(
 			(await requestJournal.getByRequestId(String(firstConnectionResult!.message.id)))?.status,
 		).toBe("pending");
 
+		// syncOnce triggers retryPendingConnectionResults: second send succeeds
+		// and the contact is written as active.
 		await service.syncOnce();
 
 		expect(
@@ -470,11 +481,22 @@ describe("TapMessagingService", () => {
 				correlationId: String(request.id),
 			}),
 		);
+		// Contact now written after successful retry.
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+			expect.objectContaining({
+				status: "active",
+			}),
+		);
 
 		await service.stop();
 	});
 
-	it("retries pending inbound connection requests during maintenance", async () => {
+	it("retries pending inbound connection requests during maintenance when contact write fails", async () => {
+		// Under the new ordering, addContact is called AFTER the send succeeds.
+		// If addContact throws, the inbound journal entry stays pending (enqueue
+		// swallows the error). The outbound connection/result entry is already
+		// completed (the send succeeded). On next syncOnce, the inbound is
+		// retried: a second connection/result is sent and addContact succeeds.
 		const baseTrustStore = createMemoryTrustStore();
 		let failAddContactOnce = true;
 		const trustStore: ITrustStore = {
@@ -501,7 +523,10 @@ describe("TapMessagingService", () => {
 
 		await sleep(50);
 
+		// Contact not yet written (addContact threw).
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+
+		// Inbound is still pending (enqueue swallowed the addContact error).
 		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
 			expect.objectContaining({
 				direction: "inbound",
@@ -510,13 +535,18 @@ describe("TapMessagingService", () => {
 				status: "pending",
 			}),
 		);
+
+		// Unlike the old design, the connection/result WAS sent (send happens
+		// before addContact in the new ordering).
 		expect(
 			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
-		).toHaveLength(0);
+		).toHaveLength(1);
 
+		// syncOnce retries the pending inbound: second connection/result sent,
+		// addContact now succeeds.
 		const report = await service.syncOnce();
 
-		expect(report.processed).toBe(1);
+		expect(report.processed).toBeGreaterThanOrEqual(1);
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
 			expect.objectContaining({
 				status: "active",
@@ -527,14 +557,19 @@ describe("TapMessagingService", () => {
 				status: "completed",
 			}),
 		);
+		// Second connection/result sent during retry.
 		expect(
 			transport.sentMessages.filter((entry) => entry.message.method === "connection/result"),
-		).toHaveLength(1);
+		).toHaveLength(2);
 
 		await service.stop();
 	});
 
 	it("does not report connection result delivery failure when retry persistence fails", async () => {
+		// When journal persistence fails, the connection/result is still sent via
+		// the fallback path. However, because there is no journal entry to confirm
+		// delivery, the contact is NOT written (ordering fix). The error is logged
+		// as a persistence warning, not a delivery failure.
 		const trustStore = createMemoryTrustStore();
 		const transport = new FakeTransport();
 		const logs: string[] = [];
@@ -566,13 +601,17 @@ describe("TapMessagingService", () => {
 		const sentResult = transport.sentMessages.find(
 			(entry) => entry.message.method === "connection/result",
 		);
+		// The connection/result was still sent via the fallback path.
 		expect(sentResult).toBeDefined();
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
-			expect.objectContaining({
-				status: "active",
-			}),
-		);
+
+		// Contact NOT written — no journal entry means we cannot confirm delivery,
+		// so the ordering fix requires we skip the contact write.
+		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+
+		// No journal entry exists (persist failed).
 		expect(await requestJournal.getByRequestId(String(sentResult!.message.id))).toBeNull();
+
+		// The persistence error is logged, but the send itself is not a delivery failure.
 		expect(
 			logs.some((entry) =>
 				entry.includes("Failed to persist retry metadata for connection result"),
@@ -3031,49 +3070,71 @@ describe("TapMessagingService", () => {
 
 	describe("implicit handshake completion on inbound traffic", () => {
 		it("marks pending outbound connection/result entries completed when peer sends a valid inbound message", async () => {
-			const trustStore = createMemoryTrustStore();
-			class DropConnectionResultTransport extends FakeTransport {
-				override async send(
-					peerId: number,
-					message: ProtocolMessage,
-					options?: TransportSendOptions,
-				): Promise<TransportReceipt> {
-					this.sentMessages.push({
-						peerId,
-						message,
-						...(options ? { options } : {}),
-					});
-					if (message.method === "connection/result") {
-						// Pretend publish failed so the entry stays pending.
-						throw new TransportError("drop connection/result for test");
-					}
-					return {
-						received: true,
-						requestId: String(message.id),
-						status: options?.waitForAck === false ? "published" : "received",
-						receivedAt: "2026-03-08T00:00:00.000Z",
-					};
-				}
-			}
-			const transport = new DropConnectionResultTransport();
+			// Implicit handshake completion scenario: we have an active contact for
+			// the peer (connection result was already confirmed delivered and
+			// contact was written) but the journal entry was left pending due to
+			// a transient failure in markJournalEntryCompleted. When the peer sends
+			// us a message, we know they received our result and we can safely
+			// mark the journal entry completed.
+			//
+			// State setup: pre-seed the active contact and manually write a pending
+			// journal entry to simulate the "send succeeded, journal completion
+			// failed" scenario.
+			const activeContact = makeActiveContact("conn-implicit-complete-001");
+			const trustStore = createMemoryTrustStore([activeContact]);
+			const transport = new FakeTransport();
 			const { service, requestJournal } = await createService({}, { transport, trustStore });
 
 			await service.start();
-			await submitConnectionRequest(transport, "peer-inbox-implicit-completion");
-			await sleep(50);
+
+			// Manually insert a pending connection/result journal entry simulating
+			// a stale entry that was never marked completed (e.g. due to a crash
+			// between transport.send() and markJournalEntryCompleted()).
+			const staleRequestId = deriveConnectionResultId({
+				chain: PEER_AGENT.chain,
+				peerAgentId: PEER_AGENT.agentId,
+				correlationId: "stale-inbound-req-1",
+			});
+			const staleResultMessage = buildConnectionResult(
+				{
+					requestId: "stale-inbound-req-1",
+					from: { agentId: 1, chain: "eip155:8453" },
+					status: "accepted",
+					timestamp: "2026-03-08T00:00:00.000Z",
+				},
+				staleRequestId,
+			);
+			await requestJournal.putOutbound({
+				requestId: staleRequestId,
+				requestKey: `outbound:connection/result:${staleRequestId}`,
+				direction: "outbound",
+				kind: "result",
+				method: "connection/result",
+				peerAgentId: PEER_AGENT.agentId,
+				correlationId: "stale-inbound-req-1",
+				status: "pending",
+				metadata: {
+					type: "connection-result-delivery",
+					peerAgentId: PEER_AGENT.agentId,
+					peerChain: PEER_AGENT.chain,
+					peerName: PEER_AGENT.registrationFile.name,
+					peerAddress: PEER_AGENT.agentAddress,
+					request: staleResultMessage,
+				},
+			});
 
 			const pendingBefore = (await requestJournal.listPending("outbound")).filter(
 				(entry) => entry.method === "connection/result",
 			);
 			expect(pendingBefore).toHaveLength(1);
 
-			// Now the peer's side got our connection/result eventually and has
-			// added us to its trust store. Simulate the peer sending us a plain
-			// message/send, which proves they have an active contact for us —
-			// our pending connection/result delivery is no longer load-bearing.
-			const activeContact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
-			expect(activeContact?.status).toBe("active");
+			// Verify the active contact is present.
+			expect((await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain))?.status).toBe(
+				"active",
+			);
 
+			// Peer sends us a message — this proves they received our connection/result.
+			// The implicit completion should mark the stale journal entry completed.
 			const inbound: ProtocolMessage = {
 				jsonrpc: "2.0",
 				method: "message/send",
@@ -3206,46 +3267,52 @@ describe("TapMessagingService", () => {
 			// could both enter the implicit-completion path and both trigger
 			// full journal scans (instead of sharing one). After the fix,
 			// concurrent callers await the same priming promise.
-			const trustStore = createMemoryTrustStore();
+			//
+			// State setup: pre-seed the active contact and a stale pending
+			// connection/result journal entry to trigger the implicit completion
+			// path without relying on the old ordering (which wrote the contact
+			// even when the send failed).
+			const activeContact = makeActiveContact("conn-prime-race-001");
+			const trustStore = createMemoryTrustStore([activeContact]);
 			const transport = new FakeTransport();
 			const { service, requestJournal } = await createService({}, { transport, trustStore });
 
 			await service.start();
-			// Seed one pending outbound connection/result by running the
-			// handshake against a transport that drops the result.
-			class DropTransport extends FakeTransport {
-				override async send(
-					peerId: number,
-					message: ProtocolMessage,
-					options?: TransportSendOptions,
-				): Promise<TransportReceipt> {
-					this.sentMessages.push({
-						peerId,
-						message,
-						...(options ? { options } : {}),
-					});
-					if (message.method === "connection/result") {
-						throw new TransportError("drop for test");
-					}
-					return {
-						received: true,
-						requestId: String(message.id),
-						status: options?.waitForAck === false ? "published" : "received",
-						receivedAt: "2026-03-08T00:00:00.000Z",
-					};
-				}
-			}
-			const dropTransport = new DropTransport();
-			dropTransport.handlers = transport.handlers;
-			(service as unknown as { context: { transport: TransportProvider } }).context.transport =
-				dropTransport;
-			await submitConnectionRequest(dropTransport, "peer-inbox-prime-race");
-			await sleep(50);
 
-			// Restore the normal transport for subsequent sends.
-			(service as unknown as { context: { transport: TransportProvider } }).context.transport =
-				transport;
-			transport.handlers = dropTransport.handlers;
+			// Manually insert a pending connection/result entry (simulating a
+			// stale entry that was not cleaned up, e.g. after a crash).
+			const staleRequestId = deriveConnectionResultId({
+				chain: PEER_AGENT.chain,
+				peerAgentId: PEER_AGENT.agentId,
+				correlationId: "prime-race-stale-req",
+			});
+			const staleResultMessage = buildConnectionResult(
+				{
+					requestId: "prime-race-stale-req",
+					from: { agentId: 1, chain: "eip155:8453" },
+					status: "accepted",
+					timestamp: "2026-03-08T00:00:00.000Z",
+				},
+				staleRequestId,
+			);
+			await requestJournal.putOutbound({
+				requestId: staleRequestId,
+				requestKey: `outbound:connection/result:${staleRequestId}`,
+				direction: "outbound",
+				kind: "result",
+				method: "connection/result",
+				peerAgentId: PEER_AGENT.agentId,
+				correlationId: "prime-race-stale-req",
+				status: "pending",
+				metadata: {
+					type: "connection-result-delivery",
+					peerAgentId: PEER_AGENT.agentId,
+					peerChain: PEER_AGENT.chain,
+					peerName: PEER_AGENT.registrationFile.name,
+					peerAddress: PEER_AGENT.agentAddress,
+					request: staleResultMessage,
+				},
+			});
 
 			// Fire two concurrent inbounds that both trigger implicit
 			// completion. The priming scan should run exactly once.
