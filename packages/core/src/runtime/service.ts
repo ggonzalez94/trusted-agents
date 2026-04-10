@@ -122,7 +122,7 @@ import {
 	appendPermissionLedgerEntry,
 	getPermissionLedgerPath,
 } from "./permission-ledger.js";
-import type { RequestJournalEntry } from "./request-journal.js";
+import type { RequestJournalEntry, RequestJournalLastError } from "./request-journal.js";
 import {
 	type TransportOwnerInfo,
 	TransportOwnerLock,
@@ -3448,6 +3448,24 @@ export class TapMessagingService {
 		}
 	}
 
+	/**
+	 * Record a transient send/processing failure on a pending journal entry so
+	 * operators can inspect stuck work via `tap journal show`. Keeps attempt count
+	 * and cumulative metadata. Safe to call on any entry id — it is a no-op if
+	 * the entry does not exist.
+	 */
+	private async recordSendFailure(requestId: string, error: unknown): Promise<void> {
+		const existing = await this.context.requestJournal.getByRequestId(requestId);
+		if (!existing) return;
+		const prior = existing.metadata?.lastError as RequestJournalLastError | undefined;
+		const attempts = (prior?.attempts ?? 0) + 1;
+		const message = error instanceof Error ? error.message : String(error);
+		await this.context.requestJournal.updateMetadata(requestId, {
+			...(existing.metadata ?? {}),
+			lastError: { message, at: nowISO(), attempts },
+		});
+	}
+
 	private retryPendingActionResults(): Promise<number> {
 		return this.retryPendingResults(
 			ACTION_RESULT,
@@ -3546,6 +3564,7 @@ export class TapMessagingService {
 					error,
 				);
 				await this.recordDeliveryFailure(entry.requestId, entry.metadata, error);
+				await this.recordSendFailure(entry.requestId, error);
 			}
 		}
 		return processed;

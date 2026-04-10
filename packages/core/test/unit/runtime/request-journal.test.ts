@@ -184,6 +184,30 @@ describe("FileRequestJournal", () => {
 		expect(pending.map((e) => e.requestId)).toEqual(["req-pending"]);
 	});
 
+	it("persists metadata.lastError with incrementing attempts", async () => {
+		const journal = await createJournal();
+		await journal.putOutbound({
+			requestId: "req-err-1",
+			requestKey: "outbound:req-err-1",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: 42,
+			status: "pending",
+		});
+
+		await journal.updateMetadata("req-err-1", {
+			lastError: { message: "xmtp timeout", at: "2026-04-10T00:00:00Z", attempts: 1 },
+		});
+		await journal.updateMetadata("req-err-1", {
+			lastError: { message: "network unreachable", at: "2026-04-10T00:01:00Z", attempts: 2 },
+		});
+
+		const fetched = await journal.getByRequestId("req-err-1");
+		expect(fetched?.metadata?.lastError?.attempts).toBe(2);
+		expect(fetched?.metadata?.lastError?.message).toBe("network unreachable");
+	});
+
 	it("completes an inbound request before recording an outbound result", async () => {
 		const journal = await createJournal();
 
