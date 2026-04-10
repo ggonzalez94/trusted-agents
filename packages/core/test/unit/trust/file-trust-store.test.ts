@@ -164,4 +164,21 @@ describe("FileTrustStore", () => {
 		const contacts = await store.getContacts();
 		expect(contacts.filter((c) => c.status === "active")).toHaveLength(2);
 	});
+
+	it("should round-trip a connecting contact with expiresAt through addContact and findByAgentId", async () => {
+		const expiresAt = "2026-12-31T23:59:59.000Z";
+		const contact = createTestContact({
+			connectionId: "connecting-001",
+			peerAgentId: 99,
+			peerChain: "eip155:8453",
+			status: "connecting",
+			expiresAt,
+		});
+		await store.addContact(contact);
+
+		const found = await store.findByAgentId(99, "eip155:8453");
+		expect(found).not.toBeNull();
+		expect(found!.status).toBe("connecting");
+		expect(found!.expiresAt).toBe(expiresAt);
+	});
 });
