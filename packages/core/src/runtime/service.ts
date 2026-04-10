@@ -1147,6 +1147,11 @@ export class TapMessagingService {
 			const rpcRequest = buildConnectionRevoke(revokeParams);
 			const requestId = String(rpcRequest.id);
 
+			// Store the peerAddress and reason in metadata so the reconciliation
+			// loop can rebuild and re-send the wire message on retry. The CLI
+			// deletes the local contact after revokeConnection returns regardless
+			// of delivery outcome, so reconciliation is our only chance to reach
+			// the peer if the first send fails.
 			await this.context.requestJournal.putOutbound({
 				requestId,
 				requestKey: `outbound:${CONNECTION_REVOKE}:${requestId}`,
@@ -1155,6 +1160,15 @@ export class TapMessagingService {
 				method: CONNECTION_REVOKE,
 				peerAgentId: contact.peerAgentId,
 				status: "pending",
+				metadata: {
+					revokeDelivery: {
+						peerAgentId: contact.peerAgentId,
+						peerChain: contact.peerChain,
+						peerAddress: contact.peerAgentAddress,
+						peerDisplayName: contact.peerDisplayName,
+						reason,
+					},
+				},
 			});
 
 			try {
@@ -1163,12 +1177,13 @@ export class TapMessagingService {
 				});
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 			} catch (error: unknown) {
-				// Best-effort: leave the journal entry pending so reconciliation can retry.
-				// Do not rethrow — the CLI flow should still delete the local contact.
-				await this.recordDeliveryFailure(requestId, undefined, error);
+				// Best-effort: leave the journal entry pending so the retry loop can
+				// deliver it on a future transport-owning run. Do not rethrow — the
+				// CLI flow should still delete the local contact.
+				await this.recordSendFailure(requestId, error);
 				this.log(
 					"warn",
-					`Failed to send connection/revoke to ${peerLabel(contact)}: ${error instanceof Error ? error.message : String(error)}`,
+					`Failed to send connection/revoke to ${peerLabel(contact)} — will retry on next reconciliation: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
 		});
@@ -3705,6 +3720,13 @@ export class TapMessagingService {
 		let processed = 0;
 		const now = Date.now();
 		for (const entry of pending) {
+			// Revoke entries are retried by their own branch below — a pending
+			// connection/revoke means our first send failed and the peer has
+			// not yet heard that we disconnected.
+			if (entry.method === CONNECTION_REVOKE) {
+				processed += await this.retryPendingConnectionRevoke(entry, now);
+				continue;
+			}
 			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
 				continue;
 			}
@@ -3766,6 +3788,63 @@ export class TapMessagingService {
 			}
 		}
 		return processed;
+	}
+
+	/**
+	 * Retry a pending outbound `connection/revoke` entry. The CLI deletes the
+	 * local contact as soon as `revokeConnection()` returns, so if the first
+	 * send failed the peer will stay connected to us forever unless we deliver
+	 * the revoke here. Revoke delivery is idempotent on the receiving side
+	 * (removes contact if present, no-ops otherwise), so re-sending is safe.
+	 */
+	private async retryPendingConnectionRevoke(
+		entry: RequestJournalEntry,
+		nowMs: number,
+	): Promise<number> {
+		const createdMs = Date.parse(entry.createdAt);
+		if (Number.isFinite(createdMs) && nowMs - createdMs > PENDING_RESULT_MAX_AGE_MS) {
+			this.log(
+				"warn",
+				`Abandoning pending ${CONNECTION_REVOKE} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
+			);
+			await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
+			return 0;
+		}
+
+		const delivery = parsePendingConnectionRevokeDelivery(entry.metadata);
+		if (!delivery) {
+			this.log(
+				"warn",
+				`Pending ${CONNECTION_REVOKE} entry ${entry.requestId} has no revokeDelivery metadata; cannot retry`,
+			);
+			return 0;
+		}
+
+		const revokeParams: ConnectionRevokeParams = {
+			from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+			reason: delivery.reason,
+			timestamp: nowISO(),
+		};
+		const rpcRequest = buildConnectionRevoke(revokeParams);
+
+		try {
+			await this.context.transport.send(delivery.peerAgentId, rpcRequest, {
+				peerAddress: delivery.peerAddress,
+			});
+			await this.context.requestJournal.updateStatus(entry.requestId, "completed");
+			this.log(
+				"info",
+				`Reconciled connection/revoke delivery for ${delivery.peerDisplayName} (#${delivery.peerAgentId})`,
+			);
+			return 1;
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Retry of connection/revoke to ${delivery.peerDisplayName} (#${delivery.peerAgentId}) failed: ${toErrorMessage(error)}`,
+			);
+			await this.recordSendFailure(entry.requestId, error);
+			return 0;
+		}
 	}
 
 	/**
@@ -4588,6 +4667,41 @@ function parsePendingConnectionResultDelivery(
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
 		...(plannedContact ? { plannedContact } : {}),
+	};
+}
+
+interface PendingConnectionRevokeDelivery {
+	peerAgentId: number;
+	peerChain: string;
+	peerAddress: `0x${string}`;
+	peerDisplayName: string;
+	reason?: string;
+}
+
+function parsePendingConnectionRevokeDelivery(
+	metadata: Record<string, unknown> | undefined,
+): PendingConnectionRevokeDelivery | null {
+	if (!metadata || typeof metadata !== "object") return null;
+	const revokeDelivery = (metadata as Record<string, unknown>).revokeDelivery;
+	if (!revokeDelivery || typeof revokeDelivery !== "object") return null;
+	const delivery = revokeDelivery as Record<string, unknown>;
+	const peerAddress = asString(delivery.peerAddress);
+	if (
+		typeof delivery.peerAgentId !== "number" ||
+		typeof delivery.peerChain !== "string" ||
+		delivery.peerChain.length === 0 ||
+		typeof delivery.peerDisplayName !== "string" ||
+		!peerAddress?.startsWith("0x")
+	) {
+		return null;
+	}
+	const reason = typeof delivery.reason === "string" ? delivery.reason : undefined;
+	return {
+		peerAgentId: delivery.peerAgentId,
+		peerChain: delivery.peerChain,
+		peerAddress: peerAddress as `0x${string}`,
+		peerDisplayName: delivery.peerDisplayName,
+		...(reason ? { reason } : {}),
 	};
 }
 

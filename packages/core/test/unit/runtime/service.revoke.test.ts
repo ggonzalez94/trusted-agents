@@ -347,4 +347,97 @@ describe("connection revoke (spec §3.4)", () => {
 
 		await service.stop();
 	});
+
+	it("stores revokeDelivery metadata so the reconciliation loop can retry on the next run", async () => {
+		// Regression for Codex adversarial review finding #3: before this fix,
+		// a failed initial revoke send left a pending journal entry with no
+		// delivery metadata, and the reconciliation loop only scanned
+		// connection/result entries — so the revoke was never retried and the
+		// peer stayed connected forever while the CLI reported success.
+		const contact = makeActiveContact();
+		const failingTransport = new FakeTransport(new TransportError("network hiccup"));
+		const { service, requestJournal } = await createService({ transport: failingTransport });
+
+		await service.revokeConnection(contact, "user request");
+
+		const entries = await requestJournal.list("outbound");
+		const revokeEntry = entries.find((e) => e.method === CONNECTION_REVOKE);
+		expect(revokeEntry).toBeDefined();
+		expect(revokeEntry?.status).toBe("pending");
+
+		// Metadata must carry enough information to rebuild the wire message.
+		const metadata = revokeEntry?.metadata as { revokeDelivery?: Record<string, unknown> };
+		expect(metadata?.revokeDelivery).toBeDefined();
+		expect(metadata.revokeDelivery?.peerAgentId).toBe(contact.peerAgentId);
+		expect(metadata.revokeDelivery?.peerChain).toBe(contact.peerChain);
+		expect(metadata.revokeDelivery?.peerAddress).toBe(contact.peerAgentAddress);
+		expect(metadata.revokeDelivery?.peerDisplayName).toBe(contact.peerDisplayName);
+		expect(metadata.revokeDelivery?.reason).toBe("user request");
+	});
+
+	it("retries a pending connection/revoke on a subsequent sync and marks it completed on success", async () => {
+		// Regression for Codex adversarial review finding #3: the reconciliation
+		// loop now drains pending connection/revoke entries. First send fails,
+		// entry stays pending; subsequent sync retries with a healthy transport
+		// and completes the entry.
+		const contact = makeActiveContact();
+
+		// Flakey transport that fails the first send, then succeeds afterwards.
+		class FlakeyTransport implements TransportProvider {
+			public readonly sentMessages: Array<{
+				peerId: number;
+				message: ProtocolMessage;
+			}> = [];
+			public handlers: TransportHandlers = {};
+			private failsRemaining = 1;
+
+			setHandlers(handlers: TransportHandlers): void {
+				this.handlers = handlers;
+			}
+			async start(): Promise<void> {}
+			async stop(): Promise<void> {}
+			async isReachable(): Promise<boolean> {
+				return true;
+			}
+			async send(
+				peerId: number,
+				message: ProtocolMessage,
+				_options?: TransportSendOptions,
+			): Promise<TransportReceipt> {
+				if (this.failsRemaining > 0) {
+					this.failsRemaining -= 1;
+					throw new TransportError("initial send failure");
+				}
+				this.sentMessages.push({ peerId, message });
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: "accepted",
+					receivedAt: new Date().toISOString(),
+				};
+			}
+			async reconcile(): Promise<void> {}
+		}
+
+		const transport = new FlakeyTransport();
+		const { service, requestJournal } = await createService({ transport });
+
+		// Initial call fails to send but the entry is persisted as pending with
+		// revokeDelivery metadata.
+		await service.revokeConnection(contact);
+		let entries = await requestJournal.list("outbound");
+		let revokeEntry = entries.find((e) => e.method === CONNECTION_REVOKE);
+		expect(revokeEntry?.status).toBe("pending");
+		expect(transport.sentMessages.length).toBe(0);
+
+		// Next sync cycle: the reconciliation loop picks up the pending revoke,
+		// re-sends (now succeeds), and marks it completed.
+		await service.syncOnce();
+
+		entries = await requestJournal.list("outbound");
+		revokeEntry = entries.find((e) => e.method === CONNECTION_REVOKE);
+		expect(revokeEntry?.status).toBe("completed");
+		expect(transport.sentMessages.length).toBe(1);
+		expect(transport.sentMessages[0]?.message.method).toBe(CONNECTION_REVOKE);
+	});
 });
