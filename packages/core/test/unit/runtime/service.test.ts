@@ -1951,7 +1951,7 @@ describe("TapMessagingService", () => {
 
 		expect(await requestJournal.getByRequestId(String(meeting.receipt.requestId))).toEqual(
 			expect.objectContaining({
-				status: "acked",
+				status: "pending",
 			}),
 		);
 
@@ -2512,14 +2512,14 @@ describe("TapMessagingService", () => {
 
 		const requestId = String(transport.sentMessages[0]!.message.id);
 
-		// Verify journal entry was created and acked
+		// Verify journal entry was created and pending
 		const entry = await requestJournal.getByRequestId(requestId);
 		expect(entry).not.toBeNull();
 		expect(entry!.direction).toBe("outbound");
 		expect(entry!.kind).toBe("request");
 		expect(entry!.method).toBe("action/request");
 		expect(entry!.peerAgentId).toBe(PEER_AGENT.agentId);
-		expect(entry!.status).toBe("acked");
+		expect(entry!.status).toBe("pending");
 		expect(entry!.metadata).toEqual({ actionType: "bet/propose" });
 
 		await service.stop();

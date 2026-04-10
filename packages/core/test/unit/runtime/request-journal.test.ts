@@ -61,7 +61,7 @@ describe("FileRequestJournal", () => {
 			method: "action/result",
 			peerAgentId: 7,
 			correlationId: "action-1",
-			status: "acked",
+			status: "pending",
 			metadata: { updated: true },
 		});
 
@@ -70,7 +70,7 @@ describe("FileRequestJournal", () => {
 				requestId: "req-1",
 				kind: "result",
 				method: "action/result",
-				status: "acked",
+				status: "pending",
 				correlationId: "action-1",
 				metadata: { updated: true },
 			}),
@@ -112,6 +112,76 @@ describe("FileRequestJournal", () => {
 				requestId: "in-1",
 			}),
 		]);
+	});
+
+	it("listQueued returns only queued entries", async () => {
+		const journal = await createJournal();
+
+		await journal.putOutbound({
+			requestId: "req-queued",
+			requestKey: "outbound:req-queued",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: 1,
+			status: "queued",
+		});
+		await journal.putOutbound({
+			requestId: "req-pending",
+			requestKey: "outbound:req-pending",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 2,
+			status: "pending",
+		});
+		await journal.putOutbound({
+			requestId: "req-done",
+			requestKey: "outbound:req-done",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 3,
+			status: "completed",
+		});
+
+		const queued = await journal.listQueued();
+		expect(queued.map((e) => e.requestId)).toEqual(["req-queued"]);
+	});
+
+	it("listPending returns only pending entries (not queued)", async () => {
+		const journal = await createJournal();
+
+		await journal.putOutbound({
+			requestId: "req-queued",
+			requestKey: "outbound:req-queued",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: 1,
+			status: "queued",
+		});
+		await journal.putOutbound({
+			requestId: "req-pending",
+			requestKey: "outbound:req-pending",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 2,
+			status: "pending",
+		});
+		await journal.putOutbound({
+			requestId: "req-done",
+			requestKey: "outbound:req-done",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 3,
+			status: "completed",
+		});
+
+		const pending = await journal.listPending();
+		expect(pending.map((e) => e.requestId)).toEqual(["req-pending"]);
 	});
 
 	it("completes an inbound request before recording an outbound result", async () => {

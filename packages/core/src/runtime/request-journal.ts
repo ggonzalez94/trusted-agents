@@ -5,7 +5,7 @@ import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 
 export type RequestJournalDirection = "inbound" | "outbound";
 export type RequestJournalKind = "request" | "result";
-export type RequestJournalStatus = "pending" | "acked" | "completed";
+export type RequestJournalStatus = "queued" | "pending" | "completed";
 type RequestJournalMetadata = Record<string, unknown>;
 
 export interface RequestJournalEntry {
@@ -40,6 +40,7 @@ export interface IRequestJournal {
 	delete(requestId: string): Promise<void>;
 	updateStatus(requestId: string, status: RequestJournalStatus): Promise<void>;
 	updateMetadata(requestId: string, metadata: RequestJournalMetadata | undefined): Promise<void>;
+	listQueued(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
 	listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
 }
 
@@ -146,11 +147,19 @@ export class FileRequestJournal implements IRequestJournal {
 		});
 	}
 
+	async listQueued(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]> {
+		const file = await this.load();
+		return file.entries.filter(
+			(entry) =>
+				entry.status === "queued" && (direction === undefined || entry.direction === direction),
+		);
+	}
+
 	async listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]> {
 		const file = await this.load();
 		return file.entries.filter(
 			(entry) =>
-				entry.status !== "completed" && (direction === undefined || entry.direction === direction),
+				entry.status === "pending" && (direction === undefined || entry.direction === direction),
 		);
 	}
 

@@ -1776,10 +1776,6 @@ export class TapMessagingService {
 			throw error;
 		}
 
-		const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-		if (journalEntry?.status !== "completed") {
-			await this.context.requestJournal.updateStatus(requestId, "acked");
-		}
 		await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 		return receipt;
