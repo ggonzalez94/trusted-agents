@@ -13,7 +13,7 @@ export interface Contact {
 	establishedAt: string;
 	lastContactAt: string;
 	status: ConnectionStatus;
-	/** ISO timestamp from the invite's `expires` field. Display-only hint for connecting contacts; not used for expiry logic. */
+	/** ISO timestamp from the invite's `expires` field. Display-only hint on `connecting` contacts; not used for local expiry enforcement. The wire-level invite expiry check in `validateInboundInvite` is independent of this field. */
 	expiresAt?: string;
 }
 

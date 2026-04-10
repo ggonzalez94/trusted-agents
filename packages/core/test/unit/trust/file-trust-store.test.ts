@@ -119,6 +119,25 @@ describe("FileTrustStore", () => {
 		expect(contacts[0]!.peerDisplayName).toBe("Bob's Agent");
 	});
 
+	it("should persist a connecting contact with expiresAt across store instances", async () => {
+		const expiresAt = "2026-12-31T23:59:59.000Z";
+		const contact = createTestContact({
+			connectionId: "connecting-persist-001",
+			peerAgentId: 77,
+			peerChain: "eip155:8453",
+			status: "connecting",
+			expiresAt,
+		});
+		await store.addContact(contact);
+
+		// Open a brand-new store on the same directory — simulates a process restart
+		const store2 = new FileTrustStore(dir.path);
+		const found = await store2.findByAgentId(77, "eip155:8453");
+		expect(found).not.toBeNull();
+		expect(found!.status).toBe("connecting");
+		expect(found!.expiresAt).toBe(expiresAt);
+	});
+
 	it("should deactivate stale active contact when adding a new one with the same address", async () => {
 		const oldContact = createTestContact({
 			connectionId: "old-connection",
