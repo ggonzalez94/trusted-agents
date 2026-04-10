@@ -187,19 +187,20 @@ describe("tap remove", () => {
 		expect(existsSync(dataDir)).toBe(true);
 	});
 
-	it("refuses to wipe a data dir that contains non-TAP top-level entries", async () => {
-		await writeFile(join(dataDir, "README.md"), "not tap-managed\n", "utf-8");
+	it("wipes a TAP data dir even when it contains unknown extra files", async () => {
+		await writeFile(join(dataDir, "README.md"), "stray file from some tool\n", "utf-8");
+		await mkdir(join(dataDir, "scratch"), { recursive: true });
+		await writeFile(join(dataDir, "scratch", "notes.txt"), "...", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
 			{ json: true, dataDir },
 		);
 
-		expect(process.exitCode).toBe(2);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.status).toBe("error");
-		expect(output.error.message).toContain("non-TAP top-level entries");
-		expect(existsSync(dataDir)).toBe(true);
+		expect(output.status).toBe("ok");
+		expect(output.data.removed).toBe(true);
+		expect(existsSync(dataDir)).toBe(false);
 	});
 
 	it("removes the entire data dir in non-interactive mode when explicitly confirmed", async () => {
@@ -213,6 +214,35 @@ describe("tap remove", () => {
 		expect(output.status).toBe("ok");
 		expect(output.data.removed).toBe(true);
 		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "config.yaml"));
+		expect(existsSync(dataDir)).toBe(false);
+	});
+
+	it("wipes installed-app state and orphaned atomic-write temp files", async () => {
+		const resolvedDataDir = await realpath(dataDir);
+
+		await removeCommandModule.removeCommand({ dryRun: true }, { json: true, dataDir });
+		const dryRun = JSON.parse(stdoutWrites[0]!);
+		expect(dryRun.status).toBe("ok");
+		expect(dryRun.data.blocking_reasons).toEqual([]);
+		expect(dryRun.data.can_remove).toBe(true);
+		expect(dryRun.data.paths_to_remove).toContain(join(resolvedDataDir, "apps.json"));
+		expect(dryRun.data.paths_to_remove).toContain(join(resolvedDataDir, "apps", "transfer"));
+		expect(dryRun.data.paths_to_remove).toContain(
+			join(resolvedDataDir, "apps", "transfer", "state.json"),
+		);
+		expect(dryRun.data.paths_to_remove).toContain(
+			join(resolvedDataDir, "contacts.json.abc123.tmp"),
+		);
+
+		stdoutWrites.length = 0;
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir },
+		);
+
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.status).toBe("ok");
+		expect(output.data.removed).toBe(true);
 		expect(existsSync(dataDir)).toBe(false);
 	});
 
@@ -246,28 +276,62 @@ describe("tap remove", () => {
 		expect(output.error.message).toContain("External config paths are not supported");
 	});
 
-	it("refuses data dirs with unexpected top-level entries", async () => {
-		await writeFile(join(dataDir, "keep.txt"), "keep\n", "utf-8");
+	it("refuses to wipe a non-empty directory that has no TAP config.yaml", async () => {
+		const strayDir = join(tmpDir, "not-a-tap-dir");
+		await mkdir(strayDir, { recursive: true });
+		await writeFile(join(strayDir, "README.md"), "user project\n", "utf-8");
+		await writeFile(join(strayDir, "notes.txt"), "important\n", "utf-8");
 
-		await removeCommandModule.removeCommand({ dryRun: true }, { json: true, dataDir });
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir: strayDir },
+		);
+
+		expect(process.exitCode).toBe(2);
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.status).toBe("error");
+		expect(output.error.message).toContain("not a TAP data dir");
+		expect(existsSync(strayDir)).toBe(true);
+		expect(existsSync(join(strayDir, "README.md"))).toBe(true);
+	});
+
+	it("refuses to wipe a directory whose config.yaml has no chain field", async () => {
+		const badDataDir = join(tmpDir, "bad-agent");
+		await mkdir(badDataDir, { recursive: true });
+		await writeFile(
+			join(badDataDir, "config.yaml"),
+			"agent_id: 42\nows:\n  wallet: w\n  api_key: k\n",
+			"utf-8",
+		);
+		await writeFile(join(badDataDir, "contacts.json"), "[]\n", "utf-8");
+
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir: badDataDir },
+		);
+
+		expect(process.exitCode).toBe(2);
+		const output = JSON.parse(stdoutWrites[0]!);
+		expect(output.status).toBe("error");
+		expect(output.error.message).toContain("not a TAP data dir");
+		expect(existsSync(badDataDir)).toBe(true);
+	});
+
+	it("accepts a minimal legacy config.yaml that only has a chain field", async () => {
+		const legacyDataDir = join(tmpDir, "legacy-agent");
+		await mkdir(legacyDataDir, { recursive: true });
+		await writeFile(join(legacyDataDir, "config.yaml"), "chain: eip155:8453\n", "utf-8");
+		await writeFile(join(legacyDataDir, "contacts.json"), "[]\n", "utf-8");
+
+		await removeCommandModule.removeCommand(
+			{ unsafeWipeDataDir: true, yes: true },
+			{ json: true, dataDir: legacyDataDir },
+		);
 
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.status).toBe("ok");
-		expect(output.data.can_remove).toBe(false);
-		expect(output.data.blocking_reasons[0]).toContain("non-TAP top-level entries");
-		expect(output.data.paths_to_remove).not.toContain(join(dataDir, "keep.txt"));
-
-		stdoutWrites.length = 0;
-		await removeCommandModule.removeCommand(
-			{ unsafeWipeDataDir: true, yes: true },
-			{ json: true, dataDir },
-		);
-
-		const blocked = JSON.parse(stdoutWrites[0]!);
-		expect(blocked.status).toBe("error");
-		expect(blocked.error.message).toContain("non-TAP top-level entries");
-		expect(existsSync(join(dataDir, "keep.txt"))).toBe(true);
-		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
+		expect(output.data.removed).toBe(true);
+		expect(existsSync(legacyDataDir)).toBe(false);
 	});
 
 	it("resolves symlinked data dirs to the real TAP directory before removing", async () => {
@@ -397,6 +461,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "identity"), { recursive: true });
 	await mkdir(join(dataDir, "conversations"), { recursive: true });
 	await mkdir(join(dataDir, "xmtp"), { recursive: true });
+	await mkdir(join(dataDir, "apps", "transfer"), { recursive: true });
 	await writeFile(
 		join(dataDir, "config.yaml"),
 		"agent_id: 42\nchain: eip155:8453\nows:\n  wallet: test-wallet\n  api_key: test-api-key\n",
@@ -406,4 +471,16 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await writeFile(join(dataDir, "conversations", "peer-1.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");
 	await writeFile(join(dataDir, "pending-invites.json"), "[]\n", "utf-8");
+	await writeFile(
+		join(dataDir, "apps.json"),
+		JSON.stringify({ apps: { transfer: { package: "tap-app-transfer" } } }),
+		"utf-8",
+	);
+	await writeFile(
+		join(dataDir, "apps", "transfer", "state.json"),
+		JSON.stringify({ grants: [] }),
+		"utf-8",
+	);
+	// Simulate an orphaned atomic-write temp file from an interrupted store write.
+	await writeFile(join(dataDir, "contacts.json.abc123.tmp"), "[]\n", "utf-8");
 }
