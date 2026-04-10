@@ -551,10 +551,13 @@ export class OpenClawTapRegistry {
 			throw new Error(`Unknown TAP identity: ${name}`);
 		}
 
+		// Load credentials from the identity's own dataDir YAML. Do NOT plumb
+		// process.env.TAP_OWS_WALLET / TAP_OWS_API_KEY through here — the plugin
+		// is multi-identity in a single process, so a process-global env override
+		// would force every identity onto the same wallet/API key, breaking
+		// isolation and causing wrong-wallet signing.
 		const config = await loadTrustedAgentConfigFromDataDir(definition.dataDir, {
 			requireAgentId: true,
-			owsWallet: process.env.TAP_OWS_WALLET,
-			owsApiKey: process.env.TAP_OWS_API_KEY,
 		});
 		const signingProvider = new OwsSigningProvider(
 			config.ows.wallet,
@@ -573,11 +576,7 @@ export class OpenClawTapRegistry {
 
 		const tapRuntime = await createTapRuntime({
 			dataDir: definition.dataDir,
-			configOptions: {
-				requireAgentId: true,
-				owsWallet: process.env.TAP_OWS_WALLET,
-				owsApiKey: process.env.TAP_OWS_API_KEY,
-			},
+			configOptions: { requireAgentId: true },
 			ownerLabel: `openclaw:${definition.name}`,
 			createSigningProvider: async () => signingProvider,
 			schedulingHandler: new SchedulingHandler({
