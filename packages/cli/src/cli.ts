@@ -612,6 +612,37 @@ Examples:
 			await conversationsShowCommand(id, opts);
 		});
 
+	// journal
+	const journalCmd = program.command("journal").description("Inspect the TAP request journal");
+
+	journalCmd
+		.command("list")
+		.description("List journal entries (optionally filtered)")
+		.option("-d, --direction <dir>", "Filter by direction: inbound | outbound")
+		.option("-s, --status <status>", "Filter by status: queued | pending | completed")
+		.option("-m, --method <method>", "Filter by JSON-RPC method")
+		.action(async (cmdOpts: { direction?: string; status?: string; method?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { journalListCommand } = await import("./commands/journal-list.js");
+			await journalListCommand(
+				{
+					direction: cmdOpts.direction as "inbound" | "outbound" | undefined,
+					status: cmdOpts.status as "queued" | "pending" | "completed" | undefined,
+					method: cmdOpts.method,
+				},
+				opts,
+			);
+		});
+
+	journalCmd
+		.command("show <request-id>")
+		.description("Show details of a single journal entry by request ID")
+		.action(async (requestId: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { journalShowCommand } = await import("./commands/journal-show.js");
+			await journalShowCommand(requestId, opts);
+		});
+
 	// app
 	const app = program.command("app").description("Manage TAP apps");
 
