@@ -2764,34 +2764,68 @@ export class TapMessagingService {
 		// has already confirmed the message's sender inbox ID matches the on-chain
 		// resolved agent address. A spoofed result with a mismatched sender would
 		// have been rejected before reaching this handler.
+		//
+		// For the "missing" case, resolve the peer on-chain to populate contact fields
+		// correctly. peerAgentAddress is load-bearing for transport routing; a zero-
+		// address would cause silent failures on subsequent messaging. This adds one
+		// on-chain resolver call in the recovery path, acceptable because the wipe
+		// scenario is rare and the resolver is cached.
+		if (!existingContact) {
+			let resolved: ResolvedAgent;
+			try {
+				resolved = await this.context.resolver.resolveWithCache(
+					result.from.agentId,
+					result.from.chain,
+				);
+			} catch (error: unknown) {
+				this.log(
+					"warn",
+					`handleConnectionResult: resolver failed for agent #${result.from.agentId} on ${result.from.chain} — skipping contact creation: ${toErrorMessage(error)}`,
+				);
+				return "duplicate";
+			}
+			const now = result.timestamp ?? nowISO();
+			const freshContact: Contact = {
+				connectionId: generateConnectionId(),
+				peerAgentId: resolved.agentId,
+				peerChain: resolved.chain,
+				peerOwnerAddress: resolved.ownerAddress,
+				peerDisplayName: resolved.registrationFile.name,
+				peerAgentAddress: resolved.agentAddress,
+				permissions: createEmptyPermissionState(now),
+				establishedAt: now,
+				lastContactAt: now,
+				status: "active",
+			};
+			await this.context.trustStore.addContact(freshContact);
+			// Best-effort journal correlation: mark matching outbound entry completed.
+			const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			if (journalEntry) {
+				await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			}
+			this.log("info", `Connection accepted by ${peerLabel(freshContact)}`);
+			return "received";
+		}
 
 		const establishedAt = result.timestamp;
 		const nextContact: Contact = {
-			connectionId: existingContact?.connectionId ?? generateConnectionId(),
+			connectionId: existingContact.connectionId,
 			peerAgentId: result.from.agentId,
 			peerChain: result.from.chain,
-			// For the "missing" case we only have the resolved identity from the
-			// result.from field. peerOwnerAddress and peerDisplayName are filled
-			// from the existing connecting contact when available, otherwise set
-			// to reasonable defaults sourced from the result envelope.
-			peerOwnerAddress:
-				existingContact?.peerOwnerAddress ?? (`0x${"0".repeat(40)}` as `0x${string}`),
-			peerDisplayName: existingContact?.peerDisplayName ?? `Agent #${result.from.agentId}`,
-			peerAgentAddress:
-				existingContact?.peerAgentAddress ?? (`0x${"0".repeat(40)}` as `0x${string}`),
-			permissions: existingContact?.permissions ?? createEmptyPermissionState(establishedAt),
-			establishedAt: existingContact?.establishedAt ?? establishedAt,
+			peerOwnerAddress: existingContact.peerOwnerAddress,
+			peerDisplayName: existingContact.peerDisplayName,
+			peerAgentAddress: existingContact.peerAgentAddress,
+			permissions: existingContact.permissions ?? createEmptyPermissionState(establishedAt),
+			establishedAt: existingContact.establishedAt ?? establishedAt,
 			lastContactAt: establishedAt,
 			status: "active",
 			// Clear expiresAt when transitioning to active — no longer needed.
 			expiresAt: undefined,
 		};
 
-		if (existingContact) {
-			await this.context.trustStore.updateContact(existingContact.connectionId, nextContact);
-		} else {
-			await this.context.trustStore.addContact(nextContact);
-		}
+		// existingContact is always defined here — the !existingContact path
+		// was handled above with an early return.
+		await this.context.trustStore.updateContact(existingContact.connectionId, nextContact);
 
 		// Best-effort journal correlation: mark matching outbound entry completed.
 		const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);

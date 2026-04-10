@@ -1520,22 +1520,48 @@ describe("TapMessagingService", () => {
 		// the XMTP transport layer (sender inbox verification). At the service layer,
 		// an accepted result from an unknown agent that passes transport-layer
 		// verification creates a fresh active contact per spec §5.3.
+		// The handler must resolve peer identity on-chain to populate load-bearing
+		// fields (peerAgentAddress, peerOwnerAddress) with correct non-zero values.
 		const transport = new FakeTransport();
 		const trustStore = createMemoryTrustStore();
+
+		const unknownAgentId = 999;
+		const unknownChain = PEER_AGENT.chain;
+		const unknownAgentResolved: ResolvedAgent = {
+			agentId: unknownAgentId,
+			chain: unknownChain,
+			ownerAddress: ALICE.address,
+			agentAddress: ALICE.address,
+			capabilities: ["chat"],
+			registrationFile: {
+				type: "eip-8004-registration-v1",
+				name: "Unknown Agent",
+				description: "A newly discovered peer",
+				services: [{ name: "xmtp", endpoint: ALICE.address }],
+				trustedAgentProtocol: {
+					version: "1.0",
+					agentAddress: ALICE.address,
+					capabilities: ["chat"],
+				},
+			},
+			resolvedAt: "2026-03-08T00:00:00.000Z",
+		};
+		const resolver = createStaticResolver(unknownAgentResolved);
+
 		const { service } = await createService(
 			{},
 			{
 				transport,
 				trustStore,
+				resolver,
 			},
 		);
 
 		await service.start();
 
-		const unknownAgentId = 999;
 		const acceptedResult = buildConnectionResult({
 			requestId: "req-from-unknown",
-			from: { agentId: unknownAgentId, chain: PEER_AGENT.chain },
+			from: { agentId: unknownAgentId, chain: unknownChain },
 			status: "accepted",
 			timestamp: "2026-03-08T00:00:01.000Z",
 		});
@@ -1548,10 +1574,63 @@ describe("TapMessagingService", () => {
 			}),
 		).resolves.toEqual({ status: "received" });
 
-		// A fresh active contact is created for the unknown agent.
-		const contact = await trustStore.findByAgentId(unknownAgentId, PEER_AGENT.chain);
+		// A fresh active contact is created for the unknown agent with correct
+		// on-chain resolved fields — not zero-address placeholders.
+		const contact = await trustStore.findByAgentId(unknownAgentId, unknownChain);
 		expect(contact?.status).toBe("active");
 		expect(contact?.peerAgentId).toBe(unknownAgentId);
+		expect(contact?.peerAgentAddress).toBe(ALICE.address);
+		expect(contact?.peerOwnerAddress).toBe(ALICE.address);
+		expect(contact?.peerDisplayName).toBe("Unknown Agent");
+
+		await service.stop();
+	});
+
+	it("returns duplicate and skips contact creation when resolver fails in missing-contact path (§5.3 graceful fallback)", async () => {
+		// If the resolver throws (e.g. peer deregistered or network error), the
+		// handler must not create a broken zero-address contact — it logs a warning
+		// and returns "duplicate" so the caller treats the result as unactionable.
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+		const failingResolver: IAgentResolver = {
+			resolve: async () => {
+				throw new Error("on-chain lookup failed");
+			},
+			resolveWithCache: async () => {
+				throw new Error("on-chain lookup failed");
+			},
+		};
+
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+				resolver: failingResolver,
+			},
+		);
+
+		await service.start();
+
+		const unknownAgentId = 888;
+		const acceptedResult = buildConnectionResult({
+			requestId: "req-resolver-fail",
+			from: { agentId: unknownAgentId, chain: PEER_AGENT.chain },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: unknownAgentId,
+				senderInboxId: "peer-inbox-resolver-fail",
+				message: acceptedResult,
+			}),
+		).resolves.toEqual({ status: "duplicate" });
+
+		// No contact created — broken zero-address contact was avoided.
+		const contact = await trustStore.findByAgentId(unknownAgentId, PEER_AGENT.chain);
+		expect(contact).toBeNull();
 
 		await service.stop();
 	});
