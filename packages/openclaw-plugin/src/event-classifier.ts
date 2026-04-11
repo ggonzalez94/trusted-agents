@@ -23,7 +23,9 @@ export function classifyTapEvent(event: TapEmitEventPayload): TapEventBucket | n
 			return "auto-handle";
 
 		case "connection/request":
-			return "escalate";
+			// Auto-accepted by the service (spec §1.5); the host is notified via the
+			// onConnectionEstablished hook instead. Suppress the emitEvent duplicate.
+			return null;
 
 		case "action/request":
 			// receipt_status "received" = permission grant request (handled synchronously)

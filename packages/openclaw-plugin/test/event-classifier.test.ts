@@ -40,16 +40,16 @@ describe("classifyTapEvent", () => {
 		});
 	});
 
-	describe("escalate bucket", () => {
-		it("classifies connection/request as escalate", () => {
+	describe("connection/request suppressed (auto-accept, spec §1.5)", () => {
+		it("returns null for connection/request (host is notified via onConnectionEstablished hook instead)", () => {
 			const event = makeEvent({ method: "connection/request" });
-			expect(classifyTapEvent(event)).toBe("escalate");
+			expect(classifyTapEvent(event)).toBeNull();
 		});
 
-		it("classifies connection/request as escalate regardless of receipt_status", () => {
+		it("returns null for connection/request regardless of receipt_status", () => {
 			for (const receipt_status of ["delivered", "received", "queued", "ok"]) {
 				const event = makeEvent({ method: "connection/request", receipt_status });
-				expect(classifyTapEvent(event)).toBe("escalate");
+				expect(classifyTapEvent(event)).toBeNull();
 			}
 		});
 	});

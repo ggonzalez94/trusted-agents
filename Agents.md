@@ -187,6 +187,9 @@ Files: `packages/core/src/conversation/logger.ts`
 ### 5) `NotificationAdapter` + `ApprovalHandler` (SDK human-in-loop seam)
 Files: `packages/sdk/src/notification.ts`, `approval.ts`
 - SDK orchestration defers approvals/notifications to host runtime.
+- `approveTransfer` is the primary approval hook (transfers need grant-gated decisions).
+- `onConnectionEstablished` is a post-success info hook used by the OpenClaw plugin to notify the operator after a handshake completes.
+- There is deliberately no `approveConnection` hook — a signed invite is already cryptographic consent, so inbound connection/request handling auto-accepts without per-request approval.
 
 ### 6) `TapAppRegistry` (app routing seam)
 File: `packages/core/src/app/registry.ts`
@@ -287,9 +290,8 @@ File: `packages/sdk/src/orchestrator.ts`
 ```
 <dataDir>/
 ├── config.yaml              # agent_id, chain, xmtp.env, ows.wallet, ows.api_key, xmtp.db_encryption_key
-├── contacts.json            # Connected peers (trust store)
-├── request-journal.json     # Durable TAP action request state
-├── pending-connects.json    # Minimal outbound connection state awaiting connection/result
+├── contacts.json            # Connected peers (trust store) — includes `connecting` rows for in-flight outbound connects
+├── request-journal.json     # Single source of truth for in-flight and completed wire requests + queued command intents
 ├── ipfs-cache.json          # Content hash → CID (avoids re-upload)
 ├── apps.json                # installed apps manifest
 ├── apps/                    # app-scoped state
@@ -326,21 +328,27 @@ File: `packages/sdk/src/orchestrator.ts`
 - `message send`, `request-funds`, listener processing, and reconciliation append conversation entries
 - Conversation commands read the persisted logs from disk
 
-15. Async connection and action outcomes use different durable state:
-- `connect` persists a minimal pending-connect record immediately after the transport receipt
-- `message listen` and `message sync` process later `connection/result` and `action/result`
-- `FileRequestJournal` is the dedupe and reconciliation source for action requests/results
-- `pending-connects.json` gates outbound `connection/result` acceptance and survives restarts
+15. Async connection and action outcomes share one durable store (`request-journal.json`):
+- `connect` upserts a `connecting` contact in the trust store BEFORE any wire traffic, so Bob's "I asked" record is durable and sticky across restarts. The contact flips to `active` when the matching `connection/result` arrives.
+- `connect()` is truly synchronous: it registers an in-memory waiter keyed on `requestId` and blocks up to `waitMs` (default 30_000) for the result to arrive. On timeout it returns `status: "pending"` and the async completion still lands on the next `sync`.
+- The inviter-side `processConnectionRequest` sends `connection/result` BEFORE writing the contact as active. If the send fails, the contact stays unwritten and reconciliation retries it. This eliminates the old divergence where Alice could end up "active" while Bob never heard back.
+- `handleConnectionRequest` and `handleConnectionResult` are fully idempotent on every contact state, so re-running `tap connect` with a fresh invite always repairs divergent state without manual cleanup (spec §5.2, §5.3).
+- `request-journal.json` holds four kinds of entries with a minimum state machine (`queued` | `pending` | `completed`): inbound requests, inbound results, outbound requests, and outbound results. `queued` is used for command intents whose wire request hasn't been sent yet (transport owned by another process). `lastError` metadata on a `pending` entry tracks transient failures for debugging via `tap journal show`.
+- The `tap-commands-outbox/` directory and `pending-connects.json` file were removed — their state moved onto the trust store (`connecting` contacts) and the journal (`queued` entries). Legacy files are migrated once at `TapMessagingService.start()` via `runLegacyStateMigrations()`.
 
 16. OpenClaw plugin mode owns transport inside Gateway:
 - `packages/openclaw-plugin` starts one `TapMessagingService` per configured TAP identity
 - OpenClaw agents should use the `tap_gateway` tool for transport-active operations when the plugin is installed
 - `tap message sync` remains the safe fallback when the plugin is not installed
 - The plugin wires `emitEvent` to classify inbound messages and push to a per-identity in-memory `TapNotificationQueue`
-- Escalation events (connection requests, ungrantable transfers) trigger `requestHeartbeatNow()` + `enqueueSystemEvent()` to wake the agent
+- Escalation events (ungrantable transfers, scheduling proposals) trigger `requestHeartbeatNow()` + `enqueueSystemEvent()` to wake the agent
 - A `before_prompt_build` hook drains the notification queue and injects `[TAP Notifications]` into the agent's context
-- Connection requests always defer for user approval via the `approveConnection` hook (returns `null`)
-- `resolvePending` handles both `ACTION_REQUEST` and `CONNECTION_REQUEST` entries
+- **Connection requests are auto-accepted on valid invites** — the `approveConnection` hook was removed because a signed invite is already cryptographic consent. The plugin emits a post-success `connection-established` info notification via the `onConnectionEstablished` hook instead.
+- `resolvePending` handles only `ACTION_REQUEST` entries (transfers, scheduling). Connection requests never appear as deferred work.
+
+17. Recovery primitives are unified:
+- Three commands cover every realistic recovery path: `tap connect <invite>`, `tap message sync`, `tap contacts remove <connectionId>`. See `skills/trusted-agents/SKILL.md` Recovery section for the full table.
+- `tap contacts remove` sends `connection/revoke` to the peer before deleting locally, so both sides converge on "not connected" even if the user clears a contact unilaterally.
 
 17. SDK connect requirement:
 - `TrustedAgentsOrchestrator.connect()` returns an explicit error unless `transport` or `xmtp` config is provided

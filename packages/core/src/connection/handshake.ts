@@ -1,15 +1,26 @@
+import { ValidationError } from "../common/index.js";
 import { createJsonRpcRequest } from "../protocol/index.js";
-import { CONNECTION_REQUEST, CONNECTION_RESULT, PERMISSIONS_UPDATE } from "../protocol/index.js";
+import {
+	CONNECTION_REQUEST,
+	CONNECTION_RESULT,
+	CONNECTION_REVOKE,
+	PERMISSIONS_UPDATE,
+} from "../protocol/index.js";
 import type {
 	ConnectionRequestParams,
 	ConnectionResultParams,
+	ConnectionRevokeParams,
 	JsonRpcId,
 	JsonRpcRequest,
 	PermissionsUpdateParams,
 } from "../protocol/index.js";
+import type { ProtocolMessage } from "../transport/interface.js";
 
-export function buildConnectionRequest(params: ConnectionRequestParams): JsonRpcRequest {
-	return createJsonRpcRequest(CONNECTION_REQUEST, params);
+export function buildConnectionRequest(
+	params: ConnectionRequestParams,
+	id?: JsonRpcId,
+): JsonRpcRequest {
+	return createJsonRpcRequest(CONNECTION_REQUEST, params, id);
 }
 
 export function buildConnectionResult(
@@ -41,4 +52,22 @@ export function deriveConnectionResultId(params: {
 
 export function buildPermissionsUpdate(params: PermissionsUpdateParams): JsonRpcRequest {
 	return createJsonRpcRequest(PERMISSIONS_UPDATE, params);
+}
+
+export function buildConnectionRevoke(params: ConnectionRevokeParams): JsonRpcRequest {
+	return createJsonRpcRequest(CONNECTION_REVOKE, params);
+}
+
+export function parseConnectionRevoke(message: ProtocolMessage): ConnectionRevokeParams {
+	const params = message.params as ConnectionRevokeParams | undefined;
+	if (
+		typeof params?.from?.agentId !== "number" ||
+		params.from.agentId < 0 ||
+		typeof params.from.chain !== "string" ||
+		params.from.chain.length === 0 ||
+		typeof params.timestamp !== "string"
+	) {
+		throw new ValidationError("Invalid connection/revoke parameters");
+	}
+	return params;
 }

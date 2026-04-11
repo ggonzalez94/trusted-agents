@@ -3,7 +3,7 @@ import {
 	AuthenticationError,
 	ConfigError,
 	ConnectionError,
-	FileTapCommandOutbox,
+	FileRequestJournal,
 	IdentityError,
 	PermissionError,
 	type TapCommandJob,
@@ -14,6 +14,7 @@ import {
 	TransportOwnershipError,
 	TrustedAgentError,
 	ValidationError,
+	generateNonce,
 } from "trusted-agents-core";
 
 const QUEUED_COMMAND_WAIT_MS = 2_000;
@@ -67,33 +68,49 @@ export async function runOrQueueTapCommand<T extends TapCommandJobResultPayload>
 			throw error;
 		}
 
-		const outbox = new FileTapCommandOutbox(dataDir);
-		const queued = await outbox.enqueue({
-			...job,
-			requestedBy: options.requestedBy,
+		// Enqueue as a `queued` outbound journal entry so the transport owner
+		// (plugin or listener) can drain and execute it.
+		const journal = new FileRequestJournal(dataDir);
+		const requestId = generateNonce();
+		await journal.putOutbound({
+			requestId,
+			requestKey: `outbound:command:${requestId}`,
+			direction: "outbound",
+			kind: "request",
+			method: `command/${job.type}`,
+			peerAgentId: 0,
+			status: "queued",
+			metadata: {
+				commandType: job.type,
+				commandPayload: (job as TapCommandJob).payload,
+				...(options.requestedBy !== undefined ? { commandRequestedBy: options.requestedBy } : {}),
+			},
 		});
+
+		// Poll briefly for the transport owner to drain the entry.
 		const deadline = Date.now() + QUEUED_COMMAND_WAIT_MS;
 		while (Date.now() < deadline) {
-			const result = await outbox.getResult(queued.jobId);
-			if (!result) {
-				await sleep(QUEUED_COMMAND_POLL_INTERVAL_MS);
-				continue;
+			const entry = await journal.getByRequestId(requestId);
+			if (entry && entry.status === "completed") {
+				const commandResult = (entry.metadata as Record<string, unknown> | undefined)
+					?.commandResult as TapCommandJobResult | undefined;
+				if (commandResult?.status === "failed") {
+					throw hydrateQueuedCommandError(commandResult, requestId);
+				}
+				return {
+					status: "completed",
+					result: commandResult?.result as T,
+					queued: true,
+					jobId: requestId,
+					owner: error.currentOwner,
+				};
 			}
-			if (result.status === "failed") {
-				throw hydrateQueuedCommandError(result, queued.jobId);
-			}
-			return {
-				status: "completed",
-				result: result.result as T,
-				queued: true,
-				jobId: queued.jobId,
-				owner: error.currentOwner,
-			};
+			await sleep(QUEUED_COMMAND_POLL_INTERVAL_MS);
 		}
 
 		return {
 			status: "queued",
-			jobId: queued.jobId,
+			jobId: requestId,
 			owner: error.currentOwner,
 		};
 	}

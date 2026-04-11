@@ -7,8 +7,10 @@ export { isSelfInvite, parseInviteUrl, verifyInvite } from "./invite-verifier.js
 export {
 	buildConnectionRequest,
 	buildConnectionResult,
+	buildConnectionRevoke,
 	buildPermissionsUpdate,
 	deriveConnectionResultId,
+	parseConnectionRevoke,
 } from "./handshake.js";
 
 export {

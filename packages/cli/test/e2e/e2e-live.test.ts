@@ -331,7 +331,7 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				agentBDir,
 				"connect",
 				inviteUrl,
-				"--yes",
+				"--no-wait",
 			]);
 
 			expect(result.exitCode, `Agent B connect failed:\n${result.stderr}`).toBe(0);

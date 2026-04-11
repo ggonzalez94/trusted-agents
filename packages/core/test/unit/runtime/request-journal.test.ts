@@ -61,7 +61,7 @@ describe("FileRequestJournal", () => {
 			method: "action/result",
 			peerAgentId: 7,
 			correlationId: "action-1",
-			status: "acked",
+			status: "pending",
 			metadata: { updated: true },
 		});
 
@@ -70,7 +70,7 @@ describe("FileRequestJournal", () => {
 				requestId: "req-1",
 				kind: "result",
 				method: "action/result",
-				status: "acked",
+				status: "pending",
 				correlationId: "action-1",
 				metadata: { updated: true },
 			}),
@@ -112,6 +112,103 @@ describe("FileRequestJournal", () => {
 				requestId: "in-1",
 			}),
 		]);
+	});
+
+	it("listQueued returns only queued entries", async () => {
+		const journal = await createJournal();
+
+		await journal.putOutbound({
+			requestId: "req-queued",
+			requestKey: "outbound:req-queued",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: 1,
+			status: "queued",
+		});
+		await journal.putOutbound({
+			requestId: "req-pending",
+			requestKey: "outbound:req-pending",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 2,
+			status: "pending",
+		});
+		await journal.putOutbound({
+			requestId: "req-done",
+			requestKey: "outbound:req-done",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 3,
+			status: "completed",
+		});
+
+		const queued = await journal.listQueued();
+		expect(queued.map((e) => e.requestId)).toEqual(["req-queued"]);
+	});
+
+	it("listPending returns all non-completed entries (both queued and pending)", async () => {
+		// listPending intentionally has "non-terminal" semantics, not "pending-only".
+		// Callers like reconciliation loops, status queries, and sync reports want
+		// to see all in-flight work; narrowing would silently hide queued intents.
+		const journal = await createJournal();
+
+		await journal.putOutbound({
+			requestId: "req-queued",
+			requestKey: "outbound:req-queued",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: 1,
+			status: "queued",
+		});
+		await journal.putOutbound({
+			requestId: "req-pending",
+			requestKey: "outbound:req-pending",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 2,
+			status: "pending",
+		});
+		await journal.putOutbound({
+			requestId: "req-done",
+			requestKey: "outbound:req-done",
+			direction: "outbound",
+			kind: "request",
+			method: "message/send",
+			peerAgentId: 3,
+			status: "completed",
+		});
+
+		const pending = await journal.listPending();
+		expect(pending.map((e) => e.requestId).sort()).toEqual(["req-pending", "req-queued"]);
+	});
+
+	it("persists metadata.lastError with incrementing attempts", async () => {
+		const journal = await createJournal();
+		await journal.putOutbound({
+			requestId: "req-err-1",
+			requestKey: "outbound:req-err-1",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: 42,
+			status: "pending",
+		});
+
+		await journal.updateMetadata("req-err-1", {
+			lastError: { message: "xmtp timeout", at: "2026-04-10T00:00:00Z", attempts: 1 },
+		});
+		await journal.updateMetadata("req-err-1", {
+			lastError: { message: "network unreachable", at: "2026-04-10T00:01:00Z", attempts: 2 },
+		});
+
+		const fetched = await journal.getByRequestId("req-err-1");
+		expect(fetched?.metadata?.lastError?.attempts).toBe(2);
+		expect(fetched?.metadata?.lastError?.message).toBe("network unreachable");
 	});
 
 	it("completes an inbound request before recording an outbound result", async () => {
