@@ -104,7 +104,7 @@ describe("TapRuntime init", () => {
 
 		await runtime.init();
 
-		expect(runtime.service["context"].config.agentId).toBe(123);
-		expect(runtime.service["context"].config.dataDir).toBe(dataDir);
+		expect(runtime.config.agentId).toBe(123);
+		expect(runtime.config.dataDir).toBe(dataDir);
 	});
 });

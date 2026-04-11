@@ -2759,7 +2759,9 @@ export class TapMessagingService {
 		await process(contact, entry.requestId, request);
 	}
 
-	private async findActiveContactForPendingEntry(entry: RequestJournalEntry): Promise<Contact | null> {
+	private async findActiveContactForPendingEntry(
+		entry: RequestJournalEntry,
+	): Promise<Contact | null> {
 		const metadata = entry.metadata as Record<string, unknown> | undefined;
 		const peerChain = typeof metadata?.peerChain === "string" ? metadata.peerChain : undefined;
 		if (peerChain) {
@@ -3308,11 +3310,7 @@ export class TapMessagingService {
 		outgoing: ProtocolMessage,
 		actionType: string,
 	): Promise<void> {
-		const delivery = buildPendingActionResultDeliveryFromRequest(
-			contact,
-			schedulingId,
-			outgoing,
-		);
+		const delivery = buildPendingActionResultDeliveryFromRequest(contact, schedulingId, outgoing);
 		await this.context.requestJournal.putOutbound({
 			requestId: String(delivery.request.id),
 			requestKey: `outbound:${delivery.request.method}:${String(delivery.request.id)}`,
@@ -3784,17 +3782,25 @@ export class TapMessagingService {
 		);
 	}
 
-	private async retryPendingResults<T extends { peerAgentId: number; peerName: string }>(
-		method: string,
-		parse: (metadata: Record<string, unknown> | undefined) => T | null,
-		deliver: (delivery: T) => Promise<void>,
-		errorLabel: (delivery: T) => string,
-	): Promise<number> {
+	private async retryPendingDeliveries<
+		T extends { peerAgentId: number; peerName: string },
+	>(options: {
+		kind: "request" | "result";
+		method: string;
+		parse: (metadata: Record<string, unknown> | undefined) => T | null;
+		deliver: (delivery: T) => Promise<void>;
+		errorLabel: (delivery: T) => string;
+		recordFailure: (
+			requestId: string,
+			metadata: Record<string, unknown> | undefined,
+			error: unknown,
+		) => Promise<void>;
+	}): Promise<number> {
 		const pending = await this.context.requestJournal.listPending("outbound");
 		let processed = 0;
 		const now = Date.now();
 		for (const entry of pending) {
-			if (entry.kind !== "result" || entry.method !== method) {
+			if (entry.kind !== options.kind || entry.method !== options.method) {
 				continue;
 			}
 
@@ -3810,26 +3816,26 @@ export class TapMessagingService {
 			if (Number.isFinite(createdMs) && now - createdMs > PENDING_RESULT_MAX_AGE_MS) {
 				this.log(
 					"warn",
-					`Abandoning pending ${method} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
+					`Abandoning pending ${options.method} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
 				);
 				await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
 				continue;
 			}
 
-			const delivery = parse(entry.metadata);
+			const delivery = options.parse(entry.metadata);
 			if (!delivery) {
 				continue;
 			}
 			try {
-				await deliver(delivery);
+				await options.deliver(delivery);
 				processed += 1;
 			} catch (error: unknown) {
 				this.logResultDeliveryFailure(
-					errorLabel(delivery),
+					options.errorLabel(delivery),
 					`${delivery.peerName} (#${delivery.peerAgentId})`,
 					error,
 				);
-				await this.recordDeliveryFailure(entry.requestId, entry.metadata, error);
+				await options.recordFailure(entry.requestId, entry.metadata, error);
 			}
 		}
 		return processed;
@@ -3916,40 +3922,27 @@ export class TapMessagingService {
 		return receipt;
 	}
 
-	private async retryPendingPermissionsUpdates(): Promise<number> {
-		const pending = await this.context.requestJournal.listPending("outbound");
-		let processed = 0;
-		for (const entry of pending) {
-			if (entry.kind !== "request" || entry.method !== PERMISSIONS_UPDATE) {
-				continue;
-			}
-			const delivery = parsePendingPermissionsUpdateDelivery(entry.metadata);
-			if (!delivery) {
-				continue;
-			}
-
-			try {
-				await this.deliverPendingPermissionsUpdate(delivery);
-				processed += 1;
-			} catch (error: unknown) {
-				this.logResultDeliveryFailure(
-					"Permissions update",
-					`${delivery.peerName} (#${delivery.peerAgentId})`,
-					error,
-				);
-				await this.recordSendFailure(entry.requestId, error);
-			}
-		}
-		return processed;
+	private retryPendingPermissionsUpdates(): Promise<number> {
+		return this.retryPendingDeliveries<PendingPermissionsUpdateDelivery>({
+			kind: "request",
+			method: PERMISSIONS_UPDATE,
+			parse: parsePendingPermissionsUpdateDelivery,
+			deliver: (d) => this.deliverPendingPermissionsUpdate(d).then(() => undefined),
+			errorLabel: () => "Permissions update",
+			recordFailure: (requestId, _metadata, error) => this.recordSendFailure(requestId, error),
+		});
 	}
 
 	private retryPendingActionResults(): Promise<number> {
-		return this.retryPendingResults(
-			ACTION_RESULT,
-			parsePendingActionResultDelivery,
-			(d) => this.deliverPendingActionResult(d),
-			(d) => `Action result ${d.actionId}`,
-		);
+		return this.retryPendingDeliveries<PendingActionResultDelivery>({
+			kind: "result",
+			method: ACTION_RESULT,
+			parse: parsePendingActionResultDelivery,
+			deliver: (d) => this.deliverPendingActionResult(d),
+			errorLabel: (d) => `Action result ${d.actionId}`,
+			recordFailure: (requestId, metadata, error) =>
+				this.recordDeliveryFailure(requestId, metadata, error),
+		});
 	}
 
 	private async retryPendingConnectionRequests(): Promise<number> {

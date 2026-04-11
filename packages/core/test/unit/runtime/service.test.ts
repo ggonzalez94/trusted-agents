@@ -2551,7 +2551,11 @@ describe("TapMessagingService", () => {
 			): Promise<TransportReceipt> {
 				this.sentMessages.push({ peerId, message, ...(options ? { options } : {}) });
 				const response = parseSchedulingActionResponse(message);
-				if (message.method === "action/result" && response?.type === "scheduling/cancel" && this.failOnce) {
+				if (
+					message.method === "action/result" &&
+					response?.type === "scheduling/cancel" &&
+					this.failOnce
+				) {
 					this.failOnce = false;
 					throw new TransportError("temporary cancel send failure");
 				}

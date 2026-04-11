@@ -1,3 +1,4 @@
+import { TransportOwnershipError } from "trusted-agents-core";
 /**
  * Tests for `tap contacts remove` — verifies that the command:
  * - Sends a connection/revoke via the service before removing locally
@@ -5,7 +6,6 @@
  * - Returns NOT_FOUND when the connectionId does not exist
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TransportOwnershipError } from "trusted-agents-core";
 
 const { loadConfigMock, createCliRuntimeMock, successMock, errorMock, infoMock } = vi.hoisted(
 	() => ({

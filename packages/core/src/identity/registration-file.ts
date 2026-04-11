@@ -321,12 +321,7 @@ function extractMappedIpv4(host: string): string | null {
 		return null;
 	}
 
-	return [
-		(high >> 8) & 0xff,
-		high & 0xff,
-		(low >> 8) & 0xff,
-		low & 0xff,
-	].join(".");
+	return [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join(".");
 }
 
 function isRedirectResponse(status: number): boolean {
