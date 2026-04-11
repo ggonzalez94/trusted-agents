@@ -853,15 +853,14 @@ describe("TapMessagingService", () => {
 		);
 		// The connecting contact is removed when a rejection is received.
 		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
-		// The outbound journal entry is written after send() returns. When the
-		// result arrives synchronously during send() (as in this test), the
-		// rejection handler fires before the entry is written and cannot correlate
-		// it. The entry remains in "pending" state. In practice this is harmless —
-		// the connecting contact was deleted, so retry attempts will fail gracefully.
+		// The outbound journal entry is now persisted BEFORE send() (so that a
+		// receipt timeout leaves a retryable record). When the rejection arrives
+		// synchronously during send(), the rejection handler correlates against
+		// the already-written entry and marks it completed.
 		const journalEntry = await requestJournal.getByRequestId(
 			String(transport.sentMessages[0]!.message.id),
 		);
-		expect(journalEntry?.status).toBe("pending");
+		expect(journalEntry?.status).toBe("completed");
 	});
 
 	it("ignores unsolicited connection results that do not match a pending outbound request", async () => {

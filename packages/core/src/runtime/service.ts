@@ -1044,6 +1044,27 @@ export class TapMessagingService {
 				}
 			}
 
+			// Persist the outbound journal entry BEFORE sending so that a
+			// transport-level failure (including XMTP's app-receipt timeout when
+			// the peer is offline) leaves a retryable record in the journal. If
+			// we only wrote the entry after a successful send, an offline peer
+			// would turn into a hard connect failure with no reconciliation
+			// path. `peerChain` is stored in metadata so the idempotency lookup
+			// above and the security gate in handleConnectionResult can both
+			// require a chain match.
+			if (!existingOutboundEntry) {
+				await this.context.requestJournal.putOutbound({
+					requestId,
+					requestKey: `outbound:${CONNECTION_REQUEST}:${requestId}`,
+					direction: "outbound",
+					kind: "request",
+					method: CONNECTION_REQUEST,
+					peerAgentId: peerAgent.agentId,
+					status: "pending",
+					metadata: { peerChain: peerAgent.chain },
+				});
+			}
+
 			// Register a waiter before sending so that a result arriving during or
 			// immediately after send() can resolve it. waitMs === 0 means fire-and-forget.
 			//
@@ -1058,44 +1079,49 @@ export class TapMessagingService {
 			});
 
 			let receipt: TransportReceipt | undefined;
+			let sendTimedOut = false;
 			try {
 				receipt = await transport.send(peerAgent.agentId, rpcRequest, {
 					peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
 				});
 			} catch (error: unknown) {
-				// Send failure: clean up the waiter (it will never resolve via the
-				// normal result path) and leave the connecting contact in place so a
-				// future sync can complete the handshake.
-				if (waiterPromise) {
-					const waiter = this.inFlightConnectWaiters.get(requestId);
-					if (waiter) {
-						clearTimeout(waiter.timer);
-						this.inFlightConnectWaiters.delete(requestId);
+				// Receipt timeout (e.g. peer offline): treat as "pending" rather
+				// than fatal. The outbound journal entry was written above, so
+				// reconciliation on the next sync can finish the handshake.
+				// Clean up the local waiter — no matching result will arrive in
+				// this process, and we want the caller to return a pending
+				// status instead of waiting for the full waitMs.
+				if (isTransportReceiptTimeout(error)) {
+					sendTimedOut = true;
+					await this.recordSendFailure(requestId, error);
+					if (waiterPromise) {
+						const waiter = this.inFlightConnectWaiters.get(requestId);
+						if (waiter) {
+							clearTimeout(waiter.timer);
+							this.inFlightConnectWaiters.delete(requestId);
+						}
 					}
+				} else {
+					// Non-timeout transport failure: also clean up the waiter
+					// and propagate. The journal entry remains pending so a
+					// future sync can retry.
+					if (waiterPromise) {
+						const waiter = this.inFlightConnectWaiters.get(requestId);
+						if (waiter) {
+							clearTimeout(waiter.timer);
+							this.inFlightConnectWaiters.delete(requestId);
+						}
+					}
+					await this.recordSendFailure(requestId, error);
+					throw error;
 				}
-				throw error;
 			}
 
-			// Persist the outbound journal entry (skipped if reusing an existing entry).
-			// `peerChain` is stored in metadata so the idempotency lookup above and the
-			// security gate in handleConnectionResult can both require a chain match,
-			// preventing cross-chain agent-id collisions from satisfying each other's
-			// proof of initiation.
-			if (!existingOutboundEntry) {
-				await this.context.requestJournal.putOutbound({
-					requestId,
-					requestKey: `outbound:${CONNECTION_REQUEST}:${requestId}`,
-					direction: "outbound",
-					kind: "request",
-					method: CONNECTION_REQUEST,
-					peerAgentId: peerAgent.agentId,
-					status: "pending",
-					metadata: { peerChain: peerAgent.chain },
-				});
-			}
-
-			// Fire-and-forget: return the current state without waiting.
-			if (waitMs === 0 || !waiterPromise) {
+			// Fire-and-forget OR send receipt timed out (peer offline): return
+			// the current state without waiting for a result. In the timeout
+			// case the journal entry is still pending and a future sync will
+			// complete the handshake.
+			if (waitMs === 0 || !waiterPromise || sendTimedOut) {
 				const currentContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
 				const status = currentContact?.status === "active" ? "active" : "pending";
 				return {
@@ -2215,6 +2241,21 @@ export class TapMessagingService {
 			return this.emitIncomingAndReturn(envelope, "duplicate");
 		}
 
+		// connection/revoke must dispatch BEFORE the generic findContactForMessage
+		// lookup because that helper falls back to `findUniqueContactForAgentId`,
+		// which throws when multiple contacts share the same numeric agent id
+		// across different chains. `processConnectionRevoke` parses `from.chain`
+		// from the revoke payload and does its own chain-scoped `findByAgentId`,
+		// so valid revokes for a specific chain still land correctly when another
+		// contact on a different chain happens to share the numeric agent id.
+		// A revoke is also teardown, so we don't need the implicit-handshake-
+		// completion side effect that runs in the generic non-revoke path.
+		if (envelope.message.method === CONNECTION_REVOKE) {
+			await this.processConnectionRevoke(envelope.message);
+			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received");
+		}
+
 		const contact = await findContactForMessage(this.context, envelope.from, envelope.message);
 		if (!contact) {
 			throw new ValidationError(`No contact found for agent ${envelope.from}`);
@@ -2226,14 +2267,6 @@ export class TapMessagingService {
 		// connection/result entries for this peer are now load-bearing no more.
 		if (contact.status === "active") {
 			await this.markPendingConnectionResultsCompletedFor(contact.peerAgentId, contact.peerChain);
-		}
-
-		if (envelope.message.method === CONNECTION_REVOKE) {
-			await this.processConnectionRevoke(envelope.message);
-			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
-			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
-				fromName: contact.peerDisplayName,
-			});
 		}
 
 		if (envelope.message.method === PERMISSIONS_UPDATE) {
