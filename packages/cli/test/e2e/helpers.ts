@@ -75,7 +75,10 @@ export async function getUsdcBalance(address: `0x${string}`, chainKey: string): 
 	}
 
 	const client = createPublicClient({
-		transport: http(config.rpcUrl),
+		// Public RPCs (mainnet.base.org, rpc.mainnet.taiko.xyz) rate-limit aggressively.
+		// Give viem a generous retry budget so a single 429 does not fail the run.
+		// Total max backoff: 1s + 2s + 4s + 8s + 16s = ~31s across 5 retries.
+		transport: http(config.rpcUrl, { retryCount: 5, retryDelay: 1_000 }),
 	});
 
 	return client.readContract({
@@ -113,18 +116,27 @@ export async function waitForBalanceChange(opts: {
 		intervalMs = 3_000,
 	} = opts;
 	const deadline = Date.now() + timeoutMs;
+	let lastError: unknown;
 
 	while (Date.now() < deadline) {
-		const current = await getUsdcBalance(address, chainKey);
-		if (current !== previousBalance) {
-			return current;
+		try {
+			const current = await getUsdcBalance(address, chainKey);
+			if (current !== previousBalance) {
+				return current;
+			}
+		} catch (err) {
+			// Public RPCs rate-limit under load; swallow transient errors and
+			// keep polling until the deadline. The last error is surfaced only
+			// if we ultimately time out.
+			lastError = err;
 		}
 		await new Promise((resolve) => setTimeout(resolve, intervalMs));
 	}
 
+	const suffix = lastError ? ` Last RPC error: ${(lastError as Error).message}` : "";
 	throw new Error(
 		`Timed out waiting for balance change (${description}). ` +
-			`Address: ${address}, chain: ${chainKey}, previous balance: ${previousBalance}`,
+			`Address: ${address}, chain: ${chainKey}, previous balance: ${previousBalance}.${suffix}`,
 	);
 }
 
