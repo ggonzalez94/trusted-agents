@@ -10,6 +10,7 @@ export type {
 	AgentIdentifier,
 	ConnectionRequestParams,
 	ConnectionResultParams,
+	ConnectionRevokeParams,
 	PermissionsUpdateParams,
 	MessageSendParams,
 } from "./types.js";
@@ -17,6 +18,7 @@ export type {
 export {
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
+	CONNECTION_REVOKE,
 	PERMISSIONS_UPDATE,
 	MESSAGE_SEND,
 	ACTION_REQUEST,

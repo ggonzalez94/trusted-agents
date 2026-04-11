@@ -1,7 +1,8 @@
-import { FileTrustStore } from "trusted-agents-core";
+import type { TapRuntime } from "trusted-agents-sdk";
+import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
-import { error, success } from "../lib/output.js";
+import { error, info, success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function contactsRemoveCommand(
@@ -9,24 +10,46 @@ export async function contactsRemoveCommand(
 	opts: GlobalOptions,
 ): Promise<void> {
 	const startTime = Date.now();
+	let runtime: TapRuntime | undefined;
 
 	try {
 		const config = await loadConfig(opts);
-		const store = new FileTrustStore(config.dataDir);
+		runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:contacts-remove" });
 
-		// Check if contact exists before removing
-		const contacts = await store.getContacts();
-		const exists = contacts.some((c) => c.connectionId === connectionId);
-		if (!exists) {
+		// Find the contact first
+		const contacts = await runtime.trustStore.getContacts();
+		const contact = contacts.find((c) => c.connectionId === connectionId);
+		if (!contact) {
 			error("NOT_FOUND", `Contact not found: ${connectionId}`, opts);
 			process.exitCode = 4;
 			return;
 		}
 
-		await store.removeContact(connectionId);
+		// Send connection/revoke to the peer (best-effort — local delete always happens)
+		try {
+			await runtime.service.revokeConnection(contact);
+			info(`Sent connection/revoke to ${contact.peerDisplayName} (#${contact.peerAgentId}).`, opts);
+		} catch (err) {
+			info(
+				`Could not deliver connection/revoke to ${contact.peerDisplayName} — removing locally anyway. ${err instanceof Error ? err.message : String(err)}`,
+				opts,
+			);
+		}
 
-		success({ removed: connectionId }, opts, startTime);
+		// Delete the local contact regardless of revoke delivery
+		await runtime.trustStore.removeContact(connectionId);
+
+		success({ removed: connectionId, peer: contact.peerDisplayName }, opts, startTime);
 	} catch (err) {
 		handleCommandError(err, opts);
+	} finally {
+		// Release the transport owner lock and any XMTP resources held by the
+		// runtime. Important for short-lived CLI commands so parallel tap
+		// processes can acquire the lock without waiting for process exit.
+		if (runtime) {
+			await runtime.stop().catch(() => {
+				/* best-effort: cleanup failures should not mask the primary outcome */
+			});
+		}
 	}
 }

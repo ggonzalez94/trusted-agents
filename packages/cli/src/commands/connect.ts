@@ -6,11 +6,11 @@ import {
 	verifyInvite,
 } from "trusted-agents-core";
 import type { ITrustStore } from "trusted-agents-core";
+import type { TapRuntime } from "trusted-agents-sdk";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
-import { promptYesNo } from "../lib/prompt.js";
 import {
 	isQueuedTapCommandPending,
 	queuedTapCommandPendingFields,
@@ -21,12 +21,13 @@ import type { GlobalOptions } from "../types.js";
 
 export async function connectCommand(
 	inviteUrl: string,
-	autoApprove: boolean,
 	opts: GlobalOptions,
 	waitSeconds?: number,
+	noWait = false,
 	dryRun = false,
 ): Promise<void> {
 	const startTime = Date.now();
+	let runtime: TapRuntime | undefined;
 
 	try {
 		const config = await loadConfig(opts);
@@ -37,7 +38,7 @@ export async function connectCommand(
 			return;
 		}
 
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
+		runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
 		const invite = parseInviteUrl(inviteUrl);
 		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
 			throw new ValidationError(
@@ -85,31 +86,19 @@ export async function connectCommand(
 			return;
 		}
 
-		if (!autoApprove) {
-			info(
-				`Send connection request to ${peerAgent.registrationFile.name} (#${peerAgent.agentId})?`,
-				opts,
-			);
-			info("Use --yes to approve in non-interactive mode", opts);
-			if (!process.stdin.isTTY) {
-				error("VALIDATION_ERROR", "Use --yes to approve in non-interactive mode", opts);
-				process.exitCode = 2;
-				return;
-			}
-			const answer = await promptYesNo("Proceed? [y/N] ");
-			if (!answer) {
-				info("Connection cancelled", opts);
-				return;
-			}
-		}
+		// Compute waitMs from the flags:
+		// --no-wait => 0 (fire-and-forget)
+		// --wait-seconds N => N * 1000
+		// default => 30s blocking wait
+		const waitMs = noWait ? 0 : waitSeconds !== undefined ? waitSeconds * 1000 : 30_000;
 
 		const { service } = runtime;
-		const connectInput = { inviteUrl };
+		const connectInput = { inviteUrl, waitMs };
 		const outcome = await runOrQueueTapCommand(
 			config.dataDir,
 			{
 				type: "connect",
-				payload: connectInput,
+				payload: { inviteUrl },
 			},
 			async () => await service.connect(connectInput),
 			{
@@ -118,31 +107,46 @@ export async function connectCommand(
 		);
 
 		if (isQueuedTapCommandPending(outcome)) {
-			if (waitSeconds) {
+			// Command was queued (transport held by another process). The executing
+			// process is different so the service's internal waiter can't be used here.
+			// Fall back to polling for the queued-path only.
+			if (waitMs > 0) {
 				info(
-					`Connect queued. Waiting up to ${waitSeconds}s for connection to become active...`,
+					`Connect queued. Waiting up to ${waitMs / 1000}s for connection to become active...`,
 					opts,
 				);
 				if (
 					await pollForActiveContact(
 						runtime.trustStore,
 						peerAgent.agentId,
-						waitSeconds,
+						Math.ceil(waitMs / 1000),
 						opts,
 						startTime,
 					)
 				) {
-					return;
+					return; // pollForActiveContact already prints success on active
 				}
-				info(`Timed out waiting. Run 'tap message sync' later to check.`, opts);
+				// Blocking wait timed out in the queued path. Match the non-queued
+				// timeout contract: exit code 2, clear message, no success event.
+				info(
+					`Connection pending — ${peerAgent.registrationFile.name} queued behind another process. Run 'tap message sync' later to check.`,
+					opts,
+				);
+				error(
+					"TIMEOUT",
+					`Timed out waiting for queued connection to become active after ${waitMs / 1000}s.`,
+					opts,
+				);
+				process.exitCode = 2;
+				return;
 			}
-
+			// Fire-and-forget (waitMs === 0): report queued status with exit 0.
 			success(
 				{
 					...queuedTapCommandPendingFields(outcome),
 					peer_name: peerAgent.registrationFile.name,
 					peer_agent_id: peerAgent.agentId,
-					status: "queued",
+					status: "pending",
 				},
 				opts,
 				startTime,
@@ -152,39 +156,62 @@ export async function connectCommand(
 
 		const result = outcome.result;
 
-		if (waitSeconds && result.status !== "active") {
-			info(`Waiting up to ${waitSeconds}s for connection to become active...`, opts);
-			if (
-				await pollForActiveContact(
-					runtime.trustStore,
-					peerAgent.agentId,
-					waitSeconds,
-					opts,
-					startTime,
-					async () => {
-						await service.syncOnce();
-					},
-				)
-			) {
-				return;
-			}
-			info(`Timed out waiting for connection. Run 'tap message sync' later to check.`, opts);
+		if (result.status === "active") {
+			success(
+				{
+					connection_id: result.connectionId,
+					peer_name: result.peerName,
+					peer_agent_id: result.peerAgentId,
+					status: "active",
+					...queuedTapCommandResultFields(outcome),
+					receipt: result.receipt,
+				},
+				opts,
+				startTime,
+			);
+			return;
 		}
 
-		success(
-			{
-				connection_id: result.connectionId,
-				peer_name: result.peerName,
-				peer_agent_id: result.peerAgentId,
-				status: result.status,
-				...queuedTapCommandResultFields(outcome),
-				receipt: result.receipt,
-			},
+		// status === "pending"
+		if (noWait || waitSeconds === 0) {
+			// Caller asked for fire-and-forget — exit 0 with pending.
+			success(
+				{
+					connection_id: result.connectionId,
+					peer_name: result.peerName,
+					peer_agent_id: result.peerAgentId,
+					status: "pending",
+					...queuedTapCommandResultFields(outcome),
+					receipt: result.receipt,
+				},
+				opts,
+				startTime,
+			);
+			return;
+		}
+
+		// Default path: blocking wait timed out. Exit 2.
+		info(
+			`Connection pending — ${peerAgent.registrationFile.name} hasn't responded yet. Run 'tap message sync' later to check.`,
 			opts,
-			startTime,
 		);
+		error(
+			"TIMEOUT",
+			`Timed out waiting for connection to become active after ${waitMs / 1000}s.`,
+			opts,
+		);
+		process.exitCode = 2;
 	} catch (err) {
 		handleCommandError(err, opts);
+	} finally {
+		// Release the transport owner lock and any XMTP resources held by the
+		// runtime. Important for short-lived CLI commands so parallel tap
+		// processes can acquire the lock without waiting for process exit.
+		if (runtime) {
+			await runtime.stop().catch(() => {
+				/* best-effort: cleanup failures should not mask the primary outcome */
+			});
+		}
 	}
 }
 
@@ -194,20 +221,12 @@ async function pollForActiveContact(
 	waitSeconds: number,
 	opts: GlobalOptions,
 	startTime: number,
-	syncFn?: () => Promise<void>,
 ): Promise<boolean> {
 	const pollIntervalMs = 3000;
 	const deadline = Date.now() + waitSeconds * 1000;
 
 	while (Date.now() < deadline) {
 		await new Promise((r) => setTimeout(r, pollIntervalMs));
-		if (syncFn) {
-			try {
-				await syncFn();
-			} catch {
-				// Transport may be owned by another process
-			}
-		}
 		const contacts = await trustStore.getContacts();
 		const match = contacts.find((c) => c.peerAgentId === peerAgentId && c.status === "active");
 		if (match) {

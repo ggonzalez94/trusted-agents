@@ -40,9 +40,8 @@ interface RemoveStoredConfig {
 }
 
 interface DataDirInspection {
-	hasManagedEntries: boolean;
-	managedEntries: string[];
-	unexpectedEntries: string[];
+	exists: boolean;
+	empty: boolean;
 }
 
 export interface RemoveBalanceContext {
@@ -96,20 +95,29 @@ export interface RemovePlan {
 	blockingReasons: string[];
 }
 
-const TAP_DATA_DIR_ENTRIES = new Set([
-	".transport.lock",
-	"config.yaml",
-	"contacts.json",
-	"conversations",
-	"identity",
-	"ipfs-cache.json",
-	"notes",
-	"outbox",
-	"pending-connects.json",
-	"pending-invites.json",
-	"request-journal.json",
-	"xmtp",
-]);
+// A TAP data dir is identified by a parseable config.yaml whose shape matches
+// what init has always written: `agent_id` as a number (e.g. -1 or a registered
+// token ID) or `chain` as a CAIP-2 string (e.g. `eip155:8453`). Both have been
+// present in every version since the first release and are always normalized
+// to these forms before being written (see resolveChainAlias). That makes the
+// check work across versions without a maintained whitelist, while still being
+// specific enough to reject a foreign config.yaml that happens to contain a
+// generic `chain: mainnet` field.
+async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
+	try {
+		const raw = await readFile(configPath, "utf-8");
+		const parsed = YAML.parse(raw);
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return false;
+		}
+		const obj = parsed as { chain?: unknown; agent_id?: unknown };
+		const hasAgentId = typeof obj.agent_id === "number";
+		const hasCaip2Chain = typeof obj.chain === "string" && obj.chain.includes(":");
+		return hasAgentId || hasCaip2Chain;
+	} catch {
+		return false;
+	}
+}
 
 export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
@@ -483,6 +491,7 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 	const [address, keyWarning] = await readAgentAddress(dataDir);
 	const liveTransportOwner = await inspectLiveTransportOwner(dataDir);
 	const inspection = await inspectDataDir(dataDir);
+	const hasSignature = await hasTapDataDirSignature(configPath);
 
 	if (configWarning) {
 		warnings.push(configWarning);
@@ -503,19 +512,24 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 			"Refusing to remove the current home directory. Use a TAP agent data dir instead.",
 		);
 	}
-	if (inspection.unexpectedEntries.length > 0) {
-		const listedEntries = inspection.unexpectedEntries.map((entry) => `"${entry}"`).join(", ");
-		const message = `Refusing to remove ${dataDir} because it contains non-TAP top-level entries: ${listedEntries}.`;
+	if (inspection.exists && !inspection.empty && !hasSignature) {
+		const message = `Refusing to remove ${dataDir} because it is not a TAP data dir. Expected ${configPath} to contain a numeric 'agent_id' or a CAIP-2 'chain' field (e.g. eip155:8453). Check --data-dir or TAP_DATA_DIR.`;
 		blockingReasons.push(message);
-		warnings.push(`${message} TAP remove only wipes TAP-owned data dirs.`);
+		warnings.push(message);
 	}
+
+	// Skip enumeration when the dir will be rejected anyway — otherwise a typo'd
+	// --data-dir that points at a huge tree (e.g. $HOME, or a dir with node_modules)
+	// would recursively walk it before surfacing the blocking message.
+	const pathsToRemove =
+		blockingReasons.length === 0 ? await collectPlannedRemovalPaths(dataDir, inspection) : [];
 
 	return {
 		dataDir,
 		configPath,
 		agentId,
 		address,
-		pathsToRemove: await collectPlannedRemovalPaths(dataDir, inspection),
+		pathsToRemove,
 		warnings,
 		liveTransportOwner,
 		blockingReasons,
@@ -607,16 +621,10 @@ async function inspectLiveTransportOwner(dataDir: string): Promise<TransportOwne
 async function inspectDataDir(dataDir: string): Promise<DataDirInspection> {
 	try {
 		const entries = await readdir(dataDir);
-		const managedEntries = entries.filter((entry) => TAP_DATA_DIR_ENTRIES.has(entry));
-		const unexpectedEntries = entries.filter((entry) => !TAP_DATA_DIR_ENTRIES.has(entry));
-		return {
-			hasManagedEntries: managedEntries.length > 0,
-			managedEntries,
-			unexpectedEntries,
-		};
+		return { exists: true, empty: entries.length === 0 };
 	} catch (error: unknown) {
 		if (fsErrorCode(error) === "ENOENT") {
-			return { hasManagedEntries: false, managedEntries: [], unexpectedEntries: [] };
+			return { exists: false, empty: true };
 		}
 		throw error;
 	}
@@ -626,19 +634,16 @@ async function collectPlannedRemovalPaths(
 	dataDir: string,
 	inspection: DataDirInspection,
 ): Promise<string[]> {
-	if (!inspection.hasManagedEntries) {
+	if (!inspection.exists || inspection.empty) {
 		return [];
 	}
 
-	const paths: string[] = [];
-	if (inspection.unexpectedEntries.length === 0) {
-		paths.push(dataDir);
-	}
-
-	for (const entry of inspection.managedEntries.sort((left, right) => left.localeCompare(right))) {
+	const paths: string[] = [dataDir];
+	const entries = await readdir(dataDir);
+	entries.sort((left, right) => left.localeCompare(right));
+	for (const entry of entries) {
 		paths.push(...(await collectRemovalPaths(join(dataDir, entry))));
 	}
-
 	return paths;
 }
 

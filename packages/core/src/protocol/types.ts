@@ -65,6 +65,12 @@ export interface ConnectionResultParams {
 	timestamp: string;
 }
 
+export interface ConnectionRevokeParams {
+	from: AgentIdentifier;
+	reason?: string;
+	timestamp: string;
+}
+
 export interface MessageSendParams {
 	message: Message;
 }

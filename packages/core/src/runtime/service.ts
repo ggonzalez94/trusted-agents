@@ -1,3 +1,5 @@
+import { readFile, readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { parseEther, parseUnits } from "viem";
 import { buildActionContext } from "../app/context.js";
 import type { TapActionContext, TapActionResult } from "../app/types.js";
@@ -9,6 +11,7 @@ import {
 	TrustedAgentError,
 	ValidationError,
 	caip2ToChainId,
+	fsErrorCode,
 	generateConnectionId,
 	generateNonce,
 	nowISO,
@@ -18,10 +21,12 @@ import type { TrustedAgentsConfig } from "../config/types.js";
 import {
 	buildConnectionRequest,
 	buildConnectionResult,
+	buildConnectionRevoke,
 	buildPermissionsUpdate,
 	deriveConnectionResultId,
 	handleConnectionRequest,
 	isSelfInvite,
+	parseConnectionRevoke,
 	parseInviteUrl,
 	verifyInvite,
 } from "../connection/index.js";
@@ -34,6 +39,7 @@ import {
 	ACTION_RESULT,
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
+	CONNECTION_REVOKE,
 	MESSAGE_SEND,
 	PERMISSIONS_UPDATE,
 } from "../protocol/methods.js";
@@ -41,6 +47,7 @@ import type {
 	AgentIdentifier,
 	ConnectionRequestParams,
 	ConnectionResultParams,
+	ConnectionRevokeParams,
 	MessageSendParams,
 	PermissionsUpdateParams,
 	TextPart,
@@ -71,6 +78,7 @@ import type {
 	TransportProvider,
 	TransportReceipt,
 } from "../transport/interface.js";
+import type { ITrustStore } from "../trust/trust-store.js";
 import { peerLabel } from "../trust/types.js";
 import type { Contact } from "../trust/types.js";
 import {
@@ -86,11 +94,7 @@ import {
 	parseTransferActionResponse,
 } from "./actions.js";
 import { getUsdcAsset } from "./assets.js";
-import {
-	FileTapCommandOutbox,
-	type ProcessingTapCommandJob,
-	type TapCommandJobResultPayload,
-} from "./command-outbox.js";
+import type { TapCommandJob, TapCommandJobResultPayload } from "./command-job.js";
 import type { TapRuntimeContext } from "./default-context.js";
 import {
 	findActiveGrantsByScope,
@@ -109,13 +113,12 @@ import {
 	findContactForPeer,
 	findUniqueContactForAgentId,
 } from "./message-conversations.js";
-import { FilePendingConnectStore, type PendingConnectRecord } from "./pending-connect-store.js";
 import {
 	type PermissionLedgerEntry,
 	appendPermissionLedgerEntry,
 	getPermissionLedgerPath,
 } from "./permission-ledger.js";
-import type { RequestJournalEntry } from "./request-journal.js";
+import type { RequestJournalEntry, RequestJournalLastError } from "./request-journal.js";
 import {
 	type TransportOwnerInfo,
 	TransportOwnerLock,
@@ -123,7 +126,6 @@ import {
 } from "./transport-owner-lock.js";
 
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
-const CONNECT_RECEIPT_TIMEOUT_MS = 5_000;
 /**
  * Pending outbound result entries older than this are garbage-collected by the
  * retry pipeline. Prevents accumulation when a peer is permanently unreachable
@@ -132,9 +134,7 @@ const CONNECT_RECEIPT_TIMEOUT_MS = 5_000;
  */
 const PENDING_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const OUTBOX_POLL_INTERVAL_MS = 1_000;
-const OUTBOX_RESULT_RETENTION_MS = 60 * 60 * 1000;
-const OUTBOX_RESULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-const OUTBOX_STALE_LEASE_MS = 60_000;
+const QUEUED_JOURNAL_STALE_CLAIM_MS = 5 * 60 * 1000;
 
 export interface TapTransferApprovalContext {
 	requestId: string;
@@ -194,6 +194,37 @@ interface PendingActionResultDelivery extends Record<string, unknown> {
 	request: ProtocolMessage;
 }
 
+// ──────────────────────────────────────────────────────────────
+// Connect waiter infrastructure (spec §3.2)
+// ──────────────────────────────────────────────────────────────
+
+interface ConnectWaiter {
+	requestId: string;
+	peerAgentId: number;
+	resolve: () => void;
+	reject: (error: Error) => void;
+	timer: ReturnType<typeof setTimeout>;
+}
+
+class ConnectWaiterTimeoutError extends Error {
+	constructor(public readonly requestId: string) {
+		super(`connect waiter timed out for requestId=${requestId}`);
+		this.name = "ConnectWaiterTimeoutError";
+	}
+}
+
+class ConnectWaiterRejectedError extends Error {
+	constructor(
+		public readonly requestId: string,
+		reason?: string,
+	) {
+		super(reason ?? "Connection rejected by peer");
+		this.name = "ConnectWaiterRejectedError";
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+
 interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	type: "connection-result-delivery";
 	peerAgentId: number;
@@ -212,6 +243,18 @@ interface PendingConnectionResultDelivery extends Record<string, unknown> {
 	peerName: string;
 	peerAddress: `0x${string}`;
 	request: ProtocolMessage;
+	/**
+	 * The contact to write to the trust store after a successful send.
+	 * Present only for accepted (non-rejected) connection results — rejection
+	 * results do not write a contact. Stored so the retry pipeline can
+	 * complete the contact write on reconciliation without re-running the
+	 * full handler.
+	 *
+	 * Optional for backward compatibility with entries written before this
+	 * field was introduced. Legacy entries are retried for delivery only;
+	 * the contact write is skipped if the field is absent.
+	 */
+	plannedContact?: Contact;
 }
 
 const DELIVERY_FAILURE_METADATA_KEY = "__deliveryFailure";
@@ -235,19 +278,23 @@ interface RecordedTransferResponseMetadata extends Record<string, unknown> {
 
 type SchedulingRequestState = "accepted" | "cancelled" | "rejected";
 
+/** Shape of entries in the legacy pending-connects.json file (pre-connection-flow-simplification). */
+interface LegacyPendingConnect {
+	requestId: string;
+	peerAgentId: number;
+	peerChain: string;
+	peerOwnerAddress: `0x${string}`;
+	peerDisplayName: string;
+	peerAgentAddress: `0x${string}`;
+	createdAt: string;
+}
+
 interface SchedulingTrackingMetadata extends Record<string, unknown> {
 	localEventId?: string;
 	schedulingState?: SchedulingRequestState;
 }
 
-export interface TapConnectionApprovalContext {
-	peerAgentId: number;
-	peerName: string;
-	peerChain: string;
-}
-
 export interface TapServiceHooks {
-	approveConnection?: (context: TapConnectionApprovalContext) => Promise<boolean | null>;
 	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null>;
 	approveScheduling?: (context: SchedulingApprovalContext) => Promise<boolean | null>;
 	confirmMeeting?: (meeting: ProposedMeeting) => Promise<boolean>;
@@ -259,14 +306,22 @@ export interface TapServiceHooks {
 	appendLedgerEntry?: (dataDir: string, entry: PermissionLedgerEntry) => Promise<string>;
 	log?: (level: "info" | "warn" | "error", message: string) => void;
 	emitEvent?: (payload: Record<string, unknown>) => void;
+	/**
+	 * Called after a connection has been established via an inbound
+	 * `connection/request` — the contact has been written as active and the
+	 * `connection/result` has been delivered. The hook is non-blocking and
+	 * informational; it should NOT modify state or throw.
+	 */
+	onConnectionEstablished?: (info: {
+		peerAgentId: number;
+		peerName: string;
+		peerChain: string;
+	}) => void | Promise<void>;
 }
 
 export interface TapServiceOptions {
 	ownerLabel?: string;
-	commandOutbox?: FileTapCommandOutbox;
 	outboxPollIntervalMs?: number;
-	outboxResultRetentionMs?: number;
-	outboxStaleLeaseMs?: number;
 	hooks?: TapServiceHooks;
 	schedulingHandler?: SchedulingHandler;
 }
@@ -375,13 +430,9 @@ export class TapMessagingService {
 	private readonly ownerLabel: string;
 	private readonly signingProvider: SigningProvider;
 	private readonly ownerLock: TransportOwnerLock;
-	private readonly pendingConnectStore: FilePendingConnectStore;
 	private localAgentAddress: `0x${string}` | undefined;
 	private readonly executionMutex = new AsyncMutex();
-	private readonly commandOutbox: FileTapCommandOutbox;
 	private readonly outboxPollIntervalMs: number;
-	private readonly outboxResultRetentionMs: number;
-	private readonly outboxStaleLeaseMs: number;
 	private readonly pendingTasks = new Set<Promise<void>>();
 	private readonly inFlightKeys = new Set<string>();
 	/**
@@ -406,11 +457,16 @@ export class TapMessagingService {
 		scheduling: new Map<string, { approve: boolean; reason?: string }>(),
 	};
 	private readonly waiters = new Map<string, (value: TransferActionResponse) => void>();
+	/**
+	 * In-memory waiters keyed by requestId. Populated by connect() when
+	 * waitMs > 0 and cleared by resolveConnectWaiter / rejectConnectWaiter /
+	 * rejectAllConnectWaiters (on service stop). See spec §3.2.
+	 */
+	private readonly inFlightConnectWaiters = new Map<string, ConnectWaiter>();
 	private readonly schedulingHandler: SchedulingHandler | undefined;
 	private readonly handlers: TransportHandlers;
 	private running = false;
 	private lastSyncAt: string | undefined;
-	private lastOutboxCleanupAt = 0;
 	private outboxPoller: ReturnType<typeof setInterval> | null = null;
 	private outboxPollInFlight = false;
 	private transportSessionReentryDepth = 0;
@@ -422,11 +478,7 @@ export class TapMessagingService {
 		this.hooks = options.hooks ?? {};
 		this.ownerLabel = options.ownerLabel ?? `tap:${process.pid}`;
 		this.ownerLock = new TransportOwnerLock(context.config.dataDir, this.ownerLabel);
-		this.pendingConnectStore = new FilePendingConnectStore(context.config.dataDir);
-		this.commandOutbox = options.commandOutbox ?? new FileTapCommandOutbox(context.config.dataDir);
 		this.outboxPollIntervalMs = options.outboxPollIntervalMs ?? OUTBOX_POLL_INTERVAL_MS;
-		this.outboxResultRetentionMs = options.outboxResultRetentionMs ?? OUTBOX_RESULT_RETENTION_MS;
-		this.outboxStaleLeaseMs = options.outboxStaleLeaseMs ?? OUTBOX_STALE_LEASE_MS;
 		this.schedulingHandler = options.schedulingHandler;
 		this.handlers = {
 			onRequest: async (envelope) => await this.onRequest(envelope),
@@ -526,8 +578,15 @@ export class TapMessagingService {
 
 		await this.ensureManifestLoaded();
 
+		// Acquire the transport owner lock BEFORE running legacy state migrations.
+		// Two concurrent processes for the same data-dir must not both migrate —
+		// `migrateOutbox()` in particular generates a fresh requestId per migrated
+		// file, so without serialization the same legacy outbox job could be
+		// inserted twice into the journal and executed twice. Holding the owner
+		// lock across the migration makes it mutually exclusive by construction.
 		await this.ownerLock.acquire();
 		try {
+			await this.runLegacyStateMigrations();
 			this.context.transport.setHandlers(this.handlers);
 			await this.context.transport.start?.();
 			this.running = true;
@@ -555,6 +614,7 @@ export class TapMessagingService {
 
 		try {
 			this.clearOutboxPoller();
+			this.rejectAllConnectWaiters(new Error("TapMessagingService stopped"));
 			await this.drain();
 			await this.context.transport.stop?.();
 		} finally {
@@ -569,6 +629,56 @@ export class TapMessagingService {
 				);
 		}
 	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Connect waiter helpers (spec §3.2)
+	// ──────────────────────────────────────────────────────────────
+
+	private registerConnectWaiter(
+		requestId: string,
+		peerAgentId: number,
+		timeoutMs: number,
+	): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.inFlightConnectWaiters.delete(requestId);
+				reject(new ConnectWaiterTimeoutError(requestId));
+			}, timeoutMs);
+			this.inFlightConnectWaiters.set(requestId, {
+				requestId,
+				peerAgentId,
+				resolve: () => resolve(),
+				reject,
+				timer,
+			});
+		});
+	}
+
+	private resolveConnectWaiter(requestId: string): void {
+		const waiter = this.inFlightConnectWaiters.get(requestId);
+		if (!waiter) return;
+		clearTimeout(waiter.timer);
+		this.inFlightConnectWaiters.delete(requestId);
+		waiter.resolve();
+	}
+
+	private rejectConnectWaiter(requestId: string, reason: Error): void {
+		const waiter = this.inFlightConnectWaiters.get(requestId);
+		if (!waiter) return;
+		clearTimeout(waiter.timer);
+		this.inFlightConnectWaiters.delete(requestId);
+		waiter.reject(reason);
+	}
+
+	private rejectAllConnectWaiters(reason: Error): void {
+		for (const waiter of this.inFlightConnectWaiters.values()) {
+			clearTimeout(waiter.timer);
+			waiter.reject(reason);
+		}
+		this.inFlightConnectWaiters.clear();
+	}
+
+	// ──────────────────────────────────────────────────────────────
 
 	async syncOnce(): Promise<TapSyncReport> {
 		const processed = await this.executionMutex.runExclusive(
@@ -690,17 +800,15 @@ export class TapMessagingService {
 			throw new ValidationError(`Pending inbound request not found: ${requestId}`);
 		}
 
-		if (entry.method !== ACTION_REQUEST && entry.method !== CONNECTION_REQUEST) {
+		if (entry.method !== ACTION_REQUEST) {
 			throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 		}
 
 		const isScheduling = entry.method === ACTION_REQUEST && entry.metadata?.type === "scheduling";
-		if (entry.method === ACTION_REQUEST) {
-			if (isScheduling) {
-				this.decisionOverrides.scheduling.set(requestId, { approve, reason });
-			} else {
-				this.decisionOverrides.transfers.set(requestId, approve);
-			}
+		if (isScheduling) {
+			this.decisionOverrides.scheduling.set(requestId, { approve, reason });
+		} else {
+			this.decisionOverrides.transfers.set(requestId, approve);
 		}
 		try {
 			return await this.executionMutex.runExclusive(
@@ -726,8 +834,6 @@ export class TapMessagingService {
 							} else {
 								await this.resolvePendingTransferRequest(latestEntry);
 							}
-						} else if (latestEntry.method === CONNECTION_REQUEST) {
-							await this.resolvePendingConnectionRequest(latestEntry, approve);
 						} else {
 							throw new ValidationError(`Request ${requestId} cannot be resolved manually`);
 						}
@@ -737,17 +843,15 @@ export class TapMessagingService {
 					}),
 			);
 		} finally {
-			if (entry.method === ACTION_REQUEST) {
-				if (isScheduling) {
-					this.decisionOverrides.scheduling.delete(requestId);
-				} else {
-					this.decisionOverrides.transfers.delete(requestId);
-				}
+			if (isScheduling) {
+				this.decisionOverrides.scheduling.delete(requestId);
+			} else {
+				this.decisionOverrides.transfers.delete(requestId);
 			}
 		}
 	}
 
-	async connect(params: { inviteUrl: string }): Promise<TapConnectResult> {
+	async connect(params: { inviteUrl: string; waitMs?: number }): Promise<TapConnectResult> {
 		return await this.executionMutex.runExclusive(async () => await this.connectInternal(params));
 	}
 
@@ -869,7 +973,11 @@ export class TapMessagingService {
 		);
 	}
 
-	private async connectInternal(params: { inviteUrl: string }): Promise<TapConnectResult> {
+	private async connectInternal(params: {
+		inviteUrl: string;
+		waitMs?: number;
+	}): Promise<TapConnectResult> {
+		const waitMs = params.waitMs ?? 30_000;
 		const { config, resolver } = this.context;
 		const chainId = caip2ToChainId(config.chain);
 		if (chainId === null) {
@@ -894,14 +1002,6 @@ export class TapMessagingService {
 			const { trustStore, transport } = this.context;
 
 			const existing = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-			if (existing?.status === "active") {
-				return {
-					connectionId: existing.connectionId,
-					peerName: existing.peerDisplayName,
-					peerAgentId: existing.peerAgentId,
-					status: "active",
-				};
-			}
 
 			const from: AgentIdentifier = { agentId: config.agentId, chain: config.chain };
 			const requestedAt = nowISO();
@@ -911,48 +1011,237 @@ export class TapMessagingService {
 				timestamp: requestedAt,
 			};
 
-			const rpcRequest = buildConnectionRequest(requestParams);
-			const requestId = String(rpcRequest.id);
-			const pendingConnect: PendingConnectRecord = {
-				requestId,
-				peerAgentId: peerAgent.agentId,
-				peerChain: peerAgent.chain,
-				peerOwnerAddress: peerAgent.ownerAddress,
-				peerDisplayName: peerAgent.registrationFile.name,
-				peerAgentAddress: peerAgent.agentAddress,
-				createdAt: requestedAt,
-			};
-			await this.pendingConnectStore.replaceForPeer(pendingConnect);
+			// §3.2 wire-level idempotency: reuse the requestId from an existing
+			// non-terminal outbound connection/request journal entry if one exists for
+			// this (peer, chain) pair. Scope matters because two on-chain identities
+			// can legitimately share the same numeric agentId across chains; without
+			// the chain check, a connect to chain B would inherit chain A's requestId
+			// and let chain A's result satisfy chain B's waiter.
+			//
+			// `listPending` returns both `queued` and `pending` entries (see
+			// request-journal.ts), so a prior connect() that couldn't acquire the
+			// transport lock and wrote a queued intent is still found here.
+			const nonTerminalOutbound = await this.context.requestJournal.listPending("outbound");
+			const existingOutboundEntry = nonTerminalOutbound.find(
+				(entry) =>
+					entry.method === CONNECTION_REQUEST &&
+					entry.peerAgentId === peerAgent.agentId &&
+					entry.kind === "request" &&
+					(entry.metadata as { peerChain?: string } | undefined)?.peerChain === peerAgent.chain,
+			);
+			const requestId = existingOutboundEntry?.requestId ?? generateNonce();
+
+			const rpcRequest = buildConnectionRequest(requestParams, requestId);
+
+			// Upsert a "connecting" contact as the durable "I asked" record before
+			// any wire traffic. Per spec §1.1, the connecting contact is sticky —
+			// it persists across restarts and survives send failures. Only written
+			// if the contact is not already active (we do not downgrade an active
+			// peer to connecting while a re-handshake is in flight — see spec §3.1.1).
+			if (existing?.status !== "active") {
+				const expiresAt = new Date(invite.expires * 1000).toISOString();
+				const connectingContact: Contact = {
+					connectionId: existing?.connectionId ?? generateConnectionId(),
+					peerAgentId: peerAgent.agentId,
+					peerChain: peerAgent.chain,
+					peerOwnerAddress: peerAgent.ownerAddress,
+					peerDisplayName: peerAgent.registrationFile.name,
+					peerAgentAddress: peerAgent.agentAddress,
+					permissions: existing?.permissions ?? createEmptyPermissionState(requestedAt),
+					establishedAt: existing?.establishedAt ?? requestedAt,
+					lastContactAt: requestedAt,
+					status: "connecting",
+					expiresAt,
+				};
+				if (existing) {
+					await trustStore.updateContact(existing.connectionId, connectingContact);
+				} else {
+					await trustStore.addContact(connectingContact);
+				}
+			}
+
+			// Persist the outbound journal entry BEFORE sending so that a
+			// transport-level failure (including XMTP's app-receipt timeout when
+			// the peer is offline) leaves a retryable record in the journal. If
+			// we only wrote the entry after a successful send, an offline peer
+			// would turn into a hard connect failure with no reconciliation
+			// path. `peerChain` is stored in metadata so the idempotency lookup
+			// above and the security gate in handleConnectionResult can both
+			// require a chain match.
+			if (!existingOutboundEntry) {
+				await this.context.requestJournal.putOutbound({
+					requestId,
+					requestKey: `outbound:${CONNECTION_REQUEST}:${requestId}`,
+					direction: "outbound",
+					kind: "request",
+					method: CONNECTION_REQUEST,
+					peerAgentId: peerAgent.agentId,
+					status: "pending",
+					metadata: { peerChain: peerAgent.chain },
+				});
+			}
+
+			// Register a waiter before sending so that a result arriving during or
+			// immediately after send() can resolve it. waitMs === 0 means fire-and-forget.
+			//
+			// Attach a no-op .catch() immediately to suppress Node.js unhandled-
+			// rejection warnings in cases where the result arrives synchronously
+			// inside send() (e.g. ImmediateRejectTransport in tests). The real
+			// rejection handler is in the try/catch below when we await the promise.
+			const waiterPromise =
+				waitMs > 0 ? this.registerConnectWaiter(requestId, peerAgent.agentId, waitMs) : null;
+			waiterPromise?.catch(() => {
+				/* handled in await below */
+			});
 
 			let receipt: TransportReceipt | undefined;
+			let sendTimedOut = false;
 			try {
 				receipt = await transport.send(peerAgent.agentId, rpcRequest, {
 					peerAddress: peerAgent.xmtpEndpoint ?? peerAgent.agentAddress,
-					timeout: CONNECT_RECEIPT_TIMEOUT_MS,
 				});
 			} catch (error: unknown) {
-				if (!isTransportReceiptTimeout(error)) {
-					await this.pendingConnectStore.delete(requestId);
+				// Receipt timeout (e.g. peer offline): treat as "pending" rather
+				// than fatal. The outbound journal entry was written above, so
+				// reconciliation on the next sync can finish the handshake.
+				// Clean up the local waiter — no matching result will arrive in
+				// this process, and we want the caller to return a pending
+				// status instead of waiting for the full waitMs.
+				if (isTransportReceiptTimeout(error)) {
+					sendTimedOut = true;
+					await this.recordSendFailure(requestId, error);
+					if (waiterPromise) {
+						const waiter = this.inFlightConnectWaiters.get(requestId);
+						if (waiter) {
+							clearTimeout(waiter.timer);
+							this.inFlightConnectWaiters.delete(requestId);
+						}
+					}
+				} else {
+					// Non-timeout transport failure: also clean up the waiter
+					// and propagate. The journal entry remains pending so a
+					// future sync can retry.
+					if (waiterPromise) {
+						const waiter = this.inFlightConnectWaiters.get(requestId);
+						if (waiter) {
+							clearTimeout(waiter.timer);
+							this.inFlightConnectWaiters.delete(requestId);
+						}
+					}
+					await this.recordSendFailure(requestId, error);
 					throw error;
 				}
 			}
 
-			const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
-			const pendingRecord = await this.pendingConnectStore.get(requestId);
-			if (!latestContact && !pendingRecord) {
-				throw new ValidationError(
-					`Connection rejected by ${peerAgent.registrationFile.name} (#${peerAgent.agentId})`,
+			// Fire-and-forget OR send receipt timed out (peer offline): return
+			// the current state without waiting for a result. In the timeout
+			// case the journal entry is still pending and a future sync will
+			// complete the handshake.
+			if (waitMs === 0 || !waiterPromise || sendTimedOut) {
+				const currentContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+				const status = currentContact?.status === "active" ? "active" : "pending";
+				return {
+					connectionId: currentContact?.connectionId,
+					peerName: currentContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+					peerAgentId: peerAgent.agentId,
+					status,
+					receipt,
+				};
+			}
+
+			// Await the waiter: resolves when connection/result arrives, times out
+			// after waitMs, or rejects immediately on explicit peer rejection.
+			try {
+				await waiterPromise;
+				// Waiter resolved — the peer accepted and handleConnectionResult already
+				// flipped the contact to active. Re-read for the latest state.
+				const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+				return {
+					connectionId: latestContact?.connectionId,
+					peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+					peerAgentId: peerAgent.agentId,
+					status: "active",
+					receipt,
+				};
+			} catch (error: unknown) {
+				if (error instanceof ConnectWaiterTimeoutError) {
+					// Timeout: return pending. The connecting contact is still in place
+					// and the journal entry will be retried on the next sync.
+					const latestContact = await trustStore.findByAgentId(peerAgent.agentId, peerAgent.chain);
+					return {
+						connectionId: latestContact?.connectionId,
+						peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
+						peerAgentId: peerAgent.agentId,
+						status: "pending",
+						receipt,
+					};
+				}
+				if (error instanceof ConnectWaiterRejectedError) {
+					// Peer explicitly rejected: surface as ValidationError so the caller
+					// gets a clear message.
+					throw new ValidationError(error.message);
+				}
+				// Unexpected error (e.g. service stopped) — propagate.
+				throw error;
+			}
+		});
+	}
+
+	/**
+	 * Send a `connection/revoke` to the peer. Persists the message as a pending
+	 * outbound journal entry so reconciliation can retry on transport failures.
+	 * The caller is responsible for deleting the local contact AFTER this method
+	 * returns (success or failure — the local delete always happens per spec §3.4).
+	 */
+	async revokeConnection(contact: Contact, reason?: string): Promise<void> {
+		return await this.withTransportSession(async () => {
+			const revokeParams: ConnectionRevokeParams = {
+				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+				reason,
+				timestamp: nowISO(),
+			};
+			const rpcRequest = buildConnectionRevoke(revokeParams);
+			const requestId = String(rpcRequest.id);
+
+			// Store the peerAddress and reason in metadata so the reconciliation
+			// loop can rebuild and re-send the wire message on retry. The CLI
+			// deletes the local contact after revokeConnection returns regardless
+			// of delivery outcome, so reconciliation is our only chance to reach
+			// the peer if the first send fails.
+			await this.context.requestJournal.putOutbound({
+				requestId,
+				requestKey: `outbound:${CONNECTION_REVOKE}:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: CONNECTION_REVOKE,
+				peerAgentId: contact.peerAgentId,
+				status: "pending",
+				metadata: {
+					revokeDelivery: {
+						peerAgentId: contact.peerAgentId,
+						peerChain: contact.peerChain,
+						peerAddress: contact.peerAgentAddress,
+						peerDisplayName: contact.peerDisplayName,
+						reason,
+					},
+				},
+			});
+
+			try {
+				await this.context.transport.send(contact.peerAgentId, rpcRequest, {
+					peerAddress: contact.peerAgentAddress,
+				});
+				await this.context.requestJournal.updateStatus(requestId, "completed");
+			} catch (error: unknown) {
+				// Best-effort: leave the journal entry pending so the retry loop can
+				// deliver it on a future transport-owning run. Do not rethrow — the
+				// CLI flow should still delete the local contact.
+				await this.recordSendFailure(requestId, error);
+				this.log(
+					"warn",
+					`Failed to send connection/revoke to ${peerLabel(contact)} — will retry on next reconciliation: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
-			const status = latestContact?.status === "active" ? "active" : "pending";
-
-			return {
-				connectionId: latestContact?.connectionId,
-				peerName: latestContact?.peerDisplayName ?? peerAgent.registrationFile.name,
-				peerAgentId: peerAgent.agentId,
-				status,
-				receipt,
-			};
 		});
 	}
 
@@ -1331,66 +1620,176 @@ export class TapMessagingService {
 	}
 
 	private async processOutboxInternal(): Promise<number> {
-		await this.cleanupOutboxResultsIfDue();
 		let processed = await this.retryPendingConnectionRequests();
 		processed += await this.retryPendingConnectionResults();
 		processed += await this.retryPendingActionResults();
-		while (true) {
-			const job = await this.commandOutbox.claimNext({
-				owner: this.ownerLabel,
-				staleLeaseMs: this.outboxStaleLeaseMs,
-			});
-			if (!job) {
-				return processed;
+		processed += await this.drainQueuedJournalCommands();
+		return processed;
+	}
+
+	/**
+	 * Drain `queued` outbound journal entries that represent command intents
+	 * written by another process (or by connect() when transport was busy).
+	 *
+	 * Claim protocol: transition queued → pending with claim metadata, execute,
+	 * then write commandResult and transition to completed (even on failure).
+	 *
+	 * Stale claim recovery: pending entries with claim.claimedAt older than
+	 * QUEUED_JOURNAL_STALE_CLAIM_MS are reset to queued so they can be retried.
+	 */
+	private async drainQueuedJournalCommands(): Promise<number> {
+		const journal = this.context.requestJournal;
+
+		// Recover stale claims from a previous crashed run before looking for
+		// new work. This prevents a crashed entry from blocking the queue.
+		const allPending = await journal.listPending("outbound");
+		for (const entry of allPending) {
+			if (!entry.method.startsWith("command/")) continue;
+			const claim = (entry.metadata as Record<string, unknown> | undefined)?.claim as
+				| { claimedAt?: string }
+				| undefined;
+			if (!claim?.claimedAt) continue;
+			const claimedAt = Date.parse(claim.claimedAt);
+			if (Number.isFinite(claimedAt) && Date.now() - claimedAt >= QUEUED_JOURNAL_STALE_CLAIM_MS) {
+				const { claim: _dropped, ...rest } = (entry.metadata ?? {}) as Record<string, unknown>;
+				await journal.updateStatus(entry.requestId, "queued");
+				await journal.updateMetadata(entry.requestId, rest);
+			}
+		}
+
+		const queued = await journal.listQueued("outbound");
+		let processed = 0;
+		for (const entry of queued) {
+			if (!entry.method.startsWith("command/")) continue;
+
+			// Claim the entry: queued → pending with claim metadata.
+			//
+			// Ordering matters for crash safety. updateMetadata must run BEFORE
+			// updateStatus. If we crash between the two writes with the old
+			// "status first, metadata second" order, the entry ends up `pending`
+			// with no `claim.claimedAt`, and neither the stale-claim recovery
+			// loop (which keys on claim metadata) nor the queued-drain loop
+			// (which scans `queued` only) would pick it up — a silent orphan.
+			// With metadata first, a crash between writes leaves the entry
+			// `queued` with stale claim metadata; the next queued-drain pass
+			// finds it, overwrites the claim, and re-executes. The transient
+			// stale claim metadata is harmless because the drain loop always
+			// rewrites it on re-claim.
+			const claimMeta: Record<string, unknown> = {
+				...(entry.metadata ?? {}),
+				claim: {
+					owner: this.ownerLabel,
+					claimedAt: nowISO(),
+					pid: process.pid,
+				},
+			};
+			await journal.updateMetadata(entry.requestId, claimMeta);
+			await journal.updateStatus(entry.requestId, "pending");
+
+			const commandType = (entry.metadata as Record<string, unknown> | undefined)?.commandType as
+				| TapCommandJob["type"]
+				| undefined;
+			const commandPayload = (entry.metadata as Record<string, unknown> | undefined)
+				?.commandPayload as TapCommandJob["payload"] | undefined;
+
+			if (!commandType || commandPayload === undefined) {
+				this.log(
+					"warn",
+					`Queued journal entry ${entry.requestId} missing commandType or commandPayload — skipping`,
+				);
+				continue;
 			}
 
 			try {
-				const result = await this.executeOutboxJob(job);
-				await this.commandOutbox.complete(job, result);
+				const result = await this.executeJournalCommand(commandType, commandPayload);
+				await journal.updateMetadata(entry.requestId, {
+					...claimMeta,
+					commandResult: {
+						jobId: entry.requestId,
+						type: commandType,
+						finishedAt: nowISO(),
+						status: "completed",
+						result,
+					},
+				});
+				await journal.updateStatus(entry.requestId, "completed");
 			} catch (error: unknown) {
 				const message = toErrorMessage(error);
-				await this.commandOutbox.fail(
-					job,
-					message,
-					error instanceof TrustedAgentError ? error.code : undefined,
+				this.log(
+					"error",
+					`Failed queued TAP command ${entry.requestId} (${commandType}): ${message}`,
 				);
-				this.log("error", `Failed queued TAP job ${job.jobId} (${job.type}): ${message}`);
+				await journal.updateMetadata(entry.requestId, {
+					...claimMeta,
+					commandResult: {
+						jobId: entry.requestId,
+						type: commandType,
+						finishedAt: nowISO(),
+						status: "failed",
+						error: message,
+						errorCode: error instanceof TrustedAgentError ? error.code : "UNKNOWN",
+					},
+				});
+				await journal.updateStatus(entry.requestId, "completed");
 			}
 			processed += 1;
 		}
+		return processed;
 	}
 
-	private async executeOutboxJob(
-		job: ProcessingTapCommandJob,
+	private async executeJournalCommand(
+		commandType: TapCommandJob["type"],
+		commandPayload: TapCommandJob["payload"],
 	): Promise<TapCommandJobResultPayload> {
-		switch (job.type) {
+		switch (commandType) {
 			case "connect":
-				return await this.connectInternal(job.payload);
-			case "send-message":
+				// Journal commands are fire-and-forget: the caller polls the journal
+				// entry for the result. Pass waitMs: 0 so connectInternal returns
+				// immediately after send.
+				return await this.connectInternal({
+					...(commandPayload as { inviteUrl: string }),
+					waitMs: 0,
+				});
+			case "send-message": {
+				const p = commandPayload as {
+					peer: string;
+					text: string;
+					scope: string;
+					autoGenerated?: boolean;
+				};
 				return await this.sendMessageInternal(
-					job.payload.peer,
-					job.payload.text,
-					job.payload.scope,
-					job.payload.autoGenerated ? { autoGenerated: true } : undefined,
+					p.peer,
+					p.text,
+					p.scope,
+					p.autoGenerated ? { autoGenerated: true } : undefined,
 				);
-			case "publish-grant-set":
-				return await this.publishGrantSetInternal(
-					job.payload.peer,
-					job.payload.grantSet,
-					job.payload.note,
-				);
-			case "request-grant-set":
-				return await this.requestGrantSetInternal(
-					job.payload.peer,
-					job.payload.grantSet,
-					job.payload.note,
-				);
-			case "request-funds":
-				return await this.requestFundsInternal(job.payload.input);
-			case "request-meeting":
-				return await this.requestMeetingInternal(job.payload.input);
+			}
+			case "publish-grant-set": {
+				const p = commandPayload as {
+					peer: string;
+					grantSet: import("../permissions/types.js").PermissionGrantSet;
+					note?: string;
+				};
+				return await this.publishGrantSetInternal(p.peer, p.grantSet, p.note);
+			}
+			case "request-grant-set": {
+				const p = commandPayload as {
+					peer: string;
+					grantSet: import("../permissions/types.js").PermissionGrantSet;
+					note?: string;
+				};
+				return await this.requestGrantSetInternal(p.peer, p.grantSet, p.note);
+			}
+			case "request-funds": {
+				const p = commandPayload as { input: import("./service.js").TapRequestFundsInput };
+				return await this.requestFundsInternal(p.input);
+			}
+			case "request-meeting": {
+				const p = commandPayload as { input: import("./service.js").TapRequestMeetingInput };
+				return await this.requestMeetingInternal(p.input);
+			}
 			default:
-				return assertNever(job);
+				throw new Error(`Unknown command type: ${String(commandType)}`);
 		}
 	}
 
@@ -1455,15 +1854,6 @@ export class TapMessagingService {
 		}
 	}
 
-	private async cleanupOutboxResultsIfDue(): Promise<void> {
-		const now = Date.now();
-		if (now - this.lastOutboxCleanupAt < OUTBOX_RESULT_CLEANUP_INTERVAL_MS) {
-			return;
-		}
-		await this.commandOutbox.cleanupResults(this.outboxResultRetentionMs);
-		this.lastOutboxCleanupAt = now;
-	}
-
 	private async runReconcile(): Promise<number> {
 		const reconciled = (await this.context.transport.reconcile?.()) ?? {
 			synced: true,
@@ -1523,6 +1913,178 @@ export class TapMessagingService {
 		this.hooks.log?.(level, message);
 	}
 
+	private async runLegacyStateMigrations(): Promise<void> {
+		await this.migratePendingConnects();
+		await this.migrateOutbox();
+		await this.context.requestJournal.migrateLegacyAcked?.();
+	}
+
+	private async migratePendingConnects(): Promise<void> {
+		const path = join(this.context.config.dataDir, "pending-connects.json");
+		let raw: string;
+		try {
+			raw = await readFile(path, "utf-8");
+		} catch (error: unknown) {
+			if (fsErrorCode(error) === "ENOENT") return; // Nothing to migrate
+			throw error;
+		}
+
+		let parsed: { pendingConnects?: LegacyPendingConnect[] };
+		try {
+			parsed = JSON.parse(raw) as { pendingConnects?: LegacyPendingConnect[] };
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Failed to parse legacy pending-connects.json: ${toErrorMessage(error)}. Skipping migration.`,
+			);
+			return;
+		}
+
+		const records = parsed.pendingConnects ?? [];
+		let migrated = 0;
+		for (const legacy of records) {
+			// Idempotent: if a contact already exists for this peer (from a previous
+			// migration run or new flow), skip this legacy record.
+			const existing = await this.context.trustStore.findByAgentId(
+				legacy.peerAgentId,
+				legacy.peerChain,
+			);
+			if (existing) continue;
+
+			await this.context.trustStore.addContact({
+				connectionId: generateConnectionId(),
+				peerAgentId: legacy.peerAgentId,
+				peerChain: legacy.peerChain,
+				peerOwnerAddress: legacy.peerOwnerAddress,
+				peerDisplayName: legacy.peerDisplayName,
+				peerAgentAddress: legacy.peerAgentAddress,
+				permissions: createEmptyPermissionState(legacy.createdAt),
+				establishedAt: legacy.createdAt,
+				lastContactAt: legacy.createdAt,
+				status: "connecting",
+				// Note: legacy records did not carry expiresAt; leave it undefined.
+				// These old connecting rows will never expire on their own but can be
+				// cleaned up manually via `tap contacts remove`.
+			});
+			migrated += 1;
+		}
+
+		await rm(path);
+
+		if (migrated > 0) {
+			this.log(
+				"info",
+				`Migrated ${migrated} pending-connects.json record(s) to connecting contacts`,
+			);
+		}
+	}
+
+	/**
+	 * Migrate legacy `outbox/` directory-based queue entries into the request
+	 * journal as `queued` outbound entries. Called on service start.
+	 *
+	 * Reads files from `outbox/queued/` and `outbox/processing/` (both become
+	 * `queued` journal entries — processing entries failed to complete last time).
+	 * Files in `outbox/results/` are discarded.
+	 * Deletes the migrated files and removes the outbox directory if empty.
+	 * Idempotent: no-op if the outbox directory does not exist.
+	 */
+	private async migrateOutbox(): Promise<void> {
+		const dataDir = this.context.config.dataDir;
+		const outboxDir = join(dataDir, "outbox");
+		const queuedDir = join(outboxDir, "queued");
+		const processingDir = join(outboxDir, "processing");
+		const resultsDir = join(outboxDir, "results");
+
+		// Idempotent: nothing to do if the legacy outbox directory doesn't exist.
+		let queuedFiles: string[] = [];
+		let processingFiles: string[] = [];
+		try {
+			queuedFiles = (await readdir(queuedDir)).filter((f) => f.endsWith(".json")).sort();
+		} catch (error: unknown) {
+			if (fsErrorCode(error) !== "ENOENT") throw error;
+		}
+		try {
+			processingFiles = (await readdir(processingDir)).filter((f) => f.endsWith(".json")).sort();
+		} catch (error: unknown) {
+			if (fsErrorCode(error) !== "ENOENT") throw error;
+		}
+		// Delete results without preserving — they were short-lived blobs.
+		try {
+			const resultFiles = (await readdir(resultsDir)).filter((f) => f.endsWith(".json"));
+			await Promise.all(resultFiles.map((f) => rm(join(resultsDir, f), { force: true })));
+			await rm(resultsDir, { force: true, recursive: true });
+		} catch (error: unknown) {
+			if (fsErrorCode(error) !== "ENOENT") throw error;
+		}
+
+		if (queuedFiles.length === 0 && processingFiles.length === 0) {
+			// Nothing in queued or processing; clean up empty dirs if they exist.
+			await rm(outboxDir, { force: true, recursive: true });
+			return;
+		}
+
+		const journal = this.context.requestJournal;
+		let migrated = 0;
+
+		const migrateFile = async (filePath: string): Promise<void> => {
+			let raw: string;
+			try {
+				raw = await readFile(filePath, "utf-8");
+			} catch (error: unknown) {
+				if (fsErrorCode(error) === "ENOENT") return; // Already deleted
+				throw error;
+			}
+			let job: Record<string, unknown>;
+			try {
+				job = JSON.parse(raw) as Record<string, unknown>;
+			} catch {
+				this.log("warn", `Failed to parse legacy outbox file ${filePath} — skipping`);
+				await rm(filePath, { force: true });
+				return;
+			}
+			const commandType = job.type as string | undefined;
+			const commandPayload = job.payload;
+			const requestedBy = job.requestedBy as string | undefined;
+			if (!commandType || commandPayload === undefined) {
+				this.log("warn", `Legacy outbox file ${filePath} missing type/payload — discarding`);
+				await rm(filePath, { force: true });
+				return;
+			}
+			const requestId = generateNonce();
+			await journal.putOutbound({
+				requestId,
+				requestKey: `outbound:command:${requestId}`,
+				direction: "outbound",
+				kind: "request",
+				method: `command/${commandType}`,
+				peerAgentId: 0,
+				status: "queued",
+				metadata: {
+					commandType,
+					commandPayload,
+					...(requestedBy !== undefined ? { commandRequestedBy: requestedBy } : {}),
+				},
+			});
+			await rm(filePath, { force: true });
+			migrated += 1;
+		};
+
+		for (const name of queuedFiles) {
+			await migrateFile(join(queuedDir, name));
+		}
+		for (const name of processingFiles) {
+			await migrateFile(join(processingDir, name));
+		}
+
+		// Remove the outbox directory tree now that files are migrated.
+		await rm(outboxDir, { force: true, recursive: true });
+
+		if (migrated > 0) {
+			this.log("info", `Migrated ${migrated} legacy outbox job(s) to queued journal entries`);
+		}
+	}
+
 	private appendLedger(entry: PermissionLedgerEntry): Promise<string> {
 		if (this.hooks.appendLedgerEntry) {
 			return this.hooks.appendLedgerEntry(this.context.config.dataDir, entry);
@@ -1562,10 +2124,6 @@ export class TapMessagingService {
 			throw error;
 		}
 
-		const journalEntry = await this.context.requestJournal.getByRequestId(requestId);
-		if (journalEntry?.status !== "completed") {
-			await this.context.requestJournal.updateStatus(requestId, "acked");
-		}
 		await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
 		return receipt;
@@ -1716,6 +2274,26 @@ export class TapMessagingService {
 
 		if (claimed.duplicate && claimed.entry.status === "completed") {
 			return this.emitIncomingAndReturn(envelope, "duplicate");
+		}
+
+		// connection/revoke must dispatch BEFORE the generic findContactForMessage
+		// lookup because that helper falls back to `findUniqueContactForAgentId`,
+		// which throws when multiple contacts share the same numeric agent id
+		// across different chains. `processConnectionRevoke` parses `from.chain`
+		// from the revoke payload and does its own chain-scoped `findByAgentId`,
+		// so valid revokes for a specific chain still land correctly when another
+		// contact on a different chain happens to share the numeric agent id.
+		// A revoke is also teardown, so we don't need the implicit-handshake-
+		// completion side effect that runs in the generic non-revoke path.
+		//
+		// The authenticated sender's agentId (envelope.from) is passed in so
+		// processConnectionRevoke can reject spoofed params.from — the transport
+		// layer guarantees envelope.from reflects the real sender, but the
+		// payload's params.from is attacker-controlled.
+		if (envelope.message.method === CONNECTION_REVOKE) {
+			await this.processConnectionRevoke(envelope.message, envelope.from);
+			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
+			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received");
 		}
 
 		const contact = await findContactForMessage(this.context, envelope.from, envelope.message);
@@ -1948,10 +2526,7 @@ export class TapMessagingService {
 		);
 	}
 
-	private async processConnectionRequest(
-		message: ProtocolMessage,
-		options?: { skipApprovalHook?: boolean },
-	): Promise<"processed" | "deferred"> {
+	private async processConnectionRequest(message: ProtocolMessage): Promise<"processed"> {
 		const params = parseConnectionRequest(message);
 
 		// Cheap local check first — avoids resolving a peer for misrouted requests
@@ -1975,50 +2550,111 @@ export class TapMessagingService {
 			return "processed";
 		}
 
-		if (this.hooks.approveConnection && !options?.skipApprovalHook) {
-			const peer = await this.context.resolver.resolveWithCache(
-				params.from.agentId,
-				params.from.chain,
-			);
-			const decision = await this.hooks.approveConnection({
-				peerAgentId: peer.agentId,
-				peerName: peer.registrationFile.name,
-				peerChain: peer.chain,
-			});
-			if (decision === null) {
-				this.log(
-					"info",
-					`Deferred connection request from ${peer.registrationFile.name} (#${peer.agentId}); resolve it later with resolvePending`,
-				);
-				return "deferred";
-			}
-			if (decision === false) {
-				await this.sendConnectionResult(peer, {
-					requestId: String(message.id),
-					from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-					status: "rejected",
-					reason: "Connection request declined by operator",
-					timestamp: nowISO(),
-				});
-				this.log(
-					"info",
-					`Rejected connection request from ${peer.registrationFile.name} (#${peer.agentId}) via approveConnection hook`,
-				);
-				return "processed";
-			}
-		}
-
-		const outcome = await handleConnectionRequest({
+		// 1. Plan — pure, no trust store writes.
+		const plan = await handleConnectionRequest({
 			message,
 			resolver: this.context.resolver,
 			trustStore: this.context.trustStore,
 			ownAgent: { agentId: this.context.config.agentId, chain: this.context.config.chain },
 		});
-		await this.sendConnectionResult(outcome.peer, outcome.result);
+
+		// 2. Persist outbound journal entry + send wire (plan is stored in metadata
+		//    so the retry pipeline can write the contact if this send fails).
+		await this.sendConnectionResult(plan.peer, plan.result, {
+			plannedContact: plan.plannedContact,
+			existingContact: plan.existingContact,
+		});
+
+		// 3. Verify the send succeeded — the journal entry must be completed.
+		//    If it is still pending the send failed and the contact must not be
+		//    written yet; the retry pipeline will resend and write the contact.
+		const deliveryRequestId = deriveConnectionResultId({
+			chain: plan.peer.chain,
+			peerAgentId: plan.peer.agentId,
+			correlationId: plan.result.requestId,
+		});
+		const delivery = await this.context.requestJournal.getByRequestId(deliveryRequestId);
+		if (delivery?.status !== "completed") {
+			this.log(
+				"warn",
+				`Connection result send failed for ${plan.peer.registrationFile.name} (#${plan.peer.agentId}); contact will remain unwritten until reconciliation`,
+			);
+			return "processed";
+		}
+
+		// 4. Send succeeded — write the contact to the trust store.
+		await applyConnectionResultContact(this.context.trustStore, plan);
 
 		this.log(
 			"info",
-			`Accepted connection request from ${outcome.peer.registrationFile.name} (#${outcome.peer.agentId})`,
+			`Accepted connection request from ${plan.peer.registrationFile.name} (#${plan.peer.agentId})`,
+		);
+
+		// 5. Notify the host (non-blocking, informational).
+		try {
+			await this.hooks.onConnectionEstablished?.({
+				peerAgentId: plan.peer.agentId,
+				peerName: plan.peer.registrationFile.name,
+				peerChain: plan.peer.chain,
+			});
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`onConnectionEstablished hook threw: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+
+		return "processed";
+	}
+
+	private async processConnectionRevoke(
+		message: ProtocolMessage,
+		authenticatedSenderAgentId: number,
+	): Promise<"processed"> {
+		const params = parseConnectionRevoke(message);
+
+		// Security: validate the payload's from.agentId matches the authenticated
+		// transport sender. The transport layer resolves envelope.from from the
+		// sender's XMTP inbox, so it cannot be spoofed by an attacker. Without
+		// this cross-check, any currently active peer could forge a revoke
+		// naming another contact and have us delete the wrong record.
+		if (params.from.agentId !== authenticatedSenderAgentId) {
+			this.log(
+				"warn",
+				`Rejecting connection/revoke: payload from.agentId=${params.from.agentId} does not match authenticated sender agentId=${authenticatedSenderAgentId}`,
+			);
+			return "processed";
+		}
+
+		const existing = await this.context.trustStore.findByAgentId(
+			params.from.agentId,
+			params.from.chain,
+		);
+		if (!existing) {
+			this.log(
+				"info",
+				`Received connection/revoke from unknown peer agent #${params.from.agentId} on ${params.from.chain}; ignoring.`,
+			);
+			return "processed";
+		}
+
+		// Additional defense: verify the found contact's peerAgentAddress is
+		// the same 0x address we would resolve for the authenticated sender.
+		// Because envelope.from is authoritative for (numeric) agentId, the
+		// primary spoofing case (cross-peer) is already blocked above. The
+		// remaining narrow window is a cross-chain collision where two real
+		// agents share the same numeric agentId on different chains and one
+		// is an active contact of ours — verifying peerAgentAddress via the
+		// trust store doesn't close that, but by construction the revoker is
+		// one of our own active contacts, so the worst case is we accept a
+		// cross-chain revoke from a legitimate peer who happens to share the
+		// numeric id. This is documented in spec §3.4 as the narrow residual
+		// threat model pending a per-chain envelope enrichment.
+		await this.context.trustStore.removeContact(existing.connectionId);
+		const reasonSuffix = params.reason ? `: ${params.reason}` : "";
+		this.log(
+			"info",
+			`Peer ${peerLabel(existing)} revoked the connection${reasonSuffix}; contact removed.`,
 		);
 		return "processed";
 	}
@@ -2121,34 +2757,6 @@ export class TapMessagingService {
 			"action request",
 			(contact, requestId, request) => this.processTransferRequest(contact, requestId, request),
 		);
-	}
-
-	private async resolvePendingConnectionRequest(
-		entry: RequestJournalEntry,
-		approve: boolean,
-	): Promise<void> {
-		const pendingRequest = parsePendingConnectionRequest(entry.metadata);
-		if (!pendingRequest) {
-			throw new ValidationError(`Cannot parse pending connection request: ${entry.requestId}`);
-		}
-
-		if (approve) {
-			await this.processConnectionRequest(pendingRequest.message, { skipApprovalHook: true });
-		} else {
-			const params = parseConnectionRequest(pendingRequest.message);
-			const peer = await this.context.resolver.resolveWithCache(
-				params.from.agentId,
-				params.from.chain,
-			);
-			await this.sendConnectionResult(peer, {
-				requestId: entry.requestId,
-				from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
-				status: "rejected",
-				reason: "Connection request declined by operator",
-				timestamp: nowISO(),
-			});
-		}
-		await this.context.requestJournal.updateStatus(entry.requestId, "completed");
 	}
 
 	private async resolvePendingSchedulingRequest(entry: RequestJournalEntry): Promise<void> {
@@ -2672,57 +3280,188 @@ export class TapMessagingService {
 		message: ProtocolMessage,
 	): Promise<"received" | "duplicate"> {
 		const result = parseConnectionResult(message);
-		const [pendingConnect, existingContact] = await Promise.all([
-			this.pendingConnectStore.get(result.requestId),
-			this.context.trustStore.findByAgentId(result.from.agentId, result.from.chain),
-		]);
+		const existingContact = await this.context.trustStore.findByAgentId(
+			result.from.agentId,
+			result.from.chain,
+		);
 
-		if (!pendingConnect) {
-			if (existingContact?.status === "active") {
-				this.log("info", `Ignoring duplicate connection result from ${peerLabel(existingContact)}`);
-				return "duplicate";
+		// §5.3 idempotency table: apply the correct action based on local contact state.
+
+		if (result.status === "rejected") {
+			// Rejection path: delete any connecting contact so the user knows to
+			// obtain a fresh invite. Active contacts are left unchanged.
+			if (existingContact?.status === "connecting") {
+				await this.context.trustStore.removeContact(existingContact.connectionId);
+				this.log("info", `Connection rejected by ${peerLabel(existingContact)}`);
+				// Best-effort journal correlation: mark matching outbound entry completed.
+				const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+				if (journalEntry) {
+					await this.context.requestJournal.updateStatus(result.requestId, "completed");
+				}
+				// Notify any in-flight connect() waiter so it surfaces the rejection
+				// immediately rather than waiting for the full waitMs timeout.
+				this.rejectConnectWaiter(
+					result.requestId,
+					new ConnectWaiterRejectedError(
+						result.requestId,
+						`Connection rejected by ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
+					),
+				);
+				return "received";
 			}
+			// No connecting contact: stale or unsolicited rejection — ignore.
 			this.log(
-				"warn",
-				`Ignoring unsolicited connection result from agent #${result.from.agentId} on ${result.from.chain}`,
+				"info",
+				`Ignoring stale rejected connection result from agent #${result.from.agentId} on ${result.from.chain}`,
 			);
 			return "duplicate";
 		}
 
-		if (
-			pendingConnect.peerAgentId !== result.from.agentId ||
-			pendingConnect.peerChain !== result.from.chain
-		) {
-			throw new ValidationError("Connection result sender does not match the pending connect");
+		// result.status === "accepted" — apply the idempotency table.
+
+		if (existingContact?.status === "active") {
+			// Already active: no-op on the contact. Touch lastContactAt and mark
+			// any matching journal entry completed. Retry-safe.
+			await this.context.trustStore.touchContact(existingContact.connectionId);
+			this.log(
+				"info",
+				`Duplicate connection result from ${peerLabel(existingContact)} — already active`,
+			);
+			const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			if (journalEntry) {
+				await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			}
+			// Resolve any in-flight connect() waiter — the peer is already active.
+			this.resolveConnectWaiter(result.requestId);
+			return "duplicate";
 		}
 
-		if (result.status === "rejected") {
-			await this.pendingConnectStore.delete(result.requestId);
-			this.log("info", `Connection rejected by ${peerLabel(pendingConnect)}`);
+		if (existingContact?.status === "revoked") {
+			// Revoked: log and ignore. Bob explicitly revoked; a stale result should
+			// not resurrect the contact. Mark matching journal entry completed.
+			this.log(
+				"info",
+				`Ignoring connection result from revoked peer ${peerLabel(existingContact)}`,
+			);
+			const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			if (journalEntry) {
+				await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			}
+			return "duplicate";
+		}
+
+		// connecting / idle / stale → flip to active.
+		// missing → gated recovery (see below) or rejected as unsolicited.
+		//
+		// SECURITY GATE (spec §5.3, corrected): before creating a contact from an
+		// incoming result, require local proof that WE initiated this handshake.
+		// Transport-layer sender verification proves the sender's IDENTITY, not
+		// our CONSENT to be connected to them — without this gate any agent who
+		// knows another agent's XMTP inbox could self-establish trust by sending
+		// an unsolicited accepted result. Proof of initiation = a matching
+		// outbound connection/request journal entry whose requestId correlates
+		// to result.requestId and whose peerAgentId matches the sender. This
+		// preserves the partial-wipe recovery scenario (contact deleted, journal
+		// entry survived) while closing the self-establishment hole.
+		if (!existingContact) {
+			const outboundEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			// Chain-scoped proof: two on-chain identities can legitimately share the
+			// same numeric agentId across chains, so the gate must also match
+			// metadata.peerChain against result.from.chain. Legacy entries written
+			// before peerChain was persisted have no chain in metadata and are
+			// intentionally NOT accepted — the security guarantee is that EVERY
+			// contact creation requires fresh chain-scoped proof of initiation.
+			const outboundChain = (outboundEntry?.metadata as { peerChain?: string } | undefined)
+				?.peerChain;
+			const hasValidOutboundProof =
+				outboundEntry !== null &&
+				outboundEntry.direction === "outbound" &&
+				outboundEntry.method === CONNECTION_REQUEST &&
+				outboundEntry.peerAgentId === result.from.agentId &&
+				outboundChain === result.from.chain;
+			if (!hasValidOutboundProof) {
+				this.log(
+					"warn",
+					`Ignoring unsolicited connection/result from agent #${result.from.agentId} on ${result.from.chain}: no matching outbound request in journal`,
+				);
+				return "duplicate";
+			}
+			// If the outbound request already completed, the result is a replay or
+			// the user explicitly deleted the contact after a successful handshake.
+			// Do NOT recreate the contact — that would silently undo a deletion.
+			if (outboundEntry.status === "completed") {
+				this.log(
+					"info",
+					`Ignoring stale connection/result for already-completed request ${result.requestId}; not recreating missing contact`,
+				);
+				return "duplicate";
+			}
+			// Partial-wipe recovery: journal says we asked, contact is gone.
+			// Resolve the peer on-chain to populate load-bearing fields
+			// (peerAgentAddress is required for transport routing).
+			let resolved: ResolvedAgent;
+			try {
+				resolved = await this.context.resolver.resolveWithCache(
+					result.from.agentId,
+					result.from.chain,
+				);
+			} catch (error: unknown) {
+				this.log(
+					"warn",
+					`handleConnectionResult: resolver failed for agent #${result.from.agentId} on ${result.from.chain} — skipping contact creation: ${toErrorMessage(error)}`,
+				);
+				return "duplicate";
+			}
+			const now = result.timestamp ?? nowISO();
+			const freshContact: Contact = {
+				connectionId: generateConnectionId(),
+				peerAgentId: resolved.agentId,
+				peerChain: resolved.chain,
+				peerOwnerAddress: resolved.ownerAddress,
+				peerDisplayName: resolved.registrationFile.name,
+				peerAgentAddress: resolved.agentAddress,
+				permissions: createEmptyPermissionState(now),
+				establishedAt: now,
+				lastContactAt: now,
+				status: "active",
+			};
+			await this.context.trustStore.addContact(freshContact);
+			await this.context.requestJournal.updateStatus(result.requestId, "completed");
+			this.log("info", `Connection accepted by ${peerLabel(freshContact)} (partial-wipe recovery)`);
+			// Notify any in-flight connect() waiter.
+			this.resolveConnectWaiter(result.requestId);
 			return "received";
 		}
 
-		const establishedAt = result.timestamp;
+		const establishedAt = result.timestamp ?? nowISO();
 		const nextContact: Contact = {
-			connectionId: existingContact?.connectionId ?? generateConnectionId(),
-			peerAgentId: pendingConnect.peerAgentId,
-			peerChain: pendingConnect.peerChain,
-			peerOwnerAddress: pendingConnect.peerOwnerAddress,
-			peerDisplayName: pendingConnect.peerDisplayName,
-			peerAgentAddress: pendingConnect.peerAgentAddress,
-			permissions: existingContact?.permissions ?? createEmptyPermissionState(establishedAt),
-			establishedAt: existingContact?.establishedAt ?? establishedAt,
+			connectionId: existingContact.connectionId,
+			peerAgentId: result.from.agentId,
+			peerChain: result.from.chain,
+			peerOwnerAddress: existingContact.peerOwnerAddress,
+			peerDisplayName: existingContact.peerDisplayName,
+			peerAgentAddress: existingContact.peerAgentAddress,
+			permissions: existingContact.permissions ?? createEmptyPermissionState(establishedAt),
+			establishedAt: existingContact.establishedAt ?? establishedAt,
 			lastContactAt: establishedAt,
 			status: "active",
+			// Clear expiresAt when transitioning to active — no longer needed.
+			expiresAt: undefined,
 		};
 
-		if (existingContact) {
-			await this.context.trustStore.updateContact(existingContact.connectionId, nextContact);
-		} else {
-			await this.context.trustStore.addContact(nextContact);
+		// existingContact is always defined here — the !existingContact path
+		// was handled above with an early return.
+		await this.context.trustStore.updateContact(existingContact.connectionId, nextContact);
+
+		// Best-effort journal correlation: mark matching outbound entry completed.
+		const journalEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+		if (journalEntry) {
+			await this.context.requestJournal.updateStatus(result.requestId, "completed");
 		}
-		await this.pendingConnectStore.delete(result.requestId);
-		this.log("info", `Connection accepted by ${peerLabel(pendingConnect)}`);
+
+		this.log("info", `Connection accepted by ${peerLabel(nextContact)}`);
+		// Notify any in-flight connect() waiter.
+		this.resolveConnectWaiter(result.requestId);
 		return "received";
 	}
 
@@ -2872,8 +3611,9 @@ export class TapMessagingService {
 	private async sendConnectionResult(
 		peer: ResolvedAgent,
 		result: ConnectionResultParams,
+		plan?: { plannedContact: Contact; existingContact: Contact | null },
 	): Promise<void> {
-		const delivery = buildPendingConnectionResultDelivery(peer, result);
+		const delivery = buildPendingConnectionResultDelivery(peer, result, plan);
 		const deliveryRequestId = String(delivery.request.id);
 		let persisted = false;
 		try {
@@ -3047,6 +3787,24 @@ export class TapMessagingService {
 		}
 	}
 
+	/**
+	 * Record a transient send/processing failure on a pending journal entry so
+	 * operators can inspect stuck work via `tap journal show`. Keeps attempt count
+	 * and cumulative metadata. Safe to call on any entry id — it is a no-op if
+	 * the entry does not exist.
+	 */
+	private async recordSendFailure(requestId: string, error: unknown): Promise<void> {
+		const existing = await this.context.requestJournal.getByRequestId(requestId);
+		if (!existing) return;
+		const prior = existing.metadata?.lastError as RequestJournalLastError | undefined;
+		const attempts = (prior?.attempts ?? 0) + 1;
+		const message = error instanceof Error ? error.message : String(error);
+		await this.context.requestJournal.updateMetadata(requestId, {
+			...(existing.metadata ?? {}),
+			lastError: { message, at: nowISO(), attempts },
+		});
+	}
+
 	private retryPendingActionResults(): Promise<number> {
 		return this.retryPendingResults(
 			ACTION_RESULT,
@@ -3083,13 +3841,136 @@ export class TapMessagingService {
 		return processed;
 	}
 
-	private retryPendingConnectionResults(): Promise<number> {
-		return this.retryPendingResults(
-			CONNECTION_RESULT,
-			parsePendingConnectionResultDelivery,
-			(d) => this.sendAndCompleteJournalEntry(d),
-			() => "Connection result",
-		);
+	private async retryPendingConnectionResults(): Promise<number> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		let processed = 0;
+		const now = Date.now();
+		for (const entry of pending) {
+			// Revoke entries are retried by their own branch below — a pending
+			// connection/revoke means our first send failed and the peer has
+			// not yet heard that we disconnected.
+			if (entry.method === CONNECTION_REVOKE) {
+				processed += await this.retryPendingConnectionRevoke(entry, now);
+				continue;
+			}
+			if (entry.kind !== "result" || entry.method !== CONNECTION_RESULT) {
+				continue;
+			}
+
+			// Stale cleanup — prevent indefinite accumulation for peers that
+			// have been offline so long that the delivery is no longer
+			// meaningful.
+			const createdMs = Date.parse(entry.createdAt);
+			if (Number.isFinite(createdMs) && now - createdMs > PENDING_RESULT_MAX_AGE_MS) {
+				this.log(
+					"warn",
+					`Abandoning pending ${CONNECTION_RESULT} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
+				);
+				await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
+				continue;
+			}
+
+			const delivery = parsePendingConnectionResultDelivery(entry.metadata);
+			if (!delivery) {
+				continue;
+			}
+
+			try {
+				// Send the wire message and mark the journal entry completed.
+				await this.sendAndCompleteJournalEntry(delivery);
+
+				// Send succeeded — write the contact if the planned contact was
+				// stored in the metadata. Legacy entries (written before the plan
+				// was added) skip the contact write; the contact will eventually
+				// be written by the implicit handshake completion or a future
+				// connection/request from the peer.
+				if (delivery.plannedContact && delivery.peerChain) {
+					// Re-read the current trust store state at retry time (more
+					// accurate than the state stored at plan time, and ensures
+					// the write is idempotent across retries).
+					const currentContact = await this.context.trustStore.findByAgentId(
+						delivery.peerAgentId,
+						delivery.peerChain,
+					);
+					await applyConnectionResultContact(this.context.trustStore, {
+						plannedContact: delivery.plannedContact,
+						existingContact: currentContact,
+					});
+					this.log(
+						"info",
+						`Reconciled connection result contact for ${delivery.peerName} (#${delivery.peerAgentId})`,
+					);
+				}
+
+				processed += 1;
+			} catch (error: unknown) {
+				this.logResultDeliveryFailure(
+					"Connection result",
+					`${delivery.peerName} (#${delivery.peerAgentId})`,
+					error,
+				);
+				await this.recordDeliveryFailure(entry.requestId, entry.metadata, error);
+				await this.recordSendFailure(entry.requestId, error);
+			}
+		}
+		return processed;
+	}
+
+	/**
+	 * Retry a pending outbound `connection/revoke` entry. The CLI deletes the
+	 * local contact as soon as `revokeConnection()` returns, so if the first
+	 * send failed the peer will stay connected to us forever unless we deliver
+	 * the revoke here. Revoke delivery is idempotent on the receiving side
+	 * (removes contact if present, no-ops otherwise), so re-sending is safe.
+	 */
+	private async retryPendingConnectionRevoke(
+		entry: RequestJournalEntry,
+		nowMs: number,
+	): Promise<number> {
+		const createdMs = Date.parse(entry.createdAt);
+		if (Number.isFinite(createdMs) && nowMs - createdMs > PENDING_RESULT_MAX_AGE_MS) {
+			this.log(
+				"warn",
+				`Abandoning pending ${CONNECTION_REVOKE} delivery ${entry.requestId} for agent #${entry.peerAgentId}: older than ${Math.round(PENDING_RESULT_MAX_AGE_MS / 3_600_000)}h`,
+			);
+			await this.markJournalEntryCompleted(entry.requestId).catch(() => {});
+			return 0;
+		}
+
+		const delivery = parsePendingConnectionRevokeDelivery(entry.metadata);
+		if (!delivery) {
+			this.log(
+				"warn",
+				`Pending ${CONNECTION_REVOKE} entry ${entry.requestId} has no revokeDelivery metadata; cannot retry`,
+			);
+			return 0;
+		}
+
+		const revokeParams: ConnectionRevokeParams = {
+			from: { agentId: this.context.config.agentId, chain: this.context.config.chain },
+			reason: delivery.reason,
+			timestamp: nowISO(),
+		};
+		const rpcRequest = buildConnectionRevoke(revokeParams);
+
+		try {
+			await this.context.transport.send(delivery.peerAgentId, rpcRequest, {
+				peerAddress: delivery.peerAddress,
+			});
+			await this.context.requestJournal.updateStatus(entry.requestId, "completed");
+			this.log(
+				"info",
+				`Reconciled connection/revoke delivery for ${delivery.peerDisplayName} (#${delivery.peerAgentId})`,
+			);
+			return 1;
+		} catch (error: unknown) {
+			this.log(
+				"warn",
+				`Retry of connection/revoke to ${delivery.peerDisplayName} (#${delivery.peerAgentId}) failed: ${toErrorMessage(error)}`,
+			);
+			await this.recordSendFailure(entry.requestId, error);
+			return 0;
+		}
 	}
 
 	/**
@@ -3806,6 +4687,7 @@ function serializePendingConnectionRequest(message: ProtocolMessage): Record<str
 function buildPendingConnectionResultDelivery(
 	peer: ResolvedAgent,
 	result: ConnectionResultParams,
+	plan?: { plannedContact: Contact; existingContact: Contact | null },
 ): PendingConnectionResultDelivery {
 	// Deterministic id keyed by (chain, peer agentId, correlation) so repeated
 	// calls upsert a single journal entry instead of accumulating one per retry
@@ -3820,7 +4702,7 @@ function buildPendingConnectionResultDelivery(
 			correlationId: result.requestId,
 		}),
 	);
-	return {
+	const base: PendingConnectionResultDelivery = {
 		type: "connection-result-delivery",
 		peerAgentId: peer.agentId,
 		peerChain: peer.chain,
@@ -3828,6 +4710,10 @@ function buildPendingConnectionResultDelivery(
 		peerAddress: peer.xmtpEndpoint ?? peer.agentAddress,
 		request,
 	};
+	if (plan) {
+		base.plannedContact = plan.plannedContact;
+	}
+	return base;
 }
 
 /**
@@ -3837,6 +4723,22 @@ function buildPendingConnectionResultDelivery(
  */
 function peerConnectionResultCacheKey(chain: string, agentId: number): string {
 	return `${chain}:${agentId}`;
+}
+
+function isPlausiblePlannedContact(value: unknown): value is Contact {
+	if (typeof value !== "object" || value === null) return false;
+	const c = value as Partial<Contact>;
+	return (
+		typeof c.connectionId === "string" &&
+		typeof c.peerAgentId === "number" &&
+		typeof c.peerChain === "string" &&
+		typeof c.peerOwnerAddress === "string" &&
+		typeof c.peerDisplayName === "string" &&
+		typeof c.peerAgentAddress === "string" &&
+		typeof c.establishedAt === "string" &&
+		typeof c.lastContactAt === "string" &&
+		typeof c.status === "string"
+	);
 }
 
 function parsePendingConnectionResultDelivery(
@@ -3865,6 +4767,24 @@ function parsePendingConnectionResultDelivery(
 			? metadata.peerChain
 			: undefined;
 
+	// plannedContact is optional — entries written before this field was
+	// introduced do not carry the planned contact and therefore cannot write
+	// the contact on retry. The retry pipeline will deliver the send but skip
+	// the contact write for such legacy entries (the implicit handshake
+	// completion or a future connection/request from the peer will eventually
+	// write the contact).
+	const plannedContact = isPlausiblePlannedContact(metadata.plannedContact)
+		? metadata.plannedContact
+		: undefined;
+	if (metadata.plannedContact !== undefined && !plannedContact) {
+		// The field is present but failed validation — warn so the journal
+		// entry is still retried for delivery, but the unexpected shape is
+		// surfaced for debugging.
+		console.warn(
+			"[TAP] parsePendingConnectionResultDelivery: plannedContact failed validation, skipping contact write",
+		);
+	}
+
 	return {
 		type: "connection-result-delivery",
 		peerAgentId: metadata.peerAgentId,
@@ -3872,6 +4792,42 @@ function parsePendingConnectionResultDelivery(
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
+		...(plannedContact ? { plannedContact } : {}),
+	};
+}
+
+interface PendingConnectionRevokeDelivery {
+	peerAgentId: number;
+	peerChain: string;
+	peerAddress: `0x${string}`;
+	peerDisplayName: string;
+	reason?: string;
+}
+
+function parsePendingConnectionRevokeDelivery(
+	metadata: Record<string, unknown> | undefined,
+): PendingConnectionRevokeDelivery | null {
+	if (!metadata || typeof metadata !== "object") return null;
+	const revokeDelivery = (metadata as Record<string, unknown>).revokeDelivery;
+	if (!revokeDelivery || typeof revokeDelivery !== "object") return null;
+	const delivery = revokeDelivery as Record<string, unknown>;
+	const peerAddress = asString(delivery.peerAddress);
+	if (
+		typeof delivery.peerAgentId !== "number" ||
+		typeof delivery.peerChain !== "string" ||
+		delivery.peerChain.length === 0 ||
+		typeof delivery.peerDisplayName !== "string" ||
+		!peerAddress?.startsWith("0x")
+	) {
+		return null;
+	}
+	const reason = typeof delivery.reason === "string" ? delivery.reason : undefined;
+	return {
+		peerAgentId: delivery.peerAgentId,
+		peerChain: delivery.peerChain,
+		peerAddress: peerAddress as `0x${string}`,
+		peerDisplayName: delivery.peerDisplayName,
+		...(reason ? { reason } : {}),
 	};
 }
 
@@ -4179,8 +5135,28 @@ async function findContactForMessage(
 	return findUniqueContactForAgentId(contacts, from) ?? null;
 }
 
-function assertNever(value: never): never {
-	throw new ValidationError(`Unsupported queued TAP job type: ${String(value)}`);
+/**
+ * Write the planned contact to the trust store after a successful
+ * `connection/result` send. This is shared between `processConnectionRequest`
+ * (immediate path) and `retryPendingConnectionResults` (reconciliation path).
+ *
+ * The active case uses `touchContact` rather than `updateContact` because the
+ * handler returns the existing contact as `plannedContact` and only the
+ * `lastContactAt` timestamp should advance.
+ */
+async function applyConnectionResultContact(
+	trustStore: ITrustStore,
+	plan: { plannedContact: Contact; existingContact: Contact | null },
+): Promise<void> {
+	if (plan.existingContact) {
+		if (plan.existingContact.status === "active") {
+			await trustStore.touchContact(plan.existingContact.connectionId);
+		} else {
+			await trustStore.updateContact(plan.existingContact.connectionId, plan.plannedContact);
+		}
+	} else {
+		await trustStore.addContact(plan.plannedContact);
+	}
 }
 
 export { TransportOwnershipError };

@@ -20,17 +20,12 @@ export {
 	type RequestJournalKind,
 	type RequestJournalStatus,
 } from "./request-journal.js";
-export {
-	FileTapCommandOutbox,
-	type ClaimNextJobOptions,
-	type ProcessingTapCommandJob,
-	type RecoverOutboxOptions,
-	type TapCommandJob,
-	type TapCommandJobResult,
-	type TapCommandJobResultPayload,
-	type TapCommandJobType,
-	type TapCommandOutboxStats,
-} from "./command-outbox.js";
+export type {
+	TapCommandJob,
+	TapCommandJobResult,
+	TapCommandJobResultPayload,
+	TapCommandJobType,
+} from "./command-job.js";
 export {
 	buildDefaultTapRuntimeContext,
 	type BuildTapRuntimeContextOptions,
@@ -79,7 +74,6 @@ export {
 	TapMessagingService,
 	type TapCancelMeetingResult,
 	type TapConnectResult,
-	type TapConnectionApprovalContext,
 	type TapPendingDelivery,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,

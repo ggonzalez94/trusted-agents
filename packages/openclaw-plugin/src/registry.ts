@@ -666,8 +666,19 @@ export class OpenClawTapRegistry {
 					}
 					return null;
 				},
-				approveConnection: async () => {
-					return null; // Always escalate to user
+				onConnectionEstablished: ({ peerAgentId, peerName, peerChain }) => {
+					// Non-blocking info notification. Emitted after the handshake completes.
+					notificationQueue.push({
+						type: "info",
+						identity: name,
+						timestamp: new Date().toISOString(),
+						method: "connection/established",
+						from: peerAgentId,
+						fromName: peerName,
+						messageId: `connection-established-${peerAgentId}`,
+						detail: { peerAgentId, peerName, peerChain },
+						oneLiner: `Connected with ${peerName} (agent #${peerAgentId})`,
+					});
 				},
 				confirmMeeting: async () => {
 					// Return false to prevent auto-confirmation; operator resolves via tap_gateway
