@@ -325,5 +325,5 @@ function extractMappedIpv4(host: string): string | null {
 }
 
 function isRedirectResponse(status: number): boolean {
-	return status >= 300 && status < 400;
+	return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
