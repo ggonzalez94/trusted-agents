@@ -566,6 +566,7 @@ export class OpenClawTapRegistry {
 		);
 
 		const notificationQueue = new TapNotificationQueue({
+			identity: name,
 			onHardCapDrop: (dropped) => {
 				this.logger.warn(
 					`[trusted-agents-tap:${name}] Notification queue hard cap reached — dropped oldest escalation: ${dropped.method} from ${dropped.fromName ?? `agent #${dropped.from}`} (messageId=${dropped.messageId}). Drain the queue via the agent or restart the plugin.`,

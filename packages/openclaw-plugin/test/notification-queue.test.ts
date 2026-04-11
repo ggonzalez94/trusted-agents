@@ -177,7 +177,7 @@ describe("TapNotificationQueue", () => {
 		});
 
 		it("emits a synthetic overflow sentinel at drain time when escalations were dropped", () => {
-			const queue = new TapNotificationQueue({ maxSize: 3 });
+			const queue = new TapNotificationQueue({ identity: "primary", maxSize: 3 });
 
 			// Fill past the hard cap to drop two escalations (e-1 and e-2).
 			for (let i = 1; i <= 8; i++) {
@@ -191,6 +191,7 @@ describe("TapNotificationQueue", () => {
 			expect(sentinel?.messageId).toBe("__tap_queue_overflow__");
 			expect(sentinel?.type).toBe("escalation");
 			expect(sentinel?.method).toBe("tap/queue-overflow");
+			expect(sentinel?.identity).toBe("primary");
 			expect(sentinel?.detail).toEqual({ droppedEscalations: 2 });
 			expect(sentinel?.oneLiner).toContain("list_pending");
 

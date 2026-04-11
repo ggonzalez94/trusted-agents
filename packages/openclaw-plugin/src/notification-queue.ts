@@ -17,12 +17,19 @@ const EVICTION_PRIORITY: TapNotification["type"][] = ["info", "summary", "auto-r
 const OVERFLOW_SENTINEL_ID = "__tap_queue_overflow__";
 
 export interface TapNotificationQueueOptions {
+	/**
+	 * Identity name this queue belongs to. Used to tag synthetic notifications
+	 * (e.g. the overflow sentinel) so they remain distinguishable from other
+	 * identities' notifications inside a multi-identity plugin host.
+	 */
+	identity?: string;
 	maxSize?: number;
 	onHardCapDrop?: (dropped: TapNotification) => void;
 }
 
 export class TapNotificationQueue {
 	private readonly items: TapNotification[] = [];
+	private readonly identity: string;
 	private readonly maxSize: number;
 	private readonly hardCap: number;
 	private readonly onHardCapDrop?: (dropped: TapNotification) => void;
@@ -31,6 +38,7 @@ export class TapNotificationQueue {
 	constructor(optionsOrMaxSize: TapNotificationQueueOptions | number = {}) {
 		const options =
 			typeof optionsOrMaxSize === "number" ? { maxSize: optionsOrMaxSize } : optionsOrMaxSize;
+		this.identity = options.identity ?? "";
 		this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
 		this.hardCap = this.maxSize * HARD_CAP_MULTIPLIER;
 		this.onHardCapDrop = options.onHardCapDrop;
@@ -60,7 +68,7 @@ export class TapNotificationQueue {
 			this.droppedEscalationCount = 0;
 			drained.push({
 				type: "escalation",
-				identity: "",
+				identity: this.identity,
 				timestamp: new Date().toISOString(),
 				method: "tap/queue-overflow",
 				from: 0,
