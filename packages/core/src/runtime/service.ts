@@ -702,7 +702,9 @@ export class TapMessagingService {
 
 	async listPendingRequests(): Promise<TapServiceStatus["pendingRequests"]> {
 		const pending = await this.context.requestJournal.listPending();
-		return pending.filter((entry) => entry.kind === "request").map(toPendingRequestView);
+		return pending
+			.filter((entry) => entry.kind === "request" && !isOutboundDeliveryEntry(entry))
+			.map(toPendingRequestView);
 	}
 
 	private async findCancellableSchedulingRequest(
@@ -1385,7 +1387,11 @@ export class TapMessagingService {
 			try {
 				receipt = await this.deliverPendingPermissionsUpdate(delivery);
 			} catch (error: unknown) {
-				await this.recordSendFailure(String(request.id), error);
+				await this.recordDeliveryFailure(
+					String(request.id),
+					serializePendingPermissionsUpdateDelivery(delivery),
+					error,
+				);
 				throw error;
 			}
 
@@ -1873,10 +1879,10 @@ export class TapMessagingService {
 		// Avoids reading request-journal.json twice per sync.
 		const allPending = await this.context.requestJournal.listPending();
 		const pendingRequests = allPending
-			.filter((entry) => entry.kind === "request")
+			.filter((entry) => entry.kind === "request" && !isOutboundDeliveryEntry(entry))
 			.map(toPendingRequestView);
 		const pendingDeliveries = allPending
-			.filter((entry) => entry.direction === "outbound" && entry.kind === "result")
+			.filter((entry) => entry.direction === "outbound" && isDeliveryEntry(entry))
 			.map((entry) => toPendingDeliveryView(entry, Date.now()));
 		return {
 			synced: true,
@@ -3929,7 +3935,8 @@ export class TapMessagingService {
 			parse: parsePendingPermissionsUpdateDelivery,
 			deliver: (d) => this.deliverPendingPermissionsUpdate(d).then(() => undefined),
 			errorLabel: () => "Permissions update",
-			recordFailure: (requestId, _metadata, error) => this.recordSendFailure(requestId, error),
+			recordFailure: (requestId, metadata, error) =>
+				this.recordDeliveryFailure(requestId, metadata, error),
 		});
 	}
 
@@ -5157,6 +5164,15 @@ function parseRecordedTransferResponse(
 	}
 
 	return parsed as TransferActionResponse;
+}
+
+function isDeliveryEntry(entry: RequestJournalEntry): boolean {
+	if (entry.kind === "result") return true;
+	return entry.kind === "request" && entry.method === PERMISSIONS_UPDATE;
+}
+
+function isOutboundDeliveryEntry(entry: RequestJournalEntry): boolean {
+	return entry.direction === "outbound" && isDeliveryEntry(entry);
 }
 
 function toPendingRequestView(entry: RequestJournalEntry): TapPendingRequest {
