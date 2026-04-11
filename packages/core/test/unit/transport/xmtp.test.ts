@@ -791,6 +791,58 @@ describe("XmtpTransport", () => {
 			});
 		});
 
+		it("should ignore injected connectionId metadata on bootstrap connection/request", async () => {
+			const bootstrapTrustStore = createAmbiguousTrustStore({
+				getContact: vi.fn(async () => BOB_CONTACT),
+			});
+			const resolver = createBobResolver();
+			const transportWithResolver = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					agentResolver: resolver,
+				},
+				bootstrapTrustStore,
+			);
+			injectMockClient(transportWithResolver);
+
+			mockSetup.setInboxIdentifiers("spoofed-bootstrap-metadata-inbox", [
+				{ identifier: ALICE.address, identifierKind: 0 },
+			]);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "queued",
+				}),
+			);
+			transportWithResolver.setHandlers({ onRequest: callback });
+
+			const request: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "connection/request",
+				id: "conn-bootstrap-metadata-spoof",
+				params: {
+					from: { agentId: 99, chain: "eip155:1" },
+					to: { agentId: 1, chain: "eip155:1" },
+					message: {
+						metadata: {
+							trustedAgent: {
+								connectionId: BOB_CONTACT.connectionId,
+							},
+						},
+					},
+					timestamp: new Date().toISOString(),
+				},
+			};
+
+			await internals(transportWithResolver).processMessage({
+				senderInboxId: "spoofed-bootstrap-metadata-inbox",
+				content: JSON.stringify(request),
+			});
+
+			expect(callback).not.toHaveBeenCalled();
+			expect(mockSetup.mockConversation.sendText).toHaveBeenCalled();
+		});
+
 		it("should route message/send by connection id when address lookup is ambiguous", async () => {
 			const ambiguousTrustStore = createAmbiguousTrustStore({
 				getContact: vi.fn(
@@ -996,6 +1048,62 @@ describe("XmtpTransport", () => {
 				senderInboxId: "legacy-inbox",
 				message: result,
 			});
+		});
+
+		it("should ignore injected connectionId metadata on bootstrap connection/result", async () => {
+			const bootstrapTrustStore = createAmbiguousTrustStore({
+				getContact: vi.fn(async () => BOB_CONTACT),
+			});
+			const resolver = createBobResolver({
+				agentId: BOB_CONTACT.peerAgentId,
+				capabilities: ["connection/result"],
+			});
+			const transportWithResolver = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					agentResolver: resolver,
+				},
+				bootstrapTrustStore,
+			);
+			injectMockClient(transportWithResolver);
+
+			mockSetup.setInboxIdentifiers("spoofed-bootstrap-result-inbox", [
+				{ identifier: ALICE.address, identifierKind: 0 },
+			]);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transportWithResolver.setHandlers({ onResult: callback });
+
+			const result: ProtocolMessage = {
+				jsonrpc: "2.0",
+				method: "connection/result",
+				id: "conn-result-metadata-spoof",
+				params: {
+					requestId: "conn-request-legacy",
+					from: { agentId: BOB_CONTACT.peerAgentId, chain: BOB_CONTACT.peerChain },
+					status: "accepted",
+					message: {
+						metadata: {
+							trustedAgent: {
+								connectionId: BOB_CONTACT.connectionId,
+							},
+						},
+					},
+					timestamp: new Date().toISOString(),
+				},
+			};
+
+			await internals(transportWithResolver).processMessage({
+				senderInboxId: "spoofed-bootstrap-result-inbox",
+				content: JSON.stringify(result),
+			});
+
+			expect(callback).not.toHaveBeenCalled();
+			expect(mockSetup.mockConversation.sendText).toHaveBeenCalled();
 		});
 
 		it("should reject messages from known contacts that are not active", async () => {

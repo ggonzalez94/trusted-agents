@@ -169,6 +169,22 @@ describe("legacy state migration — pending-connects.json", () => {
 		expect(existsSync(join(dir, "pending-connects.json"))).toBe(false);
 	});
 
+	it("runs migrations during syncOnce for short-lived sessions", async () => {
+		const dir = makeTempDir();
+		writeFileSync(
+			join(dir, "pending-connects.json"),
+			JSON.stringify({ pendingConnects: [SAMPLE_LEGACY_ENTRY] }),
+		);
+
+		const { service, trustStore } = makeServiceHarness(dir);
+		await service.syncOnce();
+
+		const contact = await trustStore.findByAgentId(42, "eip155:8453");
+		expect(contact).not.toBeNull();
+		expect(contact?.status).toBe("connecting");
+		expect(existsSync(join(dir, "pending-connects.json"))).toBe(false);
+	});
+
 	it("is idempotent — running start twice produces one contact, not two", async () => {
 		const dir = makeTempDir();
 		writeFileSync(

@@ -26,7 +26,10 @@ import {
 import type { FileRequestJournal } from "../../../src/runtime/request-journal.js";
 import { FileRequestJournal as FileRequestJournalImpl } from "../../../src/runtime/request-journal.js";
 import { TapMessagingService } from "../../../src/runtime/service.js";
-import { parseSchedulingActionResponse } from "../../../src/scheduling/index.js";
+import {
+	parseSchedulingActionRequest,
+	parseSchedulingActionResponse,
+} from "../../../src/scheduling/index.js";
 import type {
 	ProtocolMessage,
 	TransportHandlers,
@@ -1023,6 +1026,67 @@ describe("TapMessagingService", () => {
 		expect((entry?.metadata as Record<string, unknown>)?.commandResult).toEqual(
 			expect.objectContaining({ status: "completed" }),
 		);
+	});
+
+	it("only updates local grants after permissions/update is durably delivered", async () => {
+		const activeContact = makeActiveContact("conn-grants-durable");
+		const trustStore = createMemoryTrustStore([activeContact]);
+		const grantSet = createGrantSet([{ grantId: "durable-chat", scope: "general-chat" }]);
+
+		class FlakyPermissionsTransport extends FakeTransport {
+			private failOnce = true;
+
+			override async send(
+				peerId: number,
+				message: ProtocolMessage,
+				options?: TransportSendOptions,
+			): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message, ...(options ? { options } : {}) });
+				if (message.method === "permissions/update" && this.failOnce) {
+					this.failOnce = false;
+					throw new TransportError("temporary permissions update send failure");
+				}
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: options?.waitForAck === false ? "published" : "received",
+					receivedAt: "2026-03-07T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FlakyPermissionsTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore,
+			},
+		);
+
+		await service.start();
+
+		await expect(
+			service.publishGrantSet(activeContact.peerDisplayName, grantSet, "durable publish"),
+		).rejects.toThrow("temporary permissions update send failure");
+
+		const afterFailure = await trustStore.getContact(activeContact.connectionId);
+		expect(afterFailure?.permissions.grantedByMe.grants).toEqual([]);
+
+		const pendingEntry = (await requestJournal.listPending("outbound")).find(
+			(entry) => entry.method === "permissions/update",
+		);
+		expect(pendingEntry).toBeDefined();
+
+		const report = await service.syncOnce();
+		expect(report.pendingDeliveries).toEqual([]);
+
+		const afterRetry = await trustStore.getContact(activeContact.connectionId);
+		expect(afterRetry?.permissions.grantedByMe.grants).toEqual(
+			expect.arrayContaining([expect.objectContaining({ grantId: "durable-chat" })]),
+		);
+
+		await service.stop();
 	});
 
 	it("captures an action result that arrives before requestFunds finishes sending", async () => {
@@ -2202,6 +2266,131 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
+	it("rejects scheduling requests when no scheduling handler is configured", async () => {
+		const contact = makeActiveContact("conn-scheduling-unsupported");
+		const transport = new FakeTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+			},
+		);
+
+		await service.start();
+
+		const proposal = {
+			type: "scheduling/propose",
+			schedulingId: "sch-unsupported-1",
+			title: "Unsupported Meeting",
+			duration: 30,
+			slots: [{ start: "2026-03-08T16:00:00.000Z", end: "2026-03-08T16:30:00.000Z" }],
+			originTimezone: "UTC",
+		};
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Scheduling proposal",
+			proposal,
+			"scheduling/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-scheduling-unsupported",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(1);
+		expect(parseSchedulingActionResponse(actionResults[0]!.message)).toEqual(
+			expect.objectContaining({
+				type: "scheduling/reject",
+				schedulingId: "sch-unsupported-1",
+				reason: "Scheduling is not supported by this TAP host",
+			}),
+		);
+
+		await service.stop();
+	});
+
+	it("resolves pending scheduling requests using peerChain when agent ids collide", async () => {
+		const contact = makeActiveContact("conn-scheduling-mainnet");
+		const sameAgentOtherChain: Contact = {
+			...makeActiveContact("conn-scheduling-taiko"),
+			peerChain: "eip155:167000",
+			peerDisplayName: "Bob on Taiko",
+		};
+		const transport = new FakeTransport();
+		const schedulingHandler = {
+			evaluateProposal: vi.fn(async () => ({ action: "defer" as const })),
+			handleAccept: vi.fn(async () => ({ eventId: "evt-mainnet-only" })),
+			handleCancel: vi.fn(async () => {}),
+		} as unknown as NonNullable<
+			ConstructorParameters<typeof TapMessagingService>[1]["schedulingHandler"]
+		>;
+		const { service } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact, sameAgentOtherChain]),
+				serviceOptions: { schedulingHandler },
+			},
+		);
+
+		await service.start();
+
+		const proposal = {
+			type: "scheduling/propose",
+			schedulingId: "sch-mainnet-only",
+			title: "Mainnet Meeting",
+			duration: 30,
+			slots: [{ start: "2026-03-08T16:00:00.000Z", end: "2026-03-08T16:30:00.000Z" }],
+			originTimezone: "UTC",
+		};
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Scheduling proposal",
+			proposal,
+			"scheduling/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-scheduling-mainnet",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		await expect(service.resolvePending(String(request.id), false)).resolves.toEqual(
+			expect.objectContaining({
+				pendingRequests: [],
+			}),
+		);
+
+		const actionResults = transport.sentMessages.filter(
+			(entry) => entry.message.method === "action/result",
+		);
+		expect(actionResults).toHaveLength(1);
+		expect(actionResults[0]?.peerId).toBe(contact.peerAgentId);
+
+		await service.stop();
+	});
+
 	it("settles scheduling requests when confirmMeeting returns false", async () => {
 		const contact: Contact = {
 			...makeActiveContact("conn-confirm-false-scheduling"),
@@ -2272,7 +2461,13 @@ describe("TapMessagingService", () => {
 			}),
 		).resolves.toEqual({ status: "queued" });
 
-		await sleep(50);
+		for (let attempt = 0; attempt < 20; attempt += 1) {
+			const entry = await requestJournal.getByRequestId(String(request.id));
+			if (entry?.status === "completed") {
+				break;
+			}
+			await sleep(10);
+		}
 		expect(confirmMeeting).toHaveBeenCalledOnce();
 		expect(schedulingHandler.handleAccept).not.toHaveBeenCalled();
 		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
@@ -2343,6 +2538,77 @@ describe("TapMessagingService", () => {
 		await service.stop();
 	});
 
+	it("retries scheduling cancellation delivery after the initial send fails", async () => {
+		const contact = makeActiveContact("conn-cancel-retry");
+
+		class FlakySchedulingCancelTransport extends FakeTransport {
+			private failOnce = true;
+
+			override async send(
+				peerId: number,
+				message: ProtocolMessage,
+				options?: TransportSendOptions,
+			): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message, ...(options ? { options } : {}) });
+				const response = parseSchedulingActionResponse(message);
+				if (message.method === "action/result" && response?.type === "scheduling/cancel" && this.failOnce) {
+					this.failOnce = false;
+					throw new TransportError("temporary cancel send failure");
+				}
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: options?.waitForAck === false ? "published" : "received",
+					receivedAt: "2026-03-07T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FlakySchedulingCancelTransport();
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+			},
+		);
+
+		await service.start();
+		const proposal = {
+			type: "scheduling/propose" as const,
+			schedulingId: "sch-cancel-retry-1",
+			title: "Retry Candidate",
+			duration: 45,
+			slots: [{ start: "2026-03-08T20:00:00.000Z", end: "2026-03-08T20:45:00.000Z" }],
+			originTimezone: "UTC",
+		};
+		const requestResult = await service.requestMeeting({
+			peer: contact.peerDisplayName,
+			proposal,
+		});
+
+		const report = await service.cancelPendingSchedulingRequest(
+			String(requestResult.receipt.requestId),
+			"Need to reschedule",
+		);
+		expect(report.pendingRequests).toEqual([]);
+		expect(report.pendingDeliveries).toEqual([
+			expect.objectContaining({
+				method: "action/result",
+			}),
+		]);
+		expect(await requestJournal.getByRequestId(String(requestResult.receipt.requestId))).toEqual(
+			expect.objectContaining({
+				status: "completed",
+			}),
+		);
+
+		const retryReport = await service.syncOnce();
+		expect(retryReport.pendingDeliveries).toEqual([]);
+
+		await service.stop();
+	});
+
 	it("completes the superseded outbound request when a counter-proposal arrives", async () => {
 		const contact = makeActiveContact("conn-counter-cleanup");
 		const transport = new FakeTransport();
@@ -2401,6 +2667,84 @@ describe("TapMessagingService", () => {
 				direction: "inbound",
 			}),
 		]);
+
+		await service.stop();
+	});
+
+	it("keeps inbound scheduling requests pending when a counter-proposal cannot be delivered", async () => {
+		const contact = makeActiveContact("conn-counter-failure");
+
+		class FlakySchedulingCounterTransport extends FakeTransport {
+			override async send(
+				peerId: number,
+				message: ProtocolMessage,
+				options?: TransportSendOptions,
+			): Promise<TransportReceipt> {
+				this.sentMessages.push({ peerId, message, ...(options ? { options } : {}) });
+				const request = parseSchedulingActionRequest(message);
+				if (message.method === "action/request" && request?.type === "scheduling/counter") {
+					throw new TransportError("temporary counter send failure");
+				}
+				return {
+					received: true,
+					requestId: String(message.id),
+					status: options?.waitForAck === false ? "published" : "received",
+					receivedAt: "2026-03-07T00:00:00.000Z",
+				};
+			}
+		}
+
+		const transport = new FlakySchedulingCounterTransport();
+		const schedulingHandler = {
+			evaluateProposal: vi.fn(async () => ({
+				action: "counter" as const,
+				slots: [{ start: "2026-03-09T20:00:00.000Z", end: "2026-03-09T20:45:00.000Z" }],
+			})),
+			handleAccept: vi.fn(async () => ({ eventId: "evt-counter-failure" })),
+			handleCancel: vi.fn(async () => {}),
+		} as unknown as NonNullable<
+			ConstructorParameters<typeof TapMessagingService>[1]["schedulingHandler"]
+		>;
+		const { service, requestJournal } = await createService(
+			{},
+			{
+				transport,
+				trustStore: createMemoryTrustStore([contact]),
+				serviceOptions: { schedulingHandler },
+			},
+		);
+
+		await service.start();
+		const proposal = {
+			type: "scheduling/propose" as const,
+			schedulingId: "sch-counter-failure-1",
+			title: "Counter Failure Candidate",
+			duration: 45,
+			slots: [{ start: "2026-03-08T20:00:00.000Z", end: "2026-03-08T20:45:00.000Z" }],
+			originTimezone: "UTC",
+		};
+		const request = buildOutgoingActionRequest(
+			contact,
+			"Counter proposal",
+			proposal,
+			"scheduling/request",
+		);
+
+		await expect(
+			transport.handlers.onRequest?.({
+				from: contact.peerAgentId,
+				senderInboxId: "peer-inbox-counter-failure",
+				message: request,
+			}),
+		).resolves.toEqual({ status: "queued" });
+
+		await sleep(50);
+
+		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+			expect.objectContaining({
+				status: "pending",
+			}),
+		);
 
 		await service.stop();
 	});

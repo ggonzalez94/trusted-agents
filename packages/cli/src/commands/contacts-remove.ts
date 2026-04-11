@@ -1,3 +1,4 @@
+import { TransportOwnershipError } from "trusted-agents-core";
 import type { TapRuntime } from "trusted-agents-sdk";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
@@ -30,6 +31,15 @@ export async function contactsRemoveCommand(
 			await runtime.service.revokeConnection(contact);
 			info(`Sent connection/revoke to ${contact.peerDisplayName} (#${contact.peerAgentId}).`, opts);
 		} catch (err) {
+			if (err instanceof TransportOwnershipError) {
+				error(
+					"TRANSPORT_ERROR",
+					`Contact removal must run through the active TAP owner so revoke can be delivered first. Use the running TAP host to remove ${contact.peerDisplayName}.`,
+					opts,
+				);
+				process.exitCode = 2;
+				return;
+			}
 			info(
 				`Could not deliver connection/revoke to ${contact.peerDisplayName} — removing locally anyway. ${err instanceof Error ? err.message : String(err)}`,
 				opts,

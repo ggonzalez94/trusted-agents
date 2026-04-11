@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { IdentityError, isEthereumAddress, toErrorMessage } from "../common/index.js";
 import type { RegistrationFile } from "./types.js";
 
@@ -141,7 +142,7 @@ export async function fetchRegistrationFile(uri: string): Promise<RegistrationFi
 	const timeout = setTimeout(() => controller.abort(), 10_000);
 
 	try {
-		const response = await fetch(resolvedUri, { signal: controller.signal });
+		const response = await fetchRegistrationResponse(resolvedUri, controller.signal);
 		if (!response.ok) {
 			throw new IdentityError(
 				`Failed to fetch registration file from ${resolvedUri}: HTTP ${response.status}`,
@@ -187,17 +188,43 @@ function isSafeRemoteUri(uri: string): boolean {
 	const url = parseRegistrationUrl(uri);
 	const host = normalizeHostname(url.hostname);
 
-	if (host === "localhost" || host === "::1" || host.endsWith(".local")) {
+	if (host === "localhost" || host.endsWith(".local")) {
 		return false;
 	}
-	if (/^127\./.test(host)) return false;
-	if (/^10\./.test(host)) return false;
-	if (/^169\.254\./.test(host)) return false;
-	if (/^192\.168\./.test(host)) return false;
-	if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
-	if (isBlockedIpv6Host(host)) return false;
+	if (isBlockedIpHost(host)) return false;
 
 	return true;
+}
+
+async function fetchRegistrationResponse(uri: string, signal: AbortSignal): Promise<Response> {
+	let currentUri = uri;
+
+	for (let redirects = 0; redirects <= 5; redirects += 1) {
+		if (!isSafeRemoteUri(currentUri)) {
+			throw new IdentityError(`Registration URI is not allowed: ${currentUri}`);
+		}
+
+		const response = await fetch(currentUri, {
+			signal,
+			redirect: "manual",
+		});
+		if (!isRedirectResponse(response.status)) {
+			return response;
+		}
+
+		const location = response.headers.get("location");
+		if (!location) {
+			throw new IdentityError(`Registration fetch redirect missing Location header: ${currentUri}`);
+		}
+
+		const nextUrl = new URL(location, currentUri);
+		if (nextUrl.protocol !== "https:") {
+			throw new IdentityError(`Unsupported registration URI protocol: ${nextUrl.protocol}`);
+		}
+		currentUri = nextUrl.toString();
+	}
+
+	throw new IdentityError(`Registration fetch exceeded redirect limit for ${uri}`);
 }
 
 function parseRegistrationUrl(uri: string): URL {
@@ -212,9 +239,36 @@ function normalizeHostname(hostname: string): string {
 	return hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
 }
 
-function isBlockedIpv6Host(host: string): boolean {
-	if (!host.includes(":")) {
+function isBlockedIpHost(host: string): boolean {
+	const mappedIpv4 = extractMappedIpv4(host);
+	if (mappedIpv4) {
+		return isBlockedIpv4Host(mappedIpv4);
+	}
+
+	const ipVersion = isIP(host);
+	if (ipVersion === 4) {
+		return isBlockedIpv4Host(host);
+	}
+	if (ipVersion !== 6) {
 		return false;
+	}
+
+	return isBlockedIpv6Host(host);
+}
+
+function isBlockedIpv4Host(host: string): boolean {
+	return (
+		/^127\./.test(host) ||
+		/^10\./.test(host) ||
+		/^169\.254\./.test(host) ||
+		/^192\.168\./.test(host) ||
+		/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+	);
+}
+
+function isBlockedIpv6Host(host: string): boolean {
+	if (host === "::1") {
+		return true;
 	}
 
 	const firstHextet = getLeadingIpv6Hextet(host);
@@ -236,4 +290,45 @@ function getLeadingIpv6Hextet(host: string): number | null {
 
 	const parsed = Number.parseInt(firstSegment, 16);
 	return Number.isNaN(parsed) ? null : parsed;
+}
+
+function extractMappedIpv4(host: string): string | null {
+	const normalized = host.toLowerCase();
+	const prefix = "::ffff:";
+	if (!normalized.startsWith(prefix)) {
+		return null;
+	}
+	const ipv4 = normalized.slice(prefix.length);
+	if (isIP(ipv4) === 4) {
+		return ipv4;
+	}
+
+	const parts = ipv4.split(":");
+	if (parts.length !== 2) {
+		return null;
+	}
+
+	const high = Number.parseInt(parts[0] ?? "", 16);
+	const low = Number.parseInt(parts[1] ?? "", 16);
+	if (
+		Number.isNaN(high) ||
+		Number.isNaN(low) ||
+		high < 0 ||
+		high > 0xffff ||
+		low < 0 ||
+		low > 0xffff
+	) {
+		return null;
+	}
+
+	return [
+		(high >> 8) & 0xff,
+		high & 0xff,
+		(low >> 8) & 0xff,
+		low & 0xff,
+	].join(".");
+}
+
+function isRedirectResponse(status: number): boolean {
+	return status >= 300 && status < 400;
 }
