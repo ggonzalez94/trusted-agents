@@ -41,6 +41,9 @@ export interface CreateTapRuntimeOptions {
 	/** Path to the agent data directory. Defaults to ~/.trustedagents */
 	dataDir?: string;
 
+	/** Preloaded config to use instead of re-reading from disk. */
+	preloadedConfig?: TrustedAgentsConfig;
+
 	/** Override options for config loading */
 	configOptions?: LoadTrustedAgentConfigOptions;
 
@@ -110,10 +113,9 @@ export class TapRuntime extends EventEmitter {
 		const dataDir = this.options.dataDir ?? DEFAULT_DATA_DIR;
 
 		// Load config
-		this.config = await loadTrustedAgentConfigFromDataDir(
-			dataDir,
-			this.options.configOptions ?? {},
-		);
+		this.config =
+			this.options.preloadedConfig ??
+			(await loadTrustedAgentConfigFromDataDir(dataDir, this.options.configOptions ?? {}));
 
 		// Create signing provider
 		let signingProvider: SigningProviderLike;

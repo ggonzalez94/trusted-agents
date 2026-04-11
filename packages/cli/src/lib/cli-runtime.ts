@@ -151,6 +151,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 
 	const runtime = await createTapRuntime({
 		dataDir,
+		preloadedConfig: config,
 		configOptions: {
 			// Pass the chain and extra chain configs from the CLI so the SDK
 			// resolves the same chain map when it re-loads internally.

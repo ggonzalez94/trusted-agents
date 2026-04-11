@@ -233,7 +233,10 @@ describe("connect() synchronous waiting (spec §3.1 + Task 4.2)", () => {
 		const connectPromise = service.connect({ inviteUrl: url, waitMs: 5_000 });
 
 		// Deliver the accepted result asynchronously after send() completes.
-		await sleep(30);
+		for (let attempt = 0; attempt < 20 && transport.sentMessages.length === 0; attempt += 1) {
+			await sleep(10);
+		}
+		expect(transport.sentMessages[0]).toBeDefined();
 		const sentRequestId = String(transport.sentMessages[0]!.message.id);
 		await transport.handlers.onResult?.({
 			from: PEER_AGENT.agentId,

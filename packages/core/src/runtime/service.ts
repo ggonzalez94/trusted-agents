@@ -194,6 +194,16 @@ interface PendingActionResultDelivery extends Record<string, unknown> {
 	request: ProtocolMessage;
 }
 
+interface PendingPermissionsUpdateDelivery extends Record<string, unknown> {
+	type: "permissions-update-delivery";
+	connectionId: string;
+	peerAgentId: number;
+	peerName: string;
+	peerAddress: `0x${string}`;
+	grantSet: PermissionGrantSet;
+	request: ProtocolMessage;
+}
+
 // ──────────────────────────────────────────────────────────────
 // Connect waiter infrastructure (spec §3.2)
 // ──────────────────────────────────────────────────────────────
@@ -470,6 +480,7 @@ export class TapMessagingService {
 	private outboxPoller: ReturnType<typeof setInterval> | null = null;
 	private outboxPollInFlight = false;
 	private transportSessionReentryDepth = 0;
+	private legacyStateMigrationsComplete = false;
 	private manifestLoaded = false;
 
 	constructor(context: TapRuntimeContext, options: TapServiceOptions = {}) {
@@ -586,7 +597,7 @@ export class TapMessagingService {
 		// lock across the migration makes it mutually exclusive by construction.
 		await this.ownerLock.acquire();
 		try {
-			await this.runLegacyStateMigrations();
+			await this.ensureLegacyStateMigrated();
 			this.context.transport.setHandlers(this.handlers);
 			await this.context.transport.start?.();
 			this.running = true;
@@ -916,10 +927,7 @@ export class TapMessagingService {
 						);
 					}
 
-					const contact = findUniqueContactForAgentId(
-						await this.context.trustStore.getContacts(),
-						latestEntry.peerAgentId,
-					);
+					const contact = await this.findActiveContactForPendingEntry(latestEntry);
 					if (!contact) {
 						throw new ValidationError(
 							`No active contact found for pending scheduling request ${requestId}`,
@@ -940,11 +948,13 @@ export class TapMessagingService {
 						"rejected",
 					);
 
-					await this.context.transport.send(contact.peerAgentId, outgoing, {
-						peerAddress: contact.peerAgentAddress,
-						waitForAck: false,
-					});
-					await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+					await this.persistSchedulingActionResult(
+						contact,
+						latestEntry.requestId,
+						latestProposal.schedulingId,
+						outgoing,
+						"cancel",
+					);
 					const clearedLocalEvent = await this.cancelLocalSchedulingEvent(
 						latestEntry.requestId,
 						latestTracking.localEventId,
@@ -1364,10 +1374,7 @@ export class TapMessagingService {
 	): Promise<TapPublishGrantSetResult> {
 		return await this.withTransportSession(async () => {
 			const contact = await this.requireContact(peer);
-			const updatedPermissions = replaceGrantedByMe(contact.permissions, grantSet);
-			await this.context.trustStore.updateContact(contact.connectionId, {
-				permissions: updatedPermissions,
-			});
+			await this.completeSupersededPermissionsUpdates(contact.connectionId);
 
 			const request = buildPermissionsUpdate({
 				grantSet,
@@ -1376,9 +1383,25 @@ export class TapMessagingService {
 				note,
 				timestamp: nowISO(),
 			});
-			const receipt = await this.context.transport.send(contact.peerAgentId, request, {
-				peerAddress: contact.peerAgentAddress,
+			const delivery = buildPendingPermissionsUpdateDelivery(contact, grantSet, request);
+			await this.context.requestJournal.putOutbound({
+				requestId: String(request.id),
+				requestKey: `outbound:${request.method}:${String(request.id)}`,
+				direction: "outbound",
+				kind: "request",
+				method: request.method,
+				peerAgentId: contact.peerAgentId,
+				status: "pending",
+				metadata: serializePendingPermissionsUpdateDelivery(delivery),
 			});
+
+			let receipt: TransportReceipt;
+			try {
+				receipt = await this.deliverPendingPermissionsUpdate(delivery);
+			} catch (error: unknown) {
+				await this.recordSendFailure(String(request.id), error);
+				throw error;
+			}
 
 			await this.appendLedger({
 				peer: peerLabel(contact),
@@ -1622,6 +1645,7 @@ export class TapMessagingService {
 	private async processOutboxInternal(): Promise<number> {
 		let processed = await this.retryPendingConnectionRequests();
 		processed += await this.retryPendingConnectionResults();
+		processed += await this.retryPendingPermissionsUpdates();
 		processed += await this.retryPendingActionResults();
 		processed += await this.drainQueuedJournalCommands();
 		return processed;
@@ -1833,6 +1857,7 @@ export class TapMessagingService {
 		await this.ownerLock.acquire();
 		this.transportSessionReentryDepth += 1;
 		try {
+			await this.ensureLegacyStateMigrated();
 			this.context.transport.setHandlers(this.handlers);
 			await this.context.transport.start?.();
 			try {
@@ -1917,6 +1942,14 @@ export class TapMessagingService {
 		await this.migratePendingConnects();
 		await this.migrateOutbox();
 		await this.context.requestJournal.migrateLegacyAcked?.();
+	}
+
+	private async ensureLegacyStateMigrated(): Promise<void> {
+		if (this.legacyStateMigrationsComplete) {
+			return;
+		}
+		await this.runLegacyStateMigrations();
+		this.legacyStateMigrationsComplete = true;
 	}
 
 	private async migratePendingConnects(): Promise<void> {
@@ -2739,15 +2772,26 @@ export class TapMessagingService {
 			);
 		}
 
-		const contact = findUniqueContactForAgentId(
-			await this.context.trustStore.getContacts(),
-			entry.peerAgentId,
-		);
+		const contact = await this.findActiveContactForPendingEntry(entry);
 		if (!contact) {
 			throw new ValidationError(`No active contact found for pending ${label} ${entry.requestId}`);
 		}
 
 		await process(contact, entry.requestId, request);
+	}
+
+	private async findActiveContactForPendingEntry(entry: RequestJournalEntry): Promise<Contact | null> {
+		const metadata = entry.metadata as Record<string, unknown> | undefined;
+		const peerChain = typeof metadata?.peerChain === "string" ? metadata.peerChain : undefined;
+		if (peerChain) {
+			const contact = await this.context.trustStore.findByAgentId(entry.peerAgentId, peerChain);
+			return contact?.status === "active" ? contact : null;
+		}
+
+		return (
+			findUniqueContactForAgentId(await this.context.trustStore.getContacts(), entry.peerAgentId) ??
+			null
+		);
 	}
 
 	private async resolvePendingTransferRequest(entry: RequestJournalEntry): Promise<void> {
@@ -3043,9 +3087,11 @@ export class TapMessagingService {
 		proposal: SchedulingProposal,
 	): Promise<void> {
 		if (!this.schedulingHandler) {
-			this.log(
-				"warn",
-				`No scheduling handler configured — scheduling request ${requestId} stays pending`,
+			await this.deliverSchedulingReject(
+				contact,
+				requestId,
+				proposal,
+				"Scheduling is not supported by this TAP host",
 			);
 			return;
 		}
@@ -3134,7 +3180,13 @@ export class TapMessagingService {
 						"completed",
 					);
 
-					await this.deliverSchedulingOutgoing(contact, outgoing, "accept", proposal.schedulingId);
+					await this.persistSchedulingActionResult(
+						contact,
+						requestId,
+						proposal.schedulingId,
+						outgoing,
+						"accept",
+					);
 
 					await this.context.requestJournal.updateStatus(requestId, "completed");
 					await this.appendLedger({
@@ -3190,7 +3242,15 @@ export class TapMessagingService {
 					"scheduling/request",
 				);
 
-				await this.deliverSchedulingOutgoing(contact, outgoing, "counter", proposal.schedulingId);
+				const delivered = await this.sendSchedulingCounterRequest(
+					contact,
+					requestId,
+					outgoing,
+					proposal.schedulingId,
+				);
+				if (!delivered) {
+					break;
+				}
 
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 				await this.appendLedger({
@@ -3242,7 +3302,13 @@ export class TapMessagingService {
 			"rejected",
 		);
 
-		await this.deliverSchedulingOutgoing(contact, outgoing, "reject", proposal.schedulingId);
+		await this.persistSchedulingActionResult(
+			contact,
+			requestId,
+			proposal.schedulingId,
+			outgoing,
+			"reject",
+		);
 
 		await this.context.requestJournal.updateStatus(requestId, "completed");
 		await this.appendLedger({
@@ -3256,23 +3322,58 @@ export class TapMessagingService {
 		});
 	}
 
-	private async deliverSchedulingOutgoing(
+	private async persistSchedulingActionResult(
 		contact: Contact,
+		requestId: string,
+		schedulingId: string,
 		outgoing: ProtocolMessage,
 		actionType: string,
-		schedulingId: string,
 	): Promise<void> {
+		const delivery = buildPendingActionResultDeliveryFromRequest(
+			contact,
+			schedulingId,
+			outgoing,
+		);
+		await this.context.requestJournal.putOutbound({
+			requestId: String(delivery.request.id),
+			requestKey: `outbound:${delivery.request.method}:${String(delivery.request.id)}`,
+			direction: "outbound",
+			kind: "result",
+			method: delivery.request.method,
+			peerAgentId: contact.peerAgentId,
+			correlationId: requestId,
+			status: "pending",
+			metadata: serializePendingActionResultDelivery(delivery),
+		});
+
+		try {
+			await this.deliverPendingActionResult(delivery);
+		} catch (error: unknown) {
+			this.logResultDeliveryFailure(`Scheduling ${actionType}`, peerLabel(contact), error);
+			await this.recordSendFailure(String(delivery.request.id), error);
+		}
+	}
+
+	private async sendSchedulingCounterRequest(
+		contact: Contact,
+		requestId: string,
+		outgoing: ProtocolMessage,
+		schedulingId: string,
+	): Promise<boolean> {
 		try {
 			await this.context.transport.send(contact.peerAgentId, outgoing, {
 				peerAddress: contact.peerAgentAddress,
 				waitForAck: false,
 			});
 			await this.appendConversationLogSafe(contact, outgoing, "outgoing");
+			return true;
 		} catch (error: unknown) {
+			await this.recordSendFailure(requestId, error);
 			this.log(
 				"warn",
-				`Failed to deliver scheduling ${actionType} for ${schedulingId}: ${toErrorMessage(error)}`,
+				`Failed to deliver scheduling counter for ${schedulingId}: ${toErrorMessage(error)}`,
 			);
+			return false;
 		}
 	}
 
@@ -3803,6 +3904,64 @@ export class TapMessagingService {
 			...(existing.metadata ?? {}),
 			lastError: { message, at: nowISO(), attempts },
 		});
+	}
+
+	private async completeSupersededPermissionsUpdates(connectionId: string): Promise<void> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		for (const entry of pending) {
+			if (entry.method !== PERMISSIONS_UPDATE || entry.kind !== "request") {
+				continue;
+			}
+			const delivery = parsePendingPermissionsUpdateDelivery(entry.metadata);
+			if (delivery?.connectionId !== connectionId) {
+				continue;
+			}
+			await this.markJournalEntryCompleted(entry.requestId);
+		}
+	}
+
+	private async deliverPendingPermissionsUpdate(
+		delivery: PendingPermissionsUpdateDelivery,
+	): Promise<TransportReceipt> {
+		const receipt = await this.context.transport.send(delivery.peerAgentId, delivery.request, {
+			peerAddress: delivery.peerAddress,
+			waitForAck: false,
+		});
+		const contact = await this.context.trustStore.getContact(delivery.connectionId);
+		if (contact) {
+			await this.context.trustStore.updateContact(delivery.connectionId, {
+				permissions: replaceGrantedByMe(contact.permissions, delivery.grantSet),
+			});
+		}
+		await this.markJournalEntryCompleted(String(delivery.request.id));
+		return receipt;
+	}
+
+	private async retryPendingPermissionsUpdates(): Promise<number> {
+		const pending = await this.context.requestJournal.listPending("outbound");
+		let processed = 0;
+		for (const entry of pending) {
+			if (entry.kind !== "request" || entry.method !== PERMISSIONS_UPDATE) {
+				continue;
+			}
+			const delivery = parsePendingPermissionsUpdateDelivery(entry.metadata);
+			if (!delivery) {
+				continue;
+			}
+
+			try {
+				await this.deliverPendingPermissionsUpdate(delivery);
+				processed += 1;
+			} catch (error: unknown) {
+				this.logResultDeliveryFailure(
+					"Permissions update",
+					`${delivery.peerName} (#${delivery.peerAgentId})`,
+					error,
+				);
+				await this.recordSendFailure(entry.requestId, error);
+			}
+		}
+		return processed;
 	}
 
 	private retryPendingActionResults(): Promise<number> {
@@ -4647,6 +4806,22 @@ function getLocalTimezone(): string {
 	return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+function buildPendingActionResultDeliveryFromRequest(
+	contact: Contact,
+	actionId: string,
+	request: ProtocolMessage,
+): PendingActionResultDelivery {
+	return {
+		type: "action-result-delivery",
+		actionId,
+		connectionId: contact.connectionId,
+		peerAgentId: contact.peerAgentId,
+		peerName: contact.peerDisplayName,
+		peerAddress: contact.peerAgentAddress,
+		request,
+	};
+}
+
 function buildPendingActionResultDelivery(
 	contact: Contact,
 	requestId: string,
@@ -4660,19 +4835,33 @@ function buildPendingActionResultDelivery(
 		"transfer/request",
 		response.status,
 	);
-	return {
-		type: "action-result-delivery",
-		actionId: response.actionId,
-		connectionId: contact.connectionId,
-		peerAgentId: contact.peerAgentId,
-		peerName: contact.peerDisplayName,
-		peerAddress: contact.peerAgentAddress,
-		request,
-	};
+	return buildPendingActionResultDeliveryFromRequest(contact, response.actionId, request);
 }
 
 function serializePendingActionResultDelivery(
 	delivery: PendingActionResultDelivery,
+): Record<string, unknown> {
+	return delivery as unknown as Record<string, unknown>;
+}
+
+function buildPendingPermissionsUpdateDelivery(
+	contact: Contact,
+	grantSet: PermissionGrantSet,
+	request: ProtocolMessage,
+): PendingPermissionsUpdateDelivery {
+	return {
+		type: "permissions-update-delivery",
+		connectionId: contact.connectionId,
+		peerAgentId: contact.peerAgentId,
+		peerName: contact.peerDisplayName,
+		peerAddress: contact.peerAgentAddress,
+		grantSet,
+		request,
+	};
+}
+
+function serializePendingPermissionsUpdateDelivery(
+	delivery: PendingPermissionsUpdateDelivery,
 ): Record<string, unknown> {
 	return delivery as unknown as Record<string, unknown>;
 }
@@ -4870,6 +5059,38 @@ function parsePendingActionResultDelivery(
 		peerAgentId: metadata.peerAgentId,
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
+		request: metadata.request,
+	};
+}
+
+function parsePendingPermissionsUpdateDelivery(
+	metadata: Record<string, unknown> | undefined,
+): PendingPermissionsUpdateDelivery | null {
+	if (!metadata || metadata.type !== "permissions-update-delivery") {
+		return null;
+	}
+
+	const peerAddress = asString(metadata.peerAddress);
+	const grantSet = metadata.grantSet;
+	if (
+		typeof metadata.connectionId !== "string" ||
+		typeof metadata.peerAgentId !== "number" ||
+		typeof metadata.peerName !== "string" ||
+		!peerAddress?.startsWith("0x") ||
+		!grantSet ||
+		typeof grantSet !== "object" ||
+		!isProtocolMessage(metadata.request)
+	) {
+		return null;
+	}
+
+	return {
+		type: "permissions-update-delivery",
+		connectionId: metadata.connectionId,
+		peerAgentId: metadata.peerAgentId,
+		peerName: metadata.peerName,
+		peerAddress: peerAddress as `0x${string}`,
+		grantSet: grantSet as PermissionGrantSet,
 		request: metadata.request,
 	};
 }

@@ -224,6 +224,51 @@ describe("tap connect", () => {
 		expect(errorMock).not.toHaveBeenCalled();
 	});
 
+	it("keeps waiting after a queued command finishes with a pending result", async () => {
+		createCliRuntimeMock.mockResolvedValue({
+			...buildRuntime(async () => ({
+				connectionId: "conn-abc",
+				peerName: "Alice",
+				peerAgentId: 42,
+				status: "pending" as const,
+				receipt: { messageId: "msg-1" },
+			})),
+			trustStore: {
+				getContacts: vi.fn(async () => [
+					{
+						connectionId: "conn-abc",
+						peerAgentId: 42,
+						peerChain: "eip155:8453",
+						peerDisplayName: "Alice",
+						status: "active",
+					},
+				]),
+			},
+		});
+		runOrQueueTapCommandMock.mockResolvedValue({
+			status: "completed",
+			queued: true,
+			jobId: "job-1",
+			result: {
+				connectionId: "conn-abc",
+				peerName: "Alice",
+				peerAgentId: 42,
+				status: "pending" as const,
+				receipt: { messageId: "msg-1" },
+			},
+		});
+
+		await connectCommand(INVITE_URL, OPTS, 30, false, false);
+
+		expect(process.exitCode).toBeUndefined();
+		expect(successMock).toHaveBeenCalledWith(
+			expect.objectContaining({ status: "active", waited: true }),
+			OPTS,
+			expect.any(Number),
+		);
+		expect(errorMock).not.toHaveBeenCalled();
+	});
+
 	it("no --yes flag: no prompt is called when service returns active", async () => {
 		const activeResult = {
 			connectionId: "conn-abc",

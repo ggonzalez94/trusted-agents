@@ -126,6 +126,19 @@ describe("matchesSchedulingConstraints", () => {
 		expect(matchesSchedulingConstraints(grant, proposal)).toBe(false);
 	});
 
+	it("returns false when a slot starts inside the window but ends after it", () => {
+		const grant = makeGrant({
+			constraints: {
+				allowedTimeRange: { start: "09:00", end: "18:00" },
+				timezone: "UTC",
+			},
+		});
+		const proposal = makeProposal({
+			slots: [{ start: "2026-03-27T17:30:00Z", end: "2026-03-27T18:30:00Z" }],
+		});
+		expect(matchesSchedulingConstraints(grant, proposal)).toBe(false);
+	});
+
 	it("returns false when allowedTimeRange.start is missing", () => {
 		// Incomplete range object should not match (missing start)
 		const grant = makeGrant({

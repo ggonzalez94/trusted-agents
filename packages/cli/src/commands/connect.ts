@@ -119,6 +119,7 @@ export async function connectCommand(
 					await pollForActiveContact(
 						runtime.trustStore,
 						peerAgent.agentId,
+						peerAgent.chain,
 						Math.ceil(waitMs / 1000),
 						opts,
 						startTime,
@@ -155,6 +156,20 @@ export async function connectCommand(
 		}
 
 		const result = outcome.result;
+		if (result.status === "pending" && outcome.status === "completed" && waitMs > 0) {
+			if (
+				await pollForActiveContact(
+					runtime.trustStore,
+					peerAgent.agentId,
+					peerAgent.chain,
+					Math.ceil(waitMs / 1000),
+					opts,
+					startTime,
+				)
+			) {
+				return;
+			}
+		}
 
 		if (result.status === "active") {
 			success(
@@ -218,6 +233,7 @@ export async function connectCommand(
 async function pollForActiveContact(
 	trustStore: ITrustStore,
 	peerAgentId: number,
+	peerChain: string,
 	waitSeconds: number,
 	opts: GlobalOptions,
 	startTime: number,
@@ -225,10 +241,11 @@ async function pollForActiveContact(
 	const pollIntervalMs = 3000;
 	const deadline = Date.now() + waitSeconds * 1000;
 
-	while (Date.now() < deadline) {
-		await new Promise((r) => setTimeout(r, pollIntervalMs));
+	while (Date.now() <= deadline) {
 		const contacts = await trustStore.getContacts();
-		const match = contacts.find((c) => c.peerAgentId === peerAgentId && c.status === "active");
+		const match = contacts.find(
+			(c) => c.peerAgentId === peerAgentId && c.peerChain === peerChain && c.status === "active",
+		);
 		if (match) {
 			info(`Connection with ${match.peerDisplayName} is now active.`, opts);
 			success(
@@ -244,6 +261,10 @@ async function pollForActiveContact(
 			);
 			return true;
 		}
+		if (Date.now() >= deadline) {
+			break;
+		}
+		await new Promise((r) => setTimeout(r, pollIntervalMs));
 	}
 	return false;
 }

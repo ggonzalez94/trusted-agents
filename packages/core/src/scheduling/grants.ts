@@ -15,13 +15,8 @@ function getLocalDayOfWeek(date: Date, timezone: string): number {
 	return index === -1 ? date.getDay() : index;
 }
 
-function isSlotWithinTimeRange(
-	isoStart: string,
-	rangeStart: string,
-	rangeEnd: string,
-	timezone: string,
-): boolean {
-	const date = new Date(isoStart);
+function toLocalMinutes(isoTime: string, timezone: string): number {
+	const date = new Date(isoTime);
 	const formatter = new Intl.DateTimeFormat("en-US", {
 		hour: "numeric",
 		minute: "numeric",
@@ -29,19 +24,32 @@ function isSlotWithinTimeRange(
 		timeZone: timezone,
 	});
 	const localTime = formatter.format(date);
-	// localTime format: "HH:MM" (24h), e.g. "14:30"
-	// Normalize to "HH:MM" in case hour is single digit
 	const [hourStr, minuteStr] = localTime.split(":");
 	const hour = Number(hourStr);
 	const minute = Number(minuteStr);
-	const totalMinutes = hour * 60 + minute;
+	return hour * 60 + minute;
+}
+
+function isSlotWithinTimeRange(
+	isoStart: string,
+	isoEnd: string,
+	rangeStart: string,
+	rangeEnd: string,
+	timezone: string,
+): boolean {
+	const slotStartMinutes = toLocalMinutes(isoStart, timezone);
+	const slotEndMinutes = toLocalMinutes(isoEnd, timezone);
 
 	const rsParts = rangeStart.split(":").map(Number);
 	const reParts = rangeEnd.split(":").map(Number);
 	const rangeStartMinutes = (rsParts[0] ?? 0) * 60 + (rsParts[1] ?? 0);
 	const rangeEndMinutes = (reParts[0] ?? 0) * 60 + (reParts[1] ?? 0);
 
-	return totalMinutes >= rangeStartMinutes && totalMinutes < rangeEndMinutes;
+	return (
+		slotStartMinutes >= rangeStartMinutes &&
+		slotEndMinutes <= rangeEndMinutes &&
+		slotStartMinutes < slotEndMinutes
+	);
 }
 
 // ── Exports ───────────────────────────────────────────────────────────────────
@@ -85,7 +93,7 @@ export function filterSchedulingProposalSlots(
 			if (
 				typeof range.start === "string" &&
 				typeof range.end === "string" &&
-				!isSlotWithinTimeRange(slot.start, range.start, range.end, timezone)
+				!isSlotWithinTimeRange(slot.start, slot.end, range.start, range.end, timezone)
 			) {
 				return false;
 			}
