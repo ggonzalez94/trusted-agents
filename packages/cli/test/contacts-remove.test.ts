@@ -57,6 +57,7 @@ describe("tap contacts remove", () => {
 		const revokeConnection = vi.fn(async () => {});
 		const removeContact = vi.fn(async () => {});
 
+		const stop = vi.fn(async () => {});
 		createCliRuntimeMock.mockResolvedValue({
 			trustStore: {
 				getContacts: vi.fn(async () => [ACTIVE_CONTACT]),
@@ -65,6 +66,7 @@ describe("tap contacts remove", () => {
 			service: {
 				revokeConnection,
 			},
+			stop,
 		});
 
 		await contactsRemoveCommand("conn-abc-123", OPTS);
@@ -77,6 +79,7 @@ describe("tap contacts remove", () => {
 		const successArgs = successMock.mock.calls[0]?.[0] as { removed: string; peer: string };
 		expect(successArgs.removed).toBe("conn-abc-123");
 		expect(successArgs.peer).toBe("Bob");
+		expect(stop).toHaveBeenCalledOnce();
 	});
 
 	it("still removes locally even when revokeConnection throws", async () => {
@@ -88,6 +91,7 @@ describe("tap contacts remove", () => {
 			removedConnectionId = id;
 		});
 
+		const stop = vi.fn(async () => {});
 		createCliRuntimeMock.mockResolvedValue({
 			trustStore: {
 				getContacts: vi.fn(async () => [ACTIVE_CONTACT]),
@@ -96,6 +100,7 @@ describe("tap contacts remove", () => {
 			service: {
 				revokeConnection,
 			},
+			stop,
 		});
 
 		await contactsRemoveCommand("conn-abc-123", OPTS);
@@ -108,9 +113,12 @@ describe("tap contacts remove", () => {
 		expect(successMock).toHaveBeenCalledOnce();
 		// No error output
 		expect(process.exitCode).not.toBe(4);
+		// Runtime was cleaned up
+		expect(stop).toHaveBeenCalledOnce();
 	});
 
 	it("returns NOT_FOUND when the connectionId does not exist", async () => {
+		const stop = vi.fn(async () => {});
 		createCliRuntimeMock.mockResolvedValue({
 			trustStore: {
 				getContacts: vi.fn(async () => []),
@@ -118,6 +126,7 @@ describe("tap contacts remove", () => {
 			service: {
 				revokeConnection: vi.fn(),
 			},
+			stop,
 		});
 
 		await contactsRemoveCommand("conn-nonexistent", OPTS);

@@ -1,3 +1,4 @@
+import type { TapRuntime } from "trusted-agents-sdk";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
@@ -9,10 +10,11 @@ export async function contactsRemoveCommand(
 	opts: GlobalOptions,
 ): Promise<void> {
 	const startTime = Date.now();
+	let runtime: TapRuntime | undefined;
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:contacts-remove" });
+		runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:contacts-remove" });
 
 		// Find the contact first
 		const contacts = await runtime.trustStore.getContacts();
@@ -40,5 +42,14 @@ export async function contactsRemoveCommand(
 		success({ removed: connectionId, peer: contact.peerDisplayName }, opts, startTime);
 	} catch (err) {
 		handleCommandError(err, opts);
+	} finally {
+		// Release the transport owner lock and any XMTP resources held by the
+		// runtime. Important for short-lived CLI commands so parallel tap
+		// processes can acquire the lock without waiting for process exit.
+		if (runtime) {
+			await runtime.stop().catch(() => {
+				/* best-effort: cleanup failures should not mask the primary outcome */
+			});
+		}
 	}
 }
