@@ -50,7 +50,9 @@ const OPTS = { json: true };
 describe("tap contacts remove", () => {
 	afterEach(() => {
 		vi.clearAllMocks();
-		process.exitCode = 0;
+		// Clear rather than set to 0: `undefined` means "not set" while 0 means
+		// "explicitly succeeded". The sibling connect.test.ts uses this pattern.
+		process.exitCode = undefined;
 	});
 
 	it("sends connection/revoke and removes the local contact on success", async () => {
