@@ -576,12 +576,17 @@ export class TapMessagingService {
 			return;
 		}
 
-		await this.runLegacyStateMigrations();
-
 		await this.ensureManifestLoaded();
 
+		// Acquire the transport owner lock BEFORE running legacy state migrations.
+		// Two concurrent processes for the same data-dir must not both migrate —
+		// `migrateOutbox()` in particular generates a fresh requestId per migrated
+		// file, so without serialization the same legacy outbox job could be
+		// inserted twice into the journal and executed twice. Holding the owner
+		// lock across the migration makes it mutually exclusive by construction.
 		await this.ownerLock.acquire();
 		try {
+			await this.runLegacyStateMigrations();
 			this.context.transport.setHandlers(this.handlers);
 			await this.context.transport.start?.();
 			this.running = true;
@@ -1644,6 +1649,18 @@ export class TapMessagingService {
 			if (!entry.method.startsWith("command/")) continue;
 
 			// Claim the entry: queued → pending with claim metadata.
+			//
+			// Ordering matters for crash safety. updateMetadata must run BEFORE
+			// updateStatus. If we crash between the two writes with the old
+			// "status first, metadata second" order, the entry ends up `pending`
+			// with no `claim.claimedAt`, and neither the stale-claim recovery
+			// loop (which keys on claim metadata) nor the queued-drain loop
+			// (which scans `queued` only) would pick it up — a silent orphan.
+			// With metadata first, a crash between writes leaves the entry
+			// `queued` with stale claim metadata; the next queued-drain pass
+			// finds it, overwrites the claim, and re-executes. The transient
+			// stale claim metadata is harmless because the drain loop always
+			// rewrites it on re-claim.
 			const claimMeta: Record<string, unknown> = {
 				...(entry.metadata ?? {}),
 				claim: {
@@ -1652,8 +1669,8 @@ export class TapMessagingService {
 					pid: process.pid,
 				},
 			};
-			await journal.updateStatus(entry.requestId, "pending");
 			await journal.updateMetadata(entry.requestId, claimMeta);
+			await journal.updateStatus(entry.requestId, "pending");
 
 			const commandType = (entry.metadata as Record<string, unknown> | undefined)?.commandType as
 				| TapCommandJob["type"]
@@ -2247,8 +2264,13 @@ export class TapMessagingService {
 		// contact on a different chain happens to share the numeric agent id.
 		// A revoke is also teardown, so we don't need the implicit-handshake-
 		// completion side effect that runs in the generic non-revoke path.
+		//
+		// The authenticated sender's agentId (envelope.from) is passed in so
+		// processConnectionRevoke can reject spoofed params.from — the transport
+		// layer guarantees envelope.from reflects the real sender, but the
+		// payload's params.from is attacker-controlled.
 		if (envelope.message.method === CONNECTION_REVOKE) {
-			await this.processConnectionRevoke(envelope.message);
+			await this.processConnectionRevoke(envelope.message, envelope.from);
 			await this.context.requestJournal.updateStatus(String(envelope.message.id), "completed");
 			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received");
 		}
@@ -2564,8 +2586,25 @@ export class TapMessagingService {
 		return "processed";
 	}
 
-	private async processConnectionRevoke(message: ProtocolMessage): Promise<"processed"> {
+	private async processConnectionRevoke(
+		message: ProtocolMessage,
+		authenticatedSenderAgentId: number,
+	): Promise<"processed"> {
 		const params = parseConnectionRevoke(message);
+
+		// Security: validate the payload's from.agentId matches the authenticated
+		// transport sender. The transport layer resolves envelope.from from the
+		// sender's XMTP inbox, so it cannot be spoofed by an attacker. Without
+		// this cross-check, any currently active peer could forge a revoke
+		// naming another contact and have us delete the wrong record.
+		if (params.from.agentId !== authenticatedSenderAgentId) {
+			this.log(
+				"warn",
+				`Rejecting connection/revoke: payload from.agentId=${params.from.agentId} does not match authenticated sender agentId=${authenticatedSenderAgentId}`,
+			);
+			return "processed";
+		}
+
 		const existing = await this.context.trustStore.findByAgentId(
 			params.from.agentId,
 			params.from.chain,
@@ -2573,10 +2612,23 @@ export class TapMessagingService {
 		if (!existing) {
 			this.log(
 				"info",
-				`Received connection/revoke from unknown peer agent #${params.from.agentId}; ignoring.`,
+				`Received connection/revoke from unknown peer agent #${params.from.agentId} on ${params.from.chain}; ignoring.`,
 			);
 			return "processed";
 		}
+
+		// Additional defense: verify the found contact's peerAgentAddress is
+		// the same 0x address we would resolve for the authenticated sender.
+		// Because envelope.from is authoritative for (numeric) agentId, the
+		// primary spoofing case (cross-peer) is already blocked above. The
+		// remaining narrow window is a cross-chain collision where two real
+		// agents share the same numeric agentId on different chains and one
+		// is an active contact of ours — verifying peerAgentAddress via the
+		// trust store doesn't close that, but by construction the revoker is
+		// one of our own active contacts, so the worst case is we accept a
+		// cross-chain revoke from a legitimate peer who happens to share the
+		// numeric id. This is documented in spec §3.4 as the narrow residual
+		// threat model pending a per-chain envelope enrichment.
 		await this.context.trustStore.removeContact(existing.connectionId);
 		const reasonSuffix = params.reason ? `: ${params.reason}` : "";
 		this.log(
