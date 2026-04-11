@@ -999,13 +999,10 @@ export class TapMessagingService {
 			// the chain check, a connect to chain B would inherit chain A's requestId
 			// and let chain A's result satisfy chain B's waiter.
 			//
-			// Searches both `queued` and `pending` entries — `queued` covers the case
-			// where a prior connect() couldn't acquire the transport lock and wrote an
-			// intent for the transport owner to drain later.
-			const nonTerminalOutbound = [
-				...(await this.context.requestJournal.listQueued("outbound")),
-				...(await this.context.requestJournal.listPending("outbound")),
-			];
+			// `listPending` returns both `queued` and `pending` entries (see
+			// request-journal.ts), so a prior connect() that couldn't acquire the
+			// transport lock and wrote a queued intent is still found here.
+			const nonTerminalOutbound = await this.context.requestJournal.listPending("outbound");
 			const existingOutboundEntry = nonTerminalOutbound.find(
 				(entry) =>
 					entry.method === CONNECTION_REQUEST &&

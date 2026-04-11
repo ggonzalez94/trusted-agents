@@ -166,11 +166,24 @@ export class FileRequestJournal implements IRequestJournal {
 		);
 	}
 
+	/**
+	 * Returns all non-terminal outbound entries — both `queued` (intent
+	 * exists but wire has not been sent) and `pending` (wire sent, result
+	 * not yet received). Callers that specifically want one status can
+	 * filter the result inline; callers that want "in-flight work from
+	 * either state" (reconciliation, sync reports, status queries) get
+	 * the complete picture without missing queued intents.
+	 *
+	 * Historical note: an earlier revision of this method filtered strictly
+	 * on `status === "pending"`, but that silently hid queued entries from
+	 * callers like `buildSyncReport` and `listPendingRequests`. Keeping
+	 * the broader "not completed" semantics is the safer default.
+	 */
 	async listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]> {
 		const file = await this.load();
 		return file.entries.filter(
 			(entry) =>
-				entry.status === "pending" && (direction === undefined || entry.direction === direction),
+				entry.status !== "completed" && (direction === undefined || entry.direction === direction),
 		);
 	}
 

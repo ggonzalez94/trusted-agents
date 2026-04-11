@@ -149,7 +149,10 @@ describe("FileRequestJournal", () => {
 		expect(queued.map((e) => e.requestId)).toEqual(["req-queued"]);
 	});
 
-	it("listPending returns only pending entries (not queued)", async () => {
+	it("listPending returns all non-completed entries (both queued and pending)", async () => {
+		// listPending intentionally has "non-terminal" semantics, not "pending-only".
+		// Callers like reconciliation loops, status queries, and sync reports want
+		// to see all in-flight work; narrowing would silently hide queued intents.
 		const journal = await createJournal();
 
 		await journal.putOutbound({
@@ -181,7 +184,7 @@ describe("FileRequestJournal", () => {
 		});
 
 		const pending = await journal.listPending();
-		expect(pending.map((e) => e.requestId)).toEqual(["req-pending"]);
+		expect(pending.map((e) => e.requestId).sort()).toEqual(["req-pending", "req-queued"]);
 	});
 
 	it("persists metadata.lastError with incrementing attempts", async () => {
