@@ -1647,7 +1647,8 @@ describe("TapMessagingService", () => {
 		await service.start();
 
 		// Simulate a prior `connect()` call that left a pending outbound entry
-		// in the journal. The contact was then (hypothetically) wiped.
+		// in the journal. The contact was then (hypothetically) wiped. Must
+		// include metadata.peerChain so the security gate's chain check passes.
 		await requestJournal.putOutbound({
 			requestId: "req-recovered",
 			requestKey: "outbound:req-recovered",
@@ -1656,6 +1657,7 @@ describe("TapMessagingService", () => {
 			method: "connection/request",
 			peerAgentId,
 			status: "pending",
+			metadata: { peerChain },
 		});
 		expect(await trustStore.findByAgentId(peerAgentId, peerChain)).toBeNull();
 
@@ -1729,6 +1731,61 @@ describe("TapMessagingService", () => {
 		).resolves.toEqual({ status: "duplicate" });
 
 		expect(await trustStore.findByAgentId(peerAgentId, peerChain)).toBeNull();
+
+		await service.stop();
+	});
+
+	it("rejects a connection result whose chain does not match the outbound journal entry (§5.3 cross-chain collision)", async () => {
+		// Two on-chain identities can legitimately share the same numeric agentId
+		// across different chains. The security gate must require the chain in
+		// metadata.peerChain to match result.from.chain, otherwise a pending
+		// outbound request for chain A could be used as proof of initiation for
+		// an unsolicited result claiming to come from the same agentId on chain B.
+		const transport = new FakeTransport();
+		const trustStore = createMemoryTrustStore();
+
+		const sharedAgentId = 42;
+		const chainA = "eip155:8453"; // Base
+		const chainB = "eip155:167000"; // Taiko — same numeric agentId, different chain
+
+		const { service, requestJournal } = await createService(
+			{},
+			{ transport, trustStore, resolver: createStaticResolver() },
+		);
+		await service.start();
+
+		// Seed a pending outbound connection/request for chain A.
+		await requestJournal.putOutbound({
+			requestId: "req-chain-a",
+			requestKey: "outbound:req-chain-a",
+			direction: "outbound",
+			kind: "request",
+			method: "connection/request",
+			peerAgentId: sharedAgentId,
+			status: "pending",
+			metadata: { peerChain: chainA },
+		});
+
+		// Attacker sends a connection/result claiming to come from chain B but
+		// echoing the chain A request's id.
+		const crossChainResult = buildConnectionResult({
+			requestId: "req-chain-a",
+			from: { agentId: sharedAgentId, chain: chainB },
+			status: "accepted",
+			timestamp: "2026-03-08T00:00:01.000Z",
+		});
+
+		await expect(
+			transport.handlers.onResult?.({
+				from: sharedAgentId,
+				senderInboxId: "peer-inbox-chain-b-attacker",
+				message: crossChainResult,
+			}),
+		).resolves.toEqual({ status: "duplicate" });
+
+		// No contact created for either chain.
+		expect(await trustStore.findByAgentId(sharedAgentId, chainA)).toBeNull();
+		expect(await trustStore.findByAgentId(sharedAgentId, chainB)).toBeNull();
 
 		await service.stop();
 	});
@@ -1829,7 +1886,8 @@ describe("TapMessagingService", () => {
 		await service.start();
 
 		const unknownAgentId = 888;
-		// Seed proof-of-initiation so we reach the resolver-fails path.
+		// Seed proof-of-initiation so we reach the resolver-fails path. Must
+		// include metadata.peerChain so the security gate's chain check passes.
 		await requestJournal.putOutbound({
 			requestId: "req-resolver-fail",
 			requestKey: "outbound:req-resolver-fail",
@@ -1838,6 +1896,7 @@ describe("TapMessagingService", () => {
 			method: "connection/request",
 			peerAgentId: unknownAgentId,
 			status: "pending",
+			metadata: { peerChain: PEER_AGENT.chain },
 		});
 
 		const acceptedResult = buildConnectionResult({

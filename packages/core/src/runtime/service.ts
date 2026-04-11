@@ -994,15 +994,24 @@ export class TapMessagingService {
 
 			// §3.2 wire-level idempotency: reuse the requestId from an existing
 			// non-terminal outbound connection/request journal entry if one exists for
-			// this peer. This prevents duplicate wire requests when connect() is retried
-			// before the previous attempt has received a result.
-			const existingOutboundEntry = (
-				await this.context.requestJournal.listPending("outbound")
-			).find(
+			// this (peer, chain) pair. Scope matters because two on-chain identities
+			// can legitimately share the same numeric agentId across chains; without
+			// the chain check, a connect to chain B would inherit chain A's requestId
+			// and let chain A's result satisfy chain B's waiter.
+			//
+			// Searches both `queued` and `pending` entries — `queued` covers the case
+			// where a prior connect() couldn't acquire the transport lock and wrote an
+			// intent for the transport owner to drain later.
+			const nonTerminalOutbound = [
+				...(await this.context.requestJournal.listQueued("outbound")),
+				...(await this.context.requestJournal.listPending("outbound")),
+			];
+			const existingOutboundEntry = nonTerminalOutbound.find(
 				(entry) =>
 					entry.method === CONNECTION_REQUEST &&
 					entry.peerAgentId === peerAgent.agentId &&
-					entry.kind === "request",
+					entry.kind === "request" &&
+					(entry.metadata as { peerChain?: string } | undefined)?.peerChain === peerAgent.chain,
 			);
 			const requestId = existingOutboundEntry?.requestId ?? generateNonce();
 
@@ -1068,6 +1077,10 @@ export class TapMessagingService {
 			}
 
 			// Persist the outbound journal entry (skipped if reusing an existing entry).
+			// `peerChain` is stored in metadata so the idempotency lookup above and the
+			// security gate in handleConnectionResult can both require a chain match,
+			// preventing cross-chain agent-id collisions from satisfying each other's
+			// proof of initiation.
 			if (!existingOutboundEntry) {
 				await this.context.requestJournal.putOutbound({
 					requestId,
@@ -1077,6 +1090,7 @@ export class TapMessagingService {
 					method: CONNECTION_REQUEST,
 					peerAgentId: peerAgent.agentId,
 					status: "pending",
+					metadata: { peerChain: peerAgent.chain },
 				});
 			}
 
@@ -3248,11 +3262,20 @@ export class TapMessagingService {
 		// entry survived) while closing the self-establishment hole.
 		if (!existingContact) {
 			const outboundEntry = await this.context.requestJournal.getByRequestId(result.requestId);
+			// Chain-scoped proof: two on-chain identities can legitimately share the
+			// same numeric agentId across chains, so the gate must also match
+			// metadata.peerChain against result.from.chain. Legacy entries written
+			// before peerChain was persisted have no chain in metadata and are
+			// intentionally NOT accepted — the security guarantee is that EVERY
+			// contact creation requires fresh chain-scoped proof of initiation.
+			const outboundChain = (outboundEntry?.metadata as { peerChain?: string } | undefined)
+				?.peerChain;
 			const hasValidOutboundProof =
 				outboundEntry !== null &&
 				outboundEntry.direction === "outbound" &&
 				outboundEntry.method === CONNECTION_REQUEST &&
-				outboundEntry.peerAgentId === result.from.agentId;
+				outboundEntry.peerAgentId === result.from.agentId &&
+				outboundChain === result.from.chain;
 			if (!hasValidOutboundProof) {
 				this.log(
 					"warn",
