@@ -152,6 +152,7 @@ describe("fetchRegistrationFile", () => {
 	it.each([
 		"https://169.254.10.20/registration.json",
 		"https://[::1]/registration.json",
+		"https://[::ffff:127.0.0.1]/registration.json",
 		"https://[fe80::1]/registration.json",
 		"https://[fc00::1]/registration.json",
 		"https://[fd12:3456::1]/registration.json",
@@ -162,5 +163,21 @@ describe("fetchRegistrationFile", () => {
 		await expect(result).rejects.toBeInstanceOf(IdentityError);
 		await expect(result).rejects.toThrow("Registration URI is not allowed");
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects redirects to unsafe hosts", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(null, {
+				status: 302,
+				headers: {
+					location: "https://127.0.0.1/registration.json",
+				},
+			}),
+		);
+
+		await expect(
+			fetchRegistrationFile("https://safe.example.test/registration.json"),
+		).rejects.toThrow("Registration URI is not allowed");
+		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 });

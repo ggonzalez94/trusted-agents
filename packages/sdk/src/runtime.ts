@@ -41,6 +41,9 @@ export interface CreateTapRuntimeOptions {
 	/** Path to the agent data directory. Defaults to ~/.trustedagents */
 	dataDir?: string;
 
+	/** Preloaded config to use instead of re-reading from disk. */
+	preloadedConfig?: TrustedAgentsConfig;
+
 	/** Override options for config loading */
 	configOptions?: LoadTrustedAgentConfigOptions;
 
@@ -87,7 +90,7 @@ export interface SigningProviderLike {
  */
 export class TapRuntime extends EventEmitter {
 	private readonly options: CreateTapRuntimeOptions;
-	private config: TrustedAgentsConfig | undefined;
+	private _config: TrustedAgentsConfig | undefined;
 	private context: TapRuntimeContext | undefined;
 	private _service: TapMessagingService | undefined;
 	private initialized = false;
@@ -109,32 +112,27 @@ export class TapRuntime extends EventEmitter {
 
 		const dataDir = this.options.dataDir ?? DEFAULT_DATA_DIR;
 
-		// Load config
-		this.config = await loadTrustedAgentConfigFromDataDir(
-			dataDir,
-			this.options.configOptions ?? {},
-		);
+		this._config =
+			this.options.preloadedConfig ??
+			(await loadTrustedAgentConfigFromDataDir(dataDir, this.options.configOptions ?? {}));
 
-		// Create signing provider
 		let signingProvider: SigningProviderLike;
 		if (this.options.createSigningProvider) {
-			signingProvider = await this.options.createSigningProvider(this.config);
+			signingProvider = await this.options.createSigningProvider(this._config);
 		} else {
-			// Default: use OwsSigningProvider
 			signingProvider = new OwsSigningProvider(
-				this.config.ows.wallet,
-				this.config.chain,
-				this.config.ows.apiKey,
+				this._config.ows.wallet,
+				this._config.chain,
+				this._config.ows.apiKey,
 			);
 		}
 
-		// Build runtime context
 		const contextOptions: BuildTapRuntimeContextOptions = {
 			// biome-ignore lint/suspicious/noExplicitAny: SigningProviderLike is compatible with SigningProvider
 			signingProvider: signingProvider as any,
 			...this.options.contextOptions,
 		};
-		this.context = await buildDefaultTapRuntimeContext(this.config, contextOptions);
+		this.context = await buildDefaultTapRuntimeContext(this._config, contextOptions);
 
 		// Wire up event emission through hooks
 		const userHooks = this.options.hooks ?? {};
@@ -188,6 +186,14 @@ export class TapRuntime extends EventEmitter {
 	/** Access the request journal. Requires start() first. */
 	get requestJournal(): IRequestJournal {
 		return this.requireContext().requestJournal;
+	}
+
+	/** Access the loaded TAP config. Requires init() first. */
+	get config(): TrustedAgentsConfig {
+		if (!this._config) {
+			throw new Error("Runtime not initialized. Call start() first.");
+		}
+		return this._config;
 	}
 
 	private requireService(): TapMessagingService {

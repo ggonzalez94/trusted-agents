@@ -1,3 +1,4 @@
+import { TransportOwnershipError } from "trusted-agents-core";
 /**
  * Tests for `tap contacts remove` — verifies that the command:
  * - Sends a connection/revoke via the service before removing locally
@@ -84,7 +85,7 @@ describe("tap contacts remove", () => {
 		expect(stop).toHaveBeenCalledOnce();
 	});
 
-	it("still removes locally even when revokeConnection throws", async () => {
+	it("still removes locally when revokeConnection throws a non-ownership error", async () => {
 		const revokeConnection = vi.fn(async () => {
 			throw new Error("transport unavailable");
 		});
@@ -117,6 +118,35 @@ describe("tap contacts remove", () => {
 		expect(process.exitCode).not.toBe(4);
 		// Runtime was cleaned up
 		expect(stop).toHaveBeenCalledOnce();
+	});
+
+	it("does not remove locally when another TAP process owns transport", async () => {
+		const revokeConnection = vi.fn(async () => {
+			throw new TransportOwnershipError("owned");
+		});
+		const removeContact = vi.fn(async () => {});
+
+		const stop = vi.fn(async () => {});
+		createCliRuntimeMock.mockResolvedValue({
+			trustStore: {
+				getContacts: vi.fn(async () => [ACTIVE_CONTACT]),
+				removeContact,
+			},
+			service: {
+				revokeConnection,
+			},
+			stop,
+		});
+
+		await contactsRemoveCommand("conn-abc-123", OPTS);
+
+		expect(process.exitCode).toBe(2);
+		expect(removeContact).not.toHaveBeenCalled();
+		expect(errorMock).toHaveBeenCalledWith(
+			"TRANSPORT_ERROR",
+			expect.stringContaining("active TAP owner"),
+			OPTS,
+		);
 	});
 
 	it("returns NOT_FOUND when the connectionId does not exist", async () => {

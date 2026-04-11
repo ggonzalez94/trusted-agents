@@ -35,16 +35,14 @@ describe("config-loader", () => {
 
 		it("allows --config without a separately selected data dir", async () => {
 			process.env.HOME = tmpDir;
-			const defaultDataDir = join(tmpDir, ".trustedagents");
 			const configPath = join(tmpDir, "custom-config.yaml");
-			await mkdir(defaultDataDir, { recursive: true });
 			await writeFile(configPath, ["agent_id: 1", "chain: eip155:8453", ""].join("\n"), "utf-8");
 
 			const config = await loadConfig({ config: configPath }, { requireAgentId: false });
 
 			expect(config.agentId).toBe(1);
 			expect(config.chain).toBe("eip155:8453");
-			expect(config.dataDir).toBe(defaultDataDir);
+			expect(config.dataDir).toBe(tmpDir);
 		});
 
 		it("should prefer config.yaml inside dataDir when it exists", async () => {
@@ -79,6 +77,11 @@ describe("config-loader", () => {
 			process.env.TAP_DATA_DIR = "/env/data";
 			const dir = resolveDataDir({ dataDir: "/flag/data" });
 			expect(dir).toBe("/flag/data");
+		});
+
+		it("uses the config file directory when --config is set without a separate data dir", () => {
+			const dir = resolveDataDir({ config: "/custom/agent/config.yaml" });
+			expect(dir).toBe("/custom/agent");
 		});
 	});
 

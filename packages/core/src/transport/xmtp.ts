@@ -755,6 +755,10 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<Contact | null> {
+		if (this.isBootstrapMethod(message.method)) {
+			return null;
+		}
+
 		const metadataContact = await this.findContactByConnectionId(senderAddresses, message);
 		if (metadataContact) {
 			return metadataContact;

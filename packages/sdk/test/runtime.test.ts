@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TapRuntime, createTapRuntime } from "../src/index.js";
 
@@ -59,5 +62,49 @@ describe("TapRuntime event subscription", () => {
 		runtime.on("log", (entry) => logs.push(entry));
 		runtime.emit("log", { level: "info", message: "test" });
 		expect(logs).toEqual([{ level: "info", message: "test" }]);
+	});
+});
+
+describe("TapRuntime init", () => {
+	it("uses preloaded config instead of reloading from disk", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "tap-sdk-runtime-"));
+		const runtime = await createTapRuntime({
+			dataDir,
+			preloadedConfig: {
+				agentId: 123,
+				chain: "eip155:8453",
+				ows: { wallet: "wallet-1", apiKey: "ows_key_test" },
+				dataDir,
+				chains: {},
+				inviteExpirySeconds: 3600,
+				resolveCacheTtlMs: 60_000,
+				resolveCacheMaxEntries: 128,
+			},
+			createSigningProvider: async () =>
+				({
+					getAddress: async () => "0x0000000000000000000000000000000000000001",
+					signMessage: async () => "0x1",
+					signTypedData: async () => "0x1",
+					signTransaction: async () => "0x1",
+					signAuthorization: async () => ({}),
+				}) as never,
+			contextOptions: {
+				transport: {
+					setHandlers: () => {},
+					send: async () => ({
+						received: true,
+						requestId: "test",
+						status: "received",
+						receivedAt: new Date().toISOString(),
+					}),
+					isReachable: async () => true,
+				},
+			},
+		});
+
+		await runtime.init();
+
+		expect(runtime.config.agentId).toBe(123);
+		expect(runtime.config.dataDir).toBe(dataDir);
 	});
 });
