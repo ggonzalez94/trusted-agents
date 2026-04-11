@@ -170,7 +170,7 @@ async function executeTapGatewayAction(
 				identity: params.identity,
 				peer: requireString(params.peer, "peer"),
 				asset: params.asset ?? "native",
-				amount: requireString(params.amount, "amount"),
+				amount: requireAmount(params.amount, "amount"),
 				chain: optionalString(params.chain),
 				toAddress: normalizeAddress(params.toAddress),
 				note: optionalString(params.note),
@@ -179,7 +179,7 @@ async function executeTapGatewayAction(
 			return await registry.transfer({
 				identity: params.identity,
 				asset: params.asset ?? "native",
-				amount: requireString(params.amount, "amount"),
+				amount: requireAmount(params.amount, "amount"),
 				chain: optionalString(params.chain),
 				toAddress: requireAddress(params.toAddress, "toAddress"),
 			});
@@ -235,6 +235,17 @@ function requireString(value: string | undefined, name: string): string {
 		throw new Error(`${name} is required`);
 	}
 	return value.trim();
+}
+
+function requireAmount(value: string | undefined, name: string): string {
+	const trimmed = requireString(value, name);
+	const parsed = Number(trimmed);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		throw new Error(
+			`${name} must be a positive number (got: ${trimmed}). Use a decimal string like "0.5".`,
+		);
+	}
+	return trimmed;
 }
 
 function optionalString(value: string | undefined): string | undefined {

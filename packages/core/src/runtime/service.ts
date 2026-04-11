@@ -595,7 +595,14 @@ export class TapMessagingService {
 		} catch (error) {
 			this.clearOutboxPoller();
 			this.running = false;
-			await this.ownerLock.release().catch(() => {});
+			await this.ownerLock
+				.release()
+				.catch((releaseError: unknown) =>
+					this.log(
+						"warn",
+						`Failed to release transport owner lock after start() error: ${toErrorMessage(releaseError)}`,
+					),
+				);
 			throw error;
 		}
 	}
@@ -612,7 +619,14 @@ export class TapMessagingService {
 			await this.context.transport.stop?.();
 		} finally {
 			this.running = false;
-			await this.ownerLock.release().catch(() => {});
+			await this.ownerLock
+				.release()
+				.catch((releaseError: unknown) =>
+					this.log(
+						"warn",
+						`Failed to release transport owner lock during stop(): ${toErrorMessage(releaseError)}`,
+					),
+				);
 		}
 	}
 
@@ -1829,7 +1843,14 @@ export class TapMessagingService {
 			}
 		} finally {
 			this.transportSessionReentryDepth -= 1;
-			await this.ownerLock.release().catch(() => {});
+			await this.ownerLock
+				.release()
+				.catch((releaseError: unknown) =>
+					this.log(
+						"warn",
+						`Failed to release transport owner lock after transport session: ${toErrorMessage(releaseError)}`,
+					),
+				);
 		}
 	}
 

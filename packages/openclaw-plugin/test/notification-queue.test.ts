@@ -155,25 +155,65 @@ describe("TapNotificationQueue", () => {
 			expect(ids).toContain("new-1");
 		});
 
-		it("never evicts escalation items, allowing overflow", () => {
+		it("allows bounded escalation overflow but enforces hard cap to prevent unbounded growth", () => {
+			const dropped: string[] = [];
+			const queue = new TapNotificationQueue({
+				maxSize: 3,
+				onHardCapDrop: (n) => dropped.push(n.messageId),
+			});
+
+			// Hard cap is maxSize * 2 = 6. Pushing 6 escalations fills up to the cap.
+			for (let i = 1; i <= 6; i++) {
+				queue.push(makeNotification({ messageId: `e-${i}`, type: "escalation" }));
+			}
+			expect(dropped).toEqual([]);
+			expect(queue.peek()).toHaveLength(6);
+
+			// 7th escalation exceeds hard cap — drops the oldest (e-1).
+			queue.push(makeNotification({ messageId: "e-7", type: "escalation" }));
+			expect(dropped).toEqual(["e-1"]);
+			const ids = queue.peek().map((n) => n.messageId);
+			expect(ids).toEqual(["e-2", "e-3", "e-4", "e-5", "e-6", "e-7"]);
+		});
+
+		it("emits a synthetic overflow sentinel at drain time when escalations were dropped", () => {
+			const queue = new TapNotificationQueue({ identity: "primary", maxSize: 3 });
+
+			// Fill past the hard cap to drop two escalations (e-1 and e-2).
+			for (let i = 1; i <= 8; i++) {
+				queue.push(makeNotification({ messageId: `e-${i}`, type: "escalation" }));
+			}
+
+			const drained = queue.drain();
+			// Last entry should be the synthetic overflow sentinel.
+			const sentinel = drained[drained.length - 1];
+			expect(sentinel).toBeDefined();
+			expect(sentinel?.messageId).toBe("__tap_queue_overflow__");
+			expect(sentinel?.type).toBe("escalation");
+			expect(sentinel?.method).toBe("tap/queue-overflow");
+			expect(sentinel?.identity).toBe("primary");
+			expect(sentinel?.detail).toEqual({ droppedEscalations: 2 });
+			expect(sentinel?.oneLiner).toContain("list_pending");
+
+			// Counter resets after drain — next drain on an empty queue yields no sentinel.
+			expect(queue.drain()).toEqual([]);
+		});
+
+		it("does not emit an overflow sentinel when no escalations were dropped", () => {
+			const queue = new TapNotificationQueue({ maxSize: 3 });
+			queue.push(makeNotification({ messageId: "e-1", type: "escalation" }));
+			const drained = queue.drain();
+			expect(drained).toHaveLength(1);
+			expect(drained[0]?.messageId).toBe("e-1");
+		});
+
+		it("legacy constructor still accepts a bare maxSize number", () => {
 			const queue = new TapNotificationQueue(3);
-
-			const e1 = makeNotification({ messageId: "e-1", type: "escalation" });
-			const e2 = makeNotification({ messageId: "e-2", type: "escalation" });
-			const e3 = makeNotification({ messageId: "e-3", type: "escalation" });
-
-			queue.push(e1);
-			queue.push(e2);
-			queue.push(e3);
-
-			// Push another escalation — all are escalations so none can be evicted.
-			const e4 = makeNotification({ messageId: "e-4", type: "escalation" });
-			queue.push(e4);
-
-			const items = queue.drain();
-			expect(items).toHaveLength(4); // overflow allowed
-			const ids = items.map((n) => n.messageId);
-			expect(ids).toEqual(["e-1", "e-2", "e-3", "e-4"]);
+			for (let i = 1; i <= 4; i++) {
+				queue.push(makeNotification({ messageId: `e-${i}`, type: "escalation" }));
+			}
+			// Within hard cap (6), overflow allowed.
+			expect(queue.peek()).toHaveLength(4);
 		});
 
 		it("evicts info before summary in mixed queue", () => {
