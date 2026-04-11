@@ -101,6 +101,9 @@ function buildRuntime(connectFn: () => Promise<unknown>) {
 		service: {
 			connect: connectFn,
 		},
+		// Required for the try/finally cleanup in connectCommand — releases the
+		// transport owner lock when the command exits.
+		stop: vi.fn(async () => {}),
 	};
 }
 

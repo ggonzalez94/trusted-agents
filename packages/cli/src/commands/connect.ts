@@ -6,6 +6,7 @@ import {
 	verifyInvite,
 } from "trusted-agents-core";
 import type { ITrustStore } from "trusted-agents-core";
+import type { TapRuntime } from "trusted-agents-sdk";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
@@ -26,6 +27,7 @@ export async function connectCommand(
 	dryRun = false,
 ): Promise<void> {
 	const startTime = Date.now();
+	let runtime: TapRuntime | undefined;
 
 	try {
 		const config = await loadConfig(opts);
@@ -36,7 +38,7 @@ export async function connectCommand(
 			return;
 		}
 
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
+		runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
 		const invite = parseInviteUrl(inviteUrl);
 		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
 			throw new ValidationError(
@@ -124,8 +126,21 @@ export async function connectCommand(
 				) {
 					return; // pollForActiveContact already prints success on active
 				}
-				info("Timed out waiting. Run 'tap message sync' later to check.", opts);
+				// Blocking wait timed out in the queued path. Match the non-queued
+				// timeout contract: exit code 2, clear message, no success event.
+				info(
+					`Connection pending — ${peerAgent.registrationFile.name} queued behind another process. Run 'tap message sync' later to check.`,
+					opts,
+				);
+				error(
+					"TIMEOUT",
+					`Timed out waiting for queued connection to become active after ${waitMs / 1000}s.`,
+					opts,
+				);
+				process.exitCode = 2;
+				return;
 			}
+			// Fire-and-forget (waitMs === 0): report queued status with exit 0.
 			success(
 				{
 					...queuedTapCommandPendingFields(outcome),
@@ -188,6 +203,15 @@ export async function connectCommand(
 		process.exitCode = 2;
 	} catch (err) {
 		handleCommandError(err, opts);
+	} finally {
+		// Release the transport owner lock and any XMTP resources held by the
+		// runtime. Important for short-lived CLI commands so parallel tap
+		// processes can acquire the lock without waiting for process exit.
+		if (runtime) {
+			await runtime.stop().catch(() => {
+				/* best-effort: cleanup failures should not mask the primary outcome */
+			});
+		}
 	}
 }
 
