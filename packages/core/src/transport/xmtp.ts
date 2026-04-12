@@ -258,7 +258,11 @@ export class XmtpTransport implements TransportProvider {
 
 		let processed = 0;
 		for (const dm of dms) {
-			processed += await this.reconcileConversation(dm);
+			try {
+				processed += await this.reconcileConversation(dm);
+			} catch {
+				// Skip this DM so one persistently-failing message doesn't block all others.
+			}
 		}
 
 		return {

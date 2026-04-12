@@ -362,12 +362,17 @@ describe("OpenClawTapRegistry", () => {
 		});
 	});
 
-	it("cancelMeeting cancels outbound scheduling requests and forwards reason", async () => {
+	it("cancelMeeting delegates to service cancelMeeting and forwards reason", async () => {
 		const logger = createLogger();
 		const registry = new OpenClawTapRegistry({ identities: [] }, logger);
-		const cancelPendingSchedulingRequest = vi.fn(async () => ({ pendingRequests: [] }));
+		const cancelMeeting = vi.fn(async () => ({
+			requestId: "outbound-entry",
+			peerAgentId: 10,
+			schedulingId: "sch-cancel-1",
+			report: { pendingRequests: [] },
+		}));
 		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(
-			makeSchedulingRuntime("sch-cancel-1", { cancelPendingSchedulingRequest }) as never,
+			makeSchedulingRuntime("sch-cancel-1", { cancelMeeting }) as never,
 		);
 
 		const result = await registry.cancelMeeting({
@@ -375,7 +380,7 @@ describe("OpenClawTapRegistry", () => {
 			reason: "Conflict",
 		});
 
-		expect(cancelPendingSchedulingRequest).toHaveBeenCalledWith("outbound-entry", "Conflict");
+		expect(cancelMeeting).toHaveBeenCalledWith("sch-cancel-1", "Conflict");
 		expect(result).toMatchObject({
 			identity: "alpha",
 			cancelled: true,

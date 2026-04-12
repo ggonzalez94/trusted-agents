@@ -134,7 +134,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 			(await override?.executeTransferAction?.(serviceConfig, request)) ??
 			(await executeOnchainTransfer(
 				serviceConfig,
-				createConfiguredSigningProvider(serviceConfig),
+				createConfiguredSigningProvider(serviceConfig, request.chain),
 				request,
 			)),
 		log: (_level, message) => {
