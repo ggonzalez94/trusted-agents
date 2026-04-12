@@ -125,7 +125,7 @@ export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapR
 			printProposedMeeting(meeting, opts);
 
 			if (!process.stdin.isTTY) {
-				return true;
+				return false;
 			}
 
 			return await promptYesNo("Confirm this meeting? [y/N] ");
