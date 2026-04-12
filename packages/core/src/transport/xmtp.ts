@@ -428,10 +428,14 @@ export class XmtpTransport implements TransportProvider {
 			if (isMessageAlreadyCheckpointed(checkpoint, message)) {
 				continue;
 			}
-			const didProcess = await this.processMessage(this.toIncomingMessage(message));
-			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
-			if (didProcess) {
-				processed += 1;
+			try {
+				const didProcess = await this.processMessage(this.toIncomingMessage(message));
+				await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
+				if (didProcess) {
+					processed += 1;
+				}
+			} catch {
+				// Leave the checkpoint unchanged so transient failures can be retried.
 			}
 		}
 

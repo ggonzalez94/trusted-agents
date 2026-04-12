@@ -323,9 +323,13 @@ export class OpenClawTapRegistry {
 	}> {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const chain = params.chain ?? runtime.config.chain;
+		const transferProvider =
+			chain === runtime.config.chain
+				? runtime.signingProvider
+				: new OwsSigningProvider(runtime.config.ows.wallet, chain, runtime.config.ows.apiKey);
 		const result = await runtime.mutex.runExclusive(
 			async () =>
-				await executeOnchainTransfer(runtime.config, runtime.signingProvider, {
+				await executeOnchainTransfer(runtime.config, transferProvider, {
 					type: "transfer/request",
 					actionId: `gateway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 					asset: params.asset,
@@ -529,7 +533,9 @@ export class OpenClawTapRegistry {
 
 	private async ensureRuntimeStarted(name: string): Promise<ManagedTapRuntime> {
 		const runtime = await this.ensureRuntime(name);
-		await this.startRuntime(runtime);
+		if (!runtime.interval) {
+			await this.startRuntime(runtime);
+		}
 		return runtime;
 	}
 
