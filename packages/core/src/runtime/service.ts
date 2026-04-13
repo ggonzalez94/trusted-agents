@@ -1890,6 +1890,13 @@ export class TapMessagingService {
 			synced: true,
 			processed: 0,
 		};
+		if (reconciled.errors && reconciled.errors > 0) {
+			const samples = reconciled.errorSamples?.join("; ") ?? "";
+			this.log(
+				"warn",
+				`Reconcile completed with ${reconciled.errors} error(s); processed ${reconciled.processed} message(s)${samples ? `. Samples: ${samples}` : ""}`,
+			);
+		}
 		await this.drain();
 		this.lastSyncAt = nowISO();
 		return reconciled.processed;
