@@ -133,6 +133,7 @@ jobs:
           E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
           E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
           E2E_XMTP_DB_CACHE: /tmp/xmtp-e2e-db
+          TAP_DIAG: "1"
 
   publish:
     name: Publish
