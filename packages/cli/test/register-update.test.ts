@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RegistrationFile } from "trusted-agents-core";
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerUpdateCommand } from "../src/commands/register.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
+import * as shellLib from "../src/lib/shell.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import {
 	TEST_BASE_CHAIN,
@@ -15,28 +16,18 @@ import {
 	buildTestConfig,
 } from "./helpers/config-fixtures.js";
 
-const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
-	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
-	const mockProvider = vi.fn().mockImplementation(() => ({
-		getAddress: vi.fn().mockResolvedValue(addr),
-		signMessage: vi.fn(),
-		signTypedData: vi.fn(),
-		signTransaction: vi.fn(),
-		signAuthorization: vi.fn(),
-	}));
-	return { agentAddress: addr, mockOwsProvider: mockProvider };
-});
-
-vi.mock("trusted-agents-core", async () => {
-	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
-	return {
-		...actual,
-		OwsSigningProvider: mockOwsProvider,
-	};
-});
+const agentAddress = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
+const mockOwsProvider = vi.fn().mockImplementation(() => ({
+	getAddress: vi.fn().mockResolvedValue(agentAddress),
+	signMessage: vi.fn(),
+	signTypedData: vi.fn(),
+	signTransaction: vi.fn(),
+	signAuthorization: vi.fn(),
+}));
 
 describe("register update", () => {
 	let tmpDir: string;
+	let originalHermesHome: string | undefined;
 	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
 	function buildConfig() {
@@ -82,8 +73,10 @@ describe("register update", () => {
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-register-update-test-"));
+		originalHermesHome = process.env.HERMES_HOME;
 		process.exitCode = undefined;
 
+		vi.spyOn(core, "OwsSigningProvider").mockImplementation(mockOwsProvider as never);
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
 		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			readContract: vi.fn().mockResolvedValue(100_000n),
@@ -133,9 +126,15 @@ describe("register update", () => {
 			cid: "uploaded-cid",
 			uri: "ipfs://uploaded-cid",
 		});
+		vi.spyOn(shellLib, "commandExists").mockResolvedValue(false);
 	});
 
 	afterEach(async () => {
+		if (originalHermesHome === undefined) {
+			process.env.HERMES_HOME = undefined;
+		} else {
+			process.env.HERMES_HOME = originalHermesHome;
+		}
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 		await rm(tmpDir, { recursive: true, force: true });
@@ -347,6 +346,23 @@ describe("register update", () => {
 		};
 		expect(output.status).toBe("error");
 		expect(output.error?.code).toBe("VALIDATION_ERROR");
+	});
+
+	it("includes the Hermes configure hint when a Hermes install is present", async () => {
+		const hermesHome = join(tmpDir, "hermes-home");
+		await mkdir(hermesHome, { recursive: true });
+		process.env.HERMES_HOME = hermesHome;
+
+		await registerUpdateCommand({ uri: "ipfs://new-cid" }, { json: true });
+
+		const output = lastJsonOutput() as {
+			status: string;
+			data?: { next_steps?: string[] };
+		};
+		expect(output.status).toBe("ok");
+		expect(output.data?.next_steps).toContain(
+			"Configure Hermes plugin: tap hermes configure --name default",
+		);
 	});
 
 	it("tops up the messaging identity from the Base execution account before x402 upload", async () => {

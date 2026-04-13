@@ -1,0 +1,4 @@
+name: trusted-agents-tap
+description: Start the TAP Hermes daemon when Hermes gateway boots
+events:
+  - gateway:startup

@@ -165,6 +165,19 @@ class ManualTransport implements TransportProvider {
 	}
 }
 
+async function waitFor(
+	check: () => boolean,
+	{ timeoutMs = 500, pollMs = 10 }: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!check()) {
+		if (Date.now() >= deadline) {
+			throw new Error(`Timed out after ${timeoutMs}ms waiting for test condition`);
+		}
+		await sleep(pollMs);
+	}
+}
+
 async function createService(opts: {
 	trustStore?: ITrustStore;
 	transport?: ManualTransport;
@@ -228,7 +241,7 @@ describe("connect waiter lifecycle (spec §3.2 + Task 4.1)", () => {
 		const connectPromise = service.connect({ inviteUrl: url, waitMs: 5_000 });
 
 		// Wait for the send to be recorded, then deliver the accepted result.
-		await sleep(20);
+		await waitFor(() => transport.sentMessages.length === 1);
 		expect(transport.sentMessages).toHaveLength(1);
 		const sentRequestId = String(transport.sentMessages[0]!.message.id);
 

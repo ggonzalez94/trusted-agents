@@ -1,10 +1,6 @@
 import { readFile } from "node:fs/promises";
-import {
-	type PermissionGrantSet,
-	ValidationError,
-	normalizeGrantInput,
-	toErrorMessage,
-} from "trusted-agents-core";
+import { type PermissionGrantSet, ValidationError, normalizeGrantInput } from "trusted-agents-core";
+import { toErrorMessage } from "./errors.js";
 
 export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
 	const raw = path === "-" ? await readGrantStdin() : await readFile(path, "utf-8");

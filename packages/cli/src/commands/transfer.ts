@@ -7,14 +7,13 @@ import {
 	getExecutionPreview,
 	getUsdcAsset,
 	isEthereumAddress,
-	toErrorMessage,
 } from "trusted-agents-core";
 import type { ChainConfig, ExecutionPreview } from "trusted-agents-core";
 import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
 import { normalizeAsset } from "../lib/assets.js";
 import { requireChainConfig, resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { handleCommandError } from "../lib/errors.js";
+import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import { success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";

@@ -61,7 +61,7 @@ export function createCli(): Command {
 		.description("Install TAP skills and integrations for detected agent runtimes")
 		.option(
 			"--runtime <runtimes...>",
-			"Install for specific runtimes only (claude, codex, openclaw)",
+			"Install for specific runtimes only (claude, codex, openclaw, hermes)",
 			[],
 		)
 		.option("--channel <name>", "Install prerelease packages from a named npm dist-tag")
@@ -73,6 +73,75 @@ export function createCli(): Command {
 				{ runtimes: cmdOpts.runtime, channel: cmdOpts.channel, version: cmdOpts.version },
 				opts,
 			);
+		});
+
+	const hermes = program.command("hermes").description("Manage the TAP Hermes gateway integration");
+
+	hermes
+		.command("configure")
+		.description("Install or update the TAP Hermes plugin config for the current TAP data dir")
+		.option("--name <name>", "Configured Hermes TAP identity name", "default")
+		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
+		.option(
+			"--reconcile-interval-minutes <minutes>",
+			"Background reconcile interval for this TAP identity",
+		)
+		.action(
+			async (cmdOpts: {
+				name?: string;
+				hermesHome?: string;
+				reconcileIntervalMinutes?: string;
+			}) => {
+				const opts = program.opts<GlobalOptions>();
+				const { hermesConfigureCommand } = await import("./commands/hermes.js");
+				await hermesConfigureCommand(cmdOpts, opts);
+			},
+		);
+
+	hermes
+		.command("status")
+		.description("Show Hermes TAP daemon and identity status")
+		.option("--identity <name>", "Configured TAP Hermes identity name")
+		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
+		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { hermesStatusCommand } = await import("./commands/hermes.js");
+			await hermesStatusCommand(cmdOpts, opts);
+		});
+
+	hermes
+		.command("sync")
+		.description("Trigger a Hermes TAP background reconcile now")
+		.option("--identity <name>", "Configured TAP Hermes identity name")
+		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
+		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { hermesSyncCommand } = await import("./commands/hermes.js");
+			await hermesSyncCommand(cmdOpts, opts);
+		});
+
+	hermes
+		.command("restart")
+		.description("Restart TAP runtimes inside the Hermes daemon")
+		.option("--identity <name>", "Configured TAP Hermes identity name")
+		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
+		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { hermesRestartCommand } = await import("./commands/hermes.js");
+			await hermesRestartCommand(cmdOpts, opts);
+		});
+
+	const hermesDaemon = hermes.command("daemon").description("Internal Hermes TAP daemon commands");
+
+	hermesDaemon
+		.command("run")
+		.description("Run the internal Hermes TAP daemon")
+		.requiredOption("--gateway-pid <pid>", "Hermes gateway process PID")
+		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
+		.action(async (cmdOpts: { gatewayPid: string; hermesHome?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { hermesDaemonRunCommand } = await import("./commands/hermes.js");
+			await hermesDaemonRunCommand(cmdOpts, opts);
 		});
 
 	program

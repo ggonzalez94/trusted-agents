@@ -11,7 +11,6 @@ import {
 	fetchRegistrationFile,
 	getExecutionPreview,
 	getUsdcAsset,
-	toErrorMessage,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
@@ -25,8 +24,9 @@ import type {
 } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
+import { resolveHermesHome } from "../hermes/config.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
-import { handleCommandError } from "../lib/errors.js";
+import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import {
 	resolveEffectiveIpfsProvider,
 	resolvePinataJwt,
@@ -72,6 +72,10 @@ function buildOpenClawConfigStep(dataDir: string): string {
 	]);
 	const escaped = identity.replace(/'/g, "'\\''");
 	return `Configure OpenClaw plugin: openclaw config set plugins.entries.trusted-agents-tap.config.identities '${escaped}' --json`;
+}
+
+function buildHermesConfigStep(): string {
+	return "Configure Hermes plugin: tap hermes configure --name default";
 }
 
 function upsertXmtpService(
@@ -641,6 +645,9 @@ export async function registerCommand(
 		if (await commandExists("openclaw")) {
 			nextSteps.push(buildOpenClawConfigStep(config.dataDir));
 		}
+		if (existsSync(resolveHermesHome())) {
+			nextSteps.push(buildHermesConfigStep());
+		}
 
 		success(
 			{
@@ -874,6 +881,9 @@ async function executeSetAgentURI(
 	const nextSteps: string[] = [];
 	if (await commandExists("openclaw")) {
 		nextSteps.push(buildOpenClawConfigStep(config.dataDir));
+	}
+	if (existsSync(resolveHermesHome())) {
+		nextSteps.push(buildHermesConfigStep());
 	}
 
 	success(

@@ -9,13 +9,14 @@
   },
   "files": [
     "dist",
+    "assets",
     "skills"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "build": "rm -rf skills && mkdir -p skills && cp -r ../../skills/trusted-agents skills/trusted-agents && tsc -p tsconfig.json",
+    "build": "rm -rf assets/skills skills && mkdir -p assets/skills skills && cp -r ../../skills/trusted-agents assets/skills/trusted-agents && cp -r ../../skills/trusted-agents skills/trusted-agents && tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

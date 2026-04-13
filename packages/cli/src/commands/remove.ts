@@ -14,13 +14,12 @@ import {
 	isProcessAlive,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
-	toErrorMessage,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
-import { handleCommandError } from "../lib/errors.js";
+import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
 import {

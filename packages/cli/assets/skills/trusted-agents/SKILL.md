@@ -71,21 +71,12 @@ Remote install (no clone needed):
 curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash
 ```
 
-Stable is the default. To opt into prereleases:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --channel beta
-curl -fsSL https://raw.githubusercontent.com/ggonzalez94/trusted-agents/main/scripts/install.sh | bash -s -- --version 0.2.0-beta.1
-```
-
 The installer builds, links `tap` to PATH, and sets up skills for your host. If running inside OpenClaw or Hermes, make sure the host integration is installed.
 
 **OpenClaw plugin install:**
 
 ```bash
 tap install --runtime openclaw
-tap install --runtime openclaw --channel beta
-tap install --runtime openclaw --version 0.2.0-beta.1
 ```
 
 **Do not offer the user to restart the gateway, the registered service will do it automatically. Doing it puts the gateway in an infinite restart loop**
@@ -224,35 +215,26 @@ If `tap hermes status` says the daemon is not running, start or restart `hermes 
 Connections establish trust between two agents. They don't grant permissions — that's a separate step.
 
 1. Agent A creates an invite: `tap invite create`
-2. Agent B connects with it: `tap connect "<invite-url>"`
+2. Agent B connects with it: `tap connect "<invite-url>" --yes`
 3. Agent A picks up the request (via sync or listener) and auto-accepts valid invites
-4. Both agents converge on an **active** contact
+4. Both agents now have an **active** contact
 
-An invite is cryptographic consent — Agent A signs it with her agent key, so any validly signed invite targeting her is auto-accepted on the inbound side without further prompting. Agents also don't need to be online at the same time: if B connects while A is offline, B's request waits in XMTP until A runs `tap message sync` or her listener processes it.
+This is async — agents don't need to be online at the same time. Run `tap message sync` to pick up pending connection results.
 
 ```bash
 tap invite create --expiry 3600
 tap connect "<invite-url>" --dry-run
-tap connect "<invite-url>"                      # block up to 30s, exit 0 on active, exit 2 on timeout
-tap connect "<invite-url>" --no-wait            # return immediately with status=pending
-tap connect "<invite-url>" --wait-seconds 120   # override the 30s default
+tap connect "<invite-url>" --yes --wait 60
 tap contacts list
 tap contacts show WorkerAgent
-tap contacts remove <connectionId>              # sends connection/revoke to the peer before deleting locally
+tap contacts remove <connectionId>
 ```
 
-**`tap connect` blocks by default** for up to 30 seconds waiting for the peer to respond, then:
-- exits 0 with `status: "active"` if the handshake completed
-- exits 2 with `status: "pending"` if the peer didn't respond in time (the request is delivered and recoverable — run `tap message sync` later)
-- exits non-zero on invalid invite or transport errors
-
-Use `--no-wait` (or `--wait-seconds 0`) for fire-and-forget in scripts that handle the async completion themselves. Use `--wait-seconds N` to override the default block duration.
-
-The connector's in-progress state lives on `contacts.json` as `status: "connecting"` (sticky across restarts) until the result arrives. This means `tap connect` is also wire-level idempotent — re-running it on the same peer with a fresh invite reuses the existing outbound request, and running it on an already-active peer still triggers a verification handshake (so divergent state heals itself).
+`--wait` polls for the connection to become active (default: 60s). Without it, returns immediately as `pending`.
 
 In OpenClaw or Hermes plugin mode, use `tap_gateway create_invite` and `tap_gateway connect` instead of the CLI commands.
 
-After establishing a connection, ask the user whether they want to grant permissions and guide them on how to decide.
+After establishing connections with a new agent, ask the user if they want to grant permissions and guide him on how to decide.
 
 ## Permissions
 
@@ -496,12 +478,11 @@ In fallback mode, use `tap message sync` on heartbeat. Do not run `tap message l
 | `publish_grants` | `peer`, `grantSet`, `note` (opt) | Publish grants (sets `grantedByMe`). |
 | `request_grants` | `peer`, `grantSet`, `note` (opt) | Ask peer to publish grants to you. |
 | `request_funds` | `peer`, `asset`, `amount`, `chain` (opt), `toAddress` (opt), `note` (opt) | Ask peer to send ETH or USDC. Hard-blocked without matching grant. |
-| `transfer` | `asset`, `amount`, `toAddress`, `chain` (opt) | Execute an on-chain transfer directly from the agent wallet. Requires live signing provider. |
 | `request_meeting` | `peer`, `title`, `duration` (opt), `preferred` (opt), `location` (opt), `note` (opt) | Propose a meeting with a connected peer. |
 | `respond_meeting` | `schedulingId`, `meetingAction` (`accept`/`reject`), `reason` (opt) | Accept or reject a scheduling proposal. |
 | `cancel_meeting` | `schedulingId`, `reason` (opt) | Cancel a confirmed meeting. |
-| `list_pending` | — | List inbound action requests (transfers, scheduling) awaiting the user's approval. Connection requests are auto-accepted on valid invites and never appear here. |
-| `resolve_pending` | `requestId`, `approve` (bool) | Approve or reject a pending action request. |
+| `list_pending` | — | List queued inbound requests awaiting approval. |
+| `resolve_pending` | `requestId`, `approve` (bool) | Approve or reject a pending request. |
 
 ### Handling Notifications
 
@@ -509,13 +490,14 @@ All non-rejected inbound events wake the agent immediately. When `[TAP Notificat
 
 **Critical:** Your heartbeat reply does NOT reach the user through their messaging app. You must actively send a message to the user through your conversation channel after processing each notification. Never process a notification silently.
 
-**ESCALATION** — needs the user's decision (transfer requests and scheduling proposals only; connection requests are auto-accepted on valid invites and arrive as INFO notifications instead):
+**ESCALATION** — needs the user's decision:
 1. Read the escalation details (peer, request type, amount if transfer, proposed times if scheduling)
-2. For transfer requests: `tap permissions show <peer>` and check the permissions ledger
-3. For scheduling proposals: show the proposed times in the user's timezone, the meeting title, and who's asking
-4. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
-5. Wait for the user's decision
-6. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`, or use `tap_gateway respond_meeting` for scheduling
+2. For connection requests: `tap identity resolve <agentId>` to learn who's asking
+3. For transfer requests: `tap permissions show <peer>` and check the permissions ledger
+4. For scheduling proposals: show the proposed times in the user's timezone, the meeting title, and who's asking
+5. **Send the user a message** with a clear summary: who's asking, what they want, and relevant context
+6. Wait for the user's decision
+7. Resolve: `tap_gateway resolve_pending` with `requestId` and `approve: true/false`, or use `tap_gateway respond_meeting` for scheduling
 
 **AUTO-REPLY** — an active contact sent you a message that needs a reply:
 1. Read the peer's message from the notification text
@@ -528,7 +510,7 @@ All non-rejected inbound events wake the agent immediately. When `[TAP Notificat
 - **Auto-approved transfers**: **Message the user** with transfer details for visibility.
 - **Grant updates**: **Message the user** summarizing what changed.
 
-**INFO** — informational events like "Bob connected" (fired post-handshake — connections don't need approval) or "transfer executed automatically under grant X". **Message the user** so they know.
+**INFO** — "Connection with X confirmed" is sufficient. **Message the user** so they know.
 
 The pattern: notification → read underlying content → **act if you can** → **message the user**.
 
@@ -538,7 +520,6 @@ The pattern: notification → read underlying content → **act if you can** →
 tap contacts list / show <peer>
 tap permissions show <peer>
 tap conversations list / show <id>
-tap journal list / show <request-id>
 tap balance / config show / identity show / identity resolve
 ```
 
@@ -621,54 +602,11 @@ Examples:
 
 ```bash
 tap app list
-tap app install @trustedagents/app-transfer
-tap app remove @trustedagents/app-scheduling
+tap app install @tap/app-transfer
+tap app remove @tap/app-scheduling
 ```
 
-Transfer, scheduling, and permission-request handling are built into the TAP runtime today. `tap app install` is for additional third-party TAP apps published to npm.
-
-## Debugging
-
-The request journal is the single source of truth for in-flight and recently completed protocol operations. Use these read-only commands to inspect it when a connection or message seems stuck:
-
-```bash
-tap journal list                               # all entries
-tap journal list --status queued               # intents waiting on the transport lock
-tap journal list --status pending              # wire requests in flight
-tap journal list --direction outbound          # only things this agent sent
-tap journal list --method connection/request   # filter by JSON-RPC method
-tap journal show <request-id>                  # full details for one entry, including metadata.lastError
-```
-
-The journal shows every protocol request as it progresses through `queued → pending → completed`. An entry stuck in `queued` means the transport owner (listener or OpenClaw plugin) hasn't drained it yet. An entry stuck in `pending` with a `lastError` in its metadata points at the specific send failure — this is the fastest way to diagnose "I ran the command but nothing happened."
-
-Entries are terminal (retained for debugging) once they reach `completed`. They do not auto-expire; if the journal grows noisy, inspect and manually clean it up between major operations.
-
-## Recovery
-
-If a connection or conversation feels stuck — messages not landing, a peer that went silent, or two sides that disagree about whether they're connected — the universal fix is:
-
-> **Exchange a fresh invite and run `tap connect`.**
-
-The handlers on both sides are fully idempotent. Running `tap connect` with a valid invite always repairs confused state regardless of what local state either side is in. Your whole recovery toolkit is three commands:
-
-- `tap connect <invite>` — establish a new connection, or repair an existing one. Always triggers a full handshake, even on an already-active contact, and heals any divergence.
-- `tap message sync` — drain any pending messages from XMTP and process them. Completes any async flows that were in flight.
-- `tap contacts remove <connectionId>` — cleanly disconnect from a peer. Sends `connection/revoke` to the peer (best-effort) so their end removes the contact too, then deletes locally regardless of delivery.
-
-Common scenarios and what to do:
-
-| Situation | Fix |
-|---|---|
-| First-time connection | `tap connect <invite>` |
-| Peer wiped their state; they can't hear you anymore | Issue a new invite, peer runs `tap connect` |
-| Your data was restored and you don't recognise a peer that claims you | Peer issues a new invite to you, you run `tap connect` |
-| Both sides disagree on connection state | Fresh invite, `tap connect` — handlers converge to `active` |
-| You got a timeout or pending result and want to check if it eventually landed | `tap message sync` then `tap contacts show <peer>` |
-| Debugging a stuck request | `tap journal list --status pending` then `tap journal show <id>` |
-| You want out of a connection | `tap contacts remove <connectionId>` |
-
-The only unrecoverable scenario is simultaneous data loss on both sides with no out-of-band way to deliver a fresh invite. This is inherent to local-first; keep a backup of at least the `config.yaml` in your data directory (the OWS wallet binding is the only piece that can't be rebuilt from peers).
+Built-in apps (`app-transfer`, `app-scheduling`) are installed automatically when you register. Third-party apps can be installed from npm by package name.
 
 ## Common Errors
 
