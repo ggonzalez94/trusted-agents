@@ -23,7 +23,11 @@ describe("tap install", () => {
 		await mkdir(homeDir, { recursive: true });
 		await mkdir(binDir, { recursive: true });
 		await mkdir(skillsSourceDir, { recursive: true });
-		await writeFile(join(skillsSourceDir, "SKILL.md"), "---\nname: trusted-agents\n---\n", "utf-8");
+		await writeFile(
+			join(skillsSourceDir, "SKILL.md"),
+			"---\nname: trusted-agents\n---\n\n# Trusted Agents Protocol\n",
+			"utf-8",
+		);
 
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
@@ -148,18 +152,36 @@ describe("tap install", () => {
 		await installCommand({ runtimes: ["hermes"] }, { json: true });
 
 		const hermesHome = join(homeDir, ".hermes");
-		await expect(readFile(join(hermesHome, "plugins", "trusted-agents-tap", "plugin.yaml"), "utf-8")).resolves.toContain(
-			"trusted-agents-tap",
-		);
+		await expect(
+			readFile(join(hermesHome, "plugins", "trusted-agents-tap", "plugin.yaml"), "utf-8"),
+		).resolves.toContain("trusted-agents-tap");
 		await expect(
 			readFile(join(hermesHome, "plugins", "trusted-agents-tap", "config.json"), "utf-8"),
 		).resolves.toContain('"identities": []');
-		await expect(readFile(join(hermesHome, "hooks", "trusted-agents-tap", "HOOK.yaml"), "utf-8")).resolves.toContain(
-			"gateway:startup",
+		await expect(
+			readFile(join(hermesHome, "hooks", "trusted-agents-tap", "HOOK.yaml"), "utf-8"),
+		).resolves.toContain("gateway:startup");
+		await expect(
+			readFile(join(hermesHome, "skills", "trusted-agents", "SKILL.md"), "utf-8"),
+		).resolves.toContain("# Trusted Agents Protocol");
+	});
+
+	it("uses the explicit TAP_SKILLS_SOURCE for both global skills and Hermes skill assets", async () => {
+		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
+		await writeFile(
+			join(skillsSourceDir, "SKILL.md"),
+			"---\nname: trusted-agents\ndescription: Custom TAP skill\n---\n\n# Custom TAP Skill\n",
+			"utf-8",
 		);
-		await expect(readFile(join(hermesHome, "skills", "trusted-agents", "SKILL.md"), "utf-8")).resolves.toContain(
-			"# Trusted Agents Protocol",
-		);
+
+		await installCommand({ runtimes: ["claude", "hermes"] }, { json: true });
+
+		expect(await readCommandLog(join(tempRoot, "npx.log"))).toEqual([
+			`-y skills add -g ${skillsSourceDir} -y`,
+		]);
+		await expect(
+			readFile(join(homeDir, ".hermes", "skills", "trusted-agents", "SKILL.md"), "utf-8"),
+		).resolves.toContain("# Custom TAP Skill");
 	});
 
 	it("installs global skills even when no host runtime directories are detected", async () => {

@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
+import { readHermesTapDaemonState, sendHermesTapDaemonRequest } from "../hermes/client.js";
+import { getTapHermesPaths, resolveHermesHome, upsertTapHermesIdentity } from "../hermes/config.js";
+import { TapHermesDaemon } from "../hermes/daemon.js";
+import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
-import { sendHermesTapDaemonRequest, readHermesTapDaemonState } from "../hermes/client.js";
-import { getTapHermesPaths, resolveHermesHome, upsertTapHermesIdentity } from "../hermes/config.js";
-import { TapHermesDaemon } from "../hermes/daemon.js";
-import { installTapHermesAssets } from "../hermes/install.js";
 
 interface HermesBaseOptions {
 	hermesHome?: string;
@@ -107,13 +107,12 @@ export async function hermesStatusCommand(
 			const config = await import("../hermes/config.js").then((module) =>
 				module.loadTapHermesPluginConfig(hermesHome),
 			);
-			if (
-				cmdOpts.identity &&
-				!config.identities.some((entry) => entry.name === cmdOpts.identity)
-			) {
+			if (cmdOpts.identity && !config.identities.some((entry) => entry.name === cmdOpts.identity)) {
 				throw new Error(`Unknown TAP identity: ${cmdOpts.identity}`);
 			}
-			const names = cmdOpts.identity ? [cmdOpts.identity] : config.identities.map((entry) => entry.name);
+			const names = cmdOpts.identity
+				? [cmdOpts.identity]
+				: config.identities.map((entry) => entry.name);
 			payload = {
 				configured: config.identities.length > 0,
 				configuredIdentities: config.identities.map((entry) => entry.name),

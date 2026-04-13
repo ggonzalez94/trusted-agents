@@ -1,5 +1,5 @@
 import { unlink } from "node:fs/promises";
-import { normalizeGrantInput, isEthereumAddress } from "trusted-agents-core";
+import { isEthereumAddress, normalizeGrantInput } from "trusted-agents-core";
 import {
 	type TapHermesDaemonState,
 	type TapHermesPaths,
@@ -37,7 +37,10 @@ export class TapHermesDaemon {
 		this.gatewayPid = options.gatewayPid;
 		this.paths = getTapHermesPaths(options.hermesHome);
 		this.registryPromise = this.createRegistry();
-		this.server = new HermesTapIpcServer(this.paths.socketPath, async (request) => await this.dispatch(request));
+		this.server = new HermesTapIpcServer(
+			this.paths.socketPath,
+			async (request) => await this.dispatch(request),
+		);
 	}
 
 	async start(): Promise<void> {
@@ -62,7 +65,9 @@ export class TapHermesDaemon {
 		});
 		const registry = await this.registryPromise;
 		await registry.stop().catch((error: unknown) => {
-			this.logger.warn(`[trusted-agents-tap] Failed to stop TAP runtime registry: ${formatError(error)}`);
+			this.logger.warn(
+				`[trusted-agents-tap] Failed to stop TAP runtime registry: ${formatError(error)}`,
+			);
 		});
 		await unlink(this.paths.daemonStatePath).catch(() => {});
 	}
@@ -297,7 +302,7 @@ function requireAsset(value: unknown): "native" | "usdc" {
 	if (value === "native" || value === "usdc") {
 		return value;
 	}
-	throw new Error("asset must be \"native\" or \"usdc\"");
+	throw new Error('asset must be "native" or "usdc"');
 }
 
 function requireAddress(value: unknown, name: string): `0x${string}` {

@@ -1,11 +1,11 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { installTapHermesAssets } from "../src/hermes/install.js";
 import { getTapHermesPaths } from "../src/hermes/config.js";
+import { installTapHermesAssets } from "../src/hermes/install.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,7 +31,7 @@ describe("Hermes Python TAP bridge", () => {
 	afterEach(async () => {
 		process.env.PATH = originalPath;
 		if (originalHermesHome === undefined) {
-			delete process.env.HERMES_HOME;
+			process.env.HERMES_HOME = undefined;
 		} else {
 			process.env.HERMES_HOME = originalHermesHome;
 		}
@@ -57,7 +57,7 @@ describe("Hermes Python TAP bridge", () => {
 
 		const output = await runHermesPluginExpression(
 			hermesHome,
-			'print(json.dumps(module.inject_tap_notifications()))',
+			"print(json.dumps(module.inject_tap_notifications()))",
 		);
 
 		const result = JSON.parse(output) as { context?: string };
@@ -112,7 +112,9 @@ describe("Hermes Python TAP bridge", () => {
 			expect(result.status).toBe("status");
 			await expect(readCommandLog(tapLogPath)).resolves.toEqual([]);
 		} finally {
-			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			await new Promise<void>((resolve, reject) =>
+				server.close((error) => (error ? reject(error) : resolve())),
+			);
 		}
 	});
 

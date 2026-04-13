@@ -131,7 +131,7 @@ describe("register update", () => {
 
 	afterEach(async () => {
 		if (originalHermesHome === undefined) {
-			delete process.env.HERMES_HOME;
+			process.env.HERMES_HOME = undefined;
 		} else {
 			process.env.HERMES_HOME = originalHermesHome;
 		}
@@ -360,7 +360,9 @@ describe("register update", () => {
 			data?: { next_steps?: string[] };
 		};
 		expect(output.status).toBe("ok");
-		expect(output.data?.next_steps).toContain("Configure Hermes plugin: tap hermes configure --name default");
+		expect(output.data?.next_steps).toContain(
+			"Configure Hermes plugin: tap hermes configure --name default",
+		);
 	});
 
 	it("tops up the messaging identity from the Base execution account before x402 upload", async () => {

@@ -75,9 +75,7 @@ export function createCli(): Command {
 			);
 		});
 
-	const hermes = program
-		.command("hermes")
-		.description("Manage the TAP Hermes gateway integration");
+	const hermes = program.command("hermes").description("Manage the TAP Hermes gateway integration");
 
 	hermes
 		.command("configure")

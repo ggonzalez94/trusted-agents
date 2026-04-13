@@ -82,9 +82,9 @@ describe("Tap Hermes config", () => {
 		const config = await loadTapHermesPluginConfig(hermesHome);
 		expect(config.identities).toEqual([updated]);
 
-		const raw = JSON.parse(
-			await readFile(getTapHermesPaths(hermesHome).configPath, "utf-8"),
-		) as { identities: Array<{ name: string; dataDir: string; reconcileIntervalMinutes: number }> };
+		const raw = JSON.parse(await readFile(getTapHermesPaths(hermesHome).configPath, "utf-8")) as {
+			identities: Array<{ name: string; dataDir: string; reconcileIntervalMinutes: number }>;
+		};
 		expect(raw.identities).toHaveLength(1);
 		expect(raw.identities[0]?.dataDir).toBe("/tmp/agent-a-renamed");
 	});
@@ -104,9 +104,9 @@ describe("Tap Hermes config", () => {
 
 		expect(configured.dataDir).toBe(resolve(expectedDataDir));
 
-		const raw = JSON.parse(
-			await readFile(getTapHermesPaths(hermesHome).configPath, "utf-8"),
-		) as { identities: Array<{ dataDir: string }> };
+		const raw = JSON.parse(await readFile(getTapHermesPaths(hermesHome).configPath, "utf-8")) as {
+			identities: Array<{ dataDir: string }>;
+		};
 		expect(raw.identities[0]?.dataDir).toBe(resolve(expectedDataDir));
 	});
 

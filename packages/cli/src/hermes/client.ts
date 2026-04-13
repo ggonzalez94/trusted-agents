@@ -1,4 +1,8 @@
-import { loadTapHermesDaemonState, type TapHermesDaemonState, getTapHermesPaths } from "./config.js";
+import {
+	type TapHermesDaemonState,
+	getTapHermesPaths,
+	loadTapHermesDaemonState,
+} from "./config.js";
 import { type HermesTapRequest, sendHermesTapRequest } from "./ipc.js";
 
 export async function sendHermesTapDaemonRequest(

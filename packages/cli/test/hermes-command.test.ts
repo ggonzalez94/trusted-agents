@@ -27,7 +27,7 @@ describe("Hermes commands", () => {
 	afterEach(async () => {
 		process.stdout.write = origStdoutWrite;
 		if (originalHermesHome === undefined) {
-			delete process.env.HERMES_HOME;
+			process.env.HERMES_HOME = undefined;
 		} else {
 			process.env.HERMES_HOME = originalHermesHome;
 		}
@@ -46,14 +46,14 @@ describe("Hermes commands", () => {
 			],
 		});
 
-		await hermesStatusCommand({ hermesHome, identity: "defualt" }, { json: true });
+		await hermesStatusCommand({ hermesHome, identity: "nonexistent" }, { json: true });
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			error?: { message?: string };
 		};
 		expect(output.status).toBe("error");
-		expect(output.error?.message).toContain("Unknown TAP identity: defualt");
+		expect(output.error?.message).toContain("Unknown TAP identity: nonexistent");
 		expect(process.exitCode).toBeGreaterThan(0);
 	});
 });

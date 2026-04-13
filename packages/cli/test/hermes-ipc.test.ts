@@ -3,10 +3,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	HermesTapIpcServer,
-	sendHermesTapRequest,
-} from "../src/hermes/ipc.js";
+import { HermesTapIpcServer, sendHermesTapRequest } from "../src/hermes/ipc.js";
 
 describe("Hermes TAP IPC", () => {
 	const createdDirs: string[] = [];

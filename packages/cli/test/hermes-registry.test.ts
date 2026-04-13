@@ -88,12 +88,12 @@ describe("HermesTapRegistry", () => {
 			},
 		);
 
-		await (registry as never as { ensureRuntimeStarted(name: string): Promise<unknown> }).ensureRuntimeStarted(
-			"default",
-		);
-		await (registry as never as { ensureRuntimeStarted(name: string): Promise<unknown> }).ensureRuntimeStarted(
-			"default",
-		);
+		await (
+			registry as never as { ensureRuntimeStarted(name: string): Promise<unknown> }
+		).ensureRuntimeStarted("default");
+		await (
+			registry as never as { ensureRuntimeStarted(name: string): Promise<unknown> }
+		).ensureRuntimeStarted("default");
 
 		expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 		expect(clearIntervalSpy).not.toHaveBeenCalled();

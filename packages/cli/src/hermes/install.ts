@@ -1,13 +1,13 @@
 import { copyFile, mkdir, readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveTapSkillsSourcePath } from "../lib/skill-source.js";
 import {
+	type TapHermesPaths,
 	getTapHermesPaths,
 	loadTapHermesPluginConfig,
 	resolveHermesHome,
 	saveTapHermesPluginConfig,
-	type TapHermesPaths,
 } from "./config.js";
 
 export async function installTapHermesAssets(hermesHome?: string): Promise<TapHermesPaths> {
@@ -36,13 +36,11 @@ export function resolveTapHermesAssetPaths(): {
 	skillDir: string;
 } {
 	const packagedRoot = fileURLToPath(new URL("../../assets/hermes/", import.meta.url));
-	const packagedSkillDir = fileURLToPath(new URL("../../assets/skills/trusted-agents/", import.meta.url));
-	const repoSkillDir = fileURLToPath(new URL("../../../../skills/trusted-agents/", import.meta.url));
 
 	return {
 		pluginDir: join(packagedRoot, "plugin"),
 		hookDir: join(packagedRoot, "hook"),
-		skillDir: existsSync(repoSkillDir) ? repoSkillDir : packagedSkillDir,
+		skillDir: resolveTapSkillsSourcePath(),
 	};
 }
 

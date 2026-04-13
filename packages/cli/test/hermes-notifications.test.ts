@@ -57,8 +57,12 @@ describe("FileTapHermesNotificationStore", () => {
 		createdDirs.push(stateDir);
 
 		const store = new FileTapHermesNotificationStore(stateDir, 10);
-		expect(await store.push(makeNotification({ identity: "default", messageId: "shared-1" }))).toBe(true);
-		expect(await store.push(makeNotification({ identity: "ops", messageId: "shared-1" }))).toBe(true);
+		expect(await store.push(makeNotification({ identity: "default", messageId: "shared-1" }))).toBe(
+			true,
+		);
+		expect(await store.push(makeNotification({ identity: "ops", messageId: "shared-1" }))).toBe(
+			true,
+		);
 
 		const queued = await store.peek();
 		expect(queued.map((item) => `${item.identity}:${item.messageId}`)).toEqual([
