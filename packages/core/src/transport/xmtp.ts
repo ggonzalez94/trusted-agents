@@ -38,6 +38,16 @@ const RECONNECT_DELAY_MS = 5_000;
 const CLIENT_CREATE_TIMEOUT_MS = 30_000;
 const INBOUND_REQUEST_DEDUPE_TTL_MS = 10 * 60 * 1_000;
 const MAX_TRACKED_INBOUND_REQUESTS = 4_096;
+const MAX_RECONCILE_ERROR_SAMPLES = 5;
+
+function collectErrorSamples(samples: string[], messages: string[], conversationId: string): void {
+	for (const message of messages) {
+		if (samples.length >= MAX_RECONCILE_ERROR_SAMPLES) {
+			return;
+		}
+		samples.push(`[${conversationId}] ${message}`);
+	}
+}
 
 interface PendingRequest {
 	resolve: (receipt: TransportReceipt) => void;
@@ -257,13 +267,28 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		let processed = 0;
+		const errorSamples: string[] = [];
+		let errors = 0;
 		for (const dm of dms) {
-			processed += await this.reconcileConversation(dm);
+			try {
+				const result = await this.reconcileConversation(dm);
+				processed += result.processed;
+				if (result.errors.length > 0) {
+					errors += result.errors.length;
+					collectErrorSamples(errorSamples, result.errors, dm.id);
+				}
+			} catch (error) {
+				// Skip this DM so one persistently-failing DM doesn't block all others.
+				// Common causes: transient checkpoint-read errors or XMTP SDK query failures.
+				errors += 1;
+				collectErrorSamples(errorSamples, [toErrorMessage(error)], dm.id);
+			}
 		}
 
 		return {
 			synced: true,
 			processed,
+			...(errors > 0 ? { errors, errorSamples } : {}),
 		};
 	}
 
@@ -411,27 +436,37 @@ export class XmtpTransport implements TransportProvider {
 		return checkpoints;
 	}
 
-	private async reconcileConversation(dm: Dm): Promise<number> {
+	private async reconcileConversation(dm: Dm): Promise<{ processed: number; errors: string[] }> {
 		if (!this.syncState) {
-			return 0;
+			return { processed: 0, errors: [] };
 		}
 
 		const checkpoint = await this.syncState.getCheckpoint(dm.id);
 		const messages = await dm.messages(buildMessageQuery(checkpoint));
 
 		let processed = 0;
+		const errors: string[] = [];
 		for (const message of messages) {
 			if (isMessageAlreadyCheckpointed(checkpoint, message)) {
 				continue;
 			}
-			const didProcess = await this.processMessage(this.toIncomingMessage(message));
-			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
-			if (didProcess) {
-				processed += 1;
+			try {
+				const didProcess = await this.processMessage(this.toIncomingMessage(message));
+				await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
+				if (didProcess) {
+					processed += 1;
+				}
+			} catch (error) {
+				// Stop replaying this DM on the first failure. If we kept going, a later
+				// successful message would advance the checkpoint past the failed one,
+				// leaving it below `sentAfterNs` on the next reconcile pass and permanently
+				// dropping it. Returning here preserves ordering and retry semantics.
+				errors.push(toErrorMessage(error));
+				return { processed, errors };
 			}
 		}
 
-		return processed;
+		return { processed, errors };
 	}
 
 	private async processMessage(message: IncomingTransportMessage): Promise<boolean> {

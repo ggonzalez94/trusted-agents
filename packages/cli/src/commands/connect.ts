@@ -157,15 +157,18 @@ export async function connectCommand(
 
 		const result = outcome.result;
 		if (result.status === "pending" && outcome.status === "completed" && waitMs > 0) {
+			const elapsedMs = Date.now() - startTime;
+			const remainingSeconds = Math.ceil(Math.max(0, waitMs - elapsedMs) / 1000);
 			if (
-				await pollForActiveContact(
+				remainingSeconds > 0 &&
+				(await pollForActiveContact(
 					runtime.trustStore,
 					peerAgent.agentId,
 					peerAgent.chain,
-					Math.ceil(waitMs / 1000),
+					remainingSeconds,
 					opts,
 					startTime,
-				)
+				))
 			) {
 				return;
 			}

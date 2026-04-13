@@ -38,6 +38,8 @@ export interface TransportReconcileOptions {
 export interface TransportReconcileResult {
 	synced: true;
 	processed: number;
+	errors?: number;
+	errorSamples?: string[];
 }
 
 export interface TransportProvider {

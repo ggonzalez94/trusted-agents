@@ -323,9 +323,13 @@ export class OpenClawTapRegistry {
 	}> {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const chain = params.chain ?? runtime.config.chain;
+		const transferProvider =
+			chain === runtime.config.chain
+				? runtime.signingProvider
+				: new OwsSigningProvider(runtime.config.ows.wallet, chain, runtime.config.ows.apiKey);
 		const result = await runtime.mutex.runExclusive(
 			async () =>
-				await executeOnchainTransfer(runtime.config, runtime.signingProvider, {
+				await executeOnchainTransfer(runtime.config, transferProvider, {
 					type: "transfer/request",
 					actionId: `gateway-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 					asset: params.asset,
@@ -423,25 +427,18 @@ export class OpenClawTapRegistry {
 		reason?: string;
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
-		const matching = await this.findPendingSchedulingEntry(
-			runtime,
-			params.schedulingId,
-			"outbound",
-			`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
-		);
 
-		const report = await runtime.mutex.runExclusive(
-			async () =>
-				await runtime.runtime.cancelPendingSchedulingRequest(matching.requestId, params.reason),
+		const result = await runtime.mutex.runExclusive(
+			async () => await runtime.runtime.cancelMeeting(params.schedulingId, params.reason),
 		);
 
 		return {
 			identity: runtime.definition.name,
 			cancelled: true,
 			schedulingId: params.schedulingId,
-			requestId: matching.requestId,
+			requestId: result.requestId,
 			...(params.reason ? { reason: params.reason } : {}),
-			pendingRequests: report.pendingRequests.length,
+			pendingRequests: result.report.pendingRequests.length,
 		};
 	}
 
@@ -536,7 +533,9 @@ export class OpenClawTapRegistry {
 
 	private async ensureRuntimeStarted(name: string): Promise<ManagedTapRuntime> {
 		const runtime = await this.ensureRuntime(name);
-		await this.startRuntime(runtime);
+		if (!runtime.interval) {
+			await this.startRuntime(runtime);
+		}
 		return runtime;
 	}
 
@@ -617,8 +616,13 @@ export class OpenClawTapRegistry {
 				},
 			}),
 			hooks: {
-				executeTransfer: async (serviceConfig, request) =>
-					await executeOnchainTransfer(serviceConfig, signingProvider, request),
+				executeTransfer: async (serviceConfig, request) => {
+					const transferProvider =
+						request.chain === config.chain
+							? signingProvider
+							: new OwsSigningProvider(config.ows.wallet, request.chain, config.ows.apiKey);
+					return await executeOnchainTransfer(serviceConfig, transferProvider, request);
+				},
 				log: (level, message) => {
 					this.logger[level](`[trusted-agents-tap:${definition.name}] ${message}`);
 				},

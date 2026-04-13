@@ -1890,6 +1890,13 @@ export class TapMessagingService {
 			synced: true,
 			processed: 0,
 		};
+		if (reconciled.errors && reconciled.errors > 0) {
+			const samples = reconciled.errorSamples?.join("; ") ?? "";
+			this.log(
+				"warn",
+				`Reconcile completed with ${reconciled.errors} error(s); processed ${reconciled.processed} message(s)${samples ? `. Samples: ${samples}` : ""}`,
+			);
+		}
 		await this.drain();
 		this.lastSyncAt = nowISO();
 		return reconciled.processed;
@@ -4490,6 +4497,8 @@ export class TapMessagingService {
 
 		// Persist an outbound journal entry so reconciliation can retry delivery
 		// if the transport send fails (follows the same pattern as transfer results).
+		const actionId = typeof resultData.actionId === "string" ? resultData.actionId : requestId;
+		const delivery = buildPendingActionResultDeliveryFromRequest(contact, actionId, outgoing);
 		try {
 			await this.context.requestJournal.putOutbound({
 				requestId: String(outgoing.id),
@@ -4500,15 +4509,7 @@ export class TapMessagingService {
 				peerAgentId: contact.peerAgentId,
 				correlationId: requestId,
 				status: "pending",
-				metadata: {
-					type: "action-result-delivery",
-					actionId: typeof resultData.actionId === "string" ? resultData.actionId : requestId,
-					connectionId: contact.connectionId,
-					peerAgentId: contact.peerAgentId,
-					peerName: contact.peerDisplayName,
-					peerAddress: contact.peerAgentAddress,
-					request: outgoing,
-				} as unknown as Record<string, unknown>,
+				metadata: serializePendingActionResultDelivery(delivery),
 			});
 		} catch (journalError: unknown) {
 			this.log(
@@ -4528,6 +4529,12 @@ export class TapMessagingService {
 					`Failed to deliver app result for "${actionType}": ${toErrorMessage(deliveryError)}`,
 				);
 			}
+			return;
+		}
+		try {
+			await this.deliverPendingActionResult(delivery);
+		} catch (error: unknown) {
+			this.logActionResultDeliveryFailure(contact, actionId, error);
 		}
 	}
 
