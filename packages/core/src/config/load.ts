@@ -51,7 +51,7 @@ export interface LoadTrustedAgentConfigOptions {
 	paymasterProvider?: ExecutionPaymasterProvider;
 }
 
-export function resolveTrustedAgentConfigPath(dataDir: string): string {
+function resolveTrustedAgentConfigPath(dataDir: string): string {
 	return join(resolveDataDir(dataDir), "config.yaml");
 }
 

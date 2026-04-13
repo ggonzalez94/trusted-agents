@@ -20,17 +20,12 @@ export {
 	type RequestJournalKind,
 	type RequestJournalStatus,
 } from "./request-journal.js";
-export {
-	FileTapCommandOutbox,
-	type ClaimNextJobOptions,
-	type ProcessingTapCommandJob,
-	type RecoverOutboxOptions,
-	type TapCommandJob,
-	type TapCommandJobResult,
-	type TapCommandJobResultPayload,
-	type TapCommandJobType,
-	type TapCommandOutboxStats,
-} from "./command-outbox.js";
+export type {
+	TapCommandJob,
+	TapCommandJobResult,
+	TapCommandJobResultPayload,
+	TapCommandJobType,
+} from "./command-job.js";
 export {
 	buildDefaultTapRuntimeContext,
 	type BuildTapRuntimeContextOptions,
@@ -49,6 +44,7 @@ export {
 	buildConversationLogEntry,
 	findContactForPeer,
 	findUniqueContactForAgentId,
+	requireActiveContact,
 	DEFAULT_MESSAGE_SCOPE,
 } from "./message-conversations.js";
 export {
@@ -67,17 +63,18 @@ export {
 export {
 	findActiveGrantsByScope,
 	normalizeGrantInput,
-	readGrantFile,
 	replaceGrantedByMe,
 	replaceGrantedByPeer,
 	summarizeGrant,
 	summarizeGrantSet,
 } from "./grants.js";
 export {
+	findApplicableTransferGrants,
+	matchesTransferGrantRequest,
 	TapMessagingService,
 	type TapCancelMeetingResult,
 	type TapConnectResult,
-	type TapConnectionApprovalContext,
+	type TapPendingDelivery,
 	type TapPendingRequest,
 	type TapPendingRequestDetails,
 	type TapPendingSchedulingDetails,
@@ -102,4 +99,3 @@ export {
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
-export * from "../scheduling/index.js";

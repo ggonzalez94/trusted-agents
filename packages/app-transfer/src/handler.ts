@@ -1,7 +1,14 @@
-import type { TapActionContext, TapActionResult } from "trusted-agents-core";
-import { isEthereumAddress } from "trusted-agents-core";
-import { findApplicableTransferGrants } from "./grants.js";
-import type { TransferActionRequest, TransferAsset } from "./types.js";
+import type {
+	TapActionContext,
+	TapActionResult,
+	TransferActionRequest,
+	TransferAsset,
+} from "trusted-agents-core";
+import {
+	findApplicableTransferGrants,
+	isEthereumAddress,
+	toErrorMessage,
+} from "trusted-agents-core";
 
 export async function handleTransferRequest(ctx: TapActionContext): Promise<TapActionResult> {
 	const request = validatePayload(ctx.payload);
@@ -88,7 +95,7 @@ export async function handleTransferRequest(ctx: TapActionContext): Promise<TapA
 			},
 		};
 	} catch (error: unknown) {
-		const errorMessage = error instanceof Error ? error.message : String(error);
+		const errorMessage = toErrorMessage(error);
 
 		ctx.events.emit({
 			type: "transfer/failed",

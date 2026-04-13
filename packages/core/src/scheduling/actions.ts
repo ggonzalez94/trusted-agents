@@ -1,38 +1,7 @@
 import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
+import { extractMessageData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
-
-// ── Internal helpers ──────────────────────────────────────────────────────────
-
-function extractMessageData(message: ProtocolMessage): Record<string, unknown> | null {
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const container = (message.params as { message?: unknown }).message;
-	if (typeof container !== "object" || container === null) {
-		return null;
-	}
-
-	const parts = (container as { parts?: unknown }).parts;
-	if (!Array.isArray(parts)) {
-		return null;
-	}
-
-	for (const part of parts) {
-		if (
-			typeof part === "object" &&
-			part !== null &&
-			(part as { kind?: unknown }).kind === "data" &&
-			typeof (part as { data?: unknown }).data === "object" &&
-			(part as { data?: unknown }).data !== null
-		) {
-			return (part as { data: Record<string, unknown> }).data;
-		}
-	}
-
-	return null;
-}
 
 function isValidIsoDate(value: unknown): value is string {
 	if (typeof value !== "string" || value.length === 0) {

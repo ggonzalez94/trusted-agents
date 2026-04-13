@@ -14,60 +14,42 @@ function makeEvent(overrides: Partial<TapEmitEventPayload> = {}): TapEmitEventPa
 
 describe("classifyTapEvent", () => {
 	describe("filtering", () => {
-		it("drops duplicate events (receipt_status 'duplicate')", () => {
-			const event = makeEvent({ receipt_status: "duplicate" });
-			expect(classifyTapEvent(event)).toBeNull();
-		});
-
-		it("drops outgoing events (direction !== 'incoming')", () => {
-			const event = makeEvent({ direction: "outgoing" });
-			expect(classifyTapEvent(event)).toBeNull();
-		});
-
-		it("drops events that are both outgoing and duplicate", () => {
-			const event = makeEvent({
-				direction: "outgoing",
-				receipt_status: "duplicate",
-			});
-			expect(classifyTapEvent(event)).toBeNull();
+		it.each([
+			["duplicate events", { receipt_status: "duplicate" }],
+			["outgoing events", { direction: "outgoing" as const }],
+			[
+				"outgoing + duplicate events",
+				{ direction: "outgoing" as const, receipt_status: "duplicate" },
+			],
+		])("drops %s", (_, overrides) => {
+			expect(classifyTapEvent(makeEvent(overrides))).toBeNull();
 		});
 	});
 
 	describe("auto-handle bucket", () => {
-		it("classifies message/send as auto-handle", () => {
-			const event = makeEvent({ method: "message/send" });
-			expect(classifyTapEvent(event)).toBe("auto-handle");
-		});
-
-		it("classifies action/result as auto-handle", () => {
-			const event = makeEvent({ method: "action/result" });
-			expect(classifyTapEvent(event)).toBe("auto-handle");
-		});
-
-		it("classifies permissions/update as auto-handle", () => {
-			const event = makeEvent({ method: "permissions/update" });
-			expect(classifyTapEvent(event)).toBe("auto-handle");
-		});
-
-		it("classifies action/request with receipt_status 'received' as auto-handle (permission grant)", () => {
-			const event = makeEvent({
-				method: "action/request",
-				receipt_status: "received",
-			});
-			expect(classifyTapEvent(event)).toBe("auto-handle");
+		it.each([
+			["message/send", { method: "message/send" }],
+			["action/result", { method: "action/result" }],
+			["permissions/update", { method: "permissions/update" }],
+			[
+				"action/request with received status",
+				{ method: "action/request", receipt_status: "received" },
+			],
+		])("classifies %s as auto-handle", (_, overrides) => {
+			expect(classifyTapEvent(makeEvent(overrides))).toBe("auto-handle");
 		});
 	});
 
-	describe("escalate bucket", () => {
-		it("classifies connection/request as escalate", () => {
+	describe("connection/request suppressed (auto-accept, spec §1.5)", () => {
+		it("returns null for connection/request (host is notified via onConnectionEstablished hook instead)", () => {
 			const event = makeEvent({ method: "connection/request" });
-			expect(classifyTapEvent(event)).toBe("escalate");
+			expect(classifyTapEvent(event)).toBeNull();
 		});
 
-		it("classifies connection/request as escalate regardless of receipt_status", () => {
+		it("returns null for connection/request regardless of receipt_status", () => {
 			for (const receipt_status of ["delivered", "received", "queued", "ok"]) {
 				const event = makeEvent({ method: "connection/request", receipt_status });
-				expect(classifyTapEvent(event)).toBe("escalate");
+				expect(classifyTapEvent(event)).toBeNull();
 			}
 		});
 	});
@@ -90,14 +72,8 @@ describe("classifyTapEvent", () => {
 	});
 
 	describe("unknown methods", () => {
-		it("returns null for unknown method", () => {
-			const event = makeEvent({ method: "foo/bar" });
-			expect(classifyTapEvent(event)).toBeNull();
-		});
-
-		it("returns null for empty method", () => {
-			const event = makeEvent({ method: "" });
-			expect(classifyTapEvent(event)).toBeNull();
+		it.each(["foo/bar", ""])("returns null for unknown method '%s'", (method) => {
+			expect(classifyTapEvent(makeEvent({ method }))).toBeNull();
 		});
 	});
 });

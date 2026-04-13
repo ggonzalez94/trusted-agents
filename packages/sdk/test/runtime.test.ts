@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TapRuntime, createTapRuntime } from "../src/index.js";
 
@@ -21,86 +24,24 @@ describe("TapRuntime before start()", () => {
 		expect(runtime.listApps()).toEqual([]);
 	});
 
-	it("sendMessage throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.sendMessage(1, "hello")).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
+	const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
 
-	it("sendAction throws before start()", async () => {
+	it.each<[string, (r: TapRuntime) => Promise<unknown>]>([
+		["sendMessage", (r) => r.sendMessage(1, "hello")],
+		["sendAction", (r) => r.sendAction(1, "test/action", {})],
+		["connect", (r) => r.connect({ inviteUrl: "https://example.com" })],
+		["syncOnce", (r) => r.syncOnce()],
+		["stop", (r) => r.stop()],
+		["getStatus", (r) => r.getStatus()],
+		["listPendingRequests", (r) => r.listPendingRequests()],
+		["resolvePending", (r) => r.resolvePending("req-1", true)],
+		["publishGrants", (r) => r.publishGrants(1, grantSet)],
+		["requestGrants", (r) => r.requestGrants(1, grantSet)],
+		["installApp", (r) => r.installApp("nonexistent-package")],
+		["removeApp", (r) => r.removeApp("some-app")],
+	])("%s throws before start()", async (_name, callMethod) => {
 		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.sendAction(1, "test/action", {})).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("connect throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.connect({ inviteUrl: "https://example.com" })).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("syncOnce throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.syncOnce()).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("stop throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.stop()).rejects.toThrow("Runtime not initialized. Call start() first.");
-	});
-
-	it("getStatus throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.getStatus()).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("listPendingRequests throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.listPendingRequests()).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("resolvePending throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.resolvePending("req-1", true)).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("publishGrants throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
-		await expect(runtime.publishGrants(1, grantSet)).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("requestGrants throws before start()", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
-		await expect(runtime.requestGrants(1, grantSet)).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("installApp throws before start() (no context)", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.installApp("nonexistent-package")).rejects.toThrow(
-			"Runtime not initialized. Call start() first.",
-		);
-	});
-
-	it("removeApp throws before start() (no context)", async () => {
-		const runtime = await createTapRuntime({ dataDir: "/tmp/tap-sdk-test" });
-		await expect(runtime.removeApp("some-app")).rejects.toThrow(
+		await expect(callMethod(runtime)).rejects.toThrow(
 			"Runtime not initialized. Call start() first.",
 		);
 	});
@@ -121,5 +62,49 @@ describe("TapRuntime event subscription", () => {
 		runtime.on("log", (entry) => logs.push(entry));
 		runtime.emit("log", { level: "info", message: "test" });
 		expect(logs).toEqual([{ level: "info", message: "test" }]);
+	});
+});
+
+describe("TapRuntime init", () => {
+	it("uses preloaded config instead of reloading from disk", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "tap-sdk-runtime-"));
+		const runtime = await createTapRuntime({
+			dataDir,
+			preloadedConfig: {
+				agentId: 123,
+				chain: "eip155:8453",
+				ows: { wallet: "wallet-1", apiKey: "ows_key_test" },
+				dataDir,
+				chains: {},
+				inviteExpirySeconds: 3600,
+				resolveCacheTtlMs: 60_000,
+				resolveCacheMaxEntries: 128,
+			},
+			createSigningProvider: async () =>
+				({
+					getAddress: async () => "0x0000000000000000000000000000000000000001",
+					signMessage: async () => "0x1",
+					signTypedData: async () => "0x1",
+					signTransaction: async () => "0x1",
+					signAuthorization: async () => ({}),
+				}) as never,
+			contextOptions: {
+				transport: {
+					setHandlers: () => {},
+					send: async () => ({
+						received: true,
+						requestId: "test",
+						status: "received",
+						receivedAt: new Date().toISOString(),
+					}),
+					isReachable: async () => true,
+				},
+			},
+		});
+
+		await runtime.init();
+
+		expect(runtime.config.agentId).toBe(123);
+		expect(runtime.config.dataDir).toBe(dataDir);
 	});
 });

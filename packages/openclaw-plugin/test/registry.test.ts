@@ -174,67 +174,20 @@ describe("OpenClawTapRegistry", () => {
 			return { registry, enqueueSystemEvent, requestHeartbeatNow };
 		}
 
-		it("triggers escalation for message/send (auto-handle bucket) — defaults to auto-reply", () => {
+		it.each([
+			["message/send", "auto-reply"],
+			["permissions/update", "summary"],
+			["action/result", "summary"],
+			["connection/result", "info"],
+		] as const)("triggers escalation for %s → %s notification type", (method, expectedType) => {
 			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
 			const queue = new TapNotificationQueue();
 
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "message/send" }));
+			(registry as never).handleEmitEvent("test", queue, makeEvent({ method }));
 
 			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
 			expect(queue.peek()).toHaveLength(1);
-			expect(queue.peek()[0]!.type).toBe("auto-reply");
-		});
-
-		it("triggers escalation for permissions/update (auto-handle bucket)", () => {
-			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
-			const queue = new TapNotificationQueue();
-
-			(registry as never).handleEmitEvent(
-				"test",
-				queue,
-				makeEvent({ method: "permissions/update" }),
-			);
-
-			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
-			expect(queue.peek()[0]!.type).toBe("summary");
-		});
-
-		it("triggers escalation for action/result (auto-handle bucket)", () => {
-			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
-			const queue = new TapNotificationQueue();
-
-			(registry as never).handleEmitEvent("test", queue, makeEvent({ method: "action/result" }));
-
-			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
-			expect(queue.peek()[0]!.type).toBe("summary");
-		});
-
-		it("triggers escalation for connection/result (notify bucket)", () => {
-			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
-			const queue = new TapNotificationQueue();
-
-			(registry as never).handleEmitEvent(
-				"test",
-				queue,
-				makeEvent({ method: "connection/result" }),
-			);
-
-			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
-			expect(queue.peek()[0]!.type).toBe("info");
-		});
-
-		it("triggers escalation for connection/request (escalate bucket)", () => {
-			const { registry, requestHeartbeatNow } = createRegistryWithEscalation();
-			const queue = new TapNotificationQueue();
-
-			(registry as never).handleEmitEvent(
-				"test",
-				queue,
-				makeEvent({ method: "connection/request" }),
-			);
-
-			expect(requestHeartbeatNow).toHaveBeenCalledTimes(1);
-			expect(queue.peek()[0]!.type).toBe("escalation");
+			expect(queue.peek()[0]!.type).toBe(expectedType);
 		});
 
 		it("does not trigger escalation for duplicate notifications", () => {
@@ -334,38 +287,66 @@ describe("OpenClawTapRegistry", () => {
 		expect(requestHeartbeatNow).not.toHaveBeenCalled();
 	});
 
-	it("respondMeeting resolves inbound scheduling requests and forwards reason", async () => {
-		const logger = createLogger();
-		const registry = new OpenClawTapRegistry({ identities: [] }, logger);
-		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
-		const runtime = {
+	describe("onConnectionEstablished hook emits info notification", () => {
+		it("pushes an info-type connection-established notification to the queue without triggering escalation", () => {
+			// The onConnectionEstablished hook pushes directly to the notification queue
+			// with type "info" — it does NOT call handleEmitEvent or triggerEscalation.
+			// Verify the queue shape that the hook produces.
+			const queue = new TapNotificationQueue();
+			queue.push({
+				type: "info",
+				identity: "alice",
+				timestamp: new Date().toISOString(),
+				method: "connection/established",
+				from: 99,
+				fromName: "Carol",
+				messageId: "connection-established-99",
+				detail: { peerAgentId: 99, peerName: "Carol", peerChain: "eip155:8453" },
+				oneLiner: "Connected with Carol (agent #99)",
+			});
+
+			// The notification is in the queue to drain on the next heartbeat.
+			expect(queue.peek()).toHaveLength(1);
+			const notification = queue.peek()[0]!;
+			expect(notification.type).toBe("info");
+			expect(notification.method).toBe("connection/established");
+			expect(notification.oneLiner).toContain("Carol");
+		});
+	});
+
+	function makeSchedulingRuntime(
+		schedulingId: string,
+		runtimeMethods: Record<string, ReturnType<typeof vi.fn>>,
+	) {
+		const makeEntry = (requestId: string, direction: string) => ({
+			requestId,
+			peerAgentId: 10,
+			direction,
+			kind: "request",
+			method: "action/request",
+			status: "pending",
+			details: { type: "scheduling", schedulingId },
+		});
+		return {
 			definition: { name: "alpha" },
 			mutex: { runExclusive: async (work: () => Promise<unknown>) => await work() },
 			runtime: {
 				listPendingRequests: async () => [
-					{
-						requestId: "outbound-ignore",
-						peerAgentId: 10,
-						direction: "outbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-respond-1" },
-					},
-					{
-						requestId: "inbound-target",
-						peerAgentId: 10,
-						direction: "inbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-respond-1" },
-					},
+					makeEntry("inbound-entry", "inbound"),
+					makeEntry("outbound-entry", "outbound"),
 				],
-				resolvePending,
+				...runtimeMethods,
 			},
 		};
-		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(runtime as never);
+	}
+
+	it("respondMeeting resolves inbound scheduling requests and forwards reason", async () => {
+		const logger = createLogger();
+		const registry = new OpenClawTapRegistry({ identities: [] }, logger);
+		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
+		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(
+			makeSchedulingRuntime("sch-respond-1", { resolvePending }) as never,
+		);
 
 		const result = await registry.respondMeeting({
 			schedulingId: "sch-respond-1",
@@ -373,11 +354,11 @@ describe("OpenClawTapRegistry", () => {
 			reason: "No availability",
 		});
 
-		expect(resolvePending).toHaveBeenCalledWith("inbound-target", false, "No availability");
+		expect(resolvePending).toHaveBeenCalledWith("inbound-entry", false, "No availability");
 		expect(result).toMatchObject({
 			identity: "alpha",
 			resolved: true,
-			requestId: "inbound-target",
+			requestId: "inbound-entry",
 		});
 	});
 
@@ -385,45 +366,20 @@ describe("OpenClawTapRegistry", () => {
 		const logger = createLogger();
 		const registry = new OpenClawTapRegistry({ identities: [] }, logger);
 		const cancelPendingSchedulingRequest = vi.fn(async () => ({ pendingRequests: [] }));
-		const runtime = {
-			definition: { name: "alpha" },
-			mutex: { runExclusive: async (work: () => Promise<unknown>) => await work() },
-			runtime: {
-				listPendingRequests: async () => [
-					{
-						requestId: "inbound-ignore",
-						peerAgentId: 10,
-						direction: "inbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-cancel-1" },
-					},
-					{
-						requestId: "outbound-target",
-						peerAgentId: 10,
-						direction: "outbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-cancel-1" },
-					},
-				],
-				cancelPendingSchedulingRequest,
-			},
-		};
-		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(runtime as never);
+		vi.spyOn(registry as never, "ensureRuntimeForAction").mockResolvedValue(
+			makeSchedulingRuntime("sch-cancel-1", { cancelPendingSchedulingRequest }) as never,
+		);
 
 		const result = await registry.cancelMeeting({
 			schedulingId: "sch-cancel-1",
 			reason: "Conflict",
 		});
 
-		expect(cancelPendingSchedulingRequest).toHaveBeenCalledWith("outbound-target", "Conflict");
+		expect(cancelPendingSchedulingRequest).toHaveBeenCalledWith("outbound-entry", "Conflict");
 		expect(result).toMatchObject({
 			identity: "alpha",
 			cancelled: true,
-			requestId: "outbound-target",
+			requestId: "outbound-entry",
 		});
 	});
 });

@@ -1,12 +1,10 @@
+import { buildChainPublicClient, getExecutionPreview, getUsdcAsset } from "trusted-agents-core";
 import { formatUnits } from "viem";
-import { getUsdcAsset } from "../lib/assets.js";
-import { resolveChainAlias } from "../lib/chains.js";
+import { requireChainConfig, resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { getExecutionPreview } from "../lib/execution.js";
-import { error, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success } from "../lib/output.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
-import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 const ERC20_BALANCE_OF_ABI = [
@@ -25,22 +23,13 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 	try {
 		const config = await loadConfig(opts, { requireAgentId: false });
 		const chain = chainInput ? resolveChainAlias(chainInput) : config.chain;
-		const chainConfig = config.chains[chain];
-		if (!chainConfig) {
-			error(
-				"VALIDATION_ERROR",
-				`Unknown chain: ${chainInput ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
-				opts,
-			);
-			process.exitCode = 2;
-			return;
-		}
+		const chainConfig = requireChainConfig(config, chain, chainInput);
 
 		const signingProvider = createConfiguredSigningProvider(config);
 		const messagingAddress = await signingProvider.getAddress();
 		const execution = await getExecutionPreview(config, chainConfig, signingProvider);
 		const executionAddress = execution.executionAddress;
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const usdcAsset = getUsdcAsset(chain);
 
 		const messagingNativeBalancePromise = publicClient.getBalance({ address: messagingAddress });
@@ -114,7 +103,6 @@ export async function balanceCommand(opts: GlobalOptions, chainInput?: string): 
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

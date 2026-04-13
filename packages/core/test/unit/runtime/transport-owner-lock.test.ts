@@ -1,25 +1,20 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
 	TransportOwnerLock,
 	type TransportOwnershipError,
 } from "../../../src/runtime/transport-owner-lock.js";
+import { useTempDirs } from "../../helpers/temp-dir.js";
 
-const tempDirs: string[] = [];
+const { track: trackDir } = useTempDirs();
 
 async function createDataDir() {
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-lock-"));
-	tempDirs.push(dataDir);
+	trackDir(dataDir);
 	return dataDir;
 }
-
-afterEach(async () => {
-	await Promise.all(
-		tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true })),
-	);
-});
 
 describe("TransportOwnerLock", () => {
 	it("writes and releases the ownership file", async () => {
@@ -37,8 +32,12 @@ describe("TransportOwnerLock", () => {
 		);
 
 		const lockPath = join(dataDir, ".transport.lock");
-		const raw = JSON.parse(await readFile(lockPath, "utf-8")) as { owner: string };
+		const raw = JSON.parse(await readFile(lockPath, "utf-8")) as {
+			owner: string;
+			instanceId?: string;
+		};
 		expect(raw.owner).toBe("tap:test-owner");
+		expect(typeof raw.instanceId).toBe("string");
 
 		await lock.release();
 		expect(await lock.inspect()).toBeNull();
@@ -89,38 +88,20 @@ describe("TransportOwnerLock", () => {
 		);
 	});
 
-	it("reclaims stale lock from same logical owner (restart scenario)", async () => {
+	it("rejects a second live owner even when the owner label matches", async () => {
 		const dataDir = await createDataDir();
-		const lockPath = join(dataDir, ".transport.lock");
-		const realDataDir = await import("node:fs/promises").then((m) => m.realpath(dataDir));
+		const first = new TransportOwnerLock(dataDir, "openclaw:myagent");
+		const second = new TransportOwnerLock(dataDir, "openclaw:myagent");
 
-		// Simulate a stale lock left by a crashed process with the same owner label
-		// but a live PID (simulates PID recycling by using current PID)
-		await writeFile(
-			lockPath,
-			JSON.stringify(
-				{
-					pid: process.pid,
-					owner: "openclaw:myagent",
-					acquiredAt: "2026-01-01T00:00:00.000Z",
-					dataDirRealpath: realDataDir,
-				},
-				null,
-				"\t",
-			),
-			"utf-8",
-		);
+		await first.acquire();
 
-		// Same owner label should reclaim even though PID appears alive
-		const lock = new TransportOwnerLock(dataDir, "openclaw:myagent");
-		await lock.acquire();
-
-		expect(await lock.inspect()).toEqual(
-			expect.objectContaining({
+		await expect(second.acquire()).rejects.toMatchObject<Partial<TransportOwnershipError>>({
+			name: "TransportOwnershipError",
+			currentOwner: expect.objectContaining({
 				pid: process.pid,
 				owner: "openclaw:myagent",
 			}),
-		);
+		});
 	});
 
 	it("reclaims copied lock files that point at a different data dir", async () => {
@@ -142,6 +123,35 @@ describe("TransportOwnerLock", () => {
 			expect.objectContaining({
 				pid: process.pid,
 				owner: "tap:copied",
+			}),
+		);
+	});
+
+	it("does not delete a newer owner's lock during release", async () => {
+		const dataDir = await createDataDir();
+		const first = new TransportOwnerLock(dataDir, "tap:first");
+
+		await first.acquire();
+		await writeFile(
+			join(dataDir, ".transport.lock"),
+			JSON.stringify(
+				{
+					pid: 0,
+					owner: "tap:second",
+					acquiredAt: "2026-01-01T00:00:00.000Z",
+					instanceId: "replacement-instance",
+				},
+				null,
+				"\t",
+			),
+			"utf-8",
+		);
+
+		await first.release();
+
+		expect(await first.inspect()).toEqual(
+			expect.objectContaining({
+				owner: "tap:second",
 			}),
 		);
 	});

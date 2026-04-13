@@ -1,22 +1,15 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { FileTrustStore } from "../../../src/trust/file-trust-store.js";
 import { BOB } from "../../fixtures/test-keys.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
 import { createTestContact } from "../../helpers/test-agent.js";
 
 describe("FileTrustStore", () => {
-	let tmpDir: string;
+	const dir = useTempDir("trust-store-test");
 	let store: FileTrustStore;
 
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "trust-store-test-"));
-		store = new FileTrustStore(tmpDir);
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
+	beforeEach(() => {
+		store = new FileTrustStore(dir.path);
 	});
 
 	it("should return empty contacts list initially", async () => {
@@ -120,10 +113,29 @@ describe("FileTrustStore", () => {
 		await store.addContact(contact);
 
 		// Create a new store instance pointing to the same directory
-		const store2 = new FileTrustStore(tmpDir);
+		const store2 = new FileTrustStore(dir.path);
 		const contacts = await store2.getContacts();
 		expect(contacts).toHaveLength(1);
 		expect(contacts[0]!.peerDisplayName).toBe("Bob's Agent");
+	});
+
+	it("should persist a connecting contact with expiresAt across store instances", async () => {
+		const expiresAt = "2026-12-31T23:59:59.000Z";
+		const contact = createTestContact({
+			connectionId: "connecting-persist-001",
+			peerAgentId: 77,
+			peerChain: "eip155:8453",
+			status: "connecting",
+			expiresAt,
+		});
+		await store.addContact(contact);
+
+		// Open a brand-new store on the same directory — simulates a process restart
+		const store2 = new FileTrustStore(dir.path);
+		const found = await store2.findByAgentId(77, "eip155:8453");
+		expect(found).not.toBeNull();
+		expect(found!.status).toBe("connecting");
+		expect(found!.expiresAt).toBe(expiresAt);
 	});
 
 	it("should deactivate stale active contact when adding a new one with the same address", async () => {
@@ -170,5 +182,22 @@ describe("FileTrustStore", () => {
 
 		const contacts = await store.getContacts();
 		expect(contacts.filter((c) => c.status === "active")).toHaveLength(2);
+	});
+
+	it("should round-trip a connecting contact with expiresAt through addContact and findByAgentId", async () => {
+		const expiresAt = "2026-12-31T23:59:59.000Z";
+		const contact = createTestContact({
+			connectionId: "connecting-001",
+			peerAgentId: 99,
+			peerChain: "eip155:8453",
+			status: "connecting",
+			expiresAt,
+		});
+		await store.addContact(contact);
+
+		const found = await store.findByAgentId(99, "eip155:8453");
+		expect(found).not.toBeNull();
+		expect(found!.status).toBe("connecting");
+		expect(found!.expiresAt).toBe(expiresAt);
 	});
 });

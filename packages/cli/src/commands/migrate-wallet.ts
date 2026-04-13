@@ -6,17 +6,15 @@ import { keccak256, toHex } from "viem";
 import YAML from "yaml";
 import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, info, success } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { info, success } from "../lib/output.js";
 import {
 	createOwsApiKey,
-	createOwsPolicy,
 	ensureOwsInstalled,
-	findCompatiblePolicies,
 	getOwsWalletAddress,
 	importOwsWalletPrivateKey,
+	setupOwsPolicy,
 } from "../lib/ows.js";
-import { promptInput } from "../lib/prompt.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface MigrateWalletOptions {
@@ -108,53 +106,17 @@ export async function migrateWalletCommand(
 
 		// ── Step 5: Policy setup ──────────────────────────────────────
 
-		const policyChains = [chain];
-		if (chain !== "eip155:8453") {
-			policyChains.push("eip155:8453");
-		}
-
-		let policyId: string;
-		const compatible = findCompatiblePolicies(chain);
-
-		if (compatible.length > 0 && !cmdOpts?.nonInteractive) {
-			info("\nCompatible OWS policies:", opts);
-			for (let i = 0; i < compatible.length; i++) {
-				const p = compatible[i]!;
-				info(`  ${i + 1}. ${p.name} (chains: ${p.chains.join(", ")})`, opts);
-			}
-
-			const choice = await promptInput("\nReuse an existing policy? [1/2/.../no]: ");
-			if (choice && choice !== "no") {
-				const idx = Number.parseInt(choice, 10) - 1;
-				if (idx >= 0 && idx < compatible.length) {
-					policyId = compatible[idx]!.id;
-					info(`Using policy: ${policyId}`, opts);
-				} else {
-					policyId = createNewPolicy(policyChains);
-					info(`Created policy: ${policyId}`, opts);
-				}
-			} else {
-				policyId = createNewPolicy(policyChains);
-				info(`Created policy: ${policyId}`, opts);
-			}
-		} else {
-			// Non-interactive or no compatible policies
-			if (compatible.length > 0) {
-				// Non-interactive: reuse first compatible
-				policyId = compatible[0]!.id;
-				info(`Using existing policy: ${policyId}`, opts);
-			} else {
-				policyId = createNewPolicy(policyChains);
-				info(`Created policy: ${policyId}`, opts);
-			}
-		}
+		const policyId = await setupOwsPolicy(chain, opts, {
+			nonInteractive: cmdOpts?.nonInteractive,
+			reuseInNonInteractive: true,
+		});
 
 		// ── Step 6: Create API key ────────────────────────────────────
 
 		const keyName = `tap-${walletName}-${Date.now()}`;
 		const apiKeyResult = createOwsApiKey({
 			name: keyName,
-			walletName,
+			walletId: imported.id,
 			policyId,
 			passphrase,
 		});
@@ -203,21 +165,6 @@ export async function migrateWalletCommand(
 
 		success(result, opts, startTime);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
-}
-
-function createNewPolicy(chains: string[]): string {
-	const policyId = `tap-${randomBytes(4).toString("hex")}`;
-	const oneYearFromNow = new Date();
-	oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-
-	createOwsPolicy({
-		id: policyId,
-		chains,
-		expiresAt: oneYearFromNow.toISOString(),
-	});
-
-	return policyId;
 }

@@ -1,6 +1,6 @@
 {
   "name": "trusted-agents-cli",
-  "version": "0.1.5",
+  "version": "0.2.0-beta.3",
   "type": "module",
   "main": "./dist/cli.js",
   "types": "./dist/cli.d.ts",
@@ -9,19 +9,19 @@
   },
   "files": [
     "dist",
-    "assets"
+    "assets",
+    "skills"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "prebuild": "rm -rf assets/skills && mkdir -p assets/skills && cp -r ../../skills/trusted-agents assets/skills/trusted-agents",
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf assets/skills skills && mkdir -p assets/skills skills && cp -r ../../skills/trusted-agents assets/skills/trusted-agents && cp -r ../../skills/trusted-agents skills/trusted-agents && tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
-    "@trustedagents/sdk": "workspace:*",
+    "trusted-agents-sdk": "workspace:*",
     "@x402/evm": "^2.5.0",
     "@x402/fetch": "^2.5.0",
     "commander": "^13.0.0",

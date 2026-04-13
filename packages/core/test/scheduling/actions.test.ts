@@ -16,107 +16,79 @@ import type { ProtocolMessage } from "../../src/transport/interface.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeProposalMessage(overrides: Record<string, unknown> = {}): ProtocolMessage {
+function makeSchedulingMessage(
+	method: string,
+	text: string,
+	baseData: Record<string, unknown>,
+	overrides: Record<string, unknown> = {},
+	resultParams?: Record<string, unknown>,
+): ProtocolMessage {
 	return {
 		jsonrpc: "2.0",
-		method: ACTION_REQUEST,
+		method,
 		params: {
+			...resultParams,
 			message: {
 				parts: [
-					{ kind: "text", text: "Proposing: Dinner (90 min) — 2 time slot(s)" },
-					{
-						kind: "data",
-						data: {
-							type: "scheduling/propose",
-							schedulingId: "sch_abc123",
-							title: "Dinner",
-							duration: 90,
-							slots: [
-								{ start: "2026-03-28T23:00:00Z", end: "2026-03-29T00:30:00Z" },
-								{ start: "2026-03-29T23:00:00Z", end: "2026-03-30T00:30:00Z" },
-							],
-							originTimezone: "America/New_York",
-							...overrides,
-						},
-					},
+					{ kind: "text", text },
+					{ kind: "data", data: { ...baseData, ...overrides } },
 				],
 			},
 		},
 	};
+}
+
+function makeProposalMessage(overrides: Record<string, unknown> = {}): ProtocolMessage {
+	return makeSchedulingMessage(
+		ACTION_REQUEST,
+		"Proposing: Dinner (90 min) — 2 time slot(s)",
+		{
+			type: "scheduling/propose",
+			schedulingId: "sch_abc123",
+			title: "Dinner",
+			duration: 90,
+			slots: [
+				{ start: "2026-03-28T23:00:00Z", end: "2026-03-29T00:30:00Z" },
+				{ start: "2026-03-29T23:00:00Z", end: "2026-03-30T00:30:00Z" },
+			],
+			originTimezone: "America/New_York",
+		},
+		overrides,
+	);
 }
 
 function makeAcceptMessage(overrides: Record<string, unknown> = {}): ProtocolMessage {
-	return {
-		jsonrpc: "2.0",
-		method: ACTION_RESULT,
-		params: {
-			requestId: "req_123",
-			status: "completed",
-			message: {
-				parts: [
-					{ kind: "text", text: "Accepted: meeting at 2026-03-28T23:00:00Z" },
-					{
-						kind: "data",
-						data: {
-							type: "scheduling/accept",
-							schedulingId: "sch_abc123",
-							acceptedSlot: { start: "2026-03-28T23:00:00Z", end: "2026-03-29T00:30:00Z" },
-							...overrides,
-						},
-					},
-				],
-			},
+	return makeSchedulingMessage(
+		ACTION_RESULT,
+		"Accepted: meeting at 2026-03-28T23:00:00Z",
+		{
+			type: "scheduling/accept",
+			schedulingId: "sch_abc123",
+			acceptedSlot: { start: "2026-03-28T23:00:00Z", end: "2026-03-29T00:30:00Z" },
 		},
-	};
+		overrides,
+		{ requestId: "req_123", status: "completed" },
+	);
 }
 
 function makeRejectMessage(overrides: Record<string, unknown> = {}): ProtocolMessage {
-	return {
-		jsonrpc: "2.0",
-		method: ACTION_RESULT,
-		params: {
-			requestId: "req_456",
-			status: "rejected",
-			message: {
-				parts: [
-					{ kind: "text", text: "Declined meeting request" },
-					{
-						kind: "data",
-						data: {
-							type: "scheduling/reject",
-							schedulingId: "sch_abc123",
-							...overrides,
-						},
-					},
-				],
-			},
-		},
-	};
+	return makeSchedulingMessage(
+		ACTION_RESULT,
+		"Declined meeting request",
+		{ type: "scheduling/reject", schedulingId: "sch_abc123" },
+		overrides,
+		{ requestId: "req_456", status: "rejected" },
+	);
 }
 
 function makeCancelMessage(overrides: Record<string, unknown> = {}): ProtocolMessage {
-	return {
-		jsonrpc: "2.0",
-		method: ACTION_RESULT,
-		params: {
-			requestId: "req_789",
-			status: "rejected",
-			message: {
-				parts: [
-					{ kind: "text", text: "Cancelled meeting" },
-					{
-						kind: "data",
-						data: {
-							type: "scheduling/cancel",
-							schedulingId: "sch_abc123",
-							reason: "No longer needed",
-							...overrides,
-						},
-					},
-				],
-			},
-		},
-	};
+	return makeSchedulingMessage(
+		ACTION_RESULT,
+		"Cancelled meeting",
+		{ type: "scheduling/cancel", schedulingId: "sch_abc123", reason: "No longer needed" },
+		overrides,
+		{ requestId: "req_789", status: "rejected" },
+	);
 }
 
 // ── parseSchedulingActionRequest ─────────────────────────────────────────────
@@ -171,62 +143,24 @@ describe("parseSchedulingActionRequest", () => {
 		expect(parseSchedulingActionRequest(msg)).toBeNull();
 	});
 
-	it("returns null when schedulingId is empty", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ schedulingId: "" }))).toBeNull();
+	it.each([
+		["schedulingId is empty", { schedulingId: "" }],
+		["title is empty", { title: "" }],
+		["duration is zero", { duration: 0 }],
+		["duration is negative", { duration: -5 }],
+		["duration is not a number", { duration: "90" }],
+		["slots is empty", { slots: [] }],
+		["slots is not an array", { slots: "not-an-array" }],
+	] as [string, Record<string, unknown>][])("returns null when %s", (_, overrides) => {
+		expect(parseSchedulingActionRequest(makeProposalMessage(overrides))).toBeNull();
 	});
 
-	it("returns null when title is empty", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ title: "" }))).toBeNull();
-	});
-
-	it("returns null when duration is zero", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ duration: 0 }))).toBeNull();
-	});
-
-	it("returns null when duration is negative", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ duration: -5 }))).toBeNull();
-	});
-
-	it("returns null when duration is not a number", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ duration: "90" }))).toBeNull();
-	});
-
-	it("returns null when slots is empty", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ slots: [] }))).toBeNull();
-	});
-
-	it("returns null when slots is not an array", () => {
-		expect(parseSchedulingActionRequest(makeProposalMessage({ slots: "not-an-array" }))).toBeNull();
-	});
-
-	it("returns null when a slot has invalid start/end", () => {
-		expect(
-			parseSchedulingActionRequest(
-				makeProposalMessage({
-					slots: [{ start: "not-a-date", end: "2026-03-29T00:30:00Z" }],
-				}),
-			),
-		).toBeNull();
-	});
-
-	it("returns null when a slot has start >= end", () => {
-		expect(
-			parseSchedulingActionRequest(
-				makeProposalMessage({
-					slots: [{ start: "2026-03-29T01:00:00Z", end: "2026-03-28T23:00:00Z" }],
-				}),
-			),
-		).toBeNull();
-	});
-
-	it("returns null when slot is missing start", () => {
-		expect(
-			parseSchedulingActionRequest(
-				makeProposalMessage({
-					slots: [{ end: "2026-03-29T00:30:00Z" }],
-				}),
-			),
-		).toBeNull();
+	it.each([
+		["a slot has invalid start/end", [{ start: "not-a-date", end: "2026-03-29T00:30:00Z" }]],
+		["a slot has start >= end", [{ start: "2026-03-29T01:00:00Z", end: "2026-03-28T23:00:00Z" }]],
+		["slot is missing start", [{ end: "2026-03-29T00:30:00Z" }]],
+	] as [string, unknown[]][])("returns null when %s", (_, slots) => {
+		expect(parseSchedulingActionRequest(makeProposalMessage({ slots }))).toBeNull();
 	});
 
 	it("returns null when originTimezone is empty", () => {

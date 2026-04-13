@@ -35,16 +35,14 @@ describe("config-loader", () => {
 
 		it("allows --config without a separately selected data dir", async () => {
 			process.env.HOME = tmpDir;
-			const defaultDataDir = join(tmpDir, ".trustedagents");
 			const configPath = join(tmpDir, "custom-config.yaml");
-			await mkdir(defaultDataDir, { recursive: true });
 			await writeFile(configPath, ["agent_id: 1", "chain: eip155:8453", ""].join("\n"), "utf-8");
 
 			const config = await loadConfig({ config: configPath }, { requireAgentId: false });
 
 			expect(config.agentId).toBe(1);
 			expect(config.chain).toBe("eip155:8453");
-			expect(config.dataDir).toBe(defaultDataDir);
+			expect(config.dataDir).toBe(tmpDir);
 		});
 
 		it("should prefer config.yaml inside dataDir when it exists", async () => {
@@ -80,27 +78,25 @@ describe("config-loader", () => {
 			const dir = resolveDataDir({ dataDir: "/flag/data" });
 			expect(dir).toBe("/flag/data");
 		});
+
+		it("uses the config file directory when --config is set without a separate data dir", () => {
+			const dir = resolveDataDir({ config: "/custom/agent/config.yaml" });
+			expect(dir).toBe("/custom/agent");
+		});
 	});
 
 	describe("loadConfig", () => {
-		it("defaults Base networks to eip7702 with Circle", async () => {
+		it.each([
+			["Base", "base", "eip7702", "circle"],
+			["Taiko mainnet", "taiko", "eip4337", "servo"],
+		])("defaults %s to %s mode with %s paymaster", async (_, chain, mode, paymaster) => {
 			await mkdir(tmpDir, { recursive: true });
-			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: base\n", "utf-8");
+			await writeFile(join(tmpDir, "config.yaml"), `agent_id: 1\nchain: ${chain}\n`, "utf-8");
 
 			const config = await loadConfig({ dataDir: tmpDir });
 
-			expect(config.execution?.mode).toBe("eip7702");
-			expect(config.execution?.paymasterProvider).toBe("circle");
-		});
-
-		it("defaults Taiko mainnet to eip4337 with Servo", async () => {
-			await mkdir(tmpDir, { recursive: true });
-			await writeFile(join(tmpDir, "config.yaml"), "agent_id: 1\nchain: taiko\n", "utf-8");
-
-			const config = await loadConfig({ dataDir: tmpDir });
-
-			expect(config.execution?.mode).toBe("eip4337");
-			expect(config.execution?.paymasterProvider).toBe("servo");
+			expect(config.execution?.mode).toBe(mode);
+			expect(config.execution?.paymasterProvider).toBe(paymaster);
 		});
 
 		it("loads optional IPFS provider settings from config", async () => {

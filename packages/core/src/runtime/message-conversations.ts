@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { assertSafeFileComponent, generateNonce, nowISO } from "../common/index.js";
+import {
+	TrustedAgentError,
+	ValidationError,
+	assertSafeFileComponent,
+	generateNonce,
+	nowISO,
+} from "../common/index.js";
 import type { IConversationLogger } from "../conversation/logger.js";
 import type { ConversationMessage } from "../conversation/types.js";
 import { createJsonRpcRequest } from "../protocol/messages.js";
@@ -17,6 +23,12 @@ export const DEFAULT_MESSAGE_SCOPE = "general-chat";
 
 const LOGGABLE_MESSAGE_METHODS = new Set<string>([MESSAGE_SEND, ACTION_REQUEST, ACTION_RESULT]);
 
+function assertContactActive(contact: Contact, peer: string): void {
+	if (contact.status !== "active") {
+		throw new ValidationError(`Cannot send to ${peer}: contact status is "${contact.status}"`);
+	}
+}
+
 export function findContactForPeer(contacts: Contact[], peer: string): Contact | undefined {
 	const agentIdNum = Number.parseInt(peer, 10);
 
@@ -25,6 +37,15 @@ export function findContactForPeer(contacts: Contact[], peer: string): Contact |
 			contact.peerDisplayName.toLowerCase() === peer.toLowerCase() ||
 			(!Number.isNaN(agentIdNum) && contact.peerAgentId === agentIdNum),
 	);
+}
+
+export function requireActiveContact(contacts: Contact[], peer: string): Contact {
+	const contact = findContactForPeer(contacts, peer);
+	if (!contact) {
+		throw new TrustedAgentError(`Peer not found in contacts: ${peer}`, "NOT_FOUND");
+	}
+	assertContactActive(contact, peer);
+	return contact;
 }
 
 export function findUniqueContactForAgentId(

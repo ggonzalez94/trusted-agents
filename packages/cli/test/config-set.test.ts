@@ -4,29 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { configSetCommand } from "../src/commands/config-set.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("config set", () => {
 	let tmpDir: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-config-set-test-"));
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 
 		await mkdir(tmpDir, { recursive: true });
 		await writeFile(
@@ -44,8 +30,6 @@ describe("config set", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		await rm(tmpDir, { recursive: true, force: true });
 	});

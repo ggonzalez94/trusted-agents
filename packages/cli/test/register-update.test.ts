@@ -1,70 +1,47 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RegistrationFile, TrustedAgentsConfig } from "trusted-agents-core";
+import type { RegistrationFile } from "trusted-agents-core";
 import * as core from "trusted-agents-core";
+import { getUsdcAsset } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerUpdateCommand } from "../src/commands/register.js";
-import { getUsdcAsset } from "../src/lib/assets.js";
 import * as configLoader from "../src/lib/config-loader.js";
-import * as executionLib from "../src/lib/execution.js";
 import * as ipfsLib from "../src/lib/ipfs.js";
 import * as shellLib from "../src/lib/shell.js";
-import * as walletLib from "../src/lib/wallet.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
+import {
+	TEST_BASE_CHAIN,
+	buildMockExecutionPreview,
+	buildTestConfig,
+} from "./helpers/config-fixtures.js";
 
-const { agentAddress, mockOwsProvider } = vi.hoisted(() => {
-	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
-	const mockProvider = vi.fn().mockImplementation(() => ({
-		getAddress: vi.fn().mockResolvedValue(addr),
-		signMessage: vi.fn(),
-		signTypedData: vi.fn(),
-		signTransaction: vi.fn(),
-		signAuthorization: vi.fn(),
-	}));
-	return { agentAddress: addr, mockOwsProvider: mockProvider };
-});
-
-vi.mock("trusted-agents-core", async () => {
-	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
-	return {
-		...actual,
-		OwsSigningProvider: mockOwsProvider,
-	};
-});
+const agentAddress = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as `0x${string}`;
+const mockOwsProvider = vi.fn().mockImplementation(() => ({
+	getAddress: vi.fn().mockResolvedValue(agentAddress),
+	signMessage: vi.fn(),
+	signTypedData: vi.fn(),
+	signTransaction: vi.fn(),
+	signAuthorization: vi.fn(),
+}));
 
 describe("register update", () => {
 	let tmpDir: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
 	let originalHermesHome: string | undefined;
+	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
-	function buildConfig(): TrustedAgentsConfig {
-		return {
+	function buildConfig() {
+		return buildTestConfig({
 			agentId: 7,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
 			dataDir: tmpDir,
 			chains: {
 				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
+					...TEST_BASE_CHAIN,
 					rpcUrl: "https://example.test/base-mainnet",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 					blockExplorerUrl: "https://example.test/base-explorer",
 				},
 			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-			execution: {
-				mode: "eip7702",
-				paymasterProvider: "circle",
-			},
-		};
+		});
 	}
 
 	function buildRegistrationFile(capabilities: string[]): RegistrationFile {
@@ -96,40 +73,29 @@ describe("register update", () => {
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-register-update-test-"));
-		stdoutWrites = [];
-		stderrWrites = [];
 		originalHermesHome = process.env.HERMES_HOME;
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 
+		vi.spyOn(core, "OwsSigningProvider").mockImplementation(mockOwsProvider as never);
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			readContract: vi.fn().mockResolvedValue(100_000n),
 		} as never);
 		vi.spyOn(core.ERC8004Registry.prototype, "verifyDeployed").mockResolvedValue();
 		vi.spyOn(core.ERC8004Registry.prototype, "getTokenURI").mockResolvedValue(
 			"ipfs://existing-cid",
 		);
-		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
-			requestedMode: "eip4337",
-			mode: "eip4337",
-			messagingAddress: agentAddress,
-			executionAddress: "0x00000000000000000000000000000000000000aa",
-			fundingAddress: "0x00000000000000000000000000000000000000aa",
-			paymasterProvider: "candide",
-			warnings: [],
-		});
-		vi.spyOn(executionLib, "ensureExecutionReady").mockResolvedValue();
-		vi.spyOn(executionLib, "executeContractCalls").mockResolvedValue({
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(
+			buildMockExecutionPreview(agentAddress, {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				executionAddress: "0x00000000000000000000000000000000000000aa",
+				fundingAddress: "0x00000000000000000000000000000000000000aa",
+				paymasterProvider: "candide",
+			}),
+		);
+		vi.spyOn(core, "ensureExecutionReady").mockResolvedValue();
+		vi.spyOn(core, "executeContractCalls").mockResolvedValue({
 			requestedMode: "eip4337",
 			mode: "eip4337",
 			messagingAddress: agentAddress,
@@ -164,8 +130,6 @@ describe("register update", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		if (originalHermesHome === undefined) {
 			delete process.env.HERMES_HOME;
 		} else {
@@ -178,7 +142,7 @@ describe("register update", () => {
 
 	it("skips upload and transaction when merged manifest is unchanged", async () => {
 		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
-		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+		vi.spyOn(core, "ensureExecutionReady").mockRejectedValue(
 			new Error("should not preflight a no-op update"),
 		);
 
@@ -190,8 +154,8 @@ describe("register update", () => {
 		};
 
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
-		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
-		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
+		expect(core.executeContractCalls).not.toHaveBeenCalled();
+		expect(core.ensureExecutionReady).not.toHaveBeenCalled();
 
 		expect(output.status).toBe("ok");
 		expect(output.data?.no_change).toBe(true);
@@ -199,15 +163,15 @@ describe("register update", () => {
 	});
 
 	it("skips paymaster preflight when --uri already matches the registry", async () => {
-		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+		vi.spyOn(core, "ensureExecutionReady").mockRejectedValue(
 			new Error("should not preflight a no-op uri update"),
 		);
 
 		await registerUpdateCommand({ uri: "ipfs://existing-cid" }, { json: true });
 
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
-		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
-		expect(executionLib.ensureExecutionReady).not.toHaveBeenCalled();
+		expect(core.executeContractCalls).not.toHaveBeenCalled();
+		expect(core.ensureExecutionReady).not.toHaveBeenCalled();
 
 		const output = lastJsonOutput() as {
 			ok: boolean;
@@ -220,14 +184,14 @@ describe("register update", () => {
 
 	it("fails before x402 upload when execution preflight fails", async () => {
 		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
-		vi.spyOn(executionLib, "ensureExecutionReady").mockRejectedValue(
+		vi.spyOn(core, "ensureExecutionReady").mockRejectedValue(
 			new Error("Circle permit preflight failed"),
 		);
 
 		await registerUpdateCommand({ description: "Updated" }, { json: true });
 
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
-		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(core.executeContractCalls).not.toHaveBeenCalled();
 
 		const output = lastJsonOutput() as {
 			ok: boolean;
@@ -250,7 +214,7 @@ describe("register update", () => {
 		);
 
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
-		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
+		expect(core.executeContractCalls).toHaveBeenCalledOnce();
 
 		const uploadPayload = uploadMock().mock.calls[0]?.[0] as RegistrationFile;
 		expect(uploadPayload.name).toBe("Replacement Agent");
@@ -265,10 +229,10 @@ describe("register update", () => {
 		await registerUpdateCommand({ capabilities: "search" }, { json: true });
 
 		expect(ipfsLib.uploadToIpfsX402).toHaveBeenCalledOnce();
-		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
+		expect(core.executeContractCalls).toHaveBeenCalledOnce();
 		expect(
 			(
-				executionLib.executeContractCalls as unknown as {
+				core.executeContractCalls as unknown as {
 					mock: { calls: unknown[][] };
 				}
 			).mock.calls[0]?.[4],
@@ -309,7 +273,7 @@ describe("register update", () => {
 
 		expect(ipfsLib.uploadToIpfsTack).toHaveBeenCalledOnce();
 		expect(ipfsLib.uploadToIpfsX402).not.toHaveBeenCalled();
-		expect(executionLib.executeContractCalls).toHaveBeenCalledOnce();
+		expect(core.executeContractCalls).toHaveBeenCalledOnce();
 		expect(ipfsLib.uploadToIpfsTack).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.anything(),
@@ -371,9 +335,9 @@ describe("register update", () => {
 			{ json: true },
 		);
 
-		expect(walletLib.buildPublicClient).not.toHaveBeenCalled();
+		expect(core.buildChainPublicClient).not.toHaveBeenCalled();
 		expect(core.ERC8004Registry.prototype.getTokenURI).not.toHaveBeenCalled();
-		expect(executionLib.executeContractCalls).not.toHaveBeenCalled();
+		expect(core.executeContractCalls).not.toHaveBeenCalled();
 		expect(process.exitCode).toBe(2);
 
 		const output = lastJsonOutput() as {
@@ -403,44 +367,30 @@ describe("register update", () => {
 		vi.spyOn(core, "fetchRegistrationFile").mockResolvedValue(buildRegistrationFile(["chat"]));
 
 		const readContract = vi.fn().mockResolvedValueOnce(0n).mockResolvedValueOnce(50_000n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			readContract,
 		} as never);
-		vi.spyOn(executionLib, "getExecutionPreview").mockImplementation(
-			async (_config, chainConfig) => {
-				if (chainConfig.caip2 === "eip155:8453") {
-					return {
-						requestedMode: "eip4337",
-						mode: "eip4337",
-						messagingAddress: agentAddress,
-						executionAddress: "0x00000000000000000000000000000000000000bb",
-						fundingAddress: "0x00000000000000000000000000000000000000bb",
-						paymasterProvider: "candide",
-						warnings: [],
-					};
-				}
-
-				return {
-					requestedMode: "eip4337",
-					mode: "eip4337",
-					messagingAddress: agentAddress,
-					executionAddress: "0x00000000000000000000000000000000000000aa",
-					fundingAddress: "0x00000000000000000000000000000000000000aa",
-					paymasterProvider: "candide",
-					warnings: [],
-				};
-			},
-		);
+		vi.spyOn(core, "getExecutionPreview").mockImplementation(async (_config, chainConfig) => {
+			const addr =
+				chainConfig.caip2 === "eip155:8453"
+					? "0x00000000000000000000000000000000000000bb"
+					: "0x00000000000000000000000000000000000000aa";
+			return buildMockExecutionPreview(agentAddress, {
+				requestedMode: "eip4337",
+				mode: "eip4337",
+				executionAddress: addr,
+				fundingAddress: addr,
+				paymasterProvider: "candide",
+			});
+		});
 
 		await registerUpdateCommand({ capabilities: "search" }, { json: true });
 
-		expect(executionLib.executeContractCalls).toHaveBeenCalledTimes(2);
-		const topUpCall = (
-			executionLib.executeContractCalls as unknown as { mock: { calls: unknown[][] } }
-		).mock.calls[0];
-		const updateCall = (
-			executionLib.executeContractCalls as unknown as { mock: { calls: unknown[][] } }
-		).mock.calls[1];
+		expect(core.executeContractCalls).toHaveBeenCalledTimes(2);
+		const topUpCall = (core.executeContractCalls as unknown as { mock: { calls: unknown[][] } })
+			.mock.calls[0];
+		const updateCall = (core.executeContractCalls as unknown as { mock: { calls: unknown[][] } })
+			.mock.calls[1];
 
 		expect(topUpCall?.[1]).toMatchObject({ caip2: "eip155:8453" });
 		expect(topUpCall?.[3]).toHaveLength(1);

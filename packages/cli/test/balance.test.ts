@@ -1,9 +1,14 @@
-import type { TrustedAgentsConfig } from "trusted-agents-core";
+import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { balanceCommand } from "../src/commands/balance.js";
 import * as configLoader from "../src/lib/config-loader.js";
-import * as executionLib from "../src/lib/execution.js";
-import * as walletLib from "../src/lib/wallet.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
+import {
+	TEST_BASE_CHAIN,
+	TEST_TAIKO_CHAIN,
+	buildMockExecutionPreview,
+	buildTestConfig,
+} from "./helpers/config-fixtures.js";
 
 const { ADDRESS, mockOwsProvider } = vi.hoisted(() => {
 	const addr = "0x0DeB8dFf035e7711f72fCde996D01f41bE4C883B" as const;
@@ -28,73 +33,23 @@ vi.mock("trusted-agents-core", async () => {
 });
 
 describe("tap balance", () => {
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 
-	function buildConfig(): TrustedAgentsConfig {
-		return {
-			agentId: -1,
-			chain: "eip155:8453",
-			ows: { wallet: "test-wallet", apiKey: "test-api-key" },
-			dataDir: "/tmp/tap",
-			chains: {
-				"eip155:8453": {
-					name: "Base",
-					caip2: "eip155:8453",
-					chainId: 8453,
-					rpcUrl: "https://example.test/base",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
-				"eip155:167000": {
-					name: "Taiko",
-					caip2: "eip155:167000",
-					chainId: 167000,
-					rpcUrl: "https://example.test/taiko",
-					registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-				},
-			},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-			execution: {
-				mode: "eip7702",
-				paymasterProvider: "circle",
-			},
-		};
+	function buildConfig() {
+		return buildTestConfig({
+			chains: { "eip155:8453": TEST_BASE_CHAIN, "eip155:167000": TEST_TAIKO_CHAIN },
+		});
 	}
 
 	beforeEach(() => {
-		stdoutWrites = [];
-		stderrWrites = [];
 		process.exitCode = undefined;
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(executionLib, "getExecutionPreview").mockResolvedValue({
-			requestedMode: "eip7702",
-			mode: "eip7702",
-			messagingAddress: ADDRESS,
-			executionAddress: ADDRESS,
-			fundingAddress: ADDRESS,
-			paymasterProvider: "candide",
-			warnings: [],
-		});
+		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(
+			buildMockExecutionPreview(ADDRESS, { paymasterProvider: "candide" }),
+		);
 	});
 
 	afterEach(() => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.clearAllMocks();
 	});
@@ -102,7 +57,7 @@ describe("tap balance", () => {
 	it("uses the configured chain by default and returns native plus USDC balances", async () => {
 		const getBalance = vi.fn().mockResolvedValue(1234000000000000000n);
 		const readContract = vi.fn().mockResolvedValue(9876543n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance,
 			readContract,
 		} as never);
@@ -130,32 +85,18 @@ describe("tap balance", () => {
 		expect(output.data?.execution_usdc_balance).toBe("9.876543");
 	});
 
-	it("accepts a natural-language chain alias", async () => {
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+	it.each([
+		["natural-language chain alias", "base"],
+		["CAIP-2 chain identifier", "eip155:8453"],
+	])("accepts a %s and resolves to eip155:8453", async (_, chainInput) => {
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(1n),
 			readContract: vi.fn().mockResolvedValue(2n),
 		} as never);
 
-		await balanceCommand({ json: true }, "base");
+		await balanceCommand({ json: true }, chainInput);
 
-		expect(walletLib.buildPublicClient).toHaveBeenCalledWith(
-			expect.objectContaining({ caip2: "eip155:8453" }),
-		);
-		const output = JSON.parse(stdoutWrites.join("")) as {
-			data?: Record<string, unknown>;
-		};
-		expect(output.data?.chain).toBe("eip155:8453");
-	});
-
-	it("accepts a CAIP-2 chain identifier", async () => {
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
-			getBalance: vi.fn().mockResolvedValue(1n),
-			readContract: vi.fn().mockResolvedValue(2n),
-		} as never);
-
-		await balanceCommand({ json: true }, "eip155:8453");
-
-		expect(walletLib.buildPublicClient).toHaveBeenCalledWith(
+		expect(core.buildChainPublicClient).toHaveBeenCalledWith(
 			expect.objectContaining({ caip2: "eip155:8453" }),
 		);
 		const output = JSON.parse(stdoutWrites.join("")) as {
@@ -166,7 +107,7 @@ describe("tap balance", () => {
 
 	it("returns native plus USDC balances on Taiko", async () => {
 		const readContract = vi.fn().mockResolvedValue(7654321n);
-		vi.spyOn(walletLib, "buildPublicClient").mockReturnValue({
+		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
 			getBalance: vi.fn().mockResolvedValue(5n),
 			readContract,
 		} as never);
@@ -188,7 +129,7 @@ describe("tap balance", () => {
 	});
 
 	it("returns a validation error for an unknown chain", async () => {
-		const buildPublicClientSpy = vi.spyOn(walletLib, "buildPublicClient");
+		const buildPublicClientSpy = vi.spyOn(core, "buildChainPublicClient");
 
 		await balanceCommand({ json: true }, "not-a-chain");
 

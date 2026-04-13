@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { AsyncMutex, nowISO } from "../common/index.js";
+import { AsyncMutex, fsErrorCode, nowISO } from "../common/index.js";
 
 export interface XmtpConversationCheckpoint {
 	lastSentAtNs: string;
@@ -84,11 +84,7 @@ export class FileXmtpSyncStateStore {
 				conversations: normalizeConversations(parsed.conversations),
 			};
 		} catch (error: unknown) {
-			if (
-				error instanceof Error &&
-				"code" in error &&
-				(error as NodeJS.ErrnoException).code === "ENOENT"
-			) {
+			if (fsErrorCode(error) === "ENOENT") {
 				return { ...EMPTY_STATE, conversations: {} };
 			}
 			throw error;

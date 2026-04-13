@@ -5,8 +5,17 @@ import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 
 export type RequestJournalDirection = "inbound" | "outbound";
 export type RequestJournalKind = "request" | "result";
-export type RequestJournalStatus = "pending" | "acked" | "completed";
-export type RequestJournalMetadata = Record<string, unknown>;
+export type RequestJournalStatus = "queued" | "pending" | "completed";
+
+export interface RequestJournalLastError {
+	message: string;
+	at: string;
+	attempts: number;
+}
+
+type RequestJournalMetadata = Record<string, unknown> & {
+	lastError?: RequestJournalLastError;
+};
 
 export interface RequestJournalEntry {
 	requestId: string;
@@ -40,7 +49,10 @@ export interface IRequestJournal {
 	delete(requestId: string): Promise<void>;
 	updateStatus(requestId: string, status: RequestJournalStatus): Promise<void>;
 	updateMetadata(requestId: string, metadata: RequestJournalMetadata | undefined): Promise<void>;
+	listQueued(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
 	listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]>;
+	/** Optional: rewrite legacy on-disk 'acked' entries to 'pending'. */
+	migrateLegacyAcked?(): Promise<void>;
 }
 
 export class FileRequestJournal implements IRequestJournal {
@@ -146,12 +158,55 @@ export class FileRequestJournal implements IRequestJournal {
 		});
 	}
 
+	async listQueued(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]> {
+		const file = await this.load();
+		return file.entries.filter(
+			(entry) =>
+				entry.status === "queued" && (direction === undefined || entry.direction === direction),
+		);
+	}
+
+	/**
+	 * Returns all non-terminal outbound entries — both `queued` (intent
+	 * exists but wire has not been sent) and `pending` (wire sent, result
+	 * not yet received). Callers that specifically want one status can
+	 * filter the result inline; callers that want "in-flight work from
+	 * either state" (reconciliation, sync reports, status queries) get
+	 * the complete picture without missing queued intents.
+	 *
+	 * Historical note: an earlier revision of this method filtered strictly
+	 * on `status === "pending"`, but that silently hid queued entries from
+	 * callers like `buildSyncReport` and `listPendingRequests`. Keeping
+	 * the broader "not completed" semantics is the safer default.
+	 */
 	async listPending(direction?: RequestJournalDirection): Promise<RequestJournalEntry[]> {
 		const file = await this.load();
 		return file.entries.filter(
 			(entry) =>
 				entry.status !== "completed" && (direction === undefined || entry.direction === direction),
 		);
+	}
+
+	/**
+	 * Rewrite legacy on-disk "acked" entries (written before Phase 2 removed
+	 * the status) to "pending". Safe to call at startup; is a no-op if the
+	 * file contains no such entries or doesn't exist.
+	 * See spec §1.3 and §6 step 3.
+	 */
+	async migrateLegacyAcked(): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const file = await this.load();
+			let migrated = false;
+			for (const entry of file.entries) {
+				if ((entry.status as string) === "acked") {
+					entry.status = "pending";
+					migrated = true;
+				}
+			}
+			if (migrated) {
+				await this.save(file);
+			}
+		});
 	}
 
 	private async load(): Promise<RequestJournalFile> {

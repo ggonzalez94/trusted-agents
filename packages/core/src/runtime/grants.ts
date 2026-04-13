@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { ValidationError } from "../common/index.js";
 import {
 	type ContactPermissionState,
@@ -7,20 +6,6 @@ import {
 	TAP_GRANTS_VERSION,
 	createGrantSet,
 } from "../permissions/index.js";
-
-export async function readGrantFile(path: string): Promise<PermissionGrantSet> {
-	const raw = await readFile(path, "utf-8");
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (error) {
-		throw new ValidationError(
-			`Invalid grant file JSON at ${path}: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-
-	return normalizeGrantInput(parsed);
-}
 
 export function normalizeGrantInput(input: unknown): PermissionGrantSet {
 	if (Array.isArray(input)) {

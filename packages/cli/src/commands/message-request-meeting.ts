@@ -3,14 +3,14 @@ import {
 	type TimeSlot,
 	ValidationError,
 	generateSchedulingId,
+	requireActiveContact,
 	validateSchedulingProposal,
 } from "trusted-agents-core";
 import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
 import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { assertContactActive, findContactForPeer } from "../lib/message-conversations.js";
-import { error, success, verbose } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success, verbose } from "../lib/output.js";
 import {
 	isQueuedTapCommandPending,
 	queuedTapCommandPendingFields,
@@ -64,13 +64,7 @@ export async function messageRequestMeetingCommand(
 		};
 
 		validateSchedulingProposal(proposal);
-		const contact = findContactForPeer(await runtime.trustStore.getContacts(), peer);
-		if (!contact) {
-			error("NOT_FOUND", `Peer not found in contacts: ${peer}`, opts);
-			process.exitCode = 4;
-			return;
-		}
-		assertContactActive(contact, peer);
+		const contact = requireActiveContact(await runtime.trustStore.getContacts(), peer);
 
 		if (cmdOpts.dryRun) {
 			success(
@@ -145,8 +139,7 @@ export async function messageRequestMeetingCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 

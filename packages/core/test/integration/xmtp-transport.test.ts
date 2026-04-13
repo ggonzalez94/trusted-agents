@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fsErrorCode } from "../../src/common/index.js";
 import type { IAgentResolver } from "../../src/identity/resolver.js";
 import { createEmptyPermissionState } from "../../src/permissions/types.js";
 import { CONNECTION_REQUEST } from "../../src/protocol/index.js";
@@ -227,11 +228,7 @@ async function removeDirWithRetry(path: string): Promise<void> {
 			await rm(path, { recursive: true, force: true });
 			return;
 		} catch (error: unknown) {
-			const code =
-				error instanceof Error && "code" in error
-					? (error as NodeJS.ErrnoException).code
-					: undefined;
-			if (code !== "ENOTEMPTY" || attempt === 4) {
+			if (fsErrorCode(error) !== "ENOTEMPTY" || attempt === 4) {
 				throw error;
 			}
 			await new Promise((resolve) => setTimeout(resolve, 200));

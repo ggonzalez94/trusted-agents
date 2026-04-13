@@ -10,7 +10,7 @@ import {
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
 
-export interface ConversationContext {
+interface ConversationContext {
 	connectionId: string;
 	peerAgentId: number;
 	peerDisplayName: string;

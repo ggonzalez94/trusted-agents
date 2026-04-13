@@ -1,34 +1,41 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveHermesHome } from "../hermes/config.js";
+import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, success } from "../lib/output.js";
+import { handleCommandError, toErrorMessage } from "../lib/errors.js";
+import { success } from "../lib/output.js";
 import { commandExists } from "../lib/shell.js";
 import { getLegacyWalletMigrationWarning } from "../lib/wallet-config.js";
 import type { GlobalOptions } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
-const SKILLS_REPO = "ggonzalez94/trusted-agents";
 const OPENCLAW_PLUGIN_NAME = "trusted-agents-tap";
 const SUPPORTED_RUNTIMES = ["claude", "codex", "openclaw", "hermes"] as const;
 const DEFAULT_OPENCLAW_GATEWAY_WAIT_TIMEOUT_MS = 60_000;
 const DEFAULT_OPENCLAW_GATEWAY_WAIT_POLL_MS = 500;
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const PACKAGED_SKILLS_DIR = join(MODULE_DIR, "../../skills/trusted-agents");
+const PACKAGED_ASSET_SKILLS_DIR = join(MODULE_DIR, "../../assets/skills/trusted-agents");
+const REPO_SKILLS_DIR = join(MODULE_DIR, "../../../../skills/trusted-agents");
 
 type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
+type InstallSurface = SupportedRuntime | "skills";
 
 export interface InstallOptions {
 	runtimes?: string[];
+	channel?: string;
+	version?: string;
 }
 
 interface RuntimeInstallResult {
-	runtime: SupportedRuntime;
+	runtime: InstallSurface;
 	detected: boolean;
 	skills_installed: boolean;
 	plugin_installed?: boolean;
@@ -47,11 +54,11 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 	const startTime = Date.now();
 
 	try {
+		const selectors = resolveInstallSelectors(cmdOpts);
 		const homeDir = resolveHomeDir();
-		const runtimes = resolveRequestedRuntimes(cmdOpts.runtimes);
-		const autoDetect = runtimes.length === 0;
+		const requestedRuntimes = resolveRequestedRuntimes(cmdOpts.runtimes);
+		const autoDetect = requestedRuntimes.length === 0;
 		const results: RuntimeInstallResult[] = [];
-		let skillsInstalled = false;
 		let hermesInstalled = false;
 		const dataDir = resolveDataDir(opts);
 		const configPath = resolveConfigPath(opts, dataDir);
@@ -61,65 +68,76 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			owsWallet: process.env.TAP_OWS_WALLET,
 			owsApiKey: process.env.TAP_OWS_API_KEY,
 		});
+		const detectedSkillHostRuntimes = detectSkillHostRuntimes(homeDir);
+		const skillInstallTargets = autoDetect
+			? detectedSkillHostRuntimes
+			: requestedRuntimes.filter((runtime) => runtime === "claude" || runtime === "codex");
+		const shouldInstallSkills = autoDetect || skillInstallTargets.length > 0;
+		const openClawDetected =
+			existsSync(join(homeDir, ".openclaw")) || (await commandExists("openclaw"));
+		const openClawRequested = autoDetect
+			? openClawDetected
+			: requestedRuntimes.includes("openclaw");
+		const hermesDetected = existsSync(resolveHermesHome());
+		const hermesRequested = autoDetect ? hermesDetected : requestedRuntimes.includes("hermes");
 
-		for (const runtime of autoDetect ? SUPPORTED_RUNTIMES : runtimes) {
-			const runtimeDir = join(homeDir, `.${runtime}`);
-			const detected =
-				runtime === "hermes"
-					? existsSync(resolveHermesHome())
-					: existsSync(runtimeDir) || (runtime === "openclaw" && (await commandExists("openclaw")));
-			if (autoDetect && !detected) {
-				continue;
+		if (shouldInstallSkills) {
+			const notes: string[] = [];
+			const skillsSource = resolveSkillsSourcePath();
+			await installSkills(skillsSource, notes);
+			addSelectorNoteForBundledSkills(selectors, notes);
+
+			if (skillInstallTargets.length > 0) {
+				let firstRuntime = true;
+				for (const runtime of skillInstallTargets) {
+					results.push({
+						runtime,
+						detected: detectedSkillHostRuntimes.includes(runtime),
+						skills_installed: true,
+						notes: firstRuntime ? [...notes] : ["Skills already installed for another runtime."],
+					});
+					firstRuntime = false;
+				}
+			} else {
+				results.push({
+					runtime: "skills",
+					detected: false,
+					skills_installed: true,
+					notes: [
+						...notes,
+						"Installed global TAP skills without relying on ~/.claude or ~/.codex detection.",
+					],
+				});
 			}
+		}
 
+		if (openClawRequested) {
 			const notes: string[] = [];
 			const result: RuntimeInstallResult = {
-				runtime,
-				detected,
+				runtime: "openclaw",
+				detected: openClawDetected,
 				skills_installed: false,
 				notes,
 			};
-
-			if ((runtime === "claude" || runtime === "codex") && !skillsInstalled) {
-				await installSkills(notes);
-				result.skills_installed = true;
-				skillsInstalled = true;
-			} else if ((runtime === "claude" || runtime === "codex") && skillsInstalled) {
-				result.skills_installed = true;
-				notes.push("Skills already installed for another runtime.");
-			}
-
-			if (runtime === "openclaw") {
-				const pluginResult = await installOpenClawPlugin(autoDetect, notes);
-				result.plugin_installed = pluginResult.installed;
-			}
-
-			if (runtime === "hermes") {
-				const hermesResult = await installHermesPlugin(notes);
-				result.skills_installed = true;
-				result.plugin_installed = hermesResult.pluginInstalled;
-				result.hook_installed = hermesResult.hookInstalled;
-				hermesInstalled = true;
-			}
-
+			const pluginPackageSpec = resolvePackageSpec(OPENCLAW_PLUGIN_NAME, selectors);
+			const pluginResult = await installOpenClawPlugin(autoDetect, notes, pluginPackageSpec);
+			result.plugin_installed = pluginResult.installed;
 			results.push(result);
 		}
 
-		if (results.length === 0) {
-			success(
-				{
-					installed: false,
-					reason:
-						"No supported runtimes detected. Looked for ~/.claude, ~/.codex, ~/.openclaw, ~/.hermes, and the openclaw CLI.",
-					warnings: legacyWarning ? [legacyWarning] : undefined,
-					next_steps: [
-						"Create the target runtime directory or pass --runtime <name> to install explicitly.",
-					],
-				},
-				opts,
-				startTime,
-			);
-			return;
+		if (hermesRequested) {
+			const notes: string[] = [];
+			const result: RuntimeInstallResult = {
+				runtime: "hermes",
+				detected: hermesDetected,
+				skills_installed: true,
+				notes,
+			};
+			const hermesResult = await installHermesPlugin(notes);
+			result.plugin_installed = hermesResult.pluginInstalled;
+			result.hook_installed = hermesResult.hookInstalled;
+			results.push(result);
+			hermesInstalled = true;
 		}
 
 		success(
@@ -139,14 +157,19 @@ export async function installCommand(cmdOpts: InstallOptions, opts: GlobalOption
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
 function resolveHomeDir(): string {
 	const envHome = process.env.HOME?.trim();
 	return envHome && envHome.length > 0 ? envHome : homedir();
+}
+
+function detectSkillHostRuntimes(homeDir: string): SupportedRuntime[] {
+	return SUPPORTED_RUNTIMES.filter(
+		(runtime) => runtime !== "openclaw" && runtime !== "hermes" && existsSync(join(homeDir, `.${runtime}`)),
+	);
 }
 
 function resolveRequestedRuntimes(input: string[] | undefined): SupportedRuntime[] {
@@ -165,24 +188,90 @@ function parseRuntime(value: string): SupportedRuntime {
 	return match;
 }
 
-async function installSkills(notes: string[]): Promise<void> {
+function resolveInstallSelectors(input: InstallOptions): { channel?: string; version?: string } {
+	return {
+		channel: normalizeSelector("channel", input.channel),
+		version: normalizeSelector("version", input.version),
+	};
+}
+
+function normalizeSelector(
+	name: "channel" | "version",
+	value: string | undefined,
+): string | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	const normalized = value.trim();
+	if (normalized.length === 0) {
+		throw new Error(`Install ${name} cannot be empty.`);
+	}
+	return normalized;
+}
+
+function resolvePackageSpec(
+	packageName: string,
+	selectors: { channel?: string; version?: string },
+): string {
+	if (selectors.version) {
+		return `${packageName}@${selectors.version}`;
+	}
+	if (selectors.channel) {
+		return `${packageName}@${selectors.channel}`;
+	}
+	return packageName;
+}
+
+function resolveSkillsSourcePath(): string {
+	const override = process.env.TAP_SKILLS_SOURCE?.trim();
+	const candidates = [
+		override,
+		PACKAGED_SKILLS_DIR,
+		PACKAGED_ASSET_SKILLS_DIR,
+		REPO_SKILLS_DIR,
+	].filter((candidate): candidate is string => Boolean(candidate));
+
+	for (const candidate of candidates) {
+		if (existsSync(join(candidate, "SKILL.md"))) {
+			return candidate;
+		}
+	}
+
+	throw new Error(
+		`Bundled TAP skills were not found. Checked: ${candidates.join(", ") || "(none provided)"}`,
+	);
+}
+
+function addSelectorNoteForBundledSkills(
+	selectors: { channel?: string; version?: string },
+	notes: string[],
+): void {
+	if (!selectors.channel && !selectors.version) {
+		return;
+	}
+
+	notes.push(
+		"Skills are installed from the currently installed trusted-agents-cli package contents. The version/channel selector only affects the OpenClaw plugin unless you first update the CLI package itself.",
+	);
+}
+
+async function installSkills(skillsSourcePath: string, notes: string[]): Promise<void> {
 	try {
-		await execFileAsync("npx", ["-y", "skills", "add", "-g", SKILLS_REPO, "-y"], {
+		await execFileAsync("npx", ["-y", "skills", "add", "-g", skillsSourcePath, "-y"], {
 			env: process.env,
 			encoding: "utf8",
 			timeout: 120_000,
 		});
-		notes.push(`Installed TAP skills via npx skills add ${SKILLS_REPO}.`);
+		notes.push(`Installed TAP skills from ${skillsSourcePath}.`);
 	} catch (err) {
-		throw new Error(
-			`Failed to install skills via npx skills add ${SKILLS_REPO}: ${err instanceof Error ? err.message : String(err)}`,
-		);
+		throw new Error(`Failed to install skills from ${skillsSourcePath}: ${toErrorMessage(err)}`);
 	}
 }
 
 async function installOpenClawPlugin(
 	autoDetect: boolean,
 	notes: string[],
+	pluginPackageSpec: string,
 ): Promise<{ installed: boolean }> {
 	const hasOpenClaw = await commandExists("openclaw");
 	if (!hasOpenClaw) {
@@ -196,8 +285,8 @@ async function installOpenClawPlugin(
 	const gatewayStatusBeforeInstall = await getOpenClawGatewayStatus();
 	const waitForGatewayReload = isHealthyOpenClawGatewayStatus(gatewayStatusBeforeInstall);
 
-	await execOpenClawCommand(["plugins", "install", OPENCLAW_PLUGIN_NAME]);
-	notes.push(`Installed the TAP OpenClaw plugin (${OPENCLAW_PLUGIN_NAME}) from npm.`);
+	await execOpenClawCommand(["plugins", "install", "--force", pluginPackageSpec]);
+	notes.push(`Installed or updated the TAP OpenClaw plugin (${pluginPackageSpec}) from npm.`);
 	await validateOpenClawConfig(notes);
 
 	if (waitForGatewayReload) {

@@ -11,7 +11,7 @@ import {
 	type TrustedAgentsConfig,
 	createTapRuntime,
 	loadTrustedAgentConfigFromDataDir,
-} from "@trustedagents/sdk";
+} from "trusted-agents-sdk";
 import {
 	AsyncMutex,
 	executeOnchainTransfer,
@@ -603,8 +603,18 @@ export class HermesTapRegistry {
 					});
 					return null;
 				},
-				approveConnection: async () => {
-					return null;
+				onConnectionEstablished: ({ peerAgentId, peerName, peerChain }) => {
+					void this.enqueueNotification({
+						type: "info",
+						identity: definition.name,
+						timestamp: new Date().toISOString(),
+						method: "connection/established",
+						from: peerAgentId,
+						fromName: peerName,
+						messageId: `connection-established-${peerAgentId}`,
+						detail: { peerAgentId, peerName, peerChain },
+						oneLiner: `Connected with ${peerName} (agent #${peerAgentId})`,
+					});
 				},
 				confirmMeeting: async () => {
 					return false;

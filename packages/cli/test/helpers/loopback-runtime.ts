@@ -17,7 +17,7 @@ import type {
 } from "trusted-agents-core";
 import { clearCliRuntimeOverride, setCliRuntimeOverride } from "../../src/lib/runtime-overrides.js";
 
-export interface TestAgentFixture {
+interface TestAgentFixture {
 	agentId: number;
 	chain: string;
 	address: `0x${string}`;

@@ -48,7 +48,6 @@ export type {
 	TapServiceHooks,
 	TapServiceOptions,
 	TapTransferApprovalContext,
-	TapConnectionApprovalContext,
 	TapPendingRequestDetails,
 	TapPendingSchedulingDetails,
 	TapPendingTransferDetails,

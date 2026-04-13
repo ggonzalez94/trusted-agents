@@ -7,23 +7,25 @@ import {
 	TransportOwnerLock,
 	type TrustedAgentsConfig,
 	ValidationError,
+	buildChainPublicClient,
+	buildChainWalletClient,
+	createSigningProviderViemAccount,
+	fsErrorCode,
 	isProcessAlive,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
-import { createSigningProviderViemAccount } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
 import YAML from "yaml";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
 import {
 	createConfiguredSigningProvider,
 	getLegacyWalletMigrationWarning,
 } from "../lib/wallet-config.js";
-import { buildPublicClient, buildWalletClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RemoveOptions {
@@ -37,9 +39,8 @@ interface RemoveStoredConfig {
 }
 
 interface DataDirInspection {
-	hasManagedEntries: boolean;
-	managedEntries: string[];
-	unexpectedEntries: string[];
+	exists: boolean;
+	empty: boolean;
 }
 
 export interface RemoveBalanceContext {
@@ -93,19 +94,29 @@ export interface RemovePlan {
 	blockingReasons: string[];
 }
 
-const TAP_DATA_DIR_ENTRIES = new Set([
-	".transport.lock",
-	"config.yaml",
-	"contacts.json",
-	"conversations",
-	"identity",
-	"ipfs-cache.json",
-	"notes",
-	"pending-connects.json",
-	"pending-invites.json",
-	"request-journal.json",
-	"xmtp",
-]);
+// A TAP data dir is identified by a parseable config.yaml whose shape matches
+// what init has always written: `agent_id` as a number (e.g. -1 or a registered
+// token ID) or `chain` as a CAIP-2 string (e.g. `eip155:8453`). Both have been
+// present in every version since the first release and are always normalized
+// to these forms before being written (see resolveChainAlias). That makes the
+// check work across versions without a maintained whitelist, while still being
+// specific enough to reject a foreign config.yaml that happens to contain a
+// generic `chain: mainnet` field.
+async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
+	try {
+		const raw = await readFile(configPath, "utf-8");
+		const parsed = YAML.parse(raw);
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return false;
+		}
+		const obj = parsed as { chain?: unknown; agent_id?: unknown };
+		const hasAgentId = typeof obj.agent_id === "number";
+		const hasCaip2Chain = typeof obj.chain === "string" && obj.chain.includes(":");
+		return hasAgentId || hasCaip2Chain;
+	} catch {
+		return false;
+	}
+}
 
 export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
@@ -253,8 +264,7 @@ export async function removeCommand(cmdOpts: RemoveOptions, opts: GlobalOptions)
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -298,7 +308,7 @@ export async function probeRemoveNativeBalance(
 
 		const signingProvider = createConfiguredSigningProvider(config);
 		const address = await signingProvider.getAddress();
-		const publicClient = buildPublicClient(chainConfig);
+		const publicClient = buildChainPublicClient(chainConfig);
 		const nativeBalanceWei = await publicClient.getBalance({ address });
 		const context: RemoveBalanceContext = {
 			config,
@@ -330,7 +340,7 @@ export async function probeRemoveNativeBalance(
 				address: null,
 				native_balance_wei: null,
 				native_balance_eth: null,
-				warning: `On-chain balance check skipped: ${err instanceof Error ? err.message : String(err)}`,
+				warning: `On-chain balance check skipped: ${toErrorMessage(err)}`,
 			},
 		};
 	}
@@ -345,8 +355,8 @@ export async function transferRemainingNativeBalance(
 		balanceContext.chainConfig.caip2,
 	);
 	const account = await createSigningProviderViemAccount(signingProvider);
-	const publicClient = buildPublicClient(balanceContext.chainConfig);
-	const walletClient = buildWalletClient(account, balanceContext.chainConfig);
+	const publicClient = buildChainPublicClient(balanceContext.chainConfig);
+	const walletClient = buildChainWalletClient(account, balanceContext.chainConfig);
 	const currentBalanceWei = await publicClient.getBalance({ address: account.address });
 	const currentBalanceEth = formatUnits(currentBalanceWei, 18);
 	const gasEstimate = await publicClient.estimateGas({
@@ -480,6 +490,7 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 	const [address, keyWarning] = await readAgentAddress(dataDir);
 	const liveTransportOwner = await inspectLiveTransportOwner(dataDir);
 	const inspection = await inspectDataDir(dataDir);
+	const hasSignature = await hasTapDataDirSignature(configPath);
 
 	if (configWarning) {
 		warnings.push(configWarning);
@@ -500,19 +511,24 @@ export async function buildRemovePlan(opts: GlobalOptions): Promise<RemovePlan> 
 			"Refusing to remove the current home directory. Use a TAP agent data dir instead.",
 		);
 	}
-	if (inspection.unexpectedEntries.length > 0) {
-		const listedEntries = inspection.unexpectedEntries.map((entry) => `"${entry}"`).join(", ");
-		const message = `Refusing to remove ${dataDir} because it contains non-TAP top-level entries: ${listedEntries}.`;
+	if (inspection.exists && !inspection.empty && !hasSignature) {
+		const message = `Refusing to remove ${dataDir} because it is not a TAP data dir. Expected ${configPath} to contain a numeric 'agent_id' or a CAIP-2 'chain' field (e.g. eip155:8453). Check --data-dir or TAP_DATA_DIR.`;
 		blockingReasons.push(message);
-		warnings.push(`${message} TAP remove only wipes TAP-owned data dirs.`);
+		warnings.push(message);
 	}
+
+	// Skip enumeration when the dir will be rejected anyway — otherwise a typo'd
+	// --data-dir that points at a huge tree (e.g. $HOME, or a dir with node_modules)
+	// would recursively walk it before surfacing the blocking message.
+	const pathsToRemove =
+		blockingReasons.length === 0 ? await collectPlannedRemovalPaths(dataDir, inspection) : [];
 
 	return {
 		dataDir,
 		configPath,
 		agentId,
 		address,
-		pathsToRemove: await collectPlannedRemovalPaths(dataDir, inspection),
+		pathsToRemove,
 		warnings,
 		liveTransportOwner,
 		blockingReasons,
@@ -524,9 +540,7 @@ async function resolveRemoveDataDir(opts: GlobalOptions): Promise<string> {
 	try {
 		return await realpath(configuredPath);
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return configuredPath;
 		}
 		throw error;
@@ -557,15 +571,10 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 		}
 		return [null, "config.yaml is present but agent_id could not be read."];
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
-		return [
-			null,
-			`config.yaml could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
-		];
+		return [null, `config.yaml could not be parsed: ${toErrorMessage(error)}`];
 	}
 }
 
@@ -592,15 +601,10 @@ async function readAgentAddress(dataDir: string): Promise<[string | null, string
 		const address = await provider.getAddress();
 		return [address, null];
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [null, "config.yaml is missing from the resolved data dir."];
 		}
-		return [
-			null,
-			`Agent address could not be read: ${error instanceof Error ? error.message : String(error)}`,
-		];
+		return [null, `Agent address could not be read: ${toErrorMessage(error)}`];
 	}
 }
 
@@ -616,18 +620,10 @@ async function inspectLiveTransportOwner(dataDir: string): Promise<TransportOwne
 async function inspectDataDir(dataDir: string): Promise<DataDirInspection> {
 	try {
 		const entries = await readdir(dataDir);
-		const managedEntries = entries.filter((entry) => TAP_DATA_DIR_ENTRIES.has(entry));
-		const unexpectedEntries = entries.filter((entry) => !TAP_DATA_DIR_ENTRIES.has(entry));
-		return {
-			hasManagedEntries: managedEntries.length > 0,
-			managedEntries,
-			unexpectedEntries,
-		};
+		return { exists: true, empty: entries.length === 0 };
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
-			return { hasManagedEntries: false, managedEntries: [], unexpectedEntries: [] };
+		if (fsErrorCode(error) === "ENOENT") {
+			return { exists: false, empty: true };
 		}
 		throw error;
 	}
@@ -637,19 +633,16 @@ async function collectPlannedRemovalPaths(
 	dataDir: string,
 	inspection: DataDirInspection,
 ): Promise<string[]> {
-	if (!inspection.hasManagedEntries) {
+	if (!inspection.exists || inspection.empty) {
 		return [];
 	}
 
-	const paths: string[] = [];
-	if (inspection.unexpectedEntries.length === 0) {
-		paths.push(dataDir);
-	}
-
-	for (const entry of inspection.managedEntries.sort((left, right) => left.localeCompare(right))) {
+	const paths: string[] = [dataDir];
+	const entries = await readdir(dataDir);
+	entries.sort((left, right) => left.localeCompare(right));
+	for (const entry of entries) {
 		paths.push(...(await collectRemovalPaths(join(dataDir, entry))));
 	}
-
 	return paths;
 }
 
@@ -668,9 +661,7 @@ async function collectRemovalPaths(targetPath: string): Promise<string[]> {
 		}
 		return paths;
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "ENOENT") {
+		if (fsErrorCode(error) === "ENOENT") {
 			return [];
 		}
 		throw error;

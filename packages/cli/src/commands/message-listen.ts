@@ -1,7 +1,7 @@
 import { type CliTapServiceHooks, createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, info } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { info } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface MessageListenerHooks extends CliTapServiceHooks {
@@ -29,8 +29,7 @@ export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
 
 		await new Promise(() => {});
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 

@@ -3,33 +3,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installCommand } from "../src/commands/install.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap install", () => {
 	let tempRoot: string;
 	let homeDir: string;
 	let binDir: string;
-	let stdoutWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
+	let skillsSourceDir: string;
+	const { stdout: stdoutWrites } = useCapturedOutput();
 	let originalHome: string | undefined;
 	let originalPath: string | undefined;
+	let originalSkillsSource: string | undefined;
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-install-"));
 		homeDir = join(tempRoot, "home");
 		binDir = join(tempRoot, "bin");
+		skillsSourceDir = join(tempRoot, "skills", "trusted-agents");
 		await mkdir(homeDir, { recursive: true });
 		await mkdir(binDir, { recursive: true });
-		stdoutWrites = [];
-		origStdoutWrite = process.stdout.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
+		await mkdir(skillsSourceDir, { recursive: true });
+		await writeFile(join(skillsSourceDir, "SKILL.md"), "---\nname: trusted-agents\n---\n", "utf-8");
 
 		originalHome = process.env.HOME;
 		originalPath = process.env.PATH;
+		originalSkillsSource = process.env.TAP_SKILLS_SOURCE;
 		process.env.HOME = homeDir;
 		process.env.PATH = `${binDir}:/usr/bin:/bin`;
+		process.env.TAP_SKILLS_SOURCE = skillsSourceDir;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = JSON.stringify({ valid: true });
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
 		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = gatewayStatusJson({
@@ -46,9 +47,9 @@ describe("tap install", () => {
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
 		process.env.HOME = originalHome;
 		process.env.PATH = originalPath;
+		process.env.TAP_SKILLS_SOURCE = originalSkillsSource;
 		process.env.FAKE_OPENCLAW_CONFIG_VALIDATE_JSON = "";
 		process.env.FAKE_OPENCLAW_PLUGIN_INSTALL_EXIT_CODE = "";
 		process.env.FAKE_OPENCLAW_GATEWAY_STATUS_JSON = "";
@@ -61,7 +62,7 @@ describe("tap install", () => {
 		await rm(tempRoot, { recursive: true, force: true });
 	});
 
-	it("auto-detects Claude and OpenClaw runtimes, calls npx skills add and openclaw plugins install", async () => {
+	it("auto-detects Claude and OpenClaw runtimes, installs packaged skills, and force-updates the plugin", async () => {
 		await mkdir(join(homeDir, ".claude"), { recursive: true });
 		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
@@ -69,12 +70,12 @@ describe("tap install", () => {
 		await installCommand({}, { json: true });
 
 		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
-		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents -y"]);
+		expect(npxLog).toEqual([`-y skills add -g ${skillsSourceDir} -y`]);
 
 		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
 		expect(openclawLog).toEqual([
 			"gateway status --json",
-			"plugins install trusted-agents-tap",
+			"plugins install --force trusted-agents-tap",
 			"config validate --json",
 		]);
 	});
@@ -87,7 +88,49 @@ describe("tap install", () => {
 		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
 		expect(openclawLog).toEqual([
 			"gateway status --json",
-			"plugins install trusted-agents-tap",
+			"plugins install --force trusted-agents-tap",
+			"config validate --json",
+		]);
+	});
+
+	it("installs the beta OpenClaw plugin when a channel is provided", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand({ runtimes: ["openclaw"], channel: "beta" }, { json: true });
+
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
+			"gateway status --json",
+			"plugins install --force trusted-agents-tap@beta",
+			"config validate --json",
+		]);
+	});
+
+	it("installs an exact-version OpenClaw plugin when a version is provided", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand({ runtimes: ["openclaw"], version: "0.2.0-beta.1" }, { json: true });
+
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
+			"gateway status --json",
+			"plugins install --force trusted-agents-tap@0.2.0-beta.1",
+			"config validate --json",
+		]);
+	});
+
+	it("prefers an explicit version over the channel when installing the OpenClaw plugin", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand(
+			{ runtimes: ["openclaw"], channel: "beta", version: "0.2.0-beta.1" },
+			{ json: true },
+		);
+
+		const openclawLog = await readCommandLog(join(tempRoot, "openclaw.log"));
+		expect(openclawLog).toEqual([
+			"gateway status --json",
+			"plugins install --force trusted-agents-tap@0.2.0-beta.1",
 			"config validate --json",
 		]);
 	});
@@ -98,7 +141,7 @@ describe("tap install", () => {
 		await installCommand({ runtimes: ["claude"] }, { json: true });
 
 		const npxLog = await readCommandLog(join(tempRoot, "npx.log"));
-		expect(npxLog).toEqual(["-y skills add -g ggonzalez94/trusted-agents -y"]);
+		expect(npxLog).toEqual([`-y skills add -g ${skillsSourceDir} -y`]);
 	});
 
 	it("installs Hermes plugin, startup hook, and skill assets", async () => {
@@ -119,16 +162,28 @@ describe("tap install", () => {
 		);
 	});
 
-	it("reports no runtimes when none detected (no error)", async () => {
+	it("installs global skills even when no host runtime directories are detected", async () => {
+		// Isolate PATH so real CLIs (like openclaw) aren't found,
+		// but keep /usr/bin:/bin so env/bash resolve for shell scripts
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
+		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 		await installCommand({}, { json: true });
+		expect(await readCommandLog(join(tempRoot, "npx.log"))).toEqual([
+			`-y skills add -g ${skillsSourceDir} -y`,
+		]);
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
-			data?: { reason?: string };
+			data?: {
+				installed?: boolean;
+				runtimes?: Array<{ runtime: string }>;
+			};
 		};
 		expect(output.status).toBe("ok");
-		expect(output.data?.reason).toContain("~/.hermes");
-		expect(process.exitCode).toBeUndefined();
+		expect(output.data?.installed).toBe(true);
+		expect(output.data?.runtimes).toEqual(
+			expect.arrayContaining([expect.objectContaining({ runtime: "skills" })]),
+		);
 	});
 
 	it("reports error when npx skills add fails", async () => {
@@ -164,14 +219,33 @@ describe("tap install", () => {
 
 		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
 			"gateway status --json",
-			"plugins install trusted-agents-tap",
+			"plugins install --force trusted-agents-tap",
 			"config validate --json",
 			"gateway status --json",
 			"gateway status --json",
 		]);
 	});
 
+	it("re-runs the OpenClaw plugin install with overwrite semantics on repeated installs", async () => {
+		await writeFakeOpenClaw(binDir, join(tempRoot, "openclaw.log"));
+
+		await installCommand({ runtimes: ["openclaw"] }, { json: true });
+		await installCommand({ runtimes: ["openclaw"] }, { json: true });
+
+		expect(await readCommandLog(join(tempRoot, "openclaw.log"))).toEqual([
+			"gateway status --json",
+			"plugins install --force trusted-agents-tap",
+			"config validate --json",
+			"gateway status --json",
+			"plugins install --force trusted-agents-tap",
+			"config validate --json",
+		]);
+	});
+
 	it("warns when the selected TAP data dir contains a legacy raw-key agent that needs migration", async () => {
+		// Isolate PATH so only fake CLIs are found (not real openclaw),
+		// but keep /usr/bin:/bin so env/bash resolve for shell scripts
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		await mkdir(join(homeDir, ".claude"), { recursive: true });
 		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 		await mkdir(join(homeDir, ".trustedagents", "identity"), { recursive: true });

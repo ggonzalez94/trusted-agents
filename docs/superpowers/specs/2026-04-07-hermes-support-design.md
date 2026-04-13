@@ -194,7 +194,7 @@ This is not a shortcut in implementation; it is a real host limitation that must
 
 Match the current OpenClaw host semantics:
 
-- connection requests: always defer
+- connection requests: auto-accept valid invites and emit a post-success `connection-established` info notification
 - transfer requests:
   - auto-approve when matching grants already cover the request
   - otherwise defer

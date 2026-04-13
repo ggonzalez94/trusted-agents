@@ -18,6 +18,13 @@ function trimTrailingSlash(url: string): string {
 
 const TAIKO_CHAINS = new Set(["eip155:167000"]);
 
+async function throwIfNotOk(response: Response, label: string): Promise<void> {
+	if (!response.ok) {
+		const text = await response.text().catch(() => "");
+		throw new Error(`${label} (HTTP ${response.status}): ${text}`);
+	}
+}
+
 export function resolveIpfsUploadProvider(value?: string): IpfsUploadProvider | undefined {
 	if (!value) {
 		return undefined;
@@ -121,10 +128,7 @@ export async function uploadToIpfsX402(
 		headers: { "Content-Type": "application/json" },
 	});
 
-	if (!paidResponse.ok) {
-		const text = await paidResponse.text().catch(() => "");
-		throw new Error(`x402 pin request failed (HTTP ${paidResponse.status}): ${text}`);
-	}
+	await throwIfNotOk(paidResponse, "x402 pin request failed");
 
 	const pinResponse = (await paidResponse.json()) as { url: string; cid?: string };
 	if (!pinResponse.url) {
@@ -141,10 +145,7 @@ export async function uploadToIpfsX402(
 		body: formData,
 	});
 
-	if (!uploadResponse.ok) {
-		const text = await uploadResponse.text().catch(() => "");
-		throw new Error(`File upload failed (HTTP ${uploadResponse.status}): ${text}`);
-	}
+	await throwIfNotOk(uploadResponse, "File upload failed");
 
 	const uploadResult = (await uploadResponse.json()) as {
 		IpfsHash?: string;
@@ -201,10 +202,7 @@ export async function uploadToIpfsTack(
 		method: "POST",
 		body: formData,
 	});
-	if (!response.ok) {
-		const text = await response.text().catch(() => "");
-		throw new Error(`Tack upload failed (HTTP ${response.status}): ${text}`);
-	}
+	await throwIfNotOk(response, "Tack upload failed");
 
 	const result = (await response.json()) as {
 		cid?: string;
@@ -245,10 +243,7 @@ export async function uploadToIpfsPinata(
 		body,
 	});
 
-	if (!response.ok) {
-		const text = await response.text().catch(() => "");
-		throw new Error(`Pinata upload failed (HTTP ${response.status}): ${text}`);
-	}
+	await throwIfNotOk(response, "Pinata upload failed");
 
 	const result = (await response.json()) as { IpfsHash: string };
 	if (!result.IpfsHash) {

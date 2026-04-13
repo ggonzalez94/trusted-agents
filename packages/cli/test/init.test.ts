@@ -2,93 +2,27 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deletePolicy, deleteWallet, listApiKeys, revokeApiKey } from "@open-wallet-standard/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
+import { useOwsArtifactCleanup } from "./helpers/ows-cleanup.js";
 import { runCli } from "./helpers/run-cli.js";
 
 describe("tap init", () => {
 	let tmpDir: string;
 	let configPath: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
-
-	// Track OWS artifacts for cleanup
-	const createdWallets: string[] = [];
-	const createdPolicies: string[] = [];
-	const createdApiKeyIds: string[] = [];
+	const { stdout: stdoutWrites } = useCapturedOutput();
+	const { trackOwsArtifacts } = useOwsArtifactCleanup();
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-init-test-"));
 		configPath = join(tmpDir, "config.yaml");
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
-
-		// Clean up OWS artifacts
-		for (const keyId of createdApiKeyIds) {
-			try {
-				revokeApiKey(keyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		for (const policyId of createdPolicies) {
-			try {
-				deletePolicy(policyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		for (const walletName of createdWallets) {
-			try {
-				deleteWallet(walletName);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		createdApiKeyIds.length = 0;
-		createdPolicies.length = 0;
-		createdWallets.length = 0;
-
 		await rm(tmpDir, { recursive: true, force: true });
 	});
-
-	/** Track OWS artifacts created during a test for cleanup. */
-	function trackOwsArtifacts(yaml: Record<string, unknown>) {
-		const ows = yaml.ows as { wallet?: string } | undefined;
-		if (ows?.wallet) {
-			createdWallets.push(ows.wallet);
-		}
-		// Find API keys and policies created during the test
-		try {
-			const keys = listApiKeys();
-			for (const k of keys) {
-				if (k.name && typeof k.name === "string" && k.name.startsWith("tap-")) {
-					createdApiKeyIds.push(k.id);
-				}
-			}
-		} catch (_) {
-			/* ignore */
-		}
-	}
 
 	it("should create config file and directory structure with OWS wallet", async () => {
 		const dataDir = join(tmpDir, "data");
@@ -140,7 +74,7 @@ describe("tap init", () => {
 		const firstConfig = await readFile(configPath, "utf-8");
 		trackOwsArtifacts(YAML.parse(firstConfig));
 
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 		await initCommand({ json: true, config: configPath, dataDir });
 		const secondConfig = await readFile(configPath, "utf-8");
 
@@ -181,7 +115,7 @@ describe("tap init", () => {
 		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
 		trackOwsArtifacts(YAML.parse(configContent));
 
-		stdoutWrites = [];
+		stdoutWrites.length = 0;
 		await initCommand({
 			json: true,
 			dataDir,

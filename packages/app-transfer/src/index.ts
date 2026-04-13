@@ -7,16 +7,16 @@ export {
 	parseTransferActionResponse,
 	buildTransferRequestText,
 	buildTransferResponseText,
-} from "./parser.js";
+} from "trusted-agents-core";
 export {
 	findApplicableTransferGrants,
 	matchesTransferGrantRequest,
-} from "./grants.js";
+} from "trusted-agents-core";
 export type {
 	TransferActionRequest,
 	TransferActionResponse,
 	TransferAsset,
-} from "./types.js";
+} from "trusted-agents-core";
 
 export function buildTransferPayload(params: {
 	asset: string;

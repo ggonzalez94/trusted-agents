@@ -6,7 +6,7 @@ export type ProtocolMessage = JsonRpcRequest;
 export interface TransportReceipt {
 	received: true;
 	requestId: string;
-	status: "received" | "duplicate" | "queued";
+	status: "received" | "duplicate" | "queued" | "published";
 	receivedAt: string;
 }
 

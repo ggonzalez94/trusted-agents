@@ -1,3 +1,11 @@
+import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
+import {
+	AsyncMutex,
+	executeOnchainTransfer,
+	generateInvite,
+	generateSchedulingId,
+	toErrorMessage,
+} from "trusted-agents-core";
 import {
 	OwsSigningProvider,
 	type PermissionGrantSet,
@@ -11,24 +19,13 @@ import {
 	type TrustedAgentsConfig,
 	createTapRuntime,
 	loadTrustedAgentConfigFromDataDir,
-} from "@trustedagents/sdk";
-import type { PluginLogger, PluginRuntime } from "openclaw/plugin-sdk";
-import {
-	AsyncMutex,
-	executeOnchainTransfer,
-	generateInvite,
-	generateSchedulingId,
-} from "trusted-agents-core";
+} from "trusted-agents-sdk";
 import type { TapOpenClawIdentityConfig, TapOpenClawPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
 import { type TapNotification, TapNotificationQueue } from "./notification-queue.js";
 
-function sanitizeOneLiner(text: string): string {
-	return text.replace(/[\n\r\t]+/g, " ").trim();
-}
-
 function truncateText(text: string, maxLen: number): string {
-	const sanitized = sanitizeOneLiner(text);
+	const sanitized = text.replace(/[\n\r\t]+/g, " ").trim();
 	if (sanitized.length <= maxLen) return sanitized;
 	return `${sanitized.slice(0, maxLen)}...`;
 }
@@ -40,6 +37,7 @@ interface ManagedTapRuntime {
 	runtime: TapRuntime;
 	mutex: AsyncMutex;
 	interval: NodeJS.Timeout | null;
+	reconcileInFlight: boolean;
 	lastError?: string;
 }
 
@@ -99,7 +97,7 @@ export class OpenClawTapRegistry {
 			await runtime.mutex.runExclusive(async () => {
 				await runtime.runtime.stop().catch((error: unknown) => {
 					this.logger.warn(
-						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${formatError(error)}`,
+						`[trusted-agents-tap] Failed to stop ${runtime.definition.name}: ${toErrorMessage(error)}`,
 					);
 				});
 			});
@@ -148,7 +146,7 @@ export class OpenClawTapRegistry {
 						running: false,
 						lock: null,
 						pendingRequests: [],
-						lastError: formatError(error),
+						lastError: toErrorMessage(error),
 					};
 				}
 			}),
@@ -397,22 +395,12 @@ export class OpenClawTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const approve = params.action === "accept";
-
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
+		const matching = await this.findPendingSchedulingEntry(
+			runtime,
+			params.schedulingId,
+			"inbound",
+			`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
 		);
-		const matching = pending.find(
-			(r) =>
-				r.direction === "inbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
-			);
-		}
 
 		const report = await runtime.mutex.runExclusive(
 			async () => await runtime.runtime.resolvePending(matching.requestId, approve, params.reason),
@@ -435,22 +423,12 @@ export class OpenClawTapRegistry {
 		reason?: string;
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
-
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
+		const matching = await this.findPendingSchedulingEntry(
+			runtime,
+			params.schedulingId,
+			"outbound",
+			`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
 		);
-		const matching = pending.find(
-			(r) =>
-				r.direction === "outbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
-			);
-		}
 
 		const report = await runtime.mutex.runExclusive(
 			async () =>
@@ -515,7 +493,7 @@ export class OpenClawTapRegistry {
 				const runtime = await this.ensureRuntime(identity.name);
 				await this.startRuntime(runtime);
 			} catch (error: unknown) {
-				const message = formatError(error);
+				const message = toErrorMessage(error);
 				failures.push(`${identity.name}: ${message}`);
 				this.logger.warn(
 					`[trusted-agents-tap:${identity.name}] Failed to start TAP runtime: ${message}`,
@@ -530,6 +508,27 @@ export class OpenClawTapRegistry {
 		}
 	}
 
+	private async findPendingSchedulingEntry(
+		runtime: ManagedTapRuntime,
+		schedulingId: string,
+		direction: "inbound" | "outbound",
+		notFoundMessage: string,
+	) {
+		const pending = await runtime.mutex.runExclusive(
+			async () => await runtime.runtime.listPendingRequests(),
+		);
+		const matching = pending.find(
+			(r) =>
+				r.direction === direction &&
+				r.details?.type === "scheduling" &&
+				(r.details as TapPendingSchedulingDetails).schedulingId === schedulingId,
+		);
+		if (!matching) {
+			throw new Error(notFoundMessage);
+		}
+		return matching;
+	}
+
 	private async ensureRuntimeForAction(identity?: string): Promise<ManagedTapRuntime> {
 		const name = this.resolveSingleIdentity(identity);
 		return await this.ensureRuntimeStarted(name);
@@ -537,16 +536,7 @@ export class OpenClawTapRegistry {
 
 	private async ensureRuntimeStarted(name: string): Promise<ManagedTapRuntime> {
 		const runtime = await this.ensureRuntime(name);
-		await runtime.mutex.runExclusive(async () => {
-			try {
-				await runtime.runtime.start();
-				runtime.lastError = undefined;
-			} catch (error: unknown) {
-				runtime.lastError = formatError(error);
-				throw error;
-			}
-		});
-		this.installInterval(runtime);
+		await this.startRuntime(runtime);
 		return runtime;
 	}
 
@@ -561,6 +551,11 @@ export class OpenClawTapRegistry {
 			throw new Error(`Unknown TAP identity: ${name}`);
 		}
 
+		// Load credentials from the identity's own dataDir YAML. Do NOT plumb
+		// process.env.TAP_OWS_WALLET / TAP_OWS_API_KEY through here — the plugin
+		// is multi-identity in a single process, so a process-global env override
+		// would force every identity onto the same wallet/API key, breaking
+		// isolation and causing wrong-wallet signing.
 		const config = await loadTrustedAgentConfigFromDataDir(definition.dataDir, {
 			requireAgentId: true,
 		});
@@ -570,7 +565,14 @@ export class OpenClawTapRegistry {
 			config.ows.apiKey,
 		);
 
-		const notificationQueue = new TapNotificationQueue();
+		const notificationQueue = new TapNotificationQueue({
+			identity: name,
+			onHardCapDrop: (dropped) => {
+				this.logger.warn(
+					`[trusted-agents-tap:${name}] Notification queue hard cap reached — dropped oldest escalation: ${dropped.method} from ${dropped.fromName ?? `agent #${dropped.from}`} (messageId=${dropped.messageId}). Drain the queue via the agent or restart the plugin.`,
+				);
+			},
+		});
 		this.notificationQueues.set(name, notificationQueue);
 
 		const tapRuntime = await createTapRuntime({
@@ -580,8 +582,37 @@ export class OpenClawTapRegistry {
 			createSigningProvider: async () => signingProvider,
 			schedulingHandler: new SchedulingHandler({
 				hooks: {
-					approveScheduling: async () => {
-						return null; // Defer for operator approval
+					approveScheduling: async ({ requestId, contact, proposal }) => {
+						// Mirror approveTransfer: the hook owns the notification because
+						// the classifier does not emit action/request with receipt_status
+						// "queued" (see event-classifier.ts). Without this push, deferred
+						// scheduling proposals are invisible to the operator.
+						const firstSlot = proposal.slots[0];
+						const slotLabel = firstSlot
+							? `${firstSlot.start} → ${firstSlot.end}`
+							: "no slot proposed";
+						const enqueued = notificationQueue.push({
+							type: "escalation",
+							identity: name,
+							timestamp: new Date().toISOString(),
+							method: "scheduling/propose",
+							from: contact.peerAgentId,
+							fromName: contact.peerDisplayName,
+							messageId: requestId,
+							detail: {
+								schedulingId: proposal.schedulingId,
+								title: proposal.title,
+								duration: proposal.duration,
+								slots: proposal.slots,
+							},
+							oneLiner: `Meeting request from ${contact.peerDisplayName}: "${proposal.title}" (${slotLabel}) — needs approval`,
+						});
+						if (enqueued) {
+							void this.triggerEscalation(
+								`Meeting request from ${contact.peerDisplayName}: "${proposal.title}" requires approval`,
+							);
+						}
+						return null;
 					},
 				},
 			}),
@@ -589,7 +620,7 @@ export class OpenClawTapRegistry {
 				executeTransfer: async (serviceConfig, request) =>
 					await executeOnchainTransfer(serviceConfig, signingProvider, request),
 				log: (level, message) => {
-					logWithLevel(this.logger, level, `[trusted-agents-tap:${definition.name}] ${message}`);
+					this.logger[level](`[trusted-agents-tap:${definition.name}] ${message}`);
 				},
 				emitEvent: (payload) => {
 					this.handleEmitEvent(name, notificationQueue, payload);
@@ -635,8 +666,19 @@ export class OpenClawTapRegistry {
 					}
 					return null;
 				},
-				approveConnection: async () => {
-					return null; // Always escalate to user
+				onConnectionEstablished: ({ peerAgentId, peerName, peerChain }) => {
+					// Non-blocking info notification. Emitted after the handshake completes.
+					notificationQueue.push({
+						type: "info",
+						identity: name,
+						timestamp: new Date().toISOString(),
+						method: "connection/established",
+						from: peerAgentId,
+						fromName: peerName,
+						messageId: `connection-established-${peerAgentId}`,
+						detail: { peerAgentId, peerName, peerChain },
+						oneLiner: `Connected with ${peerName} (agent #${peerAgentId})`,
+					});
 				},
 				confirmMeeting: async () => {
 					// Return false to prevent auto-confirmation; operator resolves via tap_gateway
@@ -675,6 +717,7 @@ export class OpenClawTapRegistry {
 			runtime: tapRuntime,
 			mutex: new AsyncMutex(),
 			interval: null,
+			reconcileInFlight: false,
 		};
 		this.runtimes.set(name, runtime);
 		return runtime;
@@ -686,7 +729,7 @@ export class OpenClawTapRegistry {
 				await runtime.runtime.start();
 				runtime.lastError = undefined;
 			} catch (error: unknown) {
-				runtime.lastError = formatError(error);
+				runtime.lastError = toErrorMessage(error);
 				throw error;
 			}
 		});
@@ -716,17 +759,31 @@ export class OpenClawTapRegistry {
 		}
 
 		runtime.interval = setInterval(() => {
-			void runtime.mutex.runExclusive(async () => {
-				try {
-					await runtime.runtime.syncOnce();
-					runtime.lastError = undefined;
-				} catch (error: unknown) {
-					runtime.lastError = formatError(error);
-					this.logger.warn(
-						`[trusted-agents-tap:${runtime.definition.name}] Periodic reconcile failed: ${runtime.lastError}`,
-					);
-				}
-			});
+			// Skip if the previous reconcile is still running. Without this guard,
+			// a slow syncOnce (longer than the interval) causes ticks to pile up on
+			// the runtime mutex instead of being dropped.
+			if (runtime.reconcileInFlight) {
+				this.logger.warn(
+					`[trusted-agents-tap:${runtime.definition.name}] Skipping periodic reconcile — previous run still in flight`,
+				);
+				return;
+			}
+			runtime.reconcileInFlight = true;
+			void runtime.mutex
+				.runExclusive(async () => {
+					try {
+						await runtime.runtime.syncOnce();
+						runtime.lastError = undefined;
+					} catch (error: unknown) {
+						runtime.lastError = toErrorMessage(error);
+						this.logger.warn(
+							`[trusted-agents-tap:${runtime.definition.name}] Periodic reconcile failed: ${runtime.lastError}`,
+						);
+					}
+				})
+				.finally(() => {
+					runtime.reconcileInFlight = false;
+				});
 		}, runtime.definition.reconcileIntervalMinutes * 60_000);
 	}
 
@@ -785,7 +842,7 @@ export class OpenClawTapRegistry {
 			});
 		} catch (error: unknown) {
 			this.logger.warn(
-				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${formatError(error)}`,
+				`[trusted-agents-tap] Failed to trigger OpenClaw heartbeat wake: ${toErrorMessage(error)}`,
 			);
 		}
 	}
@@ -883,24 +940,4 @@ export class OpenClawTapRegistry {
 
 		return warnings;
 	}
-}
-
-function logWithLevel(
-	logger: PluginLogger,
-	level: "info" | "warn" | "error",
-	message: string,
-): void {
-	if (level === "error") {
-		logger.error(message);
-		return;
-	}
-	if (level === "warn") {
-		logger.warn(message);
-		return;
-	}
-	logger.info(message);
-}
-
-function formatError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }

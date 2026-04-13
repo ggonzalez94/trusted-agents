@@ -1,7 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
 	type AppManifest,
 	type AppManifestEntry,
@@ -11,20 +8,13 @@ import {
 	removeAppFromManifest,
 	saveAppManifest,
 } from "../../../src/app/manifest.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
 
 describe("AppManifest", () => {
-	let tmpDir: string;
-
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "tap-manifest-"));
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
-	});
+	const dir = useTempDir("tap-manifest");
 
 	it("returns empty manifest when file does not exist", async () => {
-		const manifest = await loadAppManifest(tmpDir);
+		const manifest = await loadAppManifest(dir.path);
 		expect(manifest.apps).toEqual({});
 	});
 
@@ -39,8 +29,8 @@ describe("AppManifest", () => {
 				},
 			},
 		};
-		await saveAppManifest(tmpDir, manifest);
-		const loaded = await loadAppManifest(tmpDir);
+		await saveAppManifest(dir.path, manifest);
+		const loaded = await loadAppManifest(dir.path);
 		expect(loaded).toEqual(manifest);
 	});
 
@@ -51,8 +41,8 @@ describe("AppManifest", () => {
 			installedAt: "2026-03-30T00:00:00.000Z",
 			status: "active",
 		};
-		await addAppToManifest(tmpDir, "betting", entry);
-		const manifest = await loadAppManifest(tmpDir);
+		await addAppToManifest(dir.path, "betting", entry);
+		const manifest = await loadAppManifest(dir.path);
 		expect(manifest.apps.betting).toEqual(entry);
 	});
 
@@ -63,9 +53,9 @@ describe("AppManifest", () => {
 			installedAt: "2026-03-30T00:00:00.000Z",
 			status: "active",
 		};
-		await addAppToManifest(tmpDir, "betting", entry);
-		await removeAppFromManifest(tmpDir, "betting");
-		const manifest = await loadAppManifest(tmpDir);
+		await addAppToManifest(dir.path, "betting", entry);
+		await removeAppFromManifest(dir.path, "betting");
+		const manifest = await loadAppManifest(dir.path);
 		expect(manifest.apps.betting).toBeUndefined();
 	});
 

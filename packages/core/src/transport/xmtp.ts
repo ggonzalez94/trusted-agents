@@ -1,14 +1,15 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { Client } from "@xmtp/node-sdk";
-import type { DecodedMessage, Dm } from "@xmtp/node-sdk";
+import { Client, getInboxIdForIdentifier } from "@xmtp/node-sdk";
+import type { DecodedMessage, Dm, Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { TransportError, isEthereumAddress, nowISO } from "../common/index.js";
+import { TransportError, isEthereumAddress, nowISO, toErrorMessage } from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import {
 	CONNECTION_REQUEST,
 	CONNECTION_RESULT,
 	PERMISSIONS_UPDATE,
+	extractConnectionIdFromParams,
 	isResultMethod,
 } from "../protocol/index.js";
 import type { AgentIdentifier } from "../protocol/types.js";
@@ -99,20 +100,45 @@ export class XmtpTransport implements TransportProvider {
 			await mkdir(this.config.dbPath, { recursive: true, mode: 0o700 });
 		}
 
-		const clientPromise = Client.create(signer, {
-			env: "production",
+		const clientOptions = {
+			env: "production" as const,
 			dbEncryptionKey,
 			...(this.config.dbPath
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
-		});
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			setTimeout(
-				() => reject(new TransportError("XMTP Client.create() timed out")),
-				CLIENT_CREATE_TIMEOUT_MS,
-			);
-		});
-		this.client = await Promise.race([clientPromise, timeoutPromise]);
+		};
+		const createClient = () =>
+			Promise.race([
+				Client.create(signer, clientOptions),
+				new Promise<never>((_, reject) => {
+					setTimeout(
+						() => reject(new TransportError("XMTP Client.create() timed out")),
+						CLIENT_CREATE_TIMEOUT_MS,
+					);
+				}),
+			]);
+
+		try {
+			this.client = await createClient();
+		} catch (error: unknown) {
+			// If the inbox hit the 10-installation limit, Client.create() fails
+			// before we get a chance to call revokeAllOtherInstallations().
+			// Revoke all installations using static SDK methods and retry once.
+			if (isInstallationLimitError(error)) {
+				await revokeAllInstallationsStatic(signer);
+				this.client = await createClient();
+			} else {
+				throw error;
+			}
+		}
+
+		// Revoke stale installations after successfully registering so the NEXT
+		// start has room.  This keeps the inbox clean over repeated sessions.
+		try {
+			await this.client.revokeAllOtherInstallations();
+		} catch {
+			// Best-effort: if revocation fails, proceed anyway.
+		}
 
 		this.running = true;
 		await this.populateInboxIdCache();
@@ -145,6 +171,32 @@ export class XmtpTransport implements TransportProvider {
 		const inboxId = await this.resolveInboxId(peerAddress);
 		const dm = await this.client.conversations.createDm(inboxId);
 		const requestId = String(message.id);
+		const waitForAck = options?.waitForAck ?? true;
+
+		// Fire-and-forget path: publish to the transport and return immediately.
+		// The peer may still emit a JSON-RPC receipt later, which `processIncomingReceipt`
+		// will silently ignore (no matching pendingRequest entry). Delivery durability
+		// is owned by the caller's request journal + retry pipeline, not by the
+		// synchronous ack.
+		if (!waitForAck) {
+			try {
+				await dm.sendText(JSON.stringify(message));
+			} catch (err) {
+				throw err instanceof TransportError
+					? err
+					: new TransportError(`Failed to send message: ${toErrorMessage(err)}`);
+			}
+			if (connectionId) {
+				this.trustStore.touchContact(connectionId).catch(() => {});
+			}
+			return {
+				received: true,
+				requestId,
+				status: "published",
+				receivedAt: nowISO(),
+			};
+		}
+
 		const timeout = options?.timeout ?? this.config.defaultResponseTimeoutMs ?? 30_000;
 
 		const receiptPromise = new Promise<TransportReceipt>((resolve, reject) => {
@@ -171,9 +223,7 @@ export class XmtpTransport implements TransportProvider {
 			}
 			throw err instanceof TransportError
 				? err
-				: new TransportError(
-						`Failed to send message: ${err instanceof Error ? err.message : String(err)}`,
-					);
+				: new TransportError(`Failed to send message: ${toErrorMessage(err)}`);
 		}
 
 		const receipt = await receiptPromise;
@@ -286,6 +336,16 @@ export class XmtpTransport implements TransportProvider {
 		})();
 	}
 
+	private toIncomingMessage(message: DecodedMessage): IncomingTransportMessage {
+		return {
+			senderInboxId: message.senderInboxId,
+			content: message.content,
+			conversationId: message.conversationId,
+			messageId: message.id,
+			sentAtNs: message.sentAtNs,
+		};
+	}
+
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
@@ -297,13 +357,7 @@ export class XmtpTransport implements TransportProvider {
 		for await (const message of stream) {
 			if (!this.running) break;
 			try {
-				await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-					messageId: message.id,
-					sentAtNs: message.sentAtNs,
-				});
+				await this.processMessage(this.toIncomingMessage(message));
 				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
 			} catch {
 				// Leave the checkpoint unchanged so transient failures can be retried.
@@ -327,13 +381,7 @@ export class XmtpTransport implements TransportProvider {
 			const messages = await dm.messages();
 			messages.sort((left, right) => left.sentAt.getTime() - right.sentAt.getTime());
 			for (const message of messages) {
-				const didProcess = await this.processMessage({
-					senderInboxId: message.senderInboxId,
-					content: message.content,
-					conversationId: message.conversationId,
-					messageId: message.id,
-					sentAtNs: message.sentAtNs,
-				});
+				const didProcess = await this.processMessage(this.toIncomingMessage(message));
 				if (didProcess) {
 					processed += 1;
 				}
@@ -376,13 +424,7 @@ export class XmtpTransport implements TransportProvider {
 			if (isMessageAlreadyCheckpointed(checkpoint, message)) {
 				continue;
 			}
-			const didProcess = await this.processMessage({
-				senderInboxId: message.senderInboxId,
-				content: message.content,
-				conversationId: message.conversationId,
-				messageId: message.id,
-				sentAtNs: message.sentAtNs,
-			});
+			const didProcess = await this.processMessage(this.toIncomingMessage(message));
 			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
 			if (didProcess) {
 				processed += 1;
@@ -431,9 +473,24 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		const handled = await this.handleIncomingProtocolMessage(message, request);
-		if (handled) {
-			this.markIncomingRequestProcessed(message.senderInboxId, request);
+		// Mark as processed BEFORE the async handler to prevent the TOCTOU race
+		// where both the listener stream and reconcile process the same message concurrently.
+		this.markIncomingRequestProcessed(message.senderInboxId, request);
+		let handled: boolean;
+		try {
+			handled = await this.handleIncomingProtocolMessage(message, request);
+		} catch (err) {
+			// Remove the mark on error so the message can be retried
+			this.processedIncomingRequests.delete(
+				buildIncomingRequestKey(message.senderInboxId, request),
+			);
+			throw err;
+		}
+		if (!handled) {
+			// Remove the mark so genuine retries can be processed
+			this.processedIncomingRequests.delete(
+				buildIncomingRequestKey(message.senderInboxId, request),
+			);
 		}
 		return handled;
 	}
@@ -596,7 +653,7 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<number> {
-		const claimedSender = this.extractBootstrapSender(message.params);
+		const claimedSender = this.extractAgentIdentifier(message.params, "from");
 		const claimedAgentId = claimedSender?.agentId;
 		const claimedChain = claimedSender?.chain;
 
@@ -632,18 +689,18 @@ export class XmtpTransport implements TransportProvider {
 		return claimedAgentId;
 	}
 
-	private extractBootstrapSender(params: unknown): AgentIdentifier | null {
+	private extractAgentIdentifier(params: unknown, key: string): AgentIdentifier | null {
 		if (typeof params !== "object" || params === null) {
 			return null;
 		}
 
-		const from = (params as { from?: unknown }).from;
-		if (typeof from !== "object" || from === null) {
+		const nested = (params as Record<string, unknown>)[key];
+		if (typeof nested !== "object" || nested === null) {
 			return null;
 		}
 
-		const agentId = (from as { agentId?: unknown }).agentId;
-		const chain = (from as { chain?: unknown }).chain;
+		const agentId = (nested as { agentId?: unknown }).agentId;
+		const chain = (nested as { chain?: unknown }).chain;
 		if (
 			typeof agentId !== "number" ||
 			agentId < 0 ||
@@ -698,6 +755,10 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<Contact | null> {
+		if (this.isBootstrapMethod(message.method)) {
+			return null;
+		}
+
 		const metadataContact = await this.findContactByConnectionId(senderAddresses, message);
 		if (metadataContact) {
 			return metadataContact;
@@ -707,7 +768,7 @@ export class XmtpTransport implements TransportProvider {
 			return null;
 		}
 
-		const grantor = this.extractGrantor(message.params);
+		const grantor = this.extractAgentIdentifier(message.params, "grantor");
 		if (!grantor) {
 			return null;
 		}
@@ -724,7 +785,7 @@ export class XmtpTransport implements TransportProvider {
 		senderAddresses: `0x${string}`[],
 		message: ProtocolMessage,
 	): Promise<Contact | null> {
-		const connectionId = this.extractConnectionId(message.params);
+		const connectionId = extractConnectionIdFromParams(message.params);
 		if (!connectionId) {
 			return null;
 		}
@@ -742,47 +803,12 @@ export class XmtpTransport implements TransportProvider {
 		return senderAddresses.some((address) => address.toLowerCase() === expectedAddress);
 	}
 
-	private extractGrantor(params: unknown): AgentIdentifier | null {
-		if (typeof params !== "object" || params === null) {
-			return null;
+	private async sendJsonRpc(senderInboxId: string, payload: object): Promise<void> {
+		const dm = await this.findDmForSender(senderInboxId);
+		if (!dm) {
+			return;
 		}
-
-		const grantor = (params as { grantor?: unknown }).grantor;
-		if (typeof grantor !== "object" || grantor === null) {
-			return null;
-		}
-
-		const agentId = (grantor as { agentId?: unknown }).agentId;
-		const chain = (grantor as { chain?: unknown }).chain;
-		if (
-			typeof agentId !== "number" ||
-			agentId < 0 ||
-			typeof chain !== "string" ||
-			chain.length === 0
-		) {
-			return null;
-		}
-
-		return { agentId, chain };
-	}
-
-	private extractConnectionId(params: unknown): string | null {
-		if (typeof params !== "object" || params === null) {
-			return null;
-		}
-
-		const payload = params as {
-			message?: {
-				metadata?: {
-					trustedAgent?: {
-						connectionId?: unknown;
-					};
-				};
-			};
-		};
-
-		const connectionId = payload.message?.metadata?.trustedAgent?.connectionId;
-		return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
+		await dm.sendText(JSON.stringify(payload));
 	}
 
 	private async sendJsonRpcReceipt(
@@ -791,23 +817,16 @@ export class XmtpTransport implements TransportProvider {
 		requestId: string,
 		ack: TransportAck,
 	): Promise<void> {
-		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) {
-			return;
-		}
-
-		await dm.sendText(
-			JSON.stringify({
-				jsonrpc: "2.0",
-				id,
-				result: {
-					received: true,
-					requestId,
-					status: ack.status,
-					receivedAt: nowISO(),
-				},
-			}),
-		);
+		await this.sendJsonRpc(senderInboxId, {
+			jsonrpc: "2.0",
+			id,
+			result: {
+				received: true,
+				requestId,
+				status: ack.status,
+				receivedAt: nowISO(),
+			},
+		});
 	}
 
 	private async sendJsonRpcError(
@@ -816,18 +835,11 @@ export class XmtpTransport implements TransportProvider {
 		code: number,
 		message: string,
 	): Promise<void> {
-		const dm = await this.findDmForSender(senderInboxId);
-		if (!dm) {
-			return;
-		}
-
-		await dm.sendText(
-			JSON.stringify({
-				jsonrpc: "2.0",
-				id,
-				error: { code, message },
-			}),
-		);
+		await this.sendJsonRpc(senderInboxId, {
+			jsonrpc: "2.0",
+			id,
+			error: { code, message },
+		});
 	}
 
 	private async resolveInboxId(address: `0x${string}`): Promise<string> {
@@ -952,4 +964,36 @@ function isMessageAlreadyCheckpointed(
 		return false;
 	}
 	return checkpoint.lastMessageIds.includes(message.id);
+}
+
+/**
+ * Detect the XMTP "10/10 installations" error that occurs when
+ * Client.create() tries to register a new installation but the inbox
+ * has already reached its maximum.
+ */
+function isInstallationLimitError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /registered \d+\/\d+ installations/i.test(message);
+}
+
+/**
+ * Revoke ALL installations for a signer's inbox using static SDK methods.
+ * This does not require a Client instance, so it works even when
+ * Client.create() fails due to the installation limit.
+ */
+async function revokeAllInstallationsStatic(signer: Signer): Promise<void> {
+	const identifier = await signer.getIdentifier();
+	const inboxId = await getInboxIdForIdentifier(identifier, "production");
+	if (!inboxId) {
+		return;
+	}
+
+	const states = await Client.fetchInboxStates([inboxId], "production");
+	const installations = states[0]?.installations;
+	if (!installations || installations.length === 0) {
+		return;
+	}
+
+	const installationBytes = installations.map((i) => i.bytes);
+	await Client.revokeInstallations(signer, inboxId, installationBytes, "production");
 }

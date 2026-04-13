@@ -21,7 +21,13 @@ export const COMMAND_METADATA: Record<string, CommandMetadata> = {
 		],
 	},
 	"tap install": {
-		examples: ["tap install", "tap install --runtime codex", "tap install --runtime openclaw"],
+		examples: [
+			"tap install",
+			"tap install --runtime codex",
+			"tap install --runtime openclaw",
+			"tap install --channel beta --runtime openclaw",
+			"tap install --version 0.2.0-beta.1 --runtime openclaw",
+		],
 	},
 	"tap remove": {
 		examples: ["tap remove --dry-run", "tap remove --unsafe-wipe-data-dir --yes"],

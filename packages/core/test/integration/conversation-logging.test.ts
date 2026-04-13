@@ -1,12 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { FileConversationLogger } from "../../src/conversation/logger.js";
 import type { ConversationMessage } from "../../src/conversation/types.js";
+import { useTempDir } from "../helpers/temp-dir.js";
 
 describe("Conversation logging integration", () => {
-	let tmpDir: string;
+	const dir = useTempDir("conv-int-test");
 	let logger: FileConversationLogger;
 	const conversationId = "conv-int-001";
 	const context = {
@@ -15,13 +13,8 @@ describe("Conversation logging integration", () => {
 		peerDisplayName: "Scheduling Bot",
 	};
 
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "conv-int-test-"));
-		logger = new FileConversationLogger(tmpDir);
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
+	beforeEach(() => {
+		logger = new FileConversationLogger(dir.path);
 	});
 
 	it("should log a multi-message conversation and produce a correct transcript", async () => {
@@ -147,7 +140,7 @@ describe("Conversation logging integration", () => {
 
 		await logger.logMessage("conv-persist", msg, context);
 
-		const logger2 = new FileConversationLogger(tmpDir);
+		const logger2 = new FileConversationLogger(dir.path);
 		const conv = await logger2.getConversation("conv-persist");
 
 		expect(conv).not.toBeNull();

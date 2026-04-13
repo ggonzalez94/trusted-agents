@@ -10,7 +10,7 @@ import {
 	toHex,
 } from "viem";
 import { createBundlerClient, getUserOperationHash } from "viem/account-abstraction";
-import { ValidationError } from "../../common/index.js";
+import { ConnectionError, ValidationError, toErrorMessage } from "../../common/index.js";
 import type { ChainConfig } from "../../config/types.js";
 import { getUsdcAsset } from "../assets.js";
 import {
@@ -77,7 +77,7 @@ function asNumber(value: unknown, label: string): number {
 	return value;
 }
 
-export function parseServoQuote(value: unknown): ServoQuoteResponse {
+function parseServoQuote(value: unknown): ServoQuoteResponse {
 	const payload = asRecord(value, "Servo paymaster quote");
 	return {
 		paymaster: asAddress(payload.paymaster, "paymaster"),
@@ -138,7 +138,7 @@ function parseServoCapabilities(value: unknown): ServoCapabilities {
 	};
 }
 
-export function buildServoFactoryData(owner: Address): Hex {
+function buildServoFactoryData(owner: Address): Hex {
 	return encodeFunctionData({
 		abi: SERVO_ACCOUNT_FACTORY_ABI,
 		functionName: "createAccount",
@@ -255,13 +255,19 @@ export async function resolveServoExecutionAddress(
 	factoryAddress: Address,
 	owner: Address,
 ): Promise<Address> {
-	const result = await context.readContract({
-		address: factoryAddress,
-		abi: SERVO_ACCOUNT_FACTORY_ABI,
-		functionName: "getAddress",
-		args: [owner, SERVO_ACCOUNT_SALT],
-	});
-	return getAddress(result);
+	try {
+		const result = await context.readContract({
+			address: factoryAddress,
+			abi: SERVO_ACCOUNT_FACTORY_ABI,
+			functionName: "getAddress",
+			args: [owner, SERVO_ACCOUNT_SALT],
+		});
+		return getAddress(result);
+	} catch (err) {
+		throw new ConnectionError(
+			`Failed to resolve Servo smart account address via RPC: ${toErrorMessage(err)}`,
+		);
+	}
 }
 
 async function resolveEip1559Fees(
@@ -291,7 +297,7 @@ export async function getServoCapabilities(endpoint: string): Promise<ServoCapab
 	return parseServoCapabilities(await rpcRequest<unknown>(endpoint, "pm_getCapabilities", []));
 }
 
-export async function resolveServoEip1559Fees(
+async function resolveServoEip1559Fees(
 	context: Pick<Eip4337ExecutionContext, "publicClient">["publicClient"],
 	endpoint: string,
 ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {

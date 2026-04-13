@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { TapAppRegistry } from "../app/registry.js";
 import { buildChainPublicClient } from "../common/index.js";
-import type { ChainConfig, TrustedAgentsConfig } from "../config/types.js";
+import type { TrustedAgentsConfig } from "../config/types.js";
 import { FileConversationLogger, type IConversationLogger } from "../conversation/logger.js";
 import { AgentResolver, type IAgentResolver } from "../identity/resolver.js";
 import type { SigningProvider } from "../signing/provider.js";
@@ -32,10 +32,6 @@ export interface BuildTapRuntimeContextOptions {
 	appRegistry?: TapAppRegistry;
 }
 
-function createViemClient(chainConfig: ChainConfig) {
-	return buildChainPublicClient(chainConfig);
-}
-
 export async function buildDefaultTapRuntimeContext(
 	config: TrustedAgentsConfig,
 	options: BuildTapRuntimeContextOptions,
@@ -43,7 +39,7 @@ export async function buildDefaultTapRuntimeContext(
 	const trustStore = options.trustStore ?? new FileTrustStore(config.dataDir);
 	const resolver =
 		options.resolver ??
-		new AgentResolver(config.chains, createViemClient, {
+		new AgentResolver(config.chains, buildChainPublicClient, {
 			maxCacheEntries: config.resolveCacheMaxEntries,
 		});
 	const conversationLogger =

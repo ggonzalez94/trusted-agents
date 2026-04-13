@@ -1,6 +1,6 @@
 {
   "name": "trusted-agents-tap",
-  "version": "0.1.5",
+  "version": "0.2.0-beta.3",
   "description": "OpenClaw plugin for running TAP as a Gateway background service",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,9 +21,8 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.48",
-    "@trustedagents/sdk": "workspace:*",
-    "trusted-agents-core": "workspace:*",
-    "viem": "2.46.3"
+    "trusted-agents-sdk": "workspace:*",
+    "trusted-agents-core": "workspace:*"
   },
   "peerDependencies": {
     "openclaw": ">=2026.1.29"

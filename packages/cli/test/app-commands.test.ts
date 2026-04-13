@@ -3,15 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appListCommand, appRemoveCommand } from "../src/commands/app.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap app commands", () => {
 	let tempRoot: string;
 	let dataDir: string;
 	let logWrites: string[];
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
+	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-app-cmd-"));
@@ -23,41 +21,30 @@ describe("tap app commands", () => {
 			"utf-8",
 		);
 		logWrites = [];
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
 		// The app commands use console.log for success output
 		vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
 			logWrites.push(args.map(String).join(" "));
 		});
-		// The error() helper writes to process.stdout (json) or process.stderr (text)
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 		process.exitCode = undefined;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
 		process.exitCode = undefined;
 		vi.restoreAllMocks();
 		await rm(tempRoot, { recursive: true, force: true });
 	});
 
 	describe("app remove", () => {
-		it("removes by app ID", async () => {
+		it.each([
+			["by app ID", "betting", "betting"],
+			["by package name", "betting", "tap-app-betting"],
+			["by short name fallback", "mybet", "betting"],
+		])("removes app %s", async (_, appKey, lookupId) => {
 			await writeFile(
 				join(dataDir, "apps.json"),
 				JSON.stringify({
 					apps: {
-						betting: {
+						[appKey]: {
 							package: "tap-app-betting",
 							entryPoint: "tap-app-betting",
 							installedAt: "2026-03-30T00:00:00.000Z",
@@ -67,62 +54,13 @@ describe("tap app commands", () => {
 				}),
 			);
 
-			await appRemoveCommand("betting", { dataDir });
+			await appRemoveCommand(lookupId, { dataDir });
 
 			const manifest = JSON.parse(await readFile(join(dataDir, "apps.json"), "utf-8"));
-			expect(manifest.apps.betting).toBeUndefined();
+			expect(manifest.apps[appKey]).toBeUndefined();
 			const allOutput = logWrites.join("\n");
 			expect(allOutput).toContain("Removed");
-			expect(allOutput).toContain("betting");
-		});
-
-		it("removes by package name when app ID doesn't match", async () => {
-			await writeFile(
-				join(dataDir, "apps.json"),
-				JSON.stringify({
-					apps: {
-						betting: {
-							package: "tap-app-betting",
-							entryPoint: "tap-app-betting",
-							installedAt: "2026-03-30T00:00:00.000Z",
-							status: "active",
-						},
-					},
-				}),
-			);
-
-			await appRemoveCommand("tap-app-betting", { dataDir });
-
-			const manifest = JSON.parse(await readFile(join(dataDir, "apps.json"), "utf-8"));
-			expect(manifest.apps.betting).toBeUndefined();
-			const allOutput = logWrites.join("\n");
-			expect(allOutput).toContain("Removed");
-			expect(allOutput).toContain("betting");
-		});
-
-		it("resolves short name to package name for fallback lookup", async () => {
-			await writeFile(
-				join(dataDir, "apps.json"),
-				JSON.stringify({
-					apps: {
-						mybet: {
-							package: "tap-app-betting",
-							entryPoint: "tap-app-betting",
-							installedAt: "2026-03-30T00:00:00.000Z",
-							status: "active",
-						},
-					},
-				}),
-			);
-
-			// "betting" resolves to "tap-app-betting" which matches the package field
-			await appRemoveCommand("betting", { dataDir });
-
-			const manifest = JSON.parse(await readFile(join(dataDir, "apps.json"), "utf-8"));
-			expect(manifest.apps.mybet).toBeUndefined();
-			const allOutput = logWrites.join("\n");
-			expect(allOutput).toContain("Removed");
-			expect(allOutput).toContain("mybet");
+			expect(allOutput).toContain(appKey);
 		});
 
 		it("errors when no matching app is found", async () => {

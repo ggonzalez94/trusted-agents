@@ -5,10 +5,11 @@ This repository publishes packages from the `Release` GitHub Actions workflow in
 ## What gets released
 
 - `trusted-agents-core`
+- `trusted-agents-sdk`
 - `trusted-agents-cli`
 - `trusted-agents-tap`
 
-The workflow validates that all three package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base and Taiko, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
+The workflow validates that all four package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base and Taiko, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
 
 ## Prepare the release PR
 
@@ -16,6 +17,7 @@ The workflow validates that all three package versions exactly match the pushed 
    - Patch: `0.1.3` -> `0.1.4`
    - Minor: `0.1.3` -> `0.2.0`
    - Major: `0.1.3` -> `1.0.0`
+   - Prerelease: `0.2.0` -> `0.2.0-beta.1`
 2. Bump the published package versions:
 
 ```bash
@@ -48,13 +50,43 @@ If you are tagging immediately after the release PR merges and nothing else land
 
 That tag push starts the publish workflow automatically.
 
+## Stable vs prerelease tags
+
+The workflow distinguishes stable and prerelease releases from the tag version:
+
+- Stable: `v0.1.6`
+- Prerelease: `v0.2.0-beta.1`, `v0.2.0-beta.2`, `v0.2.0-rc.1`
+
+npm publish behavior:
+
+- Stable tags publish normally and keep npm `latest`
+- Prerelease tags publish to npm dist-tag `beta`
+
+That means:
+
+- `npm i -g trusted-agents-cli` keeps installing the latest stable release
+- `npm i -g trusted-agents-cli@beta` installs the newest prerelease
+- `npm i -g trusted-agents-cli@0.2.0-beta.1` installs an exact prerelease version
+
+Example prerelease cut:
+
+```bash
+./scripts/bump-version.sh 0.2.0-beta.1
+bun run release:check
+git add -A && git commit -m "chore(release): prepare 0.2.0-beta.1"
+git checkout main
+git pull --ff-only origin main
+git tag v0.2.0-beta.1 HEAD
+git push origin v0.2.0-beta.1
+```
+
 ## Monitor the workflow
 
 1. Open the `Release` workflow run for the pushed tag.
 2. Confirm the jobs pass through:
    - version validation
    - package verification
-   - npm publish for all three packages
+   - npm publish for all four packages
    - GitHub Release creation
 3. If a rerun is needed, the workflow is designed to skip packages or GitHub releases that already exist.
 

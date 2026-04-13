@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	type ExecutionMode,
 	type ExecutionPaymasterProvider,
@@ -21,6 +21,9 @@ export function resolveDataDir(opts: GlobalOptions): string {
 	const envDir = process.env.TAP_DATA_DIR;
 	if (envDir) {
 		return envDir;
+	}
+	if (opts.config) {
+		return dirname(resolve(opts.config));
 	}
 	return join(process.env.HOME ?? homedir(), ".trustedagents");
 }

@@ -45,17 +45,7 @@ export function parseTransferActionRequest(message: ProtocolMessage): TransferAc
 		return null;
 	}
 
-	if (
-		(data.asset !== "native" && data.asset !== "usdc") ||
-		typeof data.actionId !== "string" ||
-		data.actionId.length === 0 ||
-		typeof data.amount !== "string" ||
-		data.amount.length === 0 ||
-		typeof data.chain !== "string" ||
-		data.chain.length === 0 ||
-		typeof data.toAddress !== "string" ||
-		!isEthereumAddress(data.toAddress)
-	) {
+	if (!hasValidTransferFields(data)) {
 		return null;
 	}
 
@@ -102,17 +92,7 @@ export function parseTransferActionResponse(
 		return null;
 	}
 
-	if (
-		(data.asset !== "native" && data.asset !== "usdc") ||
-		typeof data.actionId !== "string" ||
-		data.actionId.length === 0 ||
-		typeof data.amount !== "string" ||
-		data.amount.length === 0 ||
-		typeof data.chain !== "string" ||
-		data.chain.length === 0 ||
-		typeof data.toAddress !== "string" ||
-		!isEthereumAddress(data.toAddress)
-	) {
+	if (!hasValidTransferFields(data)) {
 		return null;
 	}
 
@@ -251,6 +231,26 @@ export function extractMessageData(message: ProtocolMessage): Record<string, unk
 	}
 
 	return null;
+}
+
+function hasValidTransferFields(data: Record<string, unknown>): data is Record<string, unknown> & {
+	asset: TransferAsset;
+	actionId: string;
+	amount: string;
+	chain: string;
+	toAddress: `0x${string}`;
+} {
+	return (
+		(data.asset === "native" || data.asset === "usdc") &&
+		typeof data.actionId === "string" &&
+		data.actionId.length > 0 &&
+		typeof data.amount === "string" &&
+		data.amount.length > 0 &&
+		typeof data.chain === "string" &&
+		data.chain.length > 0 &&
+		typeof data.toAddress === "string" &&
+		isEthereumAddress(data.toAddress)
+	);
 }
 
 function isEthereumAddressLikeHash(value: string): value is `0x${string}` {

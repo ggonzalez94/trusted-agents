@@ -1,6 +1,6 @@
 export type {
+	JsonRpcId,
 	JsonRpcRequest,
-	JsonRpcResponse,
 	JsonRpcErrorObject,
 	TextPart,
 	DataPart,
@@ -10,10 +10,9 @@ export type {
 	AgentIdentifier,
 	ConnectionRequestParams,
 	ConnectionResultParams,
+	ConnectionRevokeParams,
 	PermissionsUpdateParams,
 	MessageSendParams,
-	ActionResultParams,
-	AgentCard,
 } from "./types.js";
 
 export {
@@ -25,25 +24,9 @@ export {
 	ACTION_REQUEST,
 	ACTION_RESULT,
 	BOOTSTRAP_METHODS,
-	RESULT_METHODS,
 	isResultMethod,
 } from "./methods.js";
 
 export type { ResultMethod } from "./methods.js";
 
-export {
-	parseError,
-	invalidRequest,
-	methodNotFound,
-	invalidParams,
-	internalError,
-	forbidden,
-	unauthorized,
-} from "./errors.js";
-
-export {
-	createJsonRpcRequest,
-	createJsonRpcResponse,
-	createJsonRpcError,
-	createMessage,
-} from "./messages.js";
+export { createJsonRpcRequest, extractConnectionIdFromParams } from "./messages.js";

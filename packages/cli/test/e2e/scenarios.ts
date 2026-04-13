@@ -10,6 +10,8 @@ export const PHASES = {
 export const SCENARIOS = {
 	// Phase 0: Preflight
 	VALIDATE_ENV: { name: "Validate OWS wallet env vars", phase: PHASES.PREFLIGHT },
+	PREFLIGHT_RPC: { name: "Verify chain RPC is reachable", phase: PHASES.PREFLIGHT },
+	PREFLIGHT_OWS: { name: "Verify OWS is available", phase: PHASES.PREFLIGHT },
 
 	// Phase 1: Onboarding & Identity
 	INIT_AGENT_A: { name: "Init Agent A from OWS wallet", phase: PHASES.ONBOARDING },

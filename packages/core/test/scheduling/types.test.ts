@@ -26,16 +26,11 @@ describe("validateTimeSlot", () => {
 		).not.toThrow();
 	});
 
-	it("throws when start === end", () => {
-		expect(() =>
-			validateTimeSlot({ start: "2026-04-01T09:00:00Z", end: "2026-04-01T09:00:00Z" }),
-		).toThrow();
-	});
-
-	it("throws when start > end", () => {
-		expect(() =>
-			validateTimeSlot({ start: "2026-04-01T11:00:00Z", end: "2026-04-01T09:00:00Z" }),
-		).toThrow();
+	it.each([
+		["start === end", "2026-04-01T09:00:00Z", "2026-04-01T09:00:00Z"],
+		["start > end", "2026-04-01T11:00:00Z", "2026-04-01T09:00:00Z"],
+	])("throws when %s", (_, start, end) => {
+		expect(() => validateTimeSlot({ start, end })).toThrow();
 	});
 });
 
@@ -59,39 +54,19 @@ describe("validateSchedulingProposal", () => {
 		).not.toThrow();
 	});
 
-	it("throws on invalid type", () => {
-		expect(() =>
-			validateSchedulingProposal({ ...validProposal, type: "scheduling/accept" as never }),
-		).toThrow();
-	});
-
-	it("throws on empty title", () => {
-		expect(() => validateSchedulingProposal({ ...validProposal, title: "" })).toThrow();
-	});
-
-	it("throws on zero duration", () => {
-		expect(() => validateSchedulingProposal({ ...validProposal, duration: 0 })).toThrow();
-	});
-
-	it("throws on negative duration", () => {
-		expect(() => validateSchedulingProposal({ ...validProposal, duration: -5 })).toThrow();
-	});
-
-	it("throws on empty slots array", () => {
-		expect(() => validateSchedulingProposal({ ...validProposal, slots: [] })).toThrow();
-	});
-
-	it("throws when a slot has start >= end", () => {
-		expect(() =>
-			validateSchedulingProposal({
-				...validProposal,
-				slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T09:00:00Z" }],
-			}),
-		).toThrow();
-	});
-
-	it("throws on empty originTimezone", () => {
-		expect(() => validateSchedulingProposal({ ...validProposal, originTimezone: "" })).toThrow();
+	it.each([
+		["invalid type", { type: "scheduling/accept" as never }],
+		["empty title", { title: "" }],
+		["zero duration", { duration: 0 }],
+		["negative duration", { duration: -5 }],
+		["empty slots", { slots: [] as never[] }],
+		[
+			"slot with start >= end",
+			{ slots: [{ start: "2026-04-01T10:00:00Z", end: "2026-04-01T09:00:00Z" }] },
+		],
+		["empty originTimezone", { originTimezone: "" }],
+	])("throws on %s", (_, override) => {
+		expect(() => validateSchedulingProposal({ ...validProposal, ...override })).toThrow();
 	});
 });
 
@@ -106,23 +81,15 @@ describe("validateSchedulingAccept", () => {
 		expect(() => validateSchedulingAccept(validAccept)).not.toThrow();
 	});
 
-	it("throws on wrong type", () => {
-		expect(() =>
-			validateSchedulingAccept({ ...validAccept, type: "scheduling/reject" as never }),
-		).toThrow();
-	});
-
-	it("throws on empty schedulingId", () => {
-		expect(() => validateSchedulingAccept({ ...validAccept, schedulingId: "" })).toThrow();
-	});
-
-	it("throws on invalid acceptedSlot", () => {
-		expect(() =>
-			validateSchedulingAccept({
-				...validAccept,
-				acceptedSlot: { start: "2026-04-01T10:00:00Z", end: "2026-04-01T09:00:00Z" },
-			}),
-		).toThrow();
+	it.each([
+		["wrong type", { type: "scheduling/reject" as never }],
+		["empty schedulingId", { schedulingId: "" }],
+		[
+			"invalid acceptedSlot",
+			{ acceptedSlot: { start: "2026-04-01T10:00:00Z", end: "2026-04-01T09:00:00Z" } },
+		],
+	])("throws on %s", (_, override) => {
+		expect(() => validateSchedulingAccept({ ...validAccept, ...override })).toThrow();
 	});
 });
 

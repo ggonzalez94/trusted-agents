@@ -1,20 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { FileAppStorage } from "../../../src/app/storage.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
 
 describe("FileAppStorage", () => {
-	let tmpDir: string;
+	const dir = useTempDir("tap-app-storage");
 	let storage: FileAppStorage;
 
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "tap-app-storage-"));
-		storage = new FileAppStorage(tmpDir, "test-app");
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
+	beforeEach(() => {
+		storage = new FileAppStorage(dir.path, "test-app");
 	});
 
 	it("returns undefined for missing keys", async () => {
@@ -56,12 +49,12 @@ describe("FileAppStorage", () => {
 
 	it("persists across instances", async () => {
 		await storage.set("persistent", true);
-		const storage2 = new FileAppStorage(tmpDir, "test-app");
+		const storage2 = new FileAppStorage(dir.path, "test-app");
 		expect(await storage2.get("persistent")).toBe(true);
 	});
 
 	it("isolates different app IDs", async () => {
-		const other = new FileAppStorage(tmpDir, "other-app");
+		const other = new FileAppStorage(dir.path, "other-app");
 		await storage.set("key", "app1");
 		await other.set("key", "app2");
 		expect(await storage.get("key")).toBe("app1");
@@ -86,13 +79,13 @@ describe("FileAppStorage", () => {
 
 		const { writeFile } = await import("node:fs/promises");
 		const { join } = await import("node:path");
-		await writeFile(join(tmpDir, "apps", "test-app", "state.json"), "not valid json{{{");
+		await writeFile(join(dir.path, "apps", "test-app", "state.json"), "not valid json{{{");
 
 		await expect(storage.get("important")).rejects.toThrow();
 	});
 
 	it("returns empty state for missing file (ENOENT)", async () => {
-		const fresh = new FileAppStorage(tmpDir, "nonexistent-app");
+		const fresh = new FileAppStorage(dir.path, "nonexistent-app");
 		expect(await fresh.get("anything")).toBeUndefined();
 		expect(await fresh.list()).toEqual({});
 	});

@@ -1,15 +1,29 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { FileConversationLogger } from "../../../src/conversation/logger.js";
-import {
-	SAMPLE_CONVERSATION_MESSAGE,
-	SAMPLE_OUTGOING_MESSAGE,
-} from "../../fixtures/test-messages.js";
+import type { ConversationMessage } from "../../../src/index.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
+
+const SAMPLE_CONVERSATION_MESSAGE: ConversationMessage = {
+	timestamp: "2025-06-15T10:30:00.000Z",
+	direction: "incoming",
+	scope: "general-chat",
+	content: "Hello, how can I help you today?",
+	humanApprovalRequired: false,
+	humanApprovalGiven: null,
+};
+
+const SAMPLE_OUTGOING_MESSAGE: ConversationMessage = {
+	timestamp: "2025-06-15T10:31:00.000Z",
+	direction: "outgoing",
+	scope: "general-chat",
+	content: "I need help scheduling a meeting.",
+	humanApprovalRequired: true,
+	humanApprovalGiven: true,
+	humanApprovalAt: "2025-06-15T10:30:30.000Z",
+};
 
 describe("FileConversationLogger", () => {
-	let tmpDir: string;
+	const dir = useTempDir("conv-logger-test");
 	let logger: FileConversationLogger;
 	const context = {
 		connectionId: "conn-001",
@@ -17,13 +31,8 @@ describe("FileConversationLogger", () => {
 		peerDisplayName: "Bob's Agent",
 	};
 
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "conv-logger-test-"));
-		logger = new FileConversationLogger(tmpDir);
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
+	beforeEach(() => {
+		logger = new FileConversationLogger(dir.path);
 	});
 
 	it("should log a message and create a new conversation", async () => {

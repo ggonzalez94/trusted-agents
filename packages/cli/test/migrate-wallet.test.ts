@@ -2,12 +2,14 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deletePolicy, deleteWallet, listApiKeys, revokeApiKey } from "@open-wallet-standard/core";
+import { deleteWallet } from "@open-wallet-standard/core";
 import { keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { migrateWalletCommand } from "../src/commands/migrate-wallet.js";
+import { useCapturedOutput } from "./helpers/capture-output.js";
+import { useOwsArtifactCleanup } from "./helpers/ows-cleanup.js";
 import { runCli } from "./helpers/run-cli.js";
 
 // Well-known Hardhat test key — never use in production
@@ -19,15 +21,8 @@ describe("tap migrate-wallet", () => {
 	let dataDir: string;
 	let configPath: string;
 	let keyPath: string;
-	let stdoutWrites: string[];
-	let stderrWrites: string[];
-	let origStdoutWrite: typeof process.stdout.write;
-	let origStderrWrite: typeof process.stderr.write;
-
-	// Track OWS artifacts for cleanup
-	const createdWallets: string[] = [];
-	const createdPolicies: string[] = [];
-	const createdApiKeyIds: string[] = [];
+	const { stdout: stdoutWrites } = useCapturedOutput();
+	const { trackOwsArtifacts } = useOwsArtifactCleanup();
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-migrate-test-"));
@@ -44,70 +39,11 @@ describe("tap migrate-wallet", () => {
 				/* ignore — wallet may not exist */
 			}
 		}
-
-		stdoutWrites = [];
-		stderrWrites = [];
-		origStdoutWrite = process.stdout.write;
-		origStderrWrite = process.stderr.write;
-		process.stdout.write = ((chunk: string) => {
-			stdoutWrites.push(chunk);
-			return true;
-		}) as typeof process.stdout.write;
-		process.stderr.write = ((chunk: string) => {
-			stderrWrites.push(chunk);
-			return true;
-		}) as typeof process.stderr.write;
 	});
 
 	afterEach(async () => {
-		process.stdout.write = origStdoutWrite;
-		process.stderr.write = origStderrWrite;
-
-		// Clean up OWS artifacts
-		for (const keyId of createdApiKeyIds) {
-			try {
-				revokeApiKey(keyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		for (const policyId of createdPolicies) {
-			try {
-				deletePolicy(policyId);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		for (const walletName of createdWallets) {
-			try {
-				deleteWallet(walletName);
-			} catch (_) {
-				/* ignore */
-			}
-		}
-		createdApiKeyIds.length = 0;
-		createdPolicies.length = 0;
-		createdWallets.length = 0;
-
 		await rm(tmpDir, { recursive: true, force: true });
 	});
-
-	function trackOwsArtifacts(yaml: Record<string, unknown>) {
-		const ows = yaml.ows as { wallet?: string } | undefined;
-		if (ows?.wallet) {
-			createdWallets.push(ows.wallet);
-		}
-		try {
-			const keys = listApiKeys();
-			for (const k of keys) {
-				if (k.name && typeof k.name === "string" && k.name.startsWith("tap-")) {
-					createdApiKeyIds.push(k.id);
-				}
-			}
-		} catch (_) {
-			/* ignore */
-		}
-	}
 
 	/** Set up a legacy data dir with config.yaml + identity/agent.key */
 	async function setupLegacyAgent(agentId: number): Promise<void> {

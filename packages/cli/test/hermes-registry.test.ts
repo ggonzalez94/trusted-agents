@@ -1,55 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-	createTapRuntimeMock,
-	loadTrustedAgentConfigFromDataDirMock,
-	runtimeStartMock,
-	runtimeStopMock,
-	runtimeSyncOnceMock,
-	runtimeGetStatusMock,
-} = vi.hoisted(() => {
-	const runtimeStartMock = vi.fn().mockResolvedValue(undefined);
-	const runtimeStopMock = vi.fn().mockResolvedValue(undefined);
-	const runtimeSyncOnceMock = vi.fn().mockResolvedValue({
-		synced: true,
-		processed: 0,
-		pendingRequests: [],
-	});
-	const runtimeGetStatusMock = vi.fn().mockResolvedValue({
-		running: true,
-		lastSyncAt: undefined,
-		lock: null,
-		pendingRequests: [],
-	});
-
-	return {
-		createTapRuntimeMock: vi.fn().mockResolvedValue({
-			start: runtimeStartMock,
-			stop: runtimeStopMock,
-			syncOnce: runtimeSyncOnceMock,
-			getStatus: runtimeGetStatusMock,
-		}),
-		loadTrustedAgentConfigFromDataDirMock: vi.fn().mockResolvedValue({
-			agentId: 42,
-			chain: "eip155:8453",
-			dataDir: "/tmp/tap-agent",
-			ows: { wallet: "wallet-1", apiKey: "api-key-1" },
-			chains: {},
-			inviteExpirySeconds: 3600,
-			resolveCacheTtlMs: 60_000,
-			resolveCacheMaxEntries: 100,
-			xmtpDbEncryptionKey: undefined,
-		}),
-		runtimeStartMock,
-		runtimeStopMock,
-		runtimeSyncOnceMock,
-		runtimeGetStatusMock,
-	};
+const runtimeStartMock = vi.fn().mockResolvedValue(undefined);
+const runtimeStopMock = vi.fn().mockResolvedValue(undefined);
+const runtimeSyncOnceMock = vi.fn().mockResolvedValue({
+	synced: true,
+	processed: 0,
+	pendingRequests: [],
+});
+const runtimeGetStatusMock = vi.fn().mockResolvedValue({
+	running: true,
+	lastSyncAt: undefined,
+	lock: null,
+	pendingRequests: [],
 });
 
-vi.mock("@trustedagents/sdk", async () => {
-	const actual = await vi.importActual<typeof import("@trustedagents/sdk")>("@trustedagents/sdk");
+const createTapRuntimeMock = vi.fn().mockResolvedValue({
+	start: runtimeStartMock,
+	stop: runtimeStopMock,
+	syncOnce: runtimeSyncOnceMock,
+	getStatus: runtimeGetStatusMock,
+});
 
+const loadTrustedAgentConfigFromDataDirMock = vi.fn().mockResolvedValue({
+	agentId: 42,
+	chain: "eip155:8453",
+	dataDir: "/tmp/tap-agent",
+	ows: { wallet: "wallet-1", apiKey: "api-key-1" },
+	chains: {},
+	inviteExpirySeconds: 3600,
+	resolveCacheTtlMs: 60_000,
+	resolveCacheMaxEntries: 100,
+	xmtpDbEncryptionKey: undefined,
+});
+
+vi.mock("trusted-agents-sdk", () => {
 	class MockOwsSigningProvider {
 		constructor(
 			public readonly wallet: string,
@@ -63,11 +47,11 @@ vi.mock("@trustedagents/sdk", async () => {
 	}
 
 	return {
-		...actual,
 		OwsSigningProvider: MockOwsSigningProvider,
 		SchedulingHandler: MockSchedulingHandler,
-		createTapRuntime: createTapRuntimeMock,
-		loadTrustedAgentConfigFromDataDir: loadTrustedAgentConfigFromDataDirMock,
+		createTapRuntime: (...args: unknown[]) => createTapRuntimeMock(...args),
+		loadTrustedAgentConfigFromDataDir: (...args: unknown[]) =>
+			loadTrustedAgentConfigFromDataDirMock(...args),
 	};
 });
 

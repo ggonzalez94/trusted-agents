@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { toErrorMessage } from "trusted-agents-core";
 import { parseTapOpenClawPluginConfig, tapOpenClawPluginConfigSchema } from "./config.js";
 import { resolveOpenClawMainSessionKey } from "./main-session.js";
 import { OpenClawTapRegistry } from "./registry.js";
@@ -25,7 +26,7 @@ const plugin = {
 				} catch (error: unknown) {
 					// Never let startup failures crash the gateway — degrade gracefully.
 					api.logger.error(
-						`[trusted-agents-tap] Service start failed: ${error instanceof Error ? error.message : String(error)}. TAP will run in degraded mode — use tap_gateway action "restart" to retry.`,
+						`[trusted-agents-tap] Service start failed: ${toErrorMessage(error)}. TAP will run in degraded mode — use tap_gateway action "restart" to retry.`,
 					);
 				}
 			},

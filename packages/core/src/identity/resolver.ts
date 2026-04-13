@@ -1,7 +1,7 @@
 import type { PublicClient } from "viem";
 import { IdentityError } from "../common/index.js";
 import { nowISO } from "../common/index.js";
-import type { ChainConfig, TrustedAgentsConfig } from "../config/index.js";
+import type { ChainConfig } from "../config/index.js";
 import { fetchRegistrationFile } from "./registration-file.js";
 import { ERC8004Registry } from "./registry.js";
 import type { ResolvedAgent } from "./types.js";
@@ -102,13 +102,4 @@ export class AgentResolver implements IAgentResolver {
 			this.cache.delete(first.value);
 		}
 	}
-}
-
-export function createAgentResolverFromConfig(
-	config: Pick<TrustedAgentsConfig, "chains" | "resolveCacheMaxEntries">,
-	createClient: (chainConfig: ChainConfig) => PublicClient,
-): AgentResolver {
-	return new AgentResolver(config.chains, createClient, {
-		maxCacheEntries: config.resolveCacheMaxEntries,
-	});
 }

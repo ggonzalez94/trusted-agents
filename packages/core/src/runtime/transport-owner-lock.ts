@@ -1,11 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { open, readFile, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveDataDir } from "../common/index.js";
+import { fsErrorCode, resolveDataDir } from "../common/index.js";
 
 export interface TransportOwnerInfo {
 	pid: number;
 	owner: string;
 	acquiredAt: string;
+	instanceId?: string;
 	dataDirRealpath?: string;
 }
 
@@ -22,6 +24,7 @@ export class TransportOwnershipError extends Error {
 export class TransportOwnerLock {
 	private readonly lockPath: string;
 	private readonly dataDirRealpathPromise: Promise<string>;
+	private readonly instanceId = randomUUID();
 	private held = false;
 
 	constructor(
@@ -47,6 +50,7 @@ export class TransportOwnerLock {
 						pid: process.pid,
 						owner: this.owner,
 						acquiredAt: new Date().toISOString(),
+						instanceId: this.instanceId,
 						dataDirRealpath,
 					};
 					await handle.writeFile(JSON.stringify(payload, null, "\t"), "utf-8");
@@ -56,22 +60,12 @@ export class TransportOwnerLock {
 					await handle.close();
 				}
 			} catch (error: unknown) {
-				const code =
-					error instanceof Error && "code" in error
-						? (error as NodeJS.ErrnoException).code
-						: undefined;
-				if (code !== "EEXIST") {
+				if (fsErrorCode(error) !== "EEXIST") {
 					throw error;
 				}
 
 				const currentOwner = await this.readOwner();
 				if (currentOwner?.dataDirRealpath && currentOwner.dataDirRealpath !== dataDirRealpath) {
-					await rm(this.lockPath, { force: true });
-					continue;
-				}
-				// Same logical owner re-acquiring means the previous instance crashed
-				// without releasing the lock. Always treat as stale.
-				if (currentOwner && currentOwner.owner === this.owner) {
 					await rm(this.lockPath, { force: true });
 					continue;
 				}
@@ -101,6 +95,10 @@ export class TransportOwnerLock {
 			return;
 		}
 		this.held = false;
+		const currentOwner = await this.readOwner();
+		if (currentOwner?.instanceId !== this.instanceId) {
+			return;
+		}
 		await rm(this.lockPath, { force: true });
 	}
 
@@ -121,17 +119,14 @@ export class TransportOwnerLock {
 					pid: parsed.pid,
 					owner: parsed.owner,
 					acquiredAt: parsed.acquiredAt,
+					instanceId: typeof parsed.instanceId === "string" ? parsed.instanceId : undefined,
 					dataDirRealpath:
 						typeof parsed.dataDirRealpath === "string" ? parsed.dataDirRealpath : undefined,
 				};
 			}
 			return null;
 		} catch (error: unknown) {
-			const code =
-				error instanceof Error && "code" in error
-					? (error as NodeJS.ErrnoException).code
-					: undefined;
-			if (code === "ENOENT") {
+			if (fsErrorCode(error) === "ENOENT") {
 				return null;
 			}
 			throw error;
@@ -148,11 +143,6 @@ export function isProcessAlive(pid: number): boolean {
 		process.kill(pid, 0);
 		return true;
 	} catch (error: unknown) {
-		const code =
-			error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-		if (code === "EPERM") {
-			return true;
-		}
-		return false;
+		return fsErrorCode(error) === "EPERM";
 	}
 }

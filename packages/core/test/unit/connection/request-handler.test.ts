@@ -67,12 +67,38 @@ function makeMocks() {
 	return { resolver, trustStore };
 }
 
+function makeExistingContact(status: Contact["status"]): Contact {
+	return {
+		connectionId: "existing-conn",
+		peerAgentId: 10,
+		peerChain: "eip155:8453",
+		peerOwnerAddress: ALICE.address,
+		peerDisplayName: "Alice",
+		peerAgentAddress: ALICE.address,
+		permissions: {
+			grantedByMe: {
+				version: "tap-grants/v1",
+				updatedAt: "2025-01-01T00:00:00.000Z",
+				grants: [],
+			},
+			grantedByPeer: {
+				version: "tap-grants/v1",
+				updatedAt: "2025-01-01T00:00:00.000Z",
+				grants: [],
+			},
+		},
+		establishedAt: "2025-01-01T00:00:00.000Z",
+		lastContactAt: "2025-01-01T00:00:00.000Z",
+		status,
+	};
+}
+
 afterEach(() => {
 	vi.restoreAllMocks();
 });
 
 describe("handleConnectionRequest", () => {
-	it("should accept a valid connection request", async () => {
+	it("should plan a fresh active contact and NOT write to the trust store (missing peer)", async () => {
 		const { resolver, trustStore } = makeMocks();
 
 		const response = await handleConnectionRequest({
@@ -85,42 +111,27 @@ describe("handleConnectionRequest", () => {
 		expect(response.peer).toEqual(ALICE_AGENT);
 		expect(response.result.status).toBe("accepted");
 		expect(response.result.connectionId).toBeUndefined();
-		expect(response.contact?.connectionId).toBeDefined();
 
-		expect(trustStore.addContact).toHaveBeenCalledOnce();
-		const stored = (trustStore.addContact as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Contact;
-		expect(stored.peerAgentId).toBe(10);
-		expect(stored.peerDisplayName).toBe("Alice");
-		expect(stored.status).toBe("active");
-		expect(stored.permissions.grantedByMe.grants).toEqual([]);
-		expect(stored.permissions.grantedByPeer.grants).toEqual([]);
+		// plannedContact is a fresh active contact
+		expect(response.plannedContact.connectionId).toBeDefined();
+		expect(response.plannedContact.peerAgentId).toBe(10);
+		expect(response.plannedContact.peerDisplayName).toBe("Alice");
+		expect(response.plannedContact.status).toBe("active");
+		expect(response.plannedContact.permissions.grantedByMe.grants).toEqual([]);
+		expect(response.plannedContact.permissions.grantedByPeer.grants).toEqual([]);
+
+		// No prior contact
+		expect(response.existingContact).toBeNull();
+
+		// Pure — no trust store writes
+		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
-	it("should reuse an existing non-active contact record", async () => {
+	it("should plan an update for an existing non-active contact and NOT write to the trust store", async () => {
 		const { resolver, trustStore } = makeMocks();
-		const existingContact: Contact = {
-			connectionId: "existing-conn",
-			peerAgentId: 10,
-			peerChain: "eip155:8453",
-			peerOwnerAddress: ALICE.address,
-			peerDisplayName: "Alice",
-			peerAgentAddress: ALICE.address,
-			permissions: {
-				grantedByMe: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-				grantedByPeer: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-			},
-			establishedAt: "2025-01-01T00:00:00.000Z",
-			lastContactAt: "2025-01-01T00:00:00.000Z",
-			status: "revoked",
-		};
+		const existingContact = makeExistingContact("revoked");
 		(trustStore.findByAgentId as ReturnType<typeof vi.fn>).mockResolvedValue(existingContact);
 
 		const response = await handleConnectionRequest({
@@ -131,9 +142,16 @@ describe("handleConnectionRequest", () => {
 		});
 
 		expect(response.result.status).toBe("accepted");
-		expect(response.contact?.connectionId).toBe("existing-conn");
-		expect(trustStore.updateContact).toHaveBeenCalledOnce();
+		// plannedContact reuses the existing connectionId
+		expect(response.plannedContact.connectionId).toBe("existing-conn");
+		// existingContact is the prior revoked contact
+		expect(response.existingContact?.connectionId).toBe("existing-conn");
+		expect(response.existingContact?.status).toBe("revoked");
+
+		// Pure — no trust store writes
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
 		expect(trustStore.addContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 
 	it("should return error for invalid params", async () => {
@@ -165,31 +183,9 @@ describe("handleConnectionRequest", () => {
 		).rejects.toThrow("not found");
 	});
 
-	it("should return accept with existing connectionId for already-connected peers", async () => {
+	it("should plan a touch for already-connected peers and NOT write to the trust store", async () => {
 		const { resolver, trustStore } = makeMocks();
-		const existingContact: Contact = {
-			connectionId: "existing-conn",
-			peerAgentId: 10,
-			peerChain: "eip155:8453",
-			peerOwnerAddress: ALICE.address,
-			peerDisplayName: "Alice",
-			peerAgentAddress: ALICE.address,
-			permissions: {
-				grantedByMe: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-				grantedByPeer: {
-					version: "tap-grants/v1",
-					updatedAt: "2025-01-01T00:00:00.000Z",
-					grants: [],
-				},
-			},
-			establishedAt: "2025-01-01T00:00:00.000Z",
-			lastContactAt: "2025-01-01T00:00:00.000Z",
-			status: "active",
-		};
+		const existingContact = makeExistingContact("active");
 		(trustStore.findByAgentId as ReturnType<typeof vi.fn>).mockResolvedValue(existingContact);
 
 		const response = await handleConnectionRequest({
@@ -201,10 +197,14 @@ describe("handleConnectionRequest", () => {
 
 		expect(response.result.status).toBe("accepted");
 		expect(response.result.connectionId).toBeUndefined();
-		expect(response.contact?.connectionId).toBe("existing-conn");
+		// plannedContact IS the existing contact (caller should touchContact)
+		expect(response.plannedContact.connectionId).toBe("existing-conn");
+		expect(response.existingContact?.connectionId).toBe("existing-conn");
+		expect(response.existingContact?.status).toBe("active");
 
-		// Should not add a duplicate contact
+		// Pure — no trust store writes
 		expect(trustStore.addContact).not.toHaveBeenCalled();
-		expect(trustStore.touchContact).toHaveBeenCalledWith("existing-conn");
+		expect(trustStore.updateContact).not.toHaveBeenCalled();
+		expect(trustStore.touchContact).not.toHaveBeenCalled();
 	});
 });

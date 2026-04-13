@@ -2,20 +2,21 @@ import { randomUUID } from "node:crypto";
 import {
 	ERC20_TRANSFER_ABI,
 	ValidationError,
+	buildChainPublicClient,
 	executeOnchainTransfer,
+	getExecutionPreview,
+	getUsdcAsset,
 	isEthereumAddress,
 } from "trusted-agents-core";
-import type { ChainConfig } from "trusted-agents-core";
+import type { ChainConfig, ExecutionPreview } from "trusted-agents-core";
 import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
-import { getUsdcAsset, normalizeAsset } from "../lib/assets.js";
-import { resolveChainAlias } from "../lib/chains.js";
+import { normalizeAsset } from "../lib/assets.js";
+import { requireChainConfig, resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { type ExecutionPreview, getExecutionPreview } from "../lib/execution.js";
-import { error, success } from "../lib/output.js";
+import { handleCommandError, toErrorMessage } from "../lib/errors.js";
+import { success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
 import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
-import { buildPublicClient } from "../lib/wallet.js";
 import type { GlobalOptions } from "../types.js";
 
 interface TransferCommandOptions {
@@ -44,16 +45,7 @@ export async function transferCommand(
 	try {
 		const config = await loadConfig(opts, { requireAgentId: false });
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
-		const chainConfig = config.chains[chain];
-		if (!chainConfig) {
-			error(
-				"VALIDATION_ERROR",
-				`Unknown chain: ${cmdOpts.chain ?? chain}. Use a supported alias like base/taiko or a CAIP-2 ID like eip155:8453.`,
-				opts,
-			);
-			process.exitCode = 2;
-			return;
-		}
+		const chainConfig = requireChainConfig(config, chain, cmdOpts.chain);
 
 		const asset = normalizeAsset(cmdOpts.asset);
 		const toAddress = normalizeRecipientAddress(cmdOpts.to);
@@ -92,18 +84,7 @@ export async function transferCommand(
 					execution_address: execution.executionAddress,
 					funding_address: execution.fundingAddress,
 					paymaster_provider: execution.paymasterProvider,
-					estimated_gas_units:
-						gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
-					max_fee_per_gas_wei:
-						gasEstimate.maxFeePerGasWei !== undefined
-							? gasEstimate.maxFeePerGasWei.toString()
-							: undefined,
-					max_priority_fee_per_gas_wei:
-						gasEstimate.maxPriorityFeePerGasWei !== undefined
-							? gasEstimate.maxPriorityFeePerGasWei.toString()
-							: undefined,
-					gas_price_wei:
-						gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+					...serializeGasEstimate(gasEstimate),
 					warnings: warnings.length > 0 ? warnings : undefined,
 				},
 				opts,
@@ -168,26 +149,14 @@ export async function transferCommand(
 				execution_address: execution.executionAddress,
 				funding_address: execution.fundingAddress,
 				paymaster_provider: execution.paymasterProvider,
-				estimated_gas_units:
-					gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
-				max_fee_per_gas_wei:
-					gasEstimate.maxFeePerGasWei !== undefined
-						? gasEstimate.maxFeePerGasWei.toString()
-						: undefined,
-				max_priority_fee_per_gas_wei:
-					gasEstimate.maxPriorityFeePerGasWei !== undefined
-						? gasEstimate.maxPriorityFeePerGasWei.toString()
-						: undefined,
-				gas_price_wei:
-					gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+				...serializeGasEstimate(gasEstimate),
 				warnings: warnings.length > 0 ? warnings : undefined,
 			},
 			opts,
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -234,7 +203,7 @@ async function estimateTransferGasAndFees(input: {
 	erc20Decimals?: number;
 }): Promise<TransferGasEstimate> {
 	try {
-		const publicClient = buildPublicClient(input.chainConfig);
+		const publicClient = buildChainPublicClient(input.chainConfig);
 		const [fees, gasUnits] = await Promise.all([
 			publicClient.estimateFeesPerGas(),
 			input.asset === "native"
@@ -264,7 +233,7 @@ async function estimateTransferGasAndFees(input: {
 		};
 	} catch (error) {
 		return {
-			warning: `Gas estimate unavailable: ${error instanceof Error ? error.message : String(error)}`,
+			warning: `Gas estimate unavailable: ${toErrorMessage(error)}`,
 		};
 	}
 }
@@ -308,4 +277,21 @@ function buildTransferConfirmationPrompt(input: {
 		...(input.execution.warnings.map((warning) => `- Execution note: ${warning}`) ?? []),
 		"Proceed? [y/N] ",
 	].join("\n");
+}
+
+function serializeGasEstimate(gasEstimate: TransferGasEstimate) {
+	return {
+		estimated_gas_units:
+			gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
+		max_fee_per_gas_wei:
+			gasEstimate.maxFeePerGasWei !== undefined
+				? gasEstimate.maxFeePerGasWei.toString()
+				: undefined,
+		max_priority_fee_per_gas_wei:
+			gasEstimate.maxPriorityFeePerGasWei !== undefined
+				? gasEstimate.maxPriorityFeePerGasWei.toString()
+				: undefined,
+		gas_price_wei:
+			gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
+	};
 }

@@ -10,13 +10,6 @@ export interface JsonRpcRequest {
 	params?: unknown;
 }
 
-export interface JsonRpcResponse {
-	jsonrpc: "2.0";
-	id: JsonRpcId;
-	result?: unknown;
-	error?: JsonRpcErrorObject;
-}
-
 export interface JsonRpcErrorObject {
 	code: number;
 	message: string;
@@ -72,15 +65,14 @@ export interface ConnectionResultParams {
 	timestamp: string;
 }
 
-export interface MessageSendParams {
-	message: Message;
+export interface ConnectionRevokeParams {
+	from: AgentIdentifier;
+	reason?: string;
+	timestamp: string;
 }
 
-export interface ActionResultParams {
-	requestId: string;
-	status: "completed" | "rejected" | "failed";
+export interface MessageSendParams {
 	message: Message;
-	timestamp: string;
 }
 
 export interface PermissionsUpdateParams {
@@ -89,26 +81,4 @@ export interface PermissionsUpdateParams {
 	grantee: AgentIdentifier;
 	note?: string;
 	timestamp: string;
-}
-
-export interface AgentCard {
-	name: string;
-	description: string;
-	url: string;
-	capabilities: string[];
-	protocols: string[];
-	version?: string;
-	defaultInputModes?: string[];
-	defaultOutputModes?: string[];
-	skills?: Array<{
-		id: string;
-		name: string;
-		description?: string;
-		tags?: string[];
-	}>;
-	trustedAgentProtocol?: {
-		version: string;
-		agentAddress: `0x${string}`;
-		capabilities: string[];
-	};
 }

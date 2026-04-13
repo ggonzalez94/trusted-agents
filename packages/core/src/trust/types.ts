@@ -1,6 +1,6 @@
 import type { ContactPermissionState } from "../permissions/types.js";
 
-export type ConnectionStatus = "active" | "idle" | "stale" | "revoked";
+export type ConnectionStatus = "connecting" | "active" | "idle" | "stale" | "revoked";
 
 export interface Contact {
 	connectionId: string;
@@ -13,8 +13,15 @@ export interface Contact {
 	establishedAt: string;
 	lastContactAt: string;
 	status: ConnectionStatus;
+	/** ISO timestamp from the invite's `expires` field. Display-only hint on `connecting` contacts; not used for local expiry enforcement. The wire-level invite expiry check in `validateInboundInvite` is independent of this field. */
+	expiresAt?: string;
 }
 
 export interface ContactsFile {
 	contacts: Contact[];
+}
+
+/** Format a peer identifier as "DisplayName (#agentId)" for logs and ledger entries. */
+export function peerLabel(peer: { peerDisplayName: string; peerAgentId: number }): string {
+	return `${peer.peerDisplayName} (#${peer.peerAgentId})`;
 }

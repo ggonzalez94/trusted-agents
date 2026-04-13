@@ -1,7 +1,7 @@
 import { loadConfig } from "../lib/config-loader.js";
 import { buildContext } from "../lib/context.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
-import { error, success, verbose } from "../lib/output.js";
+import { handleCommandError } from "../lib/errors.js";
+import { success, verbose } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 
 async function resolveIdentity(
@@ -49,8 +49,7 @@ export async function identityResolveCommand(
 		const resolveChain = chain ?? config.chain;
 		await resolveIdentity(agentId, resolveChain, config, opts, startTime);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }
 
@@ -65,7 +64,6 @@ export async function identityResolveSelfCommand(
 		const resolveChain = chain ?? config.chain;
 		await resolveIdentity(config.agentId, resolveChain, config, opts, startTime);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
+		handleCommandError(err, opts);
 	}
 }

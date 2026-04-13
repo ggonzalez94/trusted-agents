@@ -256,7 +256,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				agentBDir,
 				"connect",
 				inviteUrl,
-				"--yes",
+				"--no-wait",
 			]);
 			expect(result.exitCode, `Agent B connect failed:\n${result.stderr}`).toBe(0);
 			expect(result.stdout).toContain("Status:");
@@ -607,7 +607,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				pendingDir,
 				"connect",
 				invite.url,
-				"--yes",
+				"--no-wait",
 			]);
 			expect(connect.exitCode).toBe(0);
 
@@ -616,20 +616,212 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				status: string;
 			};
 			expect(output.status).toBe("pending");
-			expect(output.connection_id).toBeUndefined();
+			// connection_id is now defined — the connecting contact is written
+			// to the trust store before any wire traffic (spec §1.1).
+			expect(output.connection_id).toBeDefined();
 
 			const trustStore = new FileTrustStore(pendingDir);
-			expect(await trustStore.getContacts()).toEqual([]);
-
-			const pendingConnects = JSON.parse(
-				await readFile(join(pendingDir, "pending-connects.json"), "utf-8"),
-			) as { pendingConnects?: Array<{ peerAgentId: number }> };
-			expect(pendingConnects.pendingConnects).toEqual([
-				expect.objectContaining({ peerAgentId: pendingAgentId }),
-			]);
+			const contacts = await trustStore.getContacts();
+			expect(contacts).toHaveLength(1);
+			expect(contacts[0]).toMatchObject({
+				peerAgentId: pendingAgentId,
+				status: "connecting",
+			});
 		} finally {
 			clearCliRuntimeOverride(pendingDir);
 			await rm(pendingRoot, { recursive: true, force: true });
+		}
+	});
+
+	// ═══════════════════════════════════════════════════════
+	// Edge case: wipe-and-recover (spec §3.1.1 recovery)
+	// ═══════════════════════════════════════════════════════
+
+	it("reconnects after one side wipes its local trust store (spec §3.1.1 recovery)", async () => {
+		const wipeRoot = await mkdtemp(join(tmpdir(), "tap-e2e-wipe-"));
+		const wipeADir = join(wipeRoot, "agent-a");
+		const wipeBDir = join(wipeRoot, "agent-b");
+		await mkdir(wipeADir, { recursive: true });
+		await mkdir(wipeBDir, { recursive: true });
+
+		const wipeNetwork = new LoopbackTransportNetwork();
+		const wipeResolver = new StaticAgentResolver([
+			createResolvedAgentFixture({
+				agentId: AGENT_A_ID,
+				chain: CHAIN,
+				address: AGENT_A_ADDRESS,
+				name: AGENT_A_NAME,
+				description: "Wipe test Agent A",
+				capabilities: ["general-chat"],
+			}),
+			createResolvedAgentFixture({
+				agentId: AGENT_B_ID,
+				chain: CHAIN,
+				address: AGENT_B_ADDRESS,
+				name: AGENT_B_NAME,
+				description: "Wipe test Agent B",
+				capabilities: ["general-chat"],
+			}),
+		]);
+
+		installLoopbackRuntime({
+			dataDir: wipeADir,
+			network: wipeNetwork,
+			resolver: wipeResolver,
+			txHashPrefix: "e1",
+		});
+		installLoopbackRuntime({
+			dataDir: wipeBDir,
+			network: wipeNetwork,
+			resolver: wipeResolver,
+			txHashPrefix: "f2",
+		});
+
+		try {
+			// ── 1. Init and configure both agents ──────────────────────────
+			expect(
+				await runCli(["--plain", "--data-dir", wipeADir, "init", "--chain", "base"]),
+			).toMatchObject({ exitCode: 0 });
+			expect(
+				await runCli(["--plain", "--data-dir", wipeBDir, "init", "--chain", "base"]),
+			).toMatchObject({ exitCode: 0 });
+			await setOwsConfig(wipeADir, "agent-a-wallet", "agent-a-key", AGENT_A_ID);
+			await setOwsConfig(wipeBDir, "agent-b-wallet", "agent-b-key", AGENT_B_ID);
+
+			// ── 2. Initial invite + connect handshake ──────────────────────
+			const firstInvite = await runCli(["--json", "--data-dir", wipeADir, "invite", "create"]);
+			expect(firstInvite.exitCode, `Agent A invite create failed:\n${firstInvite.stderr}`).toBe(0);
+			const firstInviteUrl = (parseJsonOutput(firstInvite.stdout).data as { url: string }).url;
+
+			const firstConnect = await runCli([
+				"--json",
+				"--data-dir",
+				wipeBDir,
+				"connect",
+				firstInviteUrl,
+				"--no-wait",
+			]);
+			expect(firstConnect.exitCode, `Agent B first connect failed:\n${firstConnect.stderr}`).toBe(
+				0,
+			);
+
+			// Sync both sides so the connection/result round-trip completes
+			await runCli(["--json", "--data-dir", wipeADir, "message", "sync"]);
+			await runCli(["--json", "--data-dir", wipeBDir, "message", "sync"]);
+
+			// Assert both sides have active contact
+			const aContactsAfterFirst = await runCli([
+				"--json",
+				"--data-dir",
+				wipeADir,
+				"contacts",
+				"list",
+			]);
+			const bContactsAfterFirst = await runCli([
+				"--json",
+				"--data-dir",
+				wipeBDir,
+				"contacts",
+				"list",
+			]);
+			const aListFirst = (
+				parseJsonOutput(aContactsAfterFirst.stdout).data as {
+					contacts: Array<{ status: string }>;
+				}
+			).contacts;
+			const bListFirst = (
+				parseJsonOutput(bContactsAfterFirst.stdout).data as {
+					contacts: Array<{ status: string }>;
+				}
+			).contacts;
+			expect(aListFirst[0]?.status, "Agent A should be active after first connect").toBe("active");
+			expect(bListFirst[0]?.status, "Agent B should be active after first connect").toBe("active");
+
+			// ── 3. Simulate Agent A wiping her trust store ─────────────────
+			// Agent A deletes her contact record for Agent B (simulates data loss
+			// or manual trust store wipe). Agent B's store is untouched.
+			const wipeTrustStore = new FileTrustStore(wipeADir);
+			const wipeContacts = await wipeTrustStore.getContacts();
+			expect(wipeContacts, "Agent A should have exactly one contact before wipe").toHaveLength(1);
+			await wipeTrustStore.removeContact(wipeContacts[0]!.connectionId);
+
+			// Verify the asymmetric state: A has no contacts, B still has A as active
+			const aAfterWipe = await runCli(["--json", "--data-dir", wipeADir, "contacts", "list"]);
+			const bAfterWipe = await runCli(["--json", "--data-dir", wipeBDir, "contacts", "list"]);
+			const aListWiped = (
+				parseJsonOutput(aAfterWipe.stdout).data as {
+					contacts: Array<{ status: string }>;
+				}
+			).contacts;
+			const bListWiped = (
+				parseJsonOutput(bAfterWipe.stdout).data as {
+					contacts: Array<{ status: string }>;
+				}
+			).contacts;
+			expect(aListWiped, "Agent A trust store should be empty after wipe").toHaveLength(0);
+			expect(
+				bListWiped[0]?.status,
+				"Agent B should still have Agent A as active (asymmetric wipe)",
+			).toBe("active");
+
+			// ── 4. Agent A issues a new invite ─────────────────────────────
+			const secondInvite = await runCli(["--json", "--data-dir", wipeADir, "invite", "create"]);
+			expect(
+				secondInvite.exitCode,
+				`Agent A second invite create failed:\n${secondInvite.stderr}`,
+			).toBe(0);
+			const secondInviteUrl = (parseJsonOutput(secondInvite.stdout).data as { url: string }).url;
+
+			// ── 5. Agent B runs connect on the new invite ──────────────────
+			const secondConnect = await runCli([
+				"--json",
+				"--data-dir",
+				wipeBDir,
+				"connect",
+				secondInviteUrl,
+				"--no-wait",
+			]);
+			expect(
+				secondConnect.exitCode,
+				`Agent B second connect failed:\n${secondConnect.stderr}`,
+			).toBe(0);
+
+			// Sync so the connection/result completes on agent A's side
+			await runCli(["--json", "--data-dir", wipeADir, "message", "sync"]);
+			await runCli(["--json", "--data-dir", wipeBDir, "message", "sync"]);
+
+			// ── 6. Assert both sides converge back to active ───────────────
+			const finalA = await runCli(["--json", "--data-dir", wipeADir, "contacts", "list"]);
+			const finalB = await runCli(["--json", "--data-dir", wipeBDir, "contacts", "list"]);
+			const finalAContacts = (
+				parseJsonOutput(finalA.stdout).data as {
+					contacts: Array<{ status: string; name: string }>;
+				}
+			).contacts;
+			const finalBContacts = (
+				parseJsonOutput(finalB.stdout).data as {
+					contacts: Array<{ status: string; name: string }>;
+				}
+			).contacts;
+
+			// Agent A should have Agent B recreated as active (self-healing via
+			// idempotent handleConnectionRequest — spec §3.1.1 "missing" path)
+			const aHasB = finalAContacts.find((c) => c.status === "active");
+			expect(
+				aHasB,
+				`Agent A should have an active contact after recovery. Got: ${JSON.stringify(finalAContacts)}`,
+			).toBeDefined();
+
+			// Agent B should still have Agent A as active (was already, still is)
+			const bHasA = finalBContacts.find((c) => c.status === "active");
+			expect(
+				bHasA,
+				`Agent B should still have Agent A as active after recovery. Got: ${JSON.stringify(finalBContacts)}`,
+			).toBeDefined();
+		} finally {
+			clearLoopbackRuntime(wipeBDir);
+			clearLoopbackRuntime(wipeADir);
+			await rm(wipeRoot, { recursive: true, force: true });
 		}
 	});
 
@@ -703,7 +895,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				queueBDir,
 				"connect",
 				inviteUrl.url,
-				"--yes",
+				"--no-wait",
 			]);
 			expect(connect.exitCode).toBe(0);
 			const connectData = parseJsonOutput(connect.stdout).data as {

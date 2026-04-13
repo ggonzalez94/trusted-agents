@@ -1,9 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { TapAppRegistry } from "../../../src/app/registry.js";
 import { type TapActionContext, defineTapApp } from "../../../src/app/types.js";
+import { useTempDir } from "../../helpers/temp-dir.js";
 
 // A simple in-memory test app
 const testApp = defineTapApp({
@@ -28,24 +26,16 @@ const testApp = defineTapApp({
 });
 
 describe("TapAppRegistry", () => {
-	let tmpDir: string;
-
-	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "tap-registry-"));
-	});
-
-	afterEach(async () => {
-		await rm(tmpDir, { recursive: true, force: true });
-	});
+	const dir = useTempDir("tap-registry");
 
 	it("reports no handler for unknown action types", async () => {
-		const registry = new TapAppRegistry(tmpDir);
+		const registry = new TapAppRegistry(dir.path);
 		await registry.loadManifest();
 		expect(registry.hasHandler("bet/propose")).toBe(false);
 	});
 
 	it("registers an app and routes to its handler", async () => {
-		const registry = new TapAppRegistry(tmpDir);
+		const registry = new TapAppRegistry(dir.path);
 		registry.registerApp(testApp);
 		expect(registry.hasHandler("bet/propose")).toBe(true);
 		expect(registry.hasHandler("bet/accept")).toBe(true);
@@ -53,7 +43,7 @@ describe("TapAppRegistry", () => {
 	});
 
 	it("returns the app for an action type", () => {
-		const registry = new TapAppRegistry(tmpDir);
+		const registry = new TapAppRegistry(dir.path);
 		registry.registerApp(testApp);
 		const app = registry.getAppForAction("bet/propose");
 		expect(app).toBeDefined();
@@ -61,7 +51,7 @@ describe("TapAppRegistry", () => {
 	});
 
 	it("rejects duplicate action type registrations", () => {
-		const registry = new TapAppRegistry(tmpDir);
+		const registry = new TapAppRegistry(dir.path);
 		registry.registerApp(testApp);
 		const duplicate = defineTapApp({
 			id: "duplicate",
@@ -77,14 +67,14 @@ describe("TapAppRegistry", () => {
 	});
 
 	it("unregisters an app", () => {
-		const registry = new TapAppRegistry(tmpDir);
+		const registry = new TapAppRegistry(dir.path);
 		registry.registerApp(testApp);
 		registry.unregisterApp("test-betting");
 		expect(registry.hasHandler("bet/propose")).toBe(false);
 	});
 
 	it("lists registered apps", () => {
-		const registry = new TapAppRegistry(tmpDir);
+		const registry = new TapAppRegistry(dir.path);
 		registry.registerApp(testApp);
 		const apps = registry.listApps();
 		expect(apps).toHaveLength(1);
