@@ -20,6 +20,8 @@ RESPAWN_LOCK_PATH = STATE_DIR / "respawn.lock"
 DEFAULT_SOCKET_PATH = STATE_DIR / "tap-hermes.sock"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 STARTUP_GRACE_SECONDS = 1.0
+STARTUP_IN_PROGRESS_GRACE_SECONDS = 15.0
+STARTUP_LOG_FRESH_SECONDS = 15.0
 RESPAWN_WAIT_SECONDS = 3.0
 RESPAWN_POLL_SECONDS = 0.05
 RESPAWN_COOLDOWN_SECONDS = 10.0
@@ -166,7 +168,12 @@ def _ensure_daemon_running() -> tuple[bool, str | None]:
         )
 
     try:
-        if _wait_for_socket(STARTUP_GRACE_SECONDS):
+        grace = (
+            STARTUP_IN_PROGRESS_GRACE_SECONDS
+            if _startup_in_progress()
+            else STARTUP_GRACE_SECONDS
+        )
+        if _wait_for_socket(grace):
             return True, None
 
         _record_respawn_attempt(current_gateway_pid)
@@ -263,12 +270,23 @@ def _wait_for_socket(timeout_seconds: float) -> bool:
         socket_path = Path(_resolve_socket_path())
         daemon_state = _read_daemon_state()
         daemon_pid = daemon_state.get("pid")
-        if socket_path.exists() and (
-            not isinstance(daemon_pid, int) or daemon_pid < 1 or _is_process_alive(daemon_pid)
+        if (
+            socket_path.exists()
+            and isinstance(daemon_pid, int)
+            and daemon_pid >= 1
+            and _is_process_alive(daemon_pid)
         ):
             return True
         time.sleep(RESPAWN_POLL_SECONDS)
     return False
+
+
+def _startup_in_progress() -> bool:
+    try:
+        age = time.time() - DAEMON_LOG_PATH.stat().st_mtime
+    except OSError:
+        return False
+    return 0 <= age < STARTUP_LOG_FRESH_SECONDS
 
 
 def _is_process_alive(pid: int) -> bool:

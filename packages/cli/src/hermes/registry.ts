@@ -1,4 +1,10 @@
 import {
+	AsyncMutex,
+	executeOnchainTransfer,
+	generateInvite,
+	generateSchedulingId,
+} from "trusted-agents-core";
+import {
 	OwsSigningProvider,
 	type PermissionGrantSet,
 	SchedulingHandler,
@@ -12,15 +18,9 @@ import {
 	createTapRuntime,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-sdk";
-import {
-	AsyncMutex,
-	executeOnchainTransfer,
-	generateInvite,
-	generateSchedulingId,
-} from "trusted-agents-core";
-import type { TapHermesPluginConfig, TapHermesIdentityConfig, TapHermesPaths } from "./config.js";
+import type { TapHermesIdentityConfig, TapHermesPaths, TapHermesPluginConfig } from "./config.js";
 import { type TapEmitEventPayload, classifyTapEvent } from "./event-classifier.js";
-import { type TapNotification, FileTapHermesNotificationStore } from "./notifications.js";
+import { FileTapHermesNotificationStore, type TapNotification } from "./notifications.js";
 
 function sanitizeOneLiner(text: string): string {
 	return text.replace(/[\n\r\t]+/g, " ").trim();
@@ -125,7 +125,9 @@ export class HermesTapRegistry {
 			names.map(async (name) => {
 				try {
 					const runtime = await this.ensureRuntime(name);
-					const status = await runtime.mutex.runExclusive(async () => await runtime.runtime.getStatus());
+					const status = await runtime.mutex.runExclusive(
+						async () => await runtime.runtime.getStatus(),
+					);
 					return {
 						identity: name,
 						dataDir: runtime.definition.dataDir,
@@ -169,7 +171,9 @@ export class HermesTapRegistry {
 		const results = await Promise.all(
 			names.map(async (name) => {
 				const runtime = await this.ensureRuntimeStarted(name);
-				const report = await runtime.mutex.runExclusive(async () => await runtime.runtime.syncOnce());
+				const report = await runtime.mutex.runExclusive(
+					async () => await runtime.runtime.syncOnce(),
+				);
 				runtime.lastError = undefined;
 				return {
 					identity: name,
@@ -388,23 +392,26 @@ export class HermesTapRegistry {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 		const approve = params.action === "accept";
 
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
-		);
-		const matching = pending.find(
-			(request) =>
-				request.direction === "inbound" &&
-				request.details?.type === "scheduling" &&
-				(request.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(`No pending scheduling request found with schedulingId: ${params.schedulingId}`);
-		}
-
-		const report = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.resolvePending(matching.requestId, approve, params.reason),
-		);
+		const { matching, report } = await runtime.mutex.runExclusive(async () => {
+			const pending = await runtime.runtime.listPendingRequests();
+			const found = pending.find(
+				(request) =>
+					request.direction === "inbound" &&
+					request.details?.type === "scheduling" &&
+					(request.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
+			);
+			if (!found) {
+				throw new Error(
+					`No pending scheduling request found with schedulingId: ${params.schedulingId}`,
+				);
+			}
+			const resolved = await runtime.runtime.resolvePending(
+				found.requestId,
+				approve,
+				params.reason,
+			);
+			return { matching: found, report: resolved };
+		});
 
 		return {
 			identity: runtime.definition.name,
@@ -424,26 +431,25 @@ export class HermesTapRegistry {
 	}) {
 		const runtime = await this.ensureRuntimeForAction(params.identity);
 
-		const pending = await runtime.mutex.runExclusive(
-			async () => await runtime.runtime.listPendingRequests(),
-		);
-		const matching = pending.find(
-			(request) =>
-				request.direction === "outbound" &&
-				request.details?.type === "scheduling" &&
-				(request.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
-		);
-
-		if (!matching) {
-			throw new Error(
-				`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
+		const { matching, report } = await runtime.mutex.runExclusive(async () => {
+			const pending = await runtime.runtime.listPendingRequests();
+			const found = pending.find(
+				(request) =>
+					request.direction === "outbound" &&
+					request.details?.type === "scheduling" &&
+					(request.details as TapPendingSchedulingDetails).schedulingId === params.schedulingId,
 			);
-		}
-
-		const report = await runtime.mutex.runExclusive(
-			async () =>
-				await runtime.runtime.cancelPendingSchedulingRequest(matching.requestId, params.reason),
-		);
+			if (!found) {
+				throw new Error(
+					`No scheduling request found with schedulingId: ${params.schedulingId}. It may have already been completed or cancelled.`,
+				);
+			}
+			const cancelled = await runtime.runtime.cancelPendingSchedulingRequest(
+				found.requestId,
+				params.reason,
+			);
+			return { matching: found, report: cancelled };
+		});
 
 		return {
 			identity: runtime.definition.name,

@@ -35,15 +35,6 @@ export function classifyTapEvent(event: TapEmitEventPayload): TapEventBucket | n
 		case "connection/result":
 			return "notify";
 
-		case "scheduling/propose":
-		case "scheduling/counter":
-		case "scheduling/accept":
-		case "scheduling/cancel":
-			return "escalate";
-
-		case "scheduling/reject":
-			return "auto-handle";
-
 		default:
 			return null;
 	}

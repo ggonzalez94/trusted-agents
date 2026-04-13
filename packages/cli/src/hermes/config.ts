@@ -105,7 +105,9 @@ export function parseTapHermesPluginConfig(raw: unknown): TapHermesPluginConfig 
 	return { identities };
 }
 
-export async function loadTapHermesPluginConfig(hermesHome?: string): Promise<TapHermesPluginConfig> {
+export async function loadTapHermesPluginConfig(
+	hermesHome?: string,
+): Promise<TapHermesPluginConfig> {
 	const { configPath } = getTapHermesPaths(hermesHome);
 	try {
 		const raw = await readFile(configPath, "utf-8");
@@ -170,7 +172,10 @@ export async function saveTapHermesDaemonState(
 	state: TapHermesDaemonState,
 ): Promise<void> {
 	const { daemonStatePath } = getTapHermesPaths(hermesHome);
-	await writeFileAtomic(daemonStatePath, JSON.stringify(parseTapHermesDaemonState(state), null, "\t"));
+	await writeFileAtomic(
+		daemonStatePath,
+		JSON.stringify(parseTapHermesDaemonState(state), null, "\t"),
+	);
 }
 
 function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityConfig {
@@ -197,7 +202,7 @@ function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityCo
 
 	return {
 		name,
-		dataDir: input.dataDir.trim(),
+		dataDir: resolve(input.dataDir.trim()),
 		reconcileIntervalMinutes: normalizeReconcileInterval(input.reconcileIntervalMinutes),
 	};
 }
@@ -227,7 +232,10 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 	if (typeof input.startedAt !== "string" || input.startedAt.trim().length === 0) {
 		throw new Error("Invalid TAP Hermes daemon state startedAt");
 	}
-	if (!Array.isArray(input.identities) || input.identities.some((value) => typeof value !== "string")) {
+	if (
+		!Array.isArray(input.identities) ||
+		input.identities.some((value) => typeof value !== "string")
+	) {
 		throw new Error("Invalid TAP Hermes daemon state identities");
 	}
 
@@ -253,8 +261,6 @@ function isFinitePositiveInteger(value: unknown): value is number {
 
 function isMissingFileError(error: unknown): boolean {
 	return (
-		error instanceof Error &&
-		"code" in error &&
-		(error as NodeJS.ErrnoException).code === "ENOENT"
+		error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
 	);
 }
