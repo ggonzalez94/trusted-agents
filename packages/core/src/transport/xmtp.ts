@@ -457,9 +457,12 @@ export class XmtpTransport implements TransportProvider {
 					processed += 1;
 				}
 			} catch (error) {
-				// Leave the checkpoint unchanged so transient failures can be retried on the
-				// next reconcile pass. Capture the reason so the outer loop can surface it.
+				// Stop replaying this DM on the first failure. If we kept going, a later
+				// successful message would advance the checkpoint past the failed one,
+				// leaving it below `sentAfterNs` on the next reconcile pass and permanently
+				// dropping it. Returning here preserves ordering and retry semantics.
 				errors.push(toErrorMessage(error));
+				return { processed, errors };
 			}
 		}
 
