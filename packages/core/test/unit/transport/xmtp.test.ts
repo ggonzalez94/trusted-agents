@@ -1214,6 +1214,66 @@ describe("XmtpTransport", () => {
 				message: { jsonrpc: "2.0", method: "message/send", id: "first-msg" },
 			});
 		});
+
+		it("does not stall on a poison message — advances past failures and keeps processing the DM", async () => {
+			// Regression: a single message whose processMessage throws must not
+			// block all subsequent messages in the same DM. Previously (v0.2.0-beta.4)
+			// reconcileConversation returned on the first per-message failure without
+			// advancing the checkpoint, so every subsequent reconcile pass retried the
+			// same poison message forever and never delivered later messages.
+			injectMockClient();
+			internals(transport).inboxIdToAddress.set(BOB_INBOX_ID, BOB.address);
+
+			const callback = vi.fn(
+				async (_envelope: InboundRequestEnvelope): Promise<TransportAck> => ({
+					status: "received",
+				}),
+			);
+			transport.setHandlers({ onRequest: callback });
+
+			// Baseline at head — no messages processed.
+			await transport.reconcile();
+
+			// Inject three new messages: the first will throw, the others are good.
+			mockSetup.setConversationMessages("dm-1", [
+				makeDmMessage("poison", { sentAtNs: 2_000n }),
+				makeDmMessage("good-a", { sentAtNs: 3_000n }),
+				makeDmMessage("good-b", { sentAtNs: 4_000n }),
+			]);
+
+			const originalProcessMessage = internals(transport).processMessage.bind(transport);
+			const processSpy = vi
+				.spyOn(internals(transport), "processMessage")
+				.mockImplementation(async (msg: unknown) => {
+					const message = msg as { messageId?: string };
+					if (message.messageId === "poison") {
+						throw new Error("simulated unrecoverable handler failure");
+					}
+					return originalProcessMessage(msg);
+				});
+
+			const result = await transport.reconcile();
+
+			// The poison message must be reported as an error, but both good messages
+			// must still be processed in the same reconcile pass.
+			expect(result.errors).toBeGreaterThanOrEqual(1);
+			expect(result.processed).toBe(2);
+			expect(callback).toHaveBeenCalledTimes(2);
+			expect(callback.mock.calls.map((c) => (c[0] as InboundRequestEnvelope).message.id)).toEqual([
+				"good-a",
+				"good-b",
+			]);
+
+			// Checkpoint must have advanced past all three messages so the next
+			// reconcile pass sees none of them again.
+			processSpy.mockClear();
+			callback.mockClear();
+
+			const second = await transport.reconcile();
+			expect(second.processed).toBe(0);
+			expect(second.errors ?? 0).toBe(0);
+			expect(callback).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("stop", () => {

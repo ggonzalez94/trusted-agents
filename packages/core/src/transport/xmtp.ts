@@ -452,18 +452,23 @@ export class XmtpTransport implements TransportProvider {
 			}
 			try {
 				const didProcess = await this.processMessage(this.toIncomingMessage(message));
-				await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
 				if (didProcess) {
 					processed += 1;
 				}
 			} catch (error) {
-				// Stop replaying this DM on the first failure. If we kept going, a later
-				// successful message would advance the checkpoint past the failed one,
-				// leaving it below `sentAfterNs` on the next reconcile pass and permanently
-				// dropping it. Returning here preserves ordering and retry semantics.
+				// Record the error but keep draining the DM. The listener stream is
+				// the authoritative real-time channel; reconcile is catch-up. If we
+				// bailed here without advancing the checkpoint (as earlier attempts
+				// at this code did), a single poison message would block every
+				// subsequent message in the same DM on every future reconcile pass.
 				errors.push(toErrorMessage(error));
-				return { processed, errors };
 			}
+			// Always advance the checkpoint — successes, `didProcess === false`,
+			// and thrown errors alike — so reconcile makes forward progress across
+			// restarts even when a message is not replay-safe. Transient failures
+			// that need a retry should flow through the listener or the journal
+			// retry pipeline, not the reconcile replay loop.
+			await this.advanceCheckpoint(dm.id, message.sentAtNs, message.id);
 		}
 
 		return { processed, errors };
