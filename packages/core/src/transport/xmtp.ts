@@ -40,16 +40,6 @@ const INBOUND_REQUEST_DEDUPE_TTL_MS = 10 * 60 * 1_000;
 const MAX_TRACKED_INBOUND_REQUESTS = 4_096;
 const MAX_RECONCILE_ERROR_SAMPLES = 5;
 
-// Temporary diagnostic logging gated on TAP_DIAG env var. Used to narrow
-// down the v0.2.0-beta.4/5 E2E Accept_invite hang. Will be removed once
-// the root cause is understood.
-const DIAG_ENABLED = process.env.TAP_DIAG === "1";
-function diag(tag: string, data: Record<string, unknown> = {}): void {
-	if (!DIAG_ENABLED) return;
-	const payload = { t: new Date().toISOString(), tag, ...data };
-	console.error(`[DIAG] ${JSON.stringify(payload)}`);
-}
-
 function collectErrorSamples(samples: string[], messages: string[], conversationId: string): void {
 	for (const message of messages) {
 		if (samples.length >= MAX_RECONCILE_ERROR_SAMPLES) {
@@ -109,7 +99,6 @@ export class XmtpTransport implements TransportProvider {
 			return;
 		}
 
-		diag("transport.start:begin", { dbPath: this.config.dbPath });
 		const signer = await createXmtpSigner(this.config.signingProvider);
 		if (!this.config.dbEncryptionKey) {
 			throw new TransportError(
@@ -162,7 +151,6 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		this.running = true;
-		diag("transport.start:done", { inboxId: this.client.inboxId });
 		await this.populateInboxIdCache();
 		this.listenWithReconnect();
 	}
@@ -175,12 +163,6 @@ export class XmtpTransport implements TransportProvider {
 		if (!this.client) {
 			throw new TransportError("XMTP client not started");
 		}
-		diag("send:begin", {
-			peerId,
-			method: message.method,
-			messageId: String(message.id),
-			waitForAck: options?.waitForAck ?? true,
-		});
 
 		let peerAddress: `0x${string}`;
 		let connectionId: string | undefined;
@@ -197,13 +179,7 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const inboxId = await this.resolveInboxId(peerAddress);
-		diag("send:resolved-peer", {
-			peerId,
-			peerAddress,
-			inboxId,
-		});
 		const dm = await this.client.conversations.createDm(inboxId);
-		diag("send:dm-created", { peerId, dmId: (dm as { id?: string }).id });
 		const requestId = String(message.id);
 		const waitForAck = options?.waitForAck ?? true;
 
@@ -247,19 +223,9 @@ export class XmtpTransport implements TransportProvider {
 			});
 		});
 
-		const sendTextStart = Date.now();
 		try {
 			await dm.sendText(JSON.stringify(message));
-			diag("send:sendText-done", {
-				requestId,
-				durationMs: Date.now() - sendTextStart,
-			});
 		} catch (err) {
-			diag("send:sendText-threw", {
-				requestId,
-				durationMs: Date.now() - sendTextStart,
-				error: toErrorMessage(err),
-			});
 			const pending = this.pendingRequests.get(requestId);
 			if (pending) {
 				clearTimeout(pending.timer);
@@ -270,22 +236,7 @@ export class XmtpTransport implements TransportProvider {
 				: new TransportError(`Failed to send message: ${toErrorMessage(err)}`);
 		}
 
-		const waitStart = Date.now();
-		let receipt: TransportReceipt;
-		try {
-			receipt = await receiptPromise;
-			diag("send:ack-received", {
-				requestId,
-				waitMs: Date.now() - waitStart,
-			});
-		} catch (err) {
-			diag("send:ack-failed", {
-				requestId,
-				waitMs: Date.now() - waitStart,
-				error: toErrorMessage(err),
-			});
-			throw err;
-		}
+		const receipt = await receiptPromise;
 		if (connectionId) {
 			this.trustStore.touchContact(connectionId).catch(() => {});
 		}
@@ -397,22 +348,16 @@ export class XmtpTransport implements TransportProvider {
 
 	private listenWithReconnect(): void {
 		(async () => {
-			let iteration = 0;
 			while (this.running) {
-				iteration += 1;
-				diag("listener.iteration", { iteration });
 				try {
 					await this.listenForMessages();
-					diag("listener.loop-exited", { iteration, running: this.running });
-				} catch (error) {
-					diag("listener.error", { iteration, error: toErrorMessage(error) });
+				} catch {
+					// Stream failed — will retry after delay
 				}
 				if (this.running) {
-					diag("listener.sleep-before-reconnect", { delayMs: RECONNECT_DELAY_MS });
 					await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
 				}
 			}
-			diag("listener.stopped", {});
 		})();
 	}
 
@@ -429,41 +374,18 @@ export class XmtpTransport implements TransportProvider {
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
-		diag("listener.opening-stream", {});
 		const stream = await this.client.conversations.streamAllDmMessages({
 			disableSync: true,
 		});
 		this.streamCloser = stream;
-		diag("listener.stream-open", {});
 
 		for await (const message of stream) {
-			if (!this.running) {
-				diag("listener.break-not-running", {});
-				break;
-			}
-			const startMs = Date.now();
-			diag("listener.msg-received", {
-				messageId: message.id,
-				conversationId: message.conversationId,
-				senderInboxId: message.senderInboxId,
-				sentAtNs: message.sentAtNs?.toString?.(),
-				isSelf: message.senderInboxId === this.client?.inboxId,
-			});
+			if (!this.running) break;
 			try {
-				const didProcess = await this.processMessage(this.toIncomingMessage(message));
-				diag("listener.msg-processed", {
-					messageId: message.id,
-					didProcess,
-					durationMs: Date.now() - startMs,
-				});
+				await this.processMessage(this.toIncomingMessage(message));
 				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
-			} catch (error) {
+			} catch {
 				// Leave the checkpoint unchanged so transient failures can be retried.
-				diag("listener.msg-threw", {
-					messageId: message.id,
-					durationMs: Date.now() - startMs,
-					error: toErrorMessage(error),
-				});
 			}
 		}
 	}
@@ -676,18 +598,7 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		const handleStart = Date.now();
-		diag("handleIncoming:begin", {
-			method: message.method,
-			messageId: String(message.id),
-			senderInboxId: rawMessage.senderInboxId,
-		});
 		const senderAddresses = await this.resolveInboxAddresses(rawMessage.senderInboxId);
-		diag("handleIncoming:resolved-addresses", {
-			messageId: String(message.id),
-			addresses: senderAddresses,
-			elapsedMs: Date.now() - handleStart,
-		});
 		const resultMethod = isResultMethod(message.method);
 		const resolvedSenderContact = await this.findSenderContactFromMessage(senderAddresses, message);
 
@@ -748,7 +659,6 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		const handlerStart = Date.now();
 		let ack: TransportAck;
 		try {
 			ack = await handler({
@@ -756,18 +666,7 @@ export class XmtpTransport implements TransportProvider {
 				senderInboxId: rawMessage.senderInboxId,
 				message,
 			});
-			diag("handleIncoming:handler-done", {
-				messageId: String(message.id),
-				ackStatus: ack.status,
-				handlerMs: Date.now() - handlerStart,
-				totalMs: Date.now() - handleStart,
-			});
 		} catch (error) {
-			diag("handleIncoming:handler-threw", {
-				messageId: String(message.id),
-				handlerMs: Date.now() - handlerStart,
-				error: toErrorMessage(error),
-			});
 			await this.sendJsonRpcError(
 				rawMessage.senderInboxId,
 				message.id,
@@ -777,22 +676,7 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		const ackStart = Date.now();
-		try {
-			await this.sendJsonRpcReceipt(rawMessage.senderInboxId, message.id, String(message.id), ack);
-			diag("handleIncoming:ack-sent", {
-				messageId: String(message.id),
-				ackMs: Date.now() - ackStart,
-				totalMs: Date.now() - handleStart,
-			});
-		} catch (error) {
-			diag("handleIncoming:ack-threw", {
-				messageId: String(message.id),
-				ackMs: Date.now() - ackStart,
-				error: toErrorMessage(error),
-			});
-			throw error;
-		}
+		await this.sendJsonRpcReceipt(rawMessage.senderInboxId, message.id, String(message.id), ack);
 		return true;
 	}
 

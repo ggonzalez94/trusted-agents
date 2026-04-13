@@ -108,18 +108,25 @@ jobs:
           echo "Imported wallets:"
           ows wallet list | grep -E "Name:|eip155:1"
 
-      # Cache XMTP DB files so the same installation is reused across runs.
-      # Without this, each run registers new installations and eventually
-      # exhausts the 10-per-inbox limit and the 256 lifetime update budget.
-      - name: Cache XMTP databases
-        uses: actions/cache@v4
-        with:
-          path: /tmp/xmtp-e2e-db
-          key: xmtp-e2e-db-${{ matrix.chain }}
-
-      # If installations are saturated (10/10) and no cached DB exists,
-      # revoke all installations so the test can register fresh ones.
-      - name: Reset XMTP installations if saturated
+      # We deliberately do NOT cache the XMTP DB across runs.
+      #
+      # Earlier revisions of this workflow cached /tmp/xmtp-e2e-db to reuse
+      # the same XMTP installation across runs and stay under the 10/10
+      # installation cap + lifetime update budget. That strategy is
+      # incompatible with the reset step below: the reset revokes all
+      # installations, so any cached DB inherits MLS group state tied to
+      # installations the server no longer recognizes. On the next run the
+      # listener stream goes silent — messages sent by the peer land in
+      # the new installation's view, but the cached group state is frozen
+      # on the old epoch and the stream can't surface them (see the
+      # v0.2.0-beta.4/5 investigation). E2E hangs for 30s on the connect
+      # ACK timeout and `Verify Agent <X> contacts` times out.
+      #
+      # Each run now starts with a fresh DB directory and a fresh XMTP
+      # installation. That costs one install + one revoke per run per
+      # wallet against the inbox lifetime budget; the E2E wallets are
+      # rotated as needed.
+      - name: Reset XMTP installations
         working-directory: packages/core
         run: bun scripts/reset-xmtp-installations.ts
         env:
@@ -132,8 +139,6 @@ jobs:
           E2E_CHAIN: ${{ matrix.chain }}
           E2E_AGENT_A_OWS_WALLET: ${{ secrets.E2E_AGENT_A_OWS_WALLET }}
           E2E_AGENT_B_OWS_WALLET: ${{ secrets.E2E_AGENT_B_OWS_WALLET }}
-          E2E_XMTP_DB_CACHE: /tmp/xmtp-e2e-db
-          TAP_DIAG: "1"
 
   publish:
     name: Publish
