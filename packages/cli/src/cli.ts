@@ -160,7 +160,7 @@ export function createCli(): Command {
 
 	hermes
 		.command("status")
-		.description("Show Hermes TAP daemon and identity status")
+		.description("Show tapd status (alias for `tap daemon status`)")
 		.option("--identity <name>", "Configured TAP Hermes identity name")
 		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
 		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
@@ -171,7 +171,7 @@ export function createCli(): Command {
 
 	hermes
 		.command("sync")
-		.description("Trigger a Hermes TAP background reconcile now")
+		.description("Trigger a tapd reconcile (alias for `tap message sync`)")
 		.option("--identity <name>", "Configured TAP Hermes identity name")
 		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
 		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
@@ -182,26 +182,13 @@ export function createCli(): Command {
 
 	hermes
 		.command("restart")
-		.description("Restart TAP runtimes inside the Hermes daemon")
+		.description("Restart tapd (the single TAP daemon used by Hermes)")
 		.option("--identity <name>", "Configured TAP Hermes identity name")
 		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
 		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { hermesRestartCommand } = await import("./commands/hermes.js");
 			await hermesRestartCommand(cmdOpts, opts);
-		});
-
-	const hermesDaemon = hermes.command("daemon").description("Internal Hermes TAP daemon commands");
-
-	hermesDaemon
-		.command("run")
-		.description("Run the internal Hermes TAP daemon")
-		.requiredOption("--gateway-pid <pid>", "Hermes gateway process PID")
-		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
-		.action(async (cmdOpts: { gatewayPid: string; hermesHome?: string }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { hermesDaemonRunCommand } = await import("./commands/hermes.js");
-			await hermesDaemonRunCommand(cmdOpts, opts);
 		});
 
 	program
