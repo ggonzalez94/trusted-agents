@@ -134,6 +134,12 @@ type TapEventBody = TapEvent extends infer E
 		: never
 	: never;
 
+function actionKindFromType(actionType: string): TapActionKind {
+	if (actionType.startsWith("scheduling/")) return "scheduling";
+	if (actionType.startsWith("transfer/")) return "transfer";
+	return "grant";
+}
+
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
 /**
  * Pending outbound result entries older than this are garbage-collected by the
@@ -186,18 +192,7 @@ export interface TapPendingRequest {
 	requestId: string;
 	method: string;
 	peerAgentId: number;
-	/**
-	 * CAIP-2 chain id of the counterparty. The canonical peer identity is
-	 * `(peerAgentId, peerChain)` because numeric agent IDs can collide
-	 * across chains — a Base agent #42 and a Taiko agent #42 are different
-	 * peers. UIs and host plugins MUST filter pending entries by both
-	 * fields before surfacing them under a specific thread/contact (F2.3).
-	 *
-	 * Empty string when the chain cannot be determined from the journal
-	 * entry's metadata and no unique contact lookup exists. Consumers
-	 * should treat an empty `peerChain` as "unknown" and fail closed on
-	 * routing decisions rather than assuming it matches any chain.
-	 */
+	/** CAIP-2 chain; empty when unknown — consumers must fail closed on routing. */
 	peerChain: string;
 	direction: string;
 	kind: string;
@@ -338,12 +333,6 @@ export interface TapServiceHooks {
 	appendLedgerEntry?: (dataDir: string, entry: PermissionLedgerEntry) => Promise<string>;
 	log?: (level: "info" | "warn" | "error", message: string) => void;
 	emitEvent?: (payload: Record<string, unknown>) => void;
-	/**
-	 * Typed event emission. Called alongside the legacy `emitEvent` hook for
-	 * state transitions that have a canonical `TapEvent` shape. Prefer this
-	 * over `emitEvent` when building new consumers — the typed union is the
-	 * contract, not the loose bag.
-	 */
 	onTypedEvent?: (event: TapEvent) => void;
 	/**
 	 * Called after a connection has been established via an inbound
@@ -1409,20 +1398,13 @@ export class TapMessagingService {
 				{ actionType, peerChain: contact.peerChain },
 			);
 
-			const outboundKind: TapActionKind = actionType.startsWith("scheduling/")
-				? "scheduling"
-				: actionType.startsWith("transfer/")
-					? "transfer"
-					: actionType.startsWith("permissions/")
-						? "grant"
-						: "grant";
 			this.emit({
 				type: "action.requested",
 				conversationId: resolveConversationId(contact),
 				peer: this.peerRefFromContact(contact),
 				requestId,
-				kind: outboundKind,
-				payload: data as unknown as Record<string, unknown>,
+				kind: actionKindFromType(actionType),
+				payload: data as Record<string, unknown>,
 				direction: "outbound",
 			});
 
@@ -1625,7 +1607,7 @@ export class TapMessagingService {
 				peer: this.peerRefFromContact(contact),
 				requestId,
 				kind: "transfer",
-				payload: requestPayload as unknown as Record<string, unknown>,
+				payload: requestPayload as Record<string, unknown>,
 				direction: "outbound",
 			});
 
@@ -1684,7 +1666,7 @@ export class TapMessagingService {
 			const request = buildOutgoingActionRequest(
 				contact,
 				buildSchedulingProposalText(proposal),
-				proposal as unknown as Record<string, unknown>,
+				proposal as Record<string, unknown>,
 				"scheduling/request",
 			);
 			const requestId = String(request.id);
@@ -1719,7 +1701,7 @@ export class TapMessagingService {
 				peer: this.peerRefFromContact(contact),
 				requestId,
 				kind: "scheduling",
-				payload: proposal as unknown as Record<string, unknown>,
+				payload: proposal as Record<string, unknown>,
 				direction: "outbound",
 			});
 
@@ -2519,15 +2501,10 @@ export class TapMessagingService {
 			}
 
 			if (!claimed.duplicate) {
+				const params = envelope.message.params as MessageSendParams | undefined;
 				const scope =
-					typeof (envelope.message.params as MessageSendParams | undefined)?.message?.metadata
-						?.trustedAgent?.scope === "string"
-						? ((
-								(envelope.message.params as MessageSendParams).message.metadata as {
-									trustedAgent?: { scope?: string };
-								}
-							).trustedAgent?.scope ?? DEFAULT_MESSAGE_SCOPE)
-						: DEFAULT_MESSAGE_SCOPE;
+					(params?.message?.metadata?.trustedAgent as { scope?: string } | undefined)?.scope ??
+					DEFAULT_MESSAGE_SCOPE;
 				this.emit({
 					type: "message.received",
 					conversationId: resolveConversationId(contact),
@@ -2624,7 +2601,7 @@ export class TapMessagingService {
 						peer: this.peerRefFromContact(contact),
 						requestId: String(envelope.message.id),
 						kind: "scheduling",
-						payload: schedulingRequest as unknown as Record<string, unknown>,
+						payload: schedulingRequest as Record<string, unknown>,
 						direction: "inbound",
 					});
 				}
@@ -2671,7 +2648,7 @@ export class TapMessagingService {
 						peer: this.peerRefFromContact(contact),
 						requestId: String(envelope.message.id),
 						kind: "transfer",
-						payload: transferRequest as unknown as Record<string, unknown>,
+						payload: transferRequest as Record<string, unknown>,
 						direction: "inbound",
 					});
 				}
@@ -3032,7 +3009,7 @@ export class TapMessagingService {
 				conversationId: resolveConversationId(contact),
 				requestId,
 				kind: "transfer",
-				payload: request as unknown as Record<string, unknown>,
+				payload: request as Record<string, unknown>,
 				awaitingDecision: true,
 			});
 			return;
@@ -3487,7 +3464,7 @@ export class TapMessagingService {
 					conversationId: resolveConversationId(contact),
 					requestId,
 					kind: "scheduling",
-					payload: proposal as unknown as Record<string, unknown>,
+					payload: proposal as Record<string, unknown>,
 					awaitingDecision: true,
 				});
 				break;
@@ -3850,7 +3827,7 @@ export class TapMessagingService {
 					conversationId: transferConversationId,
 					requestId: response.requestId ?? response.actionId,
 					kind: "transfer",
-					result: response as unknown as Record<string, unknown>,
+					result: response as Record<string, unknown>,
 					...(response.txHash ? { txHash: response.txHash } : {}),
 					completedAt: nowISO(),
 				});
@@ -3932,7 +3909,7 @@ export class TapMessagingService {
 					conversationId: schedConversationId,
 					requestId: schedRequestId,
 					kind: "scheduling",
-					result: schedulingResponse as unknown as Record<string, unknown>,
+					result: schedulingResponse as Record<string, unknown>,
 					completedAt: nowISO(),
 				});
 			} else if (
@@ -4009,7 +3986,7 @@ export class TapMessagingService {
 				peerAgentId: peer.agentId,
 				correlationId: result.requestId,
 				status: "pending",
-				metadata: delivery as unknown as Record<string, unknown>,
+				metadata: delivery as Record<string, unknown>,
 			});
 			persisted = true;
 			this.peersWithPendingConnectionResult.add(
@@ -5052,7 +5029,7 @@ function serializePendingSchedulingRequestDetails(
 		ledgerPath: getPermissionLedgerPath(dataDir),
 	};
 	return {
-		...(details as unknown as Record<string, unknown>),
+		...(details as Record<string, unknown>),
 		request: {
 			type: "scheduling-request",
 			payload: request,
@@ -5119,7 +5096,7 @@ function buildPendingActionResultDelivery(
 function serializePendingActionResultDelivery(
 	delivery: PendingActionResultDelivery,
 ): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
+	return delivery as Record<string, unknown>;
 }
 
 function buildPendingPermissionsUpdateDelivery(
@@ -5141,7 +5118,7 @@ function buildPendingPermissionsUpdateDelivery(
 function serializePendingPermissionsUpdateDelivery(
 	delivery: PendingPermissionsUpdateDelivery,
 ): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
+	return delivery as Record<string, unknown>;
 }
 
 function serializePendingConnectionRequest(message: ProtocolMessage): Record<string, unknown> {
@@ -5474,28 +5451,11 @@ function isOutboundDeliveryEntry(entry: RequestJournalEntry): boolean {
 	return entry.direction === "outbound" && isDeliveryEntry(entry);
 }
 
-/**
- * Build a `TapPendingRequest` view for the given journal entry.
- *
- * `peerChain` resolution order (F2.3):
- *   1. Use `metadata.peerChain` when the journal entry carries it — this
- *      is the case for inbound and outbound action/request entries,
- *      whose details are persisted via `serializePending*RequestDetails`.
- *   2. Fall back to a unique trust-store match on `peerAgentId`. This
- *      only returns a chain when exactly one contact in `contacts`
- *      matches the agent id. Multi-chain collisions leave the field
- *      empty rather than picking an arbitrary one.
- *   3. Leave the field empty. Downstream consumers must treat an empty
- *      `peerChain` as "unknown" and fail closed on routing.
- */
 function toPendingRequestView(
 	entry: RequestJournalEntry,
 	contacts: readonly Contact[],
 ): TapPendingRequest {
-	const metadataChain =
-		typeof (entry.metadata as { peerChain?: unknown } | undefined)?.peerChain === "string"
-			? ((entry.metadata as { peerChain?: string }).peerChain as string)
-			: undefined;
+	const metadataChain = (entry.metadata as { peerChain?: string } | undefined)?.peerChain;
 
 	let peerChain = metadataChain ?? "";
 	if (!peerChain) {
