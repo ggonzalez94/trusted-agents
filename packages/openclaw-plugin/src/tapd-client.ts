@@ -51,10 +51,27 @@ export interface OpenClawTapdClientOptions {
 	timeoutMs?: number;
 }
 
+/**
+ * Resolve the tapd Unix socket path using the same precedence order the
+ * rest of TAP uses for data dir / socket discovery (F5.1):
+ *
+ *   explicit `socketPath`
+ *     > explicit `dataDir`
+ *     > `process.env.TAP_DATA_DIR`
+ *     > `~/.trustedagents`
+ *
+ * Honoring `TAP_DATA_DIR` is critical for isolated OpenClaw deployments
+ * that start tapd under a non-default data dir — without it, the plugin
+ * silently talks to the operator's default daemon, which is a cross-agent
+ * isolation bug.
+ */
 export function resolveSocketPath(options: OpenClawTapdClientOptions): string {
 	if (options.socketPath) return options.socketPath;
-	const dataDir = options.dataDir ?? join(process.env.HOME ?? "/tmp", DEFAULT_DATA_DIR);
-	return join(dataDir, DEFAULT_SOCKET_NAME);
+	if (options.dataDir) return join(options.dataDir, DEFAULT_SOCKET_NAME);
+	const envDataDir = process.env.TAP_DATA_DIR;
+	if (envDataDir && envDataDir.length > 0) return join(envDataDir, DEFAULT_SOCKET_NAME);
+	const fallbackDataDir = join(process.env.HOME ?? "/tmp", DEFAULT_DATA_DIR);
+	return join(fallbackDataDir, DEFAULT_SOCKET_NAME);
 }
 
 /**

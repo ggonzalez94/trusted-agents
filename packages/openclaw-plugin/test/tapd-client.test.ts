@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	OpenClawTapdClient,
 	TapdHttpError,
@@ -11,12 +11,43 @@ import {
 import { FakeError, type FakeTapdHandle, startFakeTapd } from "./helpers/fake-tapd.js";
 
 describe("resolveSocketPath", () => {
-	it("uses an explicit socket path when provided", () => {
-		expect(resolveSocketPath({ socketPath: "/var/run/tapd.sock" })).toBe("/var/run/tapd.sock");
+	beforeEach(() => {
+		// Start each test with a known baseline so the precedence checks are
+		// deterministic on CI where TAP_DATA_DIR may or may not be set.
+		vi.stubEnv("TAP_DATA_DIR", "");
+		vi.stubEnv("HOME", "/home/default");
 	});
 
-	it("derives the socket path from a data dir", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("uses an explicit socket path when provided (highest precedence)", () => {
+		vi.stubEnv("TAP_DATA_DIR", "/env/tap");
+		expect(resolveSocketPath({ socketPath: "/var/run/tapd.sock", dataDir: "/opts/tap" })).toBe(
+			"/var/run/tapd.sock",
+		);
+	});
+
+	it("derives the socket path from an explicit data dir (beats TAP_DATA_DIR)", () => {
+		vi.stubEnv("TAP_DATA_DIR", "/env/tap");
 		expect(resolveSocketPath({ dataDir: "/tmp/agent" })).toBe("/tmp/agent/.tapd.sock");
+	});
+
+	it("falls back to process.env.TAP_DATA_DIR when neither socketPath nor dataDir is provided", () => {
+		vi.stubEnv("TAP_DATA_DIR", "/env/tap-isolated");
+		expect(resolveSocketPath({})).toBe("/env/tap-isolated/.tapd.sock");
+	});
+
+	it("ignores an empty TAP_DATA_DIR and falls through to $HOME/.trustedagents", () => {
+		vi.stubEnv("TAP_DATA_DIR", "");
+		vi.stubEnv("HOME", "/home/alice");
+		expect(resolveSocketPath({})).toBe("/home/alice/.trustedagents/.tapd.sock");
+	});
+
+	it("falls back to $HOME/.trustedagents when nothing else is set", () => {
+		vi.stubEnv("HOME", "/home/bob");
+		expect(resolveSocketPath({})).toBe("/home/bob/.trustedagents/.tapd.sock");
 	});
 });
 
