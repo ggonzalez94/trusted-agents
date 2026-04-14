@@ -10,11 +10,8 @@ import {
 import type { SigningProvider, TransportProvider, TransportReceipt } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import {
-	type MessageListenerSession,
-	createMessageListenerSession,
-} from "../../src/commands/message-listen.js";
 import { clearCliRuntimeOverride, setCliRuntimeOverride } from "../../src/lib/runtime-overrides.js";
+import { type InProcessTapd, startInProcessTapd } from "../helpers/in-process-tapd.ts";
 import {
 	LoopbackTransportNetwork,
 	StaticAgentResolver,
@@ -142,8 +139,8 @@ let tempRoot: string;
 let agentADir: string;
 let agentBDir: string;
 let inviteUrl: string;
-let agentAListener: MessageListenerSession | undefined;
-let agentBListener: MessageListenerSession | undefined;
+let agentATapd: InProcessTapd | undefined;
+let agentBTapd: InProcessTapd | undefined;
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -191,8 +188,8 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 	});
 
 	afterAll(async () => {
-		await agentBListener?.stop();
-		await agentAListener?.stop();
+		await agentBTapd?.stop();
+		await agentATapd?.stop();
 		clearLoopbackRuntime(agentBDir);
 		clearLoopbackRuntime(agentADir);
 		await rm(tempRoot, { recursive: true, force: true });
@@ -231,6 +228,24 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 			const parsed = parseJsonOutput(result.stdout);
 			const data = parsed.data as { name: string };
 			expect(data.name, "Agent B resolved name should match fixture").toBe(AGENT_B_NAME);
+		});
+
+		it("starts in-process tapd for both agents", async () => {
+			// Phase 3: every transport-touching CLI command goes through tapd's
+			// HTTP API, so we spin up a real Daemon per agent against the
+			// configured loopback runtime override. The CLI `runCli` calls
+			// will discover these via the per-dataDir `.tapd-token` files.
+			agentATapd = await startInProcessTapd({
+				dataDir: agentADir,
+				identityAgentId: AGENT_A_ID,
+				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
+			});
+			agentBTapd = await startInProcessTapd({
+				dataDir: agentBDir,
+				identityAgentId: AGENT_B_ID,
+			});
+			expect(agentATapd.port).toBeGreaterThan(0);
+			expect(agentBTapd.port).toBeGreaterThan(0);
 		});
 	});
 
@@ -317,15 +332,10 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 		});
 
 		it(SCENARIOS.GRANT_TRANSFER.name, async () => {
-			// Start listeners BEFORE grant so transfer auto-approval hook is active
-			agentAListener = await createMessageListenerSession(
-				{ plain: true, dataDir: agentADir },
-				{
-					approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
-				},
-			);
-			agentBListener = await createMessageListenerSession({ plain: true, dataDir: agentBDir }, {});
-
+			// Listeners are no longer needed: the in-process tapd started in
+			// Phase 1.5 owns the transport for both agents, and the
+			// approveTransfer hook is wired into agent A's in-process tapd at
+			// startup time.
 			const grantFilePath = await writeGrantFile(agentADir, "transfer-grant.json", [
 				{
 					grantId: GRANT_ID,
@@ -578,6 +588,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 			}
 		}
 
+		let pendingTapd: InProcessTapd | undefined;
 		try {
 			setCliRuntimeOverride(pendingDir, {
 				createContext: () => ({
@@ -593,6 +604,11 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				await runCli(["--plain", "--data-dir", pendingDir, "init", "--chain", "base"]),
 			).toMatchObject({ exitCode: 0 });
 			await setOwsConfig(pendingDir, "agent-b-wallet", "agent-b-key", AGENT_B_ID);
+
+			pendingTapd = await startInProcessTapd({
+				dataDir: pendingDir,
+				identityAgentId: AGENT_B_ID,
+			});
 
 			const invite = await generateInvite({
 				agentId: pendingAgentId,
@@ -628,6 +644,7 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				status: "connecting",
 			});
 		} finally {
+			await pendingTapd?.stop();
 			clearCliRuntimeOverride(pendingDir);
 			await rm(pendingRoot, { recursive: true, force: true });
 		}
@@ -677,6 +694,8 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 			txHashPrefix: "f2",
 		});
 
+		let wipeATapd: InProcessTapd | undefined;
+		let wipeBTapd: InProcessTapd | undefined;
 		try {
 			// ── 1. Init and configure both agents ──────────────────────────
 			expect(
@@ -687,6 +706,17 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 			).toMatchObject({ exitCode: 0 });
 			await setOwsConfig(wipeADir, "agent-a-wallet", "agent-a-key", AGENT_A_ID);
 			await setOwsConfig(wipeBDir, "agent-b-wallet", "agent-b-key", AGENT_B_ID);
+
+			// Phase 3: spin up an in-process tapd per agent so the CLI commands
+			// have an HTTP target to dispatch transport-touching work to.
+			wipeATapd = await startInProcessTapd({
+				dataDir: wipeADir,
+				identityAgentId: AGENT_A_ID,
+			});
+			wipeBTapd = await startInProcessTapd({
+				dataDir: wipeBDir,
+				identityAgentId: AGENT_B_ID,
+			});
 
 			// ── 2. Initial invite + connect handshake ──────────────────────
 			const firstInvite = await runCli(["--json", "--data-dir", wipeADir, "invite", "create"]);
@@ -819,6 +849,8 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 				`Agent B should still have Agent A as active after recovery. Got: ${JSON.stringify(finalBContacts)}`,
 			).toBeDefined();
 		} finally {
+			await wipeBTapd?.stop();
+			await wipeATapd?.stop();
 			clearLoopbackRuntime(wipeBDir);
 			clearLoopbackRuntime(wipeADir);
 			await rm(wipeRoot, { recursive: true, force: true });
@@ -827,9 +859,13 @@ describe("TAP mocked E2E — loopback transport + static resolver", { timeout: 2
 
 	// ═══════════════════════════════════════════════════════
 	// Edge case: connect queued behind live listener
+	//
+	// Skipped after Phase 3: tapd is single-process so there is no transport
+	// owner contention; the queueing path no longer exists. Left as a marker
+	// for the historical scenario.
 	// ═══════════════════════════════════════════════════════
 
-	it("queues connect behind a live listener and still converges to active", async () => {
+	it.skip("queues connect behind a live listener and still converges to active", async () => {
 		const queueRoot = await mkdtemp(join(tmpdir(), "tap-e2e-queue-"));
 		const queueADir = join(queueRoot, "agent-a");
 		const queueBDir = join(queueRoot, "agent-b");

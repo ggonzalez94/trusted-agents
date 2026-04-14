@@ -6,7 +6,7 @@ export interface DaemonControlOptions {
 	startedAt: number;
 	isTransportConnected: () => boolean;
 	lastSyncAt: () => string | undefined;
-	triggerSync: () => Promise<TapSyncReport | void>;
+	triggerSync: () => Promise<TapSyncReport | undefined>;
 	requestShutdown: () => void;
 }
 

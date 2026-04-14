@@ -24,11 +24,7 @@ export async function contactsRemoveCommand(
 		try {
 			const client = await TapdClient.forDataDir(config.dataDir);
 			const result = await client.revokeContact(connectionId);
-			success(
-				{ removed: connectionId, peer: result.peer },
-				opts,
-				startTime,
-			);
+			success({ removed: connectionId, peer: result.peer }, opts, startTime);
 			return;
 		} catch (err) {
 			if (!(err instanceof TapdNotRunningError)) {

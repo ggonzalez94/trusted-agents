@@ -1,4 +1,4 @@
-import { type CliTapServiceHooks, createCliRuntime } from "../lib/cli-runtime.js";
+import type { CliTapServiceHooks } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, info } from "../lib/output.js";
@@ -13,37 +13,21 @@ export interface MessageListenerHooks extends CliTapServiceHooks {
 
 /**
  * @deprecated In Phase 3 the production `tap message listen` command became
- * an SSE tail of tapd. This in-process listener session is retained ONLY for
- * loopback-based unit/e2e tests that need to drive the legacy
- * `TapMessagingService` directly. Tests that need a real HTTP boundary should
- * use the in-process tapd helper instead.
+ * an SSE tail of tapd. This stub remains as a no-op so legacy e2e tests that
+ * still call it keep importing the same name; behavior moves into the
+ * in-process tapd helper. Hooks and lock acquisition no longer happen here.
  */
 export interface MessageListenerSession {
 	stop(): Promise<void>;
 }
 
 export async function createMessageListenerSession(
-	opts: GlobalOptions,
-	hooks?: MessageListenerHooks,
+	_opts: GlobalOptions,
+	_hooks?: MessageListenerHooks,
 ): Promise<MessageListenerSession> {
-	const config = await loadConfig(opts);
-	const { service } = await createCliRuntime({
-		config,
-		opts,
-		emitEvents: true,
-		ownerLabel: "tap:listen",
-		hooks,
-	});
-
-	if (hooks?.announce !== false) {
-		info("Listening for incoming messages... (Ctrl+C to stop)", opts);
-	}
-
-	await service.start();
-
 	return {
 		stop: async () => {
-			await service.stop();
+			// no-op: see @deprecated note above
 		},
 	};
 }
@@ -73,11 +57,7 @@ export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
 			return;
 		}
 		if (!response.ok) {
-			error(
-				"STREAM_ERROR",
-				`tapd SSE stream failed with status ${response.status}`,
-				opts,
-			);
+			error("STREAM_ERROR", `tapd SSE stream failed with status ${response.status}`, opts);
 			process.exitCode = 2;
 			return;
 		}
@@ -103,9 +83,7 @@ export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
 				const idx = buffer.indexOf("\n\n");
 				const block = buffer.slice(0, idx);
 				buffer = buffer.slice(idx + 2);
-				const dataLine = block
-					.split("\n")
-					.find((line) => line.startsWith("data: "));
+				const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
 				if (dataLine) {
 					process.stdout.write(`${dataLine.slice("data: ".length)}\n`);
 				}

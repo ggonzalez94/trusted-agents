@@ -4,9 +4,11 @@ import {
 	type IConversationLogger,
 	type ITrustStore,
 	type TapMessagingService,
+	type TapTransferApprovalContext,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import { Daemon } from "trusted-agents-tapd";
+import { ALL_CHAINS } from "../../src/lib/chains.js";
 import { createCliRuntime } from "../../src/lib/cli-runtime.js";
 
 /**
@@ -24,28 +26,38 @@ export interface InProcessTapd {
 
 export interface InProcessTapdOptions {
 	dataDir: string;
-	identityAgentId: number;
+	/** Defaults to the agent_id read from the data dir's config. */
+	identityAgentId?: number;
+	/** Optional approval hook used by the underlying TapMessagingService. */
+	approveTransfer?: (context: TapTransferApprovalContext) => Promise<boolean | null | undefined>;
 }
 
-export async function startInProcessTapd(
-	options: InProcessTapdOptions,
-): Promise<InProcessTapd> {
-	const { dataDir, identityAgentId } = options;
+export async function startInProcessTapd(options: InProcessTapdOptions): Promise<InProcessTapd> {
+	const { dataDir } = options;
 
 	// Build a real TapMessagingService via the CLI runtime so the loopback
 	// runtime overrides registered by the test fixture take effect.
 	const config = await loadTrustedAgentConfigFromDataDir(dataDir, {
-		extraChains: {},
+		extraChains: ALL_CHAINS,
 	});
+	const identityAgentId = options.identityAgentId ?? config.agentId;
 	const runtime = await createCliRuntime({
 		config,
 		opts: { plain: true, dataDir },
 		ownerLabel: "in-process-tapd",
+		hooks: options.approveTransfer ? { approveTransfer: options.approveTransfer } : undefined,
 	});
 
 	const trustStore: ITrustStore = runtime.trustStore;
 	const conversationLogger: IConversationLogger = runtime.conversationLogger;
 	const service: TapMessagingService = runtime.service as TapMessagingService;
+
+	let agentAddress = "";
+	try {
+		agentAddress = await runtime.signingProvider.getAddress();
+	} catch {
+		// best-effort — tests that mock the signer may not implement getAddress
+	}
 
 	// The CLI runtime constructs its own owner lock; the daemon will start the
 	// service which re-acquires the same lock. We pass `buildService` as a
@@ -63,7 +75,7 @@ export async function startInProcessTapd(
 		identitySource: () => ({
 			agentId: identityAgentId,
 			chain: config.chain,
-			address: "",
+			address: agentAddress,
 			displayName: "",
 			dataDir,
 		}),

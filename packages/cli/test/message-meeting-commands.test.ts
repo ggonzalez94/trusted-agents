@@ -15,15 +15,15 @@ const { loadConfigMock, successMock, errorMock, verboseMock } = vi.hoisted(() =>
 }));
 
 vi.mock("../src/lib/config-loader.js", async () => {
-	const actual =
-		await vi.importActual<typeof import("../src/lib/config-loader.js")>(
-			"../src/lib/config-loader.js",
-		);
+	const actual = await vi.importActual<typeof import("../src/lib/config-loader.js")>(
+		"../src/lib/config-loader.js",
+	);
 	return { ...actual, loadConfig: loadConfigMock };
 });
 
 vi.mock("../src/lib/output.js", async () => {
-	const actual = await vi.importActual<typeof import("../src/lib/output.js")>("../src/lib/output.js");
+	const actual =
+		await vi.importActual<typeof import("../src/lib/output.js")>("../src/lib/output.js");
 	return { ...actual, success: successMock, error: errorMock, verbose: verboseMock };
 });
 
@@ -105,11 +105,7 @@ describe("meeting CLI commands (tapd client refactor)", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
-		await messageRespondMeetingCommand(
-			"sch-3",
-			{ accept: true, dryRun: true },
-			{ plain: true },
-		);
+		await messageRespondMeetingCommand("sch-3", { accept: true, dryRun: true }, { plain: true });
 
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(successMock).toHaveBeenCalledWith(
