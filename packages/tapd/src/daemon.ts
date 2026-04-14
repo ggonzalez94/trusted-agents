@@ -14,6 +14,7 @@ import {
 import { createConnectRoute } from "./http/routes/connect.js";
 import { createFundsRequestsRoute } from "./http/routes/funds-requests.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
+import { createMeetingsRoutes } from "./http/routes/meetings.js";
 import { createMessagesRoute } from "./http/routes/messages.js";
 import { type TransferExecutor, createTransfersRoute } from "./http/routes/transfers.js";
 import { createNotificationsRoute } from "./http/routes/notifications.js";
@@ -221,10 +222,22 @@ export class Daemon {
 			connect: (params: { inviteUrl: string; waitMs?: number }) => ensureRuntime().connect(params),
 			requestFunds: (input: Parameters<TapMessagingService["requestFunds"]>[0]) =>
 				ensureRuntime().requestFunds(input),
+			requestMeeting: (input: Parameters<TapMessagingService["requestMeeting"]>[0]) =>
+				ensureRuntime().requestMeeting(input),
+			cancelMeeting: (schedulingId: string, reason?: string) =>
+				ensureRuntime().cancelMeeting(schedulingId, reason),
+			resolvePending: (id: string, approve: boolean, reason?: string) =>
+				ensureRuntime().resolvePending(id, approve, reason),
+			listPendingRequests: () => ensureRuntime().listPendingRequests(),
 		} as unknown as TapMessagingService;
 		router.add("POST", "/api/messages", createMessagesRoute(writeAdapter));
 		router.add("POST", "/api/connect", createConnectRoute(writeAdapter));
 		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(writeAdapter));
+
+		const meetings = createMeetingsRoutes(writeAdapter);
+		router.add("POST", "/api/meetings", meetings.request);
+		router.add("POST", "/api/meetings/:id/respond", meetings.respond);
+		router.add("POST", "/api/meetings/:id/cancel", meetings.cancel);
 
 		const executeTransfer: TransferExecutor = (request) => {
 			const fn = this.options.executeTransfer;
