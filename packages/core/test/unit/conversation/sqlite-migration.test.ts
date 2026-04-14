@@ -652,4 +652,99 @@ describe("sqlite migration", () => {
 
 		logger.close();
 	});
+
+	it("rolls back a same-file partial failure so retries cannot overwrite newer runtime activity", async () => {
+		// This is the residual-2 continuation: even with per-file tracking,
+		// if a single legacy JSON file has a malformed message after some
+		// valid ones, the earlier messages must NOT leak into SQLite before
+		// the failure. Otherwise, newer runtime activity that lands before
+		// the retry could be rolled back when the retry replays the same
+		// (still-malformed) file.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const partialLog = {
+			conversationId: "conv-partial",
+			connectionId: "conn-1",
+			peerAgentId: 42,
+			peerDisplayName: "Alice",
+			startedAt: "2026-04-01T00:00:00.000Z",
+			lastMessageAt: "2026-04-01T00:01:00.000Z",
+			status: "active" as const,
+			messages: [
+				{
+					messageId: "legacy-1",
+					timestamp: "2026-04-01T00:00:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "valid first legacy message",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{
+					messageId: "legacy-2",
+					timestamp: "2026-04-01T00:01:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					// Intentionally malformed: content must be a string but
+					// this is a number. importLog's pre-validator rejects.
+					content: 12345 as unknown as string,
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		await writeFile(
+			join(dataDir, "conversations", "conv-partial.json"),
+			JSON.stringify(partialLog),
+		);
+
+		const logger = new SqliteConversationLogger(dataDir);
+
+		// First attempt: migration rejects the file because message[1]
+		// fails validation. Because importLog is all-or-nothing, NOTHING
+		// from this file should land in SQLite — not even the valid
+		// first message.
+		const firstReport = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(firstReport.errors).toHaveLength(1);
+		expect(firstReport.migrated).toBe(0);
+		expect(await logger.getConversation("conv-partial")).toBeNull();
+
+		// Simulate newer runtime activity arriving for the same
+		// conversation via the normal append path.
+		await logger.logMessage(
+			"conv-partial",
+			{
+				messageId: "runtime-1",
+				timestamp: "2026-04-05T12:00:00.000Z",
+				direction: "incoming",
+				scope: "default",
+				content: "runtime message after failed migration",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{ connectionId: "conn-1", peerAgentId: 42, peerDisplayName: "Alice" },
+		);
+
+		const afterRuntime = await logger.getConversation("conv-partial");
+		expect(afterRuntime).not.toBeNull();
+		if (!afterRuntime) return;
+		expect(afterRuntime.lastMessageAt).toBe("2026-04-05T12:00:00.000Z");
+
+		// Second migration attempt (still malformed on disk): the file
+		// continues to fail validation, NOTHING about conv-partial should
+		// change, and the runtime's lastMessageAt must NOT be rolled back.
+		const retry = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(retry.errors).toHaveLength(1);
+		expect(retry.migrated).toBe(0);
+
+		const afterRetry = await logger.getConversation("conv-partial");
+		expect(afterRetry).not.toBeNull();
+		if (!afterRetry) return;
+		expect(afterRetry.lastMessageAt).toBe("2026-04-05T12:00:00.000Z");
+		expect(afterRetry.messages.find((m) => m.messageId === "runtime-1")).toBeDefined();
+		// The original "valid first legacy message" must NOT be in the DB
+		// because the whole-file rollback prevented it.
+		expect(afterRetry.messages.find((m) => m.messageId === "legacy-1")).toBeUndefined();
+
+		logger.close();
+	});
 });

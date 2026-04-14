@@ -1290,7 +1290,7 @@ export class TapMessagingService {
 				await this.recordSendFailure(requestId, error);
 				this.log(
 					"warn",
-					`Failed to send connection/revoke to ${peerLabel(contact)} — will retry on next reconciliation: ${error instanceof Error ? error.message : String(error)}`,
+					`Failed to send connection/revoke to ${peerLabel(contact)} — will retry on next reconciliation: ${toErrorMessage(error)}`,
 				);
 			}
 		});
@@ -2805,10 +2805,7 @@ export class TapMessagingService {
 				peerChain: plan.peer.chain,
 			});
 		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`onConnectionEstablished hook threw: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.log("warn", `onConnectionEstablished hook threw: ${toErrorMessage(error)}`);
 		}
 
 		return "processed";
@@ -4161,7 +4158,7 @@ export class TapMessagingService {
 		if (!existing) return;
 		const prior = existing.metadata?.lastError as RequestJournalLastError | undefined;
 		const attempts = (prior?.attempts ?? 0) + 1;
-		const message = error instanceof Error ? error.message : String(error);
+		const message = toErrorMessage(error);
 		await this.context.requestJournal.updateMetadata(requestId, {
 			...(existing.metadata ?? {}),
 			lastError: { message, at: nowISO(), attempts },

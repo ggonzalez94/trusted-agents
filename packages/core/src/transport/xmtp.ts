@@ -1012,8 +1012,7 @@ function isMessageAlreadyCheckpointed(
  * has already reached its maximum.
  */
 function isInstallationLimitError(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error);
-	return /registered \d+\/\d+ installations/i.test(message);
+	return /registered \d+\/\d+ installations/i.test(toErrorMessage(error));
 }
 
 /**

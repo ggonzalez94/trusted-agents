@@ -68,23 +68,10 @@ export function applySchema(db: Database.Database): void {
 
 	db.exec(SCHEMA_SQL);
 
-	// Write the current schema version, upgrading from any older value.
-	// Every statement in SCHEMA_SQL is `CREATE ... IF NOT EXISTS` so
-	// bumping the version is a pure metadata update — no data moves.
-	const meta = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as
-		| { value: string }
-		| undefined;
-	if (!meta) {
-		db.prepare("INSERT INTO schema_meta(key, value) VALUES('version', ?)").run(
+	if (getSchemaVersion(db) < CURRENT_SCHEMA_VERSION) {
+		db.prepare("INSERT OR REPLACE INTO schema_meta(key, value) VALUES('version', ?)").run(
 			String(CURRENT_SCHEMA_VERSION),
 		);
-	} else {
-		const current = Number.parseInt(meta.value, 10);
-		if (Number.isFinite(current) && current < CURRENT_SCHEMA_VERSION) {
-			db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'version'").run(
-				String(CURRENT_SCHEMA_VERSION),
-			);
-		}
 	}
 }
 

@@ -52,6 +52,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 	private readonly stmtListAllConversations: Database.Statement;
 	private readonly stmtListConversationsByConnection: Database.Statement;
 	private readonly stmtMarkRead: Database.Statement;
+	private readonly stmtImportUpdateMetadata: Database.Statement;
 
 	constructor(dataDir: string) {
 		this.dataDir = resolveDataDir(dataDir);
@@ -62,8 +63,12 @@ export class SqliteConversationLogger implements IConversationLogger {
 		this.stmtSelectConversation = this.db.prepare(
 			"SELECT * FROM conversations WHERE conversation_id = ?",
 		);
+		// INSERT OR IGNORE keeps `importLog` idempotent against any pre-existing
+		// conversation row (e.g. a pre-residual-2 partial migration that landed
+		// a row before the fix). The regular logMessage path already guards
+		// with a SELECT so the OR IGNORE is a no-op for that caller.
 		this.stmtInsertConversation = this.db.prepare(
-			`INSERT INTO conversations(
+			`INSERT OR IGNORE INTO conversations(
 				conversation_id, connection_id, peer_agent_id, peer_display_name,
 				topic, started_at, last_message_at, last_read_at, status
 			) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'active')`,
@@ -104,6 +109,11 @@ export class SqliteConversationLogger implements IConversationLogger {
 		);
 		this.stmtMarkRead = this.db.prepare(
 			"UPDATE conversations SET last_read_at = ? WHERE conversation_id = ?",
+		);
+		this.stmtImportUpdateMetadata = this.db.prepare(
+			`UPDATE conversations
+			 SET topic = ?, started_at = ?, last_message_at = ?, last_read_at = ?, status = ?
+			 WHERE conversation_id = ?`,
 		);
 	}
 
@@ -208,6 +218,153 @@ export class SqliteConversationLogger implements IConversationLogger {
 
 	async markRead(conversationId: string, readAt: string): Promise<void> {
 		this.stmtMarkRead.run(readAt, conversationId);
+	}
+
+	/**
+	 * Atomically import a full {@link ConversationLog} as a single transaction.
+	 *
+	 * This is the migration-safe path: the whole operation (conversation row
+	 * INSERT OR IGNORE + canonical metadata UPDATE + per-message dedup-and-insert)
+	 * runs inside one `better-sqlite3` transaction, so a failure partway through
+	 * rolls back everything. Unlike calling {@link logMessage} in a loop — which
+	 * wraps each message in its own sub-transaction and leaks partial state on
+	 * mid-file errors — `importLog` gives the caller all-or-nothing semantics.
+	 *
+	 * **Message validation**: every message in `log.messages` is pre-validated
+	 * (shape check) before any INSERT lands, so a malformed row late in the
+	 * array cannot leave earlier rows committed. Validation throws before the
+	 * transaction opens; callers should catch and record the error per-file.
+	 *
+	 * **Canonical metadata**: the conversation row is populated with
+	 * `startedAt`, `lastMessageAt`, `lastReadAt`, `topic`, and `status` from
+	 * the source log — NOT derived from message timestamps. Legacy logs that
+	 * were not chronologically sorted on disk retain their authoritative
+	 * summary fields after import.
+	 *
+	 * Synchronous on purpose — `better-sqlite3` transactions must be
+	 * synchronous, and the migration calls this in a sync context.
+	 */
+	importLog(log: ConversationLog): void {
+		if (this.closed) {
+			throw new Error("cannot importLog into a closed SqliteConversationLogger");
+		}
+		validateConversationLogForImport(log);
+
+		// Sort messages ascending by timestamp so `insert_order` increments
+		// monotonically. Legacy FileConversationLogger sorted on read, so
+		// disk order is not a guarantee (finding Fv2.2).
+		const sortedMessages = [...log.messages].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+		const importFn = this.db.transaction(() => {
+			// Insert the conversation row if it doesn't exist. Start with
+			// minimal fields; the UPDATE below establishes canonical metadata.
+			this.stmtInsertConversation.run(
+				log.conversationId,
+				log.connectionId,
+				log.peerAgentId,
+				log.peerDisplayName,
+				log.topic ?? null,
+				log.startedAt,
+				log.lastMessageAt,
+			);
+
+			// Restore canonical metadata. The stmtInsertConversation above
+			// hard-codes status='active' and last_read_at=NULL, so overwrite
+			// them with the source log's authoritative values.
+			this.stmtImportUpdateMetadata.run(
+				log.topic ?? null,
+				log.startedAt,
+				log.lastMessageAt,
+				log.lastReadAt ?? null,
+				log.status,
+				log.conversationId,
+			);
+
+			// Replay messages. Each INSERT goes through the dedupe check so
+			// retries after a crash are idempotent. Counting existing rows
+			// once before the loop keeps `insert_order` monotonic across the
+			// whole file.
+			let insertOrder = (this.stmtCountMessages.get(log.conversationId) as { c: number }).c + 1;
+			for (const message of sortedMessages) {
+				if (typeof message.messageId === "string") {
+					const dup = this.stmtFindDupMessage.get(
+						log.conversationId,
+						message.messageId,
+						message.direction,
+					);
+					if (dup) continue;
+				}
+				this.stmtInsertMessage.run(
+					log.conversationId,
+					message.messageId ?? null,
+					message.timestamp,
+					message.direction,
+					message.scope,
+					message.content,
+					message.humanApprovalRequired ? 1 : 0,
+					message.humanApprovalGiven === null ? null : message.humanApprovalGiven ? 1 : 0,
+					message.humanApprovalAt ?? null,
+					insertOrder,
+				);
+				insertOrder += 1;
+			}
+		});
+
+		importFn();
+	}
+}
+
+/**
+ * Shape validator for import. Rejects a log whose message array contains a
+ * row that would fail at INSERT time. Running this before the transaction
+ * opens keeps `importLog` all-or-nothing even for malformed input.
+ */
+function validateConversationLogForImport(log: ConversationLog): void {
+	if (!Array.isArray(log.messages)) {
+		throw new Error(`importLog: conversation ${log.conversationId} messages is not an array`);
+	}
+	for (let i = 0; i < log.messages.length; i += 1) {
+		const message = log.messages[i];
+		if (!message || typeof message !== "object") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] is not an object`,
+			);
+		}
+		if (typeof message.timestamp !== "string" || message.timestamp.length === 0) {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has missing or non-string timestamp`,
+			);
+		}
+		if (message.direction !== "incoming" && message.direction !== "outgoing") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has invalid direction: ${String(message.direction)}`,
+			);
+		}
+		if (typeof message.scope !== "string") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has non-string scope`,
+			);
+		}
+		if (typeof message.content !== "string") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has non-string content`,
+			);
+		}
+		if (typeof message.humanApprovalRequired !== "boolean") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has non-boolean humanApprovalRequired`,
+			);
+		}
+		if (message.humanApprovalGiven !== null && typeof message.humanApprovalGiven !== "boolean") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has invalid humanApprovalGiven`,
+			);
+		}
+		if (message.messageId !== undefined && typeof message.messageId !== "string") {
+			throw new Error(
+				`importLog: conversation ${log.conversationId} message[${i}] has non-string messageId`,
+			);
+		}
 	}
 }
 

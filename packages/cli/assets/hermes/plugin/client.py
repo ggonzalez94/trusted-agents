@@ -174,8 +174,28 @@ def _ensure_tapd_running(socket_path: Path, data_dir: Path) -> tuple[bool, str |
     return False, "tapd did not start within timeout"
 
 
-def _http_request(method: str, path: str, socket_path: Path, body: dict | None = None) -> Any:
+def _http_request(
+    method: str,
+    path: str,
+    socket_path: Path,
+    body: dict | None = None,
+    auto_start: bool = True,
+) -> Any:
+    """Send an HTTP request to tapd over a Unix socket.
+
+    ``auto_start`` controls whether a missing socket triggers ``tap daemon
+    start`` with a 5-second wait. Interactive paths (send/transfer/connect)
+    use ``auto_start=True`` so a first-time request boots tapd. The
+    ``pre_llm_call`` notification drain path MUST pass ``auto_start=False``
+    because it runs on every prompt — a dead identity would otherwise add
+    ``DAEMON_START_TIMEOUT_SECONDS`` of latency to every turn, multiplied by
+    the number of dead identities. Drain is strictly a fast-fail read path:
+    a missing socket is reported back immediately as an error string and
+    surfaced as a meta escalation by ``drain_all_identities``.
+    """
     if not socket_path.exists():
+        if not auto_start:
+            return {"error": f"tapd socket missing at {socket_path}. {DEFAULT_RECOVERY_GUIDANCE}"}
         running, note = _ensure_tapd_running(socket_path, socket_path.parent)
         if not running:
             return {"error": f"tapd is not running: {note}. {DEFAULT_RECOVERY_GUIDANCE}"}
@@ -391,8 +411,13 @@ def _drain_one(socket_path: Path) -> tuple[list[dict], str | None]:
     failure (socket missing, HTTP error, malformed response), returns an
     empty list plus an error string for the caller to surface as a
     meta-notification.
+
+    Drain runs on every prompt via the ``pre_llm_call`` hook, so it MUST
+    be fast-fail: passing ``auto_start=False`` means a dead identity returns
+    immediately instead of blocking the prompt for ``DAEMON_START_TIMEOUT_SECONDS``
+    waiting for a daemon that may never come up.
     """
-    result = _http_request("GET", "/api/notifications/drain", socket_path)
+    result = _http_request("GET", "/api/notifications/drain", socket_path, auto_start=False)
     if isinstance(result, dict) and "error" in result and "notifications" not in result:
         return [], str(result.get("error") or "unknown error")
     if not isinstance(result, dict):

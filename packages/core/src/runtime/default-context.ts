@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { TapAppRegistry } from "../app/registry.js";
-import { buildChainPublicClient } from "../common/index.js";
+import { buildChainPublicClient, toErrorMessage } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
 import type { IConversationLogger } from "../conversation/logger.js";
 import { SqliteConversationLogger } from "../conversation/sqlite-logger.js";
@@ -68,9 +68,7 @@ export async function buildDefaultTapRuntimeContext(
 			// Unexpected hard failure (e.g. directory read error). The database
 			// is still usable — log and move on.
 			process.stderr.write(
-				`[trusted-agents] conversation log migration warning: ${
-					error instanceof Error ? error.message : String(error)
-				}\n`,
+				`[trusted-agents] conversation log migration warning: ${toErrorMessage(error)}\n`,
 			);
 		}
 		conversationLogger = sqliteLogger;

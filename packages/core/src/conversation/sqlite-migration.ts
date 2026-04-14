@@ -1,6 +1,6 @@
 import { readFile, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveDataDir } from "../common/index.js";
+import { resolveDataDir, toErrorMessage } from "../common/index.js";
 import type { SqliteConversationLogger } from "./sqlite-logger.js";
 import type { ConversationLog } from "./types.js";
 
@@ -77,17 +77,6 @@ export async function migrateFileLogsToSqlite(
 	const insertMigratedFile = logger.database.prepare(
 		"INSERT OR REPLACE INTO migrated_files(file_name, migrated_at) VALUES (?, ?)",
 	);
-	const insertEmptyConversation = logger.database.prepare(
-		`INSERT OR IGNORE INTO conversations(
-			conversation_id, connection_id, peer_agent_id, peer_display_name,
-			topic, started_at, last_message_at, last_read_at, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-	);
-	const updateCanonicalMetadata = logger.database.prepare(
-		`UPDATE conversations
-		 SET topic = ?, started_at = ?, last_message_at = ?, last_read_at = ?, status = ?
-		 WHERE conversation_id = ?`,
-	);
 
 	for (const entry of entries) {
 		if (!entry.endsWith(".json")) {
@@ -116,87 +105,31 @@ export async function migrateFileLogsToSqlite(
 			}
 			const log = parsed;
 
-			// The message replay path runs outside the transaction
-			// because SqliteConversationLogger.logMessage is async and
-			// better-sqlite3 transactions must be synchronous. We replay
-			// first, then atomically UPDATE canonical metadata + INSERT
-			// the migrated_files marker so a crash mid-metadata never
-			// leaves the marker without the UPDATE (or vice versa).
-			if (log.messages.length === 0) {
-				// Insert the conversation row directly when there are no messages.
-				// Done inside the same transaction as the marker below.
-				// Stored for the transaction block.
-			} else {
-				// Each message gets logged through the normal logMessage path so dedupe,
-				// insert_order, and timestamp normalization all apply. Sort by
-				// timestamp ascending BEFORE replay — the legacy FileConversationLogger
-				// sorted on read, so disk order is not guaranteed chronological
-				// (finding Fv2.2). Replaying in source order would corrupt
-				// `started_at`/`last_message_at` derived from the first/last append.
-				const sortedMessages = [...log.messages].sort((a, b) =>
-					a.timestamp.localeCompare(b.timestamp),
-				);
-
-				let firstMessage = true;
-				for (const message of sortedMessages) {
-					await logger.logMessage(
-						log.conversationId,
-						message,
-						firstMessage
-							? {
-									connectionId: log.connectionId,
-									peerAgentId: log.peerAgentId,
-									peerDisplayName: log.peerDisplayName,
-									...(log.topic ? { topic: log.topic } : {}),
-								}
-							: undefined,
-					);
-					firstMessage = false;
-				}
-			}
-
-			// Atomic finalize: restore canonical metadata AND mark the
-			// file as imported. Either both land or neither does, which
-			// preserves the retry invariant — a crash between UPDATE and
-			// migrated_files INSERT must not leave the file looking
-			// imported while its metadata is only partially restored.
-			const finalize = logger.database.transaction(() => {
-				if (log.messages.length === 0) {
-					insertEmptyConversation.run(
-						log.conversationId,
-						log.connectionId,
-						log.peerAgentId,
-						log.peerDisplayName,
-						log.topic ?? null,
-						log.startedAt,
-						log.lastMessageAt,
-						log.lastReadAt ?? null,
-						log.status,
-					);
-				}
-
-				// Restore canonical conversation metadata from the source JSON. The
-				// insert/replay path derives started_at from the first row and
-				// status is hard-coded to 'active' by the INSERT statement, so we
-				// explicitly overwrite with the values that existed in the legacy
-				// log (finding Fv2.2).
-				updateCanonicalMetadata.run(
-					log.topic ?? null,
-					log.startedAt,
-					log.lastMessageAt,
-					log.lastReadAt ?? null,
-					log.status,
-					log.conversationId,
-				);
+			// Import the whole file atomically via `importLog`. The method
+			// validates every message shape up front and wraps the entire
+			// conversation row + message inserts + canonical metadata update
+			// in a single synchronous `better-sqlite3` transaction, so a
+			// failure anywhere in the file rolls back ALL of its writes. This
+			// closes the same-file partial-replay window where earlier
+			// messages could commit and newer runtime activity would then be
+			// rolled back on a later retry (residual 2 continuation).
+			//
+			// We pair the import with the `migrated_files` marker in the
+			// same outer transaction so the file is visible as "imported"
+			// only after every row has landed. If the inner transaction
+			// throws, the outer rolls back too and the file remains eligible
+			// for retry on the next startup.
+			const importAndMark = logger.database.transaction(() => {
+				logger.importLog(log);
 				insertMigratedFile.run(entry, new Date().toISOString());
 			});
-			finalize();
+			importAndMark();
 
 			report.migrated += 1;
 		} catch (error: unknown) {
 			report.errors.push({
 				file: entry,
-				error: error instanceof Error ? error.message : String(error),
+				error: toErrorMessage(error),
 			});
 		}
 	}
@@ -210,7 +143,7 @@ export async function migrateFileLogsToSqlite(
 		} catch (error: unknown) {
 			report.errors.push({
 				file: CONVERSATIONS_DIRNAME,
-				error: `rename to backup failed: ${error instanceof Error ? error.message : String(error)}`,
+				error: `rename to backup failed: ${toErrorMessage(error)}`,
 			});
 			return report;
 		}
