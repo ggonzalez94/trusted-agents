@@ -1,5 +1,8 @@
 import { request } from "node:http";
 import { join } from "node:path";
+import type { TapNotification, TapNotificationType } from "trusted-agents-tapd";
+
+export type { TapNotification, TapNotificationType };
 
 const DEFAULT_SOCKET_NAME = ".tapd.sock";
 const DEFAULT_DATA_DIR = ".trustedagents";
@@ -33,16 +36,6 @@ export class TapdHttpError extends Error {
 		super(message);
 		this.name = "TapdHttpError";
 	}
-}
-
-export type TapNotificationType = "info" | "escalation" | "auto-reply" | "summary";
-
-export interface TapNotification {
-	id: string;
-	type: TapNotificationType;
-	oneLiner: string;
-	createdAt: string;
-	data?: Record<string, unknown>;
 }
 
 export interface OpenClawTapdClientOptions {

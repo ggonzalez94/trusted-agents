@@ -97,21 +97,7 @@ import {
 import { getUsdcAsset } from "./assets.js";
 import type { TapCommandJob, TapCommandJobResultPayload } from "./command-job.js";
 import type { TapRuntimeContext } from "./default-context.js";
-import type {
-	ActionCompletedEvent,
-	ActionFailedEvent,
-	ActionPendingEvent,
-	ActionRequestedEvent,
-	ConnectionEstablishedEvent,
-	ConnectionFailedEvent,
-	ConnectionRequestedEvent,
-	MessageReceivedEvent,
-	MessageSentEvent,
-	PendingResolvedEvent,
-	TapActionKind,
-	TapEvent,
-	TapPeerRef,
-} from "./event-types.js";
+import type { TapActionKind, TapEvent, TapEventEnvelope, TapPeerRef } from "./event-types.js";
 import {
 	findActiveGrantsByScope,
 	normalizeGrantInput,
@@ -141,6 +127,12 @@ import {
 	TransportOwnerLock,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+
+type TapEventBody = TapEvent extends infer E
+	? E extends TapEvent
+		? Omit<E, keyof TapEventEnvelope>
+		: never
+	: never;
 
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
 /**
@@ -897,14 +889,12 @@ export class TapMessagingService {
 					}),
 			);
 
-			const resolvedEvent: PendingResolvedEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "pending.resolved",
 				requestId,
 				decision: approve ? "approved" : "denied",
 				decidedBy: options?.decidedBy ?? "operator",
-			};
-			this.emitTyped(resolvedEvent);
+			});
 
 			return report;
 		} finally {
@@ -1145,15 +1135,13 @@ export class TapMessagingService {
 				});
 			}
 
-			const outboundConnEvent: ConnectionRequestedEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "connection.requested",
 				requestId,
 				peerAgentId: peerAgent.agentId,
 				peerChain: peerAgent.chain,
 				direction: "outbound",
-			};
-			this.emitTyped(outboundConnEvent);
+			});
 
 			// Register a waiter before sending so that a result arriving during or
 			// immediately after send() can resolve it. waitMs === 0 means fire-and-forget.
@@ -1350,16 +1338,14 @@ export class TapMessagingService {
 
 			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
 
-			const sentEvent: MessageSentEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "message.sent",
 				conversationId: resolveConversationId(contact),
 				peer: this.peerRefFromContact(contact),
 				messageId: String(request.id),
 				text,
 				scope,
-			};
-			this.emitTyped(sentEvent);
+			});
 
 			return {
 				receipt,
@@ -1430,8 +1416,7 @@ export class TapMessagingService {
 					: actionType.startsWith("permissions/")
 						? "grant"
 						: "grant";
-			const genericOutboundEvent: ActionRequestedEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "action.requested",
 				conversationId: resolveConversationId(contact),
 				peer: this.peerRefFromContact(contact),
@@ -1439,8 +1424,7 @@ export class TapMessagingService {
 				kind: outboundKind,
 				payload: data as unknown as Record<string, unknown>,
 				direction: "outbound",
-			};
-			this.emitTyped(genericOutboundEvent);
+			});
 
 			return {
 				receipt,
@@ -1635,8 +1619,7 @@ export class TapMessagingService {
 				() => waiter.cancel(),
 			);
 
-			const outboundTransferEvent: ActionRequestedEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "action.requested",
 				conversationId: resolveConversationId(contact),
 				peer: this.peerRefFromContact(contact),
@@ -1644,8 +1627,7 @@ export class TapMessagingService {
 				kind: "transfer",
 				payload: requestPayload as unknown as Record<string, unknown>,
 				direction: "outbound",
-			};
-			this.emitTyped(outboundTransferEvent);
+			});
 
 			const asyncResult = await waiter.promise;
 			if (!asyncResult) {
@@ -1731,8 +1713,7 @@ export class TapMessagingService {
 				),
 			);
 
-			const outboundSchedulingEvent: ActionRequestedEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "action.requested",
 				conversationId: resolveConversationId(contact),
 				peer: this.peerRefFromContact(contact),
@@ -1740,8 +1721,7 @@ export class TapMessagingService {
 				kind: "scheduling",
 				payload: proposal as unknown as Record<string, unknown>,
 				direction: "outbound",
-			};
-			this.emitTyped(outboundSchedulingEvent);
+			});
 
 			return {
 				receipt,
@@ -2050,24 +2030,18 @@ export class TapMessagingService {
 		}
 	}
 
-	private emitTyped(event: TapEvent): void {
+	private emit(body: TapEventBody): void {
+		const event = {
+			id: `evt-${randomUUID()}`,
+			occurredAt: nowISO(),
+			identityAgentId: this.context.config.agentId,
+			...body,
+		} as TapEvent;
 		try {
 			this.hooks.onTypedEvent?.(event);
 		} catch (error: unknown) {
 			this.log("warn", `onTypedEvent hook threw: ${toErrorMessage(error)}`);
 		}
-	}
-
-	private nextEventEnvelope(): {
-		id: string;
-		occurredAt: string;
-		identityAgentId: number;
-	} {
-		return {
-			id: `evt-${randomUUID()}`,
-			occurredAt: nowISO(),
-			identityAgentId: this.context.config.agentId,
-		};
 	}
 
 	private peerRefFromContact(contact: Contact): TapPeerRef {
@@ -2449,8 +2423,7 @@ export class TapMessagingService {
 			}
 
 			if (!claimed.duplicate) {
-				const inboundConnEvent: ConnectionRequestedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "connection.requested",
 					requestId: String(envelope.message.id),
 					peerAgentId: envelope.from,
@@ -2458,8 +2431,7 @@ export class TapMessagingService {
 						(envelope.message.params as { from?: { chain?: string } } | undefined)?.from?.chain ??
 						"",
 					direction: "inbound",
-				};
-				this.emitTyped(inboundConnEvent);
+				});
 			}
 
 			this.enqueue(requestKey, async () => {
@@ -2556,16 +2528,14 @@ export class TapMessagingService {
 								}
 							).trustedAgent?.scope ?? DEFAULT_MESSAGE_SCOPE)
 						: DEFAULT_MESSAGE_SCOPE;
-				const receivedEvent: MessageReceivedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "message.received",
 					conversationId: resolveConversationId(contact),
 					peer: this.peerRefFromContact(contact),
 					messageId: String(envelope.message.id),
 					text: messageText,
 					scope,
-				};
-				this.emitTyped(receivedEvent);
+				});
 			}
 
 			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
@@ -2648,8 +2618,7 @@ export class TapMessagingService {
 				}
 
 				if (!claimed.duplicate) {
-					const requestedEvent: ActionRequestedEvent = {
-						...this.nextEventEnvelope(),
+					this.emit({
 						type: "action.requested",
 						conversationId: resolveConversationId(contact),
 						peer: this.peerRefFromContact(contact),
@@ -2657,8 +2626,7 @@ export class TapMessagingService {
 						kind: "scheduling",
 						payload: schedulingRequest as unknown as Record<string, unknown>,
 						direction: "inbound",
-					};
-					this.emitTyped(requestedEvent);
+					});
 				}
 
 				this.enqueue(requestKey, async () => {
@@ -2697,8 +2665,7 @@ export class TapMessagingService {
 				);
 
 				if (!claimed.duplicate) {
-					const requestedEvent: ActionRequestedEvent = {
-						...this.nextEventEnvelope(),
+					this.emit({
 						type: "action.requested",
 						conversationId: resolveConversationId(contact),
 						peer: this.peerRefFromContact(contact),
@@ -2706,8 +2673,7 @@ export class TapMessagingService {
 						kind: "transfer",
 						payload: transferRequest as unknown as Record<string, unknown>,
 						direction: "inbound",
-					};
-					this.emitTyped(requestedEvent);
+					});
 				}
 
 				this.enqueue(requestKey, async () => {
@@ -2848,8 +2814,7 @@ export class TapMessagingService {
 			`Accepted connection request from ${plan.peer.registrationFile.name} (#${plan.peer.agentId})`,
 		);
 
-		const establishedEvent: ConnectionEstablishedEvent = {
-			...this.nextEventEnvelope(),
+		this.emit({
 			type: "connection.established",
 			connectionId: plan.plannedContact.connectionId,
 			peer: {
@@ -2858,8 +2823,7 @@ export class TapMessagingService {
 				peerName: plan.peer.registrationFile.name,
 				peerChain: plan.peer.chain,
 			},
-		};
-		this.emitTyped(establishedEvent);
+		});
 
 		// 5. Notify the host (non-blocking, informational).
 		try {
@@ -3063,16 +3027,14 @@ export class TapMessagingService {
 				"info",
 				`Queued action request ${request.actionId} from ${contact.peerDisplayName}; resolve it later with TAP sync or the host approval flow`,
 			);
-			const pendingEvent: ActionPendingEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "action.pending",
 				conversationId: resolveConversationId(contact),
 				requestId,
 				kind: "transfer",
 				payload: request as unknown as Record<string, unknown>,
 				awaitingDecision: true,
-			};
-			this.emitTyped(pendingEvent);
+			});
 			return;
 		}
 
@@ -3520,16 +3482,14 @@ export class TapMessagingService {
 					"info",
 					`Scheduling request ${proposal.schedulingId} deferred for manual decision`,
 				);
-				const pendingSchedulingEvent: ActionPendingEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "action.pending",
 					conversationId: resolveConversationId(contact),
 					requestId,
 					kind: "scheduling",
 					payload: proposal as unknown as Record<string, unknown>,
 					awaitingDecision: true,
-				};
-				this.emitTyped(pendingSchedulingEvent);
+				});
 				break;
 			}
 		}
@@ -3656,15 +3616,13 @@ export class TapMessagingService {
 				if (journalEntry) {
 					await this.context.requestJournal.updateStatus(result.requestId, "completed");
 				}
-				const failedEvent: ConnectionFailedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "connection.failed",
 					requestId: result.requestId,
 					error:
 						result.reason ??
 						`Connection rejected by ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
-				};
-				this.emitTyped(failedEvent);
+				});
 				// Notify any in-flight connect() waiter so it surfaces the rejection
 				// immediately rather than waiting for the full waitMs timeout.
 				this.rejectConnectWaiter(
@@ -3795,13 +3753,11 @@ export class TapMessagingService {
 			await this.context.trustStore.addContact(freshContact);
 			await this.context.requestJournal.updateStatus(result.requestId, "completed");
 			this.log("info", `Connection accepted by ${peerLabel(freshContact)} (partial-wipe recovery)`);
-			const establishedRecoveryEvent: ConnectionEstablishedEvent = {
-				...this.nextEventEnvelope(),
+			this.emit({
 				type: "connection.established",
 				connectionId: freshContact.connectionId,
 				peer: this.peerRefFromContact(freshContact),
-			};
-			this.emitTyped(establishedRecoveryEvent);
+			});
 			// Notify any in-flight connect() waiter.
 			this.resolveConnectWaiter(result.requestId);
 			return "received";
@@ -3837,13 +3793,11 @@ export class TapMessagingService {
 		// `existingContact.status` is narrowed to non-active here — the active
 		// branch returned "duplicate" above. This is a real state transition
 		// (connecting/idle/stale → active).
-		const establishedExistingEvent: ConnectionEstablishedEvent = {
-			...this.nextEventEnvelope(),
+		this.emit({
 			type: "connection.established",
 			connectionId: nextContact.connectionId,
 			peer: this.peerRefFromContact(nextContact),
-		};
-		this.emitTyped(establishedExistingEvent);
+		});
 		// Notify any in-flight connect() waiter.
 		this.resolveConnectWaiter(result.requestId);
 		return "received";
@@ -3891,8 +3845,7 @@ export class TapMessagingService {
 			}
 			const transferConversationId = contact ? resolveConversationId(contact) : "";
 			if (response.status === "completed") {
-				const completedEvent: ActionCompletedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "action.completed",
 					conversationId: transferConversationId,
 					requestId: response.requestId ?? response.actionId,
@@ -3900,18 +3853,15 @@ export class TapMessagingService {
 					result: response as unknown as Record<string, unknown>,
 					...(response.txHash ? { txHash: response.txHash } : {}),
 					completedAt: nowISO(),
-				};
-				this.emitTyped(completedEvent);
+				});
 			} else if (response.status === "rejected" || response.status === "failed") {
-				const failedEvent: ActionFailedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "action.failed",
 					conversationId: transferConversationId,
 					requestId: response.requestId ?? response.actionId,
 					kind: "transfer",
 					error: response.error ?? `transfer ${response.status}`,
-				};
-				this.emitTyped(failedEvent);
+				});
 			}
 			return contact?.peerDisplayName;
 		}
@@ -3977,22 +3927,19 @@ export class TapMessagingService {
 			const schedConversationId = contact ? resolveConversationId(contact) : "";
 			const schedRequestId = requestId ?? schedulingResponse.schedulingId;
 			if (schedulingResponse.type === "scheduling/accept") {
-				const completed: ActionCompletedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "action.completed",
 					conversationId: schedConversationId,
 					requestId: schedRequestId,
 					kind: "scheduling",
 					result: schedulingResponse as unknown as Record<string, unknown>,
 					completedAt: nowISO(),
-				};
-				this.emitTyped(completed);
+				});
 			} else if (
 				schedulingResponse.type === "scheduling/reject" ||
 				schedulingResponse.type === "scheduling/cancel"
 			) {
-				const failed: ActionFailedEvent = {
-					...this.nextEventEnvelope(),
+				this.emit({
 					type: "action.failed",
 					conversationId: schedConversationId,
 					requestId: schedRequestId,
@@ -4000,8 +3947,7 @@ export class TapMessagingService {
 					error:
 						(schedulingResponse as { reason?: string }).reason ??
 						`scheduling ${schedulingResponse.type.split("/")[1] ?? schedulingResponse.type}`,
-				};
-				this.emitTyped(failed);
+				});
 			}
 			return contact?.peerDisplayName;
 		}

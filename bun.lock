@@ -97,6 +97,7 @@
         "@sinclair/typebox": "^0.34.48",
         "trusted-agents-core": "workspace:*",
         "trusted-agents-sdk": "workspace:*",
+        "trusted-agents-tapd": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^25.3.3",
