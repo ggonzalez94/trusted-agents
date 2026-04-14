@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import type { ActionKind } from "@/lib/types";
-import { CalendarDays, DollarSign, ShieldCheck } from "lucide-react";
+import { CalendarDays, CircleHelp, DollarSign, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 
 export type ActionCardStatus = "pending" | "completed" | "failed";
@@ -46,6 +46,18 @@ const KIND_META: Record<ActionKind, KindMeta> = {
 	},
 };
 
+/**
+ * Fallback chip rendered when an `ActionCard` is asked to render a kind
+ * outside the `ActionKind` union. Prevents the component from crashing on
+ * forward-compatible or mis-shaped pending payloads (see F2.1).
+ */
+const UNKNOWN_KIND_META: KindMeta = {
+	icon: <CircleHelp className="w-3.5 h-3.5" strokeWidth={2.4} />,
+	label: "Action",
+};
+
+const UNKNOWN_KIND_ACCENT = "bg-zinc-500/10 text-zinc-300 border-zinc-400/25";
+
 const STATUS_STYLES: Record<ActionCardStatus, string> = {
 	pending: "bg-amber-500/10 text-amber-300 border border-amber-400/30",
 	completed: "bg-emerald-500/10 text-emerald-300 border border-emerald-400/30",
@@ -70,7 +82,8 @@ export function ActionCard({
 	onDeny,
 	approving,
 }: ActionCardProps) {
-	const meta = KIND_META[kind];
+	const meta = KIND_META[kind] ?? UNKNOWN_KIND_META;
+	const accent = KIND_ACCENT[kind] ?? UNKNOWN_KIND_ACCENT;
 	const showActions = !!(onApprove || onDeny);
 	return (
 		<Card className={cn("max-w-[420px] p-4", outgoing ? "ml-auto mr-12" : "ml-12")}>
@@ -78,7 +91,7 @@ export function ActionCard({
 				<span
 					className={cn(
 						"inline-flex w-6 h-6 items-center justify-center rounded-md border",
-						KIND_ACCENT[kind],
+						accent,
 					)}
 				>
 					{meta.icon}

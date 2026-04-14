@@ -11,6 +11,24 @@ interface PendingActionCardsProps {
 	onDeny: (id: string) => Promise<unknown>;
 }
 
+/**
+ * Derive the UI `ActionKind` from a pending item's details (F2.1).
+ *
+ * `/api/pending` returns `item.kind` as `"request"` | `"result"` — the wire
+ * direction, not the action semantic class. The UI's `ActionKind` union
+ * (`"transfer"` | `"scheduling"` | `"grant"`) describes the kind of decision
+ * the operator is making. The mapping lives in `details.type`, which is the
+ * discriminant of `TapPendingRequest.details`. Unknown or missing details fall
+ * back to `"grant"` so `ActionCard` still renders something sensible instead
+ * of dereferencing `KIND_META[undefined]`.
+ */
+export function deriveKind(item: Pick<PendingItem, "details">): ActionKind {
+	const detailsType = item.details?.type;
+	if (detailsType === "transfer") return "transfer";
+	if (detailsType === "scheduling") return "scheduling";
+	return "grant";
+}
+
 export function PendingActionCards({ items, onApprove, onDeny }: PendingActionCardsProps) {
 	const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -29,7 +47,7 @@ export function PendingActionCards({ items, onApprove, onDeny }: PendingActionCa
 	return (
 		<div className="space-y-3 pt-2">
 			{items.map((item) => {
-				const kind = (item.kind as ActionKind) ?? "transfer";
+				const kind = deriveKind(item);
 				return (
 					<ActionCard
 						key={item.requestId}
