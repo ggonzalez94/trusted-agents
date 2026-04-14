@@ -1,6 +1,6 @@
 import type { Contact, ITrustStore, TapMessagingService } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { requireBody, requireParam } from "../validation.js";
+import { isOptionalString, requireBody, requireParam } from "../validation.js";
 
 interface RevokeBody {
 	reason?: string;
@@ -10,7 +10,7 @@ function isRevokeBody(value: unknown): value is RevokeBody {
 	if (value === undefined || value === null) return true;
 	if (typeof value !== "object") return false;
 	const v = value as Record<string, unknown>;
-	if (v.reason !== undefined && typeof v.reason !== "string") return false;
+	if (!isOptionalString(v.reason)) return false;
 	return true;
 }
 

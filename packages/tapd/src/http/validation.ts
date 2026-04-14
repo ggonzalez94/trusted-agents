@@ -3,6 +3,14 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
 	return value as Record<string, unknown>;
 }
 
+export function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
+}
+
+export function isOptionalString(value: unknown): boolean {
+	return value === undefined || typeof value === "string";
+}
+
 export function requireParam(params: Record<string, string>, name: string): string {
 	const value = params[name];
 	if (!value) throw new Error(`missing ${name}`);

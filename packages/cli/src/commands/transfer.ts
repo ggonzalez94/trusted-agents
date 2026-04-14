@@ -40,18 +40,11 @@ export async function transferCommand(
 		const amount = normalizeAmount(cmdOpts.amount);
 		assertAmountIsParsable(asset, amount);
 
+		const base = { asset, amount, chain, chain_name: chainConfig.name, to_address: toAddress };
+
 		if (cmdOpts.dryRun) {
 			success(
-				{
-					status: "preview",
-					dry_run: true,
-					scope: "transfer/execute",
-					asset,
-					amount,
-					chain,
-					chain_name: chainConfig.name,
-					to_address: toAddress,
-				},
+				{ status: "preview", dry_run: true, scope: "transfer/execute", ...base },
 				opts,
 				startTime,
 			);
@@ -72,19 +65,7 @@ export async function transferCommand(
 				);
 
 		if (!approved) {
-			success(
-				{
-					status: "cancelled",
-					cancelled: true,
-					asset,
-					amount,
-					chain,
-					chain_name: chainConfig.name,
-					to_address: toAddress,
-				},
-				opts,
-				startTime,
-			);
+			success({ status: "cancelled", cancelled: true, ...base }, opts, startTime);
 			return;
 		}
 
@@ -101,16 +82,7 @@ export async function transferCommand(
 			: undefined;
 
 		success(
-			{
-				status: "submitted",
-				asset,
-				amount,
-				chain,
-				chain_name: chainConfig.name,
-				to_address: toAddress,
-				tx_hash: result.txHash,
-				tx_url: txUrl,
-			},
+			{ status: "submitted", ...base, tx_hash: result.txHash, tx_url: txUrl },
 			opts,
 			startTime,
 		);

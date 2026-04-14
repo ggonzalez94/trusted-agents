@@ -1,5 +1,5 @@
 import type { RouteHandler } from "../router.js";
-import { asRecord, requireBody } from "../validation.js";
+import { asRecord, isNonEmptyString, requireBody } from "../validation.js";
 
 export interface TransferExecutionRequest {
 	asset: "native" | "usdc";
@@ -20,8 +20,8 @@ function isTransferBody(value: unknown): value is TransferExecutionRequest {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (v.asset !== "native" && v.asset !== "usdc") return false;
-	if (typeof v.amount !== "string" || v.amount.length === 0) return false;
-	if (typeof v.chain !== "string" || v.chain.length === 0) return false;
+	if (!isNonEmptyString(v.amount)) return false;
+	if (!isNonEmptyString(v.chain)) return false;
 	if (typeof v.toAddress !== "string" || !v.toAddress.startsWith("0x")) return false;
 	return true;
 }

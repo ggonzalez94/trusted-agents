@@ -11,7 +11,13 @@ import {
 	validateSchedulingProposal,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord, requireBody, requireParam } from "../validation.js";
+import {
+	asRecord,
+	isNonEmptyString,
+	isOptionalString,
+	requireBody,
+	requireParam,
+} from "../validation.js";
 
 /**
  * Full-shape body. Back-compat for the CLI `tap message request-meeting`
@@ -48,7 +54,7 @@ function isFullShape(value: Record<string, unknown>): boolean {
 function isRequestMeetingFullBody(value: unknown): value is RequestMeetingFullBody {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (typeof v.peer !== "string" || v.peer.length === 0) return false;
+	if (!isNonEmptyString(v.peer)) return false;
 	if (!v.proposal || typeof v.proposal !== "object") return false;
 	const p = v.proposal as Record<string, unknown>;
 	if (p.type !== "scheduling/propose") return false;
@@ -62,17 +68,17 @@ function isRequestMeetingFullBody(value: unknown): value is RequestMeetingFullBo
 function isRequestMeetingFlatBody(value: unknown): value is RequestMeetingFlatBody {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (typeof v.peer !== "string" || v.peer.length === 0) return false;
+	if (!isNonEmptyString(v.peer)) return false;
 	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
 	if (typeof v.duration !== "number" || !Number.isFinite(v.duration) || v.duration <= 0) {
 		return false;
 	}
 	if (v.slots !== undefined && !Array.isArray(v.slots)) return false;
-	if (v.preferred !== undefined && typeof v.preferred !== "string") return false;
-	if (v.location !== undefined && typeof v.location !== "string") return false;
-	if (v.note !== undefined && typeof v.note !== "string") return false;
-	if (v.schedulingId !== undefined && typeof v.schedulingId !== "string") return false;
-	if (v.originTimezone !== undefined && typeof v.originTimezone !== "string") return false;
+	if (!isOptionalString(v.preferred)) return false;
+	if (!isOptionalString(v.location)) return false;
+	if (!isOptionalString(v.note)) return false;
+	if (!isOptionalString(v.schedulingId)) return false;
+	if (!isOptionalString(v.originTimezone)) return false;
 	return true;
 }
 
@@ -85,7 +91,7 @@ function isRespondBody(value: unknown): value is RespondBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (typeof v.approve !== "boolean") return false;
-	if (v.reason !== undefined && typeof v.reason !== "string") return false;
+	if (!isOptionalString(v.reason)) return false;
 	return true;
 }
 
@@ -97,7 +103,7 @@ function isCancelBody(value: unknown): value is CancelBody {
 	if (value === undefined || value === null) return true;
 	if (typeof value !== "object") return false;
 	const v = value as Record<string, unknown>;
-	if (v.reason !== undefined && typeof v.reason !== "string") return false;
+	if (!isOptionalString(v.reason)) return false;
 	return true;
 }
 
