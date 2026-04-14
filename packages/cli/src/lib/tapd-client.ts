@@ -107,6 +107,15 @@ export interface TransferResultBody {
 	txHash: `0x${string}`;
 }
 
+export interface CreateInviteRequestBody {
+	expiresInSeconds?: number;
+}
+
+export interface CreateInviteResultBody {
+	url: string;
+	expiresInSeconds: number;
+}
+
 export interface DaemonHealth {
 	status: "ok";
 	version: string;
@@ -204,6 +213,10 @@ export class TapdClient {
 
 	transfer(input: TransferRequestBody): Promise<TransferResultBody> {
 		return this.post<TransferResultBody>("/api/transfers", input);
+	}
+
+	createInvite(input: CreateInviteRequestBody = {}): Promise<CreateInviteResultBody> {
+		return this.post<CreateInviteResultBody>("/api/invites", input);
 	}
 
 	requestFunds(input: TapRequestFundsInput): Promise<TapRequestFundsResult> {

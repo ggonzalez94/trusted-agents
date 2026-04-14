@@ -143,6 +143,36 @@ describe("TapdClient", () => {
 		});
 	});
 
+	it("createInvite POSTs to /api/invites", async () => {
+		const calls = setupFetchSpy(() =>
+			jsonResponse({
+				url: "https://trustedagents.link/connect?agentId=1&chain=eip155%3A8453&expires=1&sig=0xabc",
+				expiresInSeconds: 3600,
+			}),
+		);
+		const client = new TapdClient(info);
+
+		const result = await client.createInvite({ expiresInSeconds: 3600 });
+		expect(result.url).toContain("trustedagents.link/connect");
+		expect(result.expiresInSeconds).toBe(3600);
+		expect(calls[0]?.url).toBe("http://127.0.0.1:4321/api/invites");
+		expect(calls[0]?.method).toBe("POST");
+		expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ expiresInSeconds: 3600 });
+	});
+
+	it("createInvite sends empty body when no args", async () => {
+		const calls = setupFetchSpy(() =>
+			jsonResponse({
+				url: "https://trustedagents.link/connect?agentId=1&chain=eip155%3A8453&expires=1&sig=0xabc",
+				expiresInSeconds: 3600,
+			}),
+		);
+		const client = new TapdClient(info);
+
+		await client.createInvite();
+		expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({});
+	});
+
 	it("transfer POSTs to /api/transfers", async () => {
 		const calls = setupFetchSpy(() => jsonResponse({ txHash: "0xabc" }));
 		const client = new TapdClient(info);
