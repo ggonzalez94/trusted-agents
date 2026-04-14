@@ -259,4 +259,222 @@ describe("SqliteConversationLogger", () => {
 		logger.close();
 		expect(() => logger.close()).not.toThrow();
 	});
+
+	describe("strict timestamp validation", () => {
+		it("rejects rollover dates that Date.parse would silently normalize", async () => {
+			// `Date.parse('2026-04-31T00:00:00Z')` returns a real ms value
+			// but it points at 2026-05-01 — Date silently rolled over the
+			// invalid April 31 to May 1. Pre-fix, canonicalizeTimestamp
+			// would persist that rolled-over instant. The validator must
+			// reject before canonicalization runs.
+			await expect(
+				logger.logMessage(
+					"conv-rollover",
+					{
+						timestamp: "2026-04-31T00:00:00Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "april thirty-first does not exist",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+					{ connectionId: "conn-rollover", peerAgentId: 1, peerDisplayName: "X" },
+				),
+			).rejects.toThrow(/strict ISO 8601/);
+		});
+
+		it("rejects non-leap February 29", async () => {
+			// 2026 is not a leap year; Date.parse rolls 2026-02-29 forward
+			// to 2026-03-01. The validator must reject.
+			await expect(
+				logger.logMessage(
+					"conv-feb29",
+					{
+						timestamp: "2026-02-29T12:00:00Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "non-leap feb 29",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+					{ connectionId: "conn-feb29", peerAgentId: 1, peerDisplayName: "X" },
+				),
+			).rejects.toThrow(/strict ISO 8601/);
+		});
+
+		it("accepts leap February 29 in actual leap years", async () => {
+			// 2024 is a leap year; the validator must NOT reject.
+			await logger.logMessage(
+				"conv-leap",
+				{
+					timestamp: "2024-02-29T12:00:00.000Z",
+					direction: "outgoing",
+					scope: "default",
+					content: "leap day",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{ connectionId: "conn-leap", peerAgentId: 1, peerDisplayName: "X" },
+			);
+			const log = await logger.getConversation("conv-leap");
+			expect(log?.messages[0]?.timestamp).toBe("2024-02-29T12:00:00.000Z");
+		});
+
+		it("rejects month 13", async () => {
+			await expect(
+				logger.logMessage(
+					"conv-mo",
+					{
+						timestamp: "2026-13-01T12:00:00Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "month thirteen",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+					{ connectionId: "conn-mo", peerAgentId: 1, peerDisplayName: "X" },
+				),
+			).rejects.toThrow(/strict ISO 8601/);
+		});
+
+		it("rejects timestamps without an explicit offset", async () => {
+			// "2026-04-10T12:00:00" parses as host-local time, which is
+			// host-dependent. The strict validator must reject the
+			// no-offset form.
+			await expect(
+				logger.logMessage(
+					"conv-noo",
+					{
+						timestamp: "2026-04-10T12:00:00",
+						direction: "outgoing",
+						scope: "default",
+						content: "no offset",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+					{ connectionId: "conn-noo", peerAgentId: 1, peerDisplayName: "X" },
+				),
+			).rejects.toThrow(/strict ISO 8601/);
+		});
+	});
+
+	describe("canonicalize backfill on construction", () => {
+		it("rewrites pre-canonical timestamps in existing rows when a fresh logger opens the DB", async () => {
+			// Simulate a pre-canonicalization-fix install: the logger
+			// was last opened by a build that wrote raw mixed-encoding
+			// timestamps to SQLite. We do that by writing rows directly
+			// via the underlying sqlite handle, then closing and
+			// reopening the logger so the construction-time backfill
+			// runs.
+			//
+			// Pre-fix encodings used here:
+			//   - Legacy snapshot in "+01:00" form (= noon UTC)
+			//   - Whole-second `Z` form (no millis)
+			//   - Sub-millisecond `Z` form
+			// All three should land back as canonical 24-char `Z` form.
+			const db = logger.database;
+			db.prepare(
+				`INSERT INTO conversations(
+					conversation_id, connection_id, peer_agent_id, peer_display_name,
+					topic, started_at, last_message_at, last_read_at, status
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			).run(
+				"conv-precanonical",
+				"conn-1",
+				42,
+				"Alice",
+				null,
+				"2026-04-10T13:00:00+01:00", // = noon UTC
+				"2026-04-10T12:00:01Z", // 1s after noon UTC, no millis
+				"2026-04-10T12:00:00.500Z", // .5s after noon UTC
+				"active",
+			);
+			db.prepare(
+				`INSERT INTO messages(
+					conversation_id, message_id, timestamp, direction, scope, content,
+					human_approval_required, human_approval_given, human_approval_at, insert_order
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			).run(
+				"conv-precanonical",
+				"m-1",
+				"2026-04-10T13:00:00+01:00",
+				"outgoing",
+				"default",
+				"first",
+				0,
+				null,
+				null,
+				1,
+			);
+			db.prepare(
+				`INSERT INTO messages(
+					conversation_id, message_id, timestamp, direction, scope, content,
+					human_approval_required, human_approval_given, human_approval_at, insert_order
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			).run(
+				"conv-precanonical",
+				"m-2",
+				"2026-04-10T12:00:00.500Z",
+				"outgoing",
+				"default",
+				"second",
+				0,
+				null,
+				"2026-04-10T12:00:00.500Z",
+				2,
+			);
+
+			// Manually clear the backfill marker so we reach the
+			// backfill code path on the next construction. (The first
+			// construction at top-of-test ran the backfill once already,
+			// found nothing to canonicalize, and set the marker.)
+			db.prepare("DELETE FROM schema_meta WHERE key = ?").run("canonicalize_timestamps_backfill");
+
+			logger.close();
+
+			// Reopen — the constructor calls runCanonicalizeBackfillIfNeeded
+			// which scans every row and rewrites non-canonical timestamps.
+			const reopened = new SqliteConversationLogger(dataDir);
+
+			const reloaded = await reopened.getConversation("conv-precanonical");
+			expect(reloaded).not.toBeNull();
+			if (!reloaded) return;
+
+			// Every top-level timestamp now matches the canonical form.
+			expect(reloaded.startedAt).toBe("2026-04-10T12:00:00.000Z");
+			expect(reloaded.lastMessageAt).toBe("2026-04-10T12:00:01.000Z");
+			expect(reloaded.lastReadAt).toBe("2026-04-10T12:00:00.500Z");
+
+			// Every message timestamp is canonical too.
+			for (const m of reloaded.messages) {
+				expect(m.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+			}
+			expect(reloaded.messages[0]?.humanApprovalAt ?? null).toBeNull();
+			expect(reloaded.messages[1]?.humanApprovalAt).toBe("2026-04-10T12:00:00.500Z");
+
+			// Messages now sort in true temporal order via the existing
+			// `ORDER BY timestamp ASC` lexical clause.
+			expect(reloaded.messages.map((m) => m.messageId)).toEqual(["m-1", "m-2"]);
+
+			// Re-opening once more is a fast no-op: the marker is set,
+			// the backfill skips. Verify by inspecting schema_meta.
+			const marker = (
+				reopened.database
+					.prepare("SELECT value FROM schema_meta WHERE key = ?")
+					.get("canonicalize_timestamps_backfill") as { value: string } | undefined
+			)?.value;
+			expect(marker).toBe("1");
+
+			reopened.close();
+		});
+
+		it("backfill is idempotent — safe to construct the logger repeatedly", async () => {
+			// Call the constructor a second time on the same DB; the
+			// backfill marker is already set, so it must be a no-op
+			// and not throw.
+			logger.close();
+			const second = new SqliteConversationLogger(dataDir);
+			second.close();
+		});
+	});
 });

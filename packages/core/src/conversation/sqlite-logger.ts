@@ -7,6 +7,14 @@ import { applySchema } from "./sqlite-schema.js";
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
 
+/**
+ * Schema_meta key + value used to mark the timestamp-canonicalization
+ * backfill as complete. Bumping the value re-runs the backfill on the
+ * next construction.
+ */
+const CANONICALIZE_BACKFILL_KEY = "canonicalize_timestamps_backfill";
+const CANONICALIZE_BACKFILL_VERSION = "1";
+
 interface ConversationContext {
 	connectionId: string;
 	peerAgentId: number;
@@ -115,6 +123,88 @@ export class SqliteConversationLogger implements IConversationLogger {
 			 SET topic = ?, started_at = ?, last_message_at = ?, last_read_at = ?, status = ?
 			 WHERE conversation_id = ?`,
 		);
+
+		// One-time data migration: canonicalize every existing row's
+		// timestamp columns. Rows written by a pre-canonicalization
+		// build of this logger are still in mixed-encoding form, and
+		// the lexical `ORDER BY` clauses above only equal instant order
+		// when EVERY row is canonical. Without this backfill, an
+		// upgraded install keeps the old ordering bug for any
+		// pre-existing conversations even though new writes are clean.
+		this.runCanonicalizeBackfillIfNeeded();
+	}
+
+	private runCanonicalizeBackfillIfNeeded(): void {
+		const versionRow = this.db
+			.prepare("SELECT value FROM schema_meta WHERE key = ?")
+			.get(CANONICALIZE_BACKFILL_KEY) as { value: string } | undefined;
+		if (versionRow && versionRow.value === CANONICALIZE_BACKFILL_VERSION) {
+			return;
+		}
+
+		// Backfill body. Wrapped in a transaction so a partial run never
+		// leaves the DB half-canonicalized.
+		const backfill = this.db.transaction(() => {
+			// conversations table — three timestamp columns
+			const conversationRows = this.db
+				.prepare(
+					"SELECT conversation_id, started_at, last_message_at, last_read_at FROM conversations",
+				)
+				.all() as Array<{
+				conversation_id: string;
+				started_at: string;
+				last_message_at: string;
+				last_read_at: string | null;
+			}>;
+			const updateConversation = this.db.prepare(
+				"UPDATE conversations SET started_at = ?, last_message_at = ?, last_read_at = ? WHERE conversation_id = ?",
+			);
+			for (const row of conversationRows) {
+				const startedAt = canonicalizeTimestampSafe(row.started_at);
+				const lastMessageAt = canonicalizeTimestampSafe(row.last_message_at);
+				const lastReadAt =
+					row.last_read_at === null ? null : canonicalizeTimestampSafe(row.last_read_at);
+				if (
+					startedAt !== row.started_at ||
+					lastMessageAt !== row.last_message_at ||
+					lastReadAt !== row.last_read_at
+				) {
+					updateConversation.run(startedAt, lastMessageAt, lastReadAt, row.conversation_id);
+				}
+			}
+
+			// messages table — two timestamp columns. We need a stable row
+			// identifier to UPDATE in place; messages has no PK, so use
+			// the (conversation_id, insert_order) pair which the schema
+			// guarantees is unique within a conversation.
+			const messageRows = this.db
+				.prepare("SELECT conversation_id, insert_order, timestamp, human_approval_at FROM messages")
+				.all() as Array<{
+				conversation_id: string;
+				insert_order: number;
+				timestamp: string;
+				human_approval_at: string | null;
+			}>;
+			const updateMessage = this.db.prepare(
+				"UPDATE messages SET timestamp = ?, human_approval_at = ? WHERE conversation_id = ? AND insert_order = ?",
+			);
+			for (const row of messageRows) {
+				const ts = canonicalizeTimestampSafe(row.timestamp);
+				const approvalAt =
+					row.human_approval_at === null ? null : canonicalizeTimestampSafe(row.human_approval_at);
+				if (ts !== row.timestamp || approvalAt !== row.human_approval_at) {
+					updateMessage.run(ts, approvalAt, row.conversation_id, row.insert_order);
+				}
+			}
+
+			// Mark the backfill complete so subsequent constructor calls
+			// no-op without re-scanning every row.
+			this.db
+				.prepare("INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)")
+				.run(CANONICALIZE_BACKFILL_KEY, CANONICALIZE_BACKFILL_VERSION);
+		});
+
+		backfill();
 	}
 
 	close(): void {
@@ -640,7 +730,7 @@ function isStrictIsoTimestamp(value: string): boolean {
 /** Returns true if `(yyyy, mm, dd)` points at a real Gregorian calendar day. */
 function isValidCalendarDate(yyyy: number, mm: number, dd: number): boolean {
 	if (yyyy < 1 || mm < 1 || mm > 12 || dd < 1) return false;
-	const daysInMonth = [
+	const daysInMonth: readonly number[] = [
 		31,
 		isLeapYear(yyyy) ? 29 : 28,
 		31,
@@ -654,7 +744,8 @@ function isValidCalendarDate(yyyy: number, mm: number, dd: number): boolean {
 		30,
 		31,
 	];
-	return dd <= daysInMonth[mm - 1];
+	const max = daysInMonth[mm - 1] ?? 0;
+	return dd <= max;
 }
 
 function isLeapYear(year: number): boolean {
