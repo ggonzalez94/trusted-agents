@@ -11,7 +11,7 @@ import {
 	validateSchedulingProposal,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord, requireParam } from "../validation.js";
+import { asRecord, requireBody, requireParam } from "../validation.js";
 
 /**
  * Full-shape body. Back-compat for the CLI `tap message request-meeting`
@@ -156,19 +156,19 @@ export function createMeetingsRoutes(
 			}
 
 			if (isFullShape(raw)) {
-				if (!isRequestMeetingFullBody(body)) {
-					throw new Error(
-						"meetings POST with a full body requires { peer: string, proposal: SchedulingProposal }",
-					);
-				}
+				requireBody(
+					body,
+					isRequestMeetingFullBody,
+					"meetings POST with a full body requires { peer: string, proposal: SchedulingProposal }",
+				);
 				return await service.requestMeeting(body);
 			}
 
-			if (!isRequestMeetingFlatBody(body)) {
-				throw new Error(
-					"meetings POST flat body requires { peer: string, title: string, duration: number, ... }",
-				);
-			}
+			requireBody(
+				body,
+				isRequestMeetingFlatBody,
+				"meetings POST flat body requires { peer: string, title: string, duration: number, ... }",
+			);
 
 			const proposal = await buildProposalFromFlat(body, calendarProvider);
 			validateSchedulingProposal(proposal);
@@ -177,9 +177,7 @@ export function createMeetingsRoutes(
 
 		respond: async (params, body) => {
 			const schedulingId = requireParam(params, "id");
-			if (!isRespondBody(body)) {
-				throw new Error("respond requires { approve: boolean, reason?: string }");
-			}
+			requireBody(body, isRespondBody, "respond requires { approve: boolean, reason?: string }");
 			const pending = await service.listPendingRequests();
 			const match = pending.find((entry) => {
 				if (entry.direction !== "inbound") return false;
@@ -201,9 +199,7 @@ export function createMeetingsRoutes(
 
 		cancel: async (params, body) => {
 			const schedulingId = requireParam(params, "id");
-			if (!isCancelBody(body)) {
-				throw new Error("cancel body must be { reason?: string } or empty");
-			}
+			requireBody(body, isCancelBody, "cancel body must be { reason?: string } or empty");
 			return await service.cancelMeeting(schedulingId, body?.reason);
 		},
 	};

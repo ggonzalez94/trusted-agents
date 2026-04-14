@@ -5,7 +5,7 @@ import type {
 	TapRequestGrantSetResult,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord } from "../validation.js";
+import { asRecord, requireBody } from "../validation.js";
 
 interface GrantsBody {
 	peer: string;
@@ -36,15 +36,11 @@ export interface GrantsRoutes {
 export function createGrantsRoutes(service: TapMessagingService): GrantsRoutes {
 	return {
 		publish: async (_params, body) => {
-			if (!isGrantsBody(body)) {
-				throw new Error("grants/publish requires { peer, grantSet, note? }");
-			}
+			requireBody(body, isGrantsBody, "grants/publish requires { peer, grantSet, note? }");
 			return await service.publishGrantSet(body.peer, body.grantSet, body.note);
 		},
 		request: async (_params, body) => {
-			if (!isGrantsBody(body)) {
-				throw new Error("grants/request requires { peer, grantSet, note? }");
-			}
+			requireBody(body, isGrantsBody, "grants/request requires { peer, grantSet, note? }");
 			return await service.requestGrantSet(body.peer, body.grantSet, body.note);
 		},
 	};

@@ -1,5 +1,5 @@
 import type { RouteHandler } from "../router.js";
-import { asRecord } from "../validation.js";
+import { asRecord, requireBody } from "../validation.js";
 
 export interface TransferExecutionRequest {
 	asset: "native" | "usdc";
@@ -36,9 +36,11 @@ export function createTransfersRoute(
 	executor: TransferExecutor,
 ): RouteHandler<unknown, TransferExecutionResult> {
 	return async (_params, body) => {
-		if (!isTransferBody(body)) {
-			throw new Error("transfers POST requires { asset, amount, chain, toAddress }");
-		}
+		requireBody(
+			body,
+			isTransferBody,
+			"transfers POST requires { asset, amount, chain, toAddress }",
+		);
 		return await executor(body);
 	};
 }

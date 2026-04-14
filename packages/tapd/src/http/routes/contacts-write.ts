@@ -1,6 +1,6 @@
 import type { Contact, ITrustStore, TapMessagingService } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { requireParam } from "../validation.js";
+import { requireBody, requireParam } from "../validation.js";
 
 interface RevokeBody {
 	reason?: string;
@@ -30,9 +30,7 @@ export function createContactsWriteRoutes(
 	return {
 		revoke: async (params, body) => {
 			const connectionId = requireParam(params, "connectionId");
-			if (!isRevokeBody(body)) {
-				throw new Error("revoke body must be { reason?: string } or empty");
-			}
+			requireBody(body, isRevokeBody, "revoke body must be { reason?: string } or empty");
 			const contacts = await trustStore.getContacts();
 			const contact = contacts.find((c: Contact) => c.connectionId === connectionId);
 			if (!contact) {

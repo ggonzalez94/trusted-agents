@@ -392,20 +392,47 @@ function mergeImportMetadata(
 ): MergedImportMetadata {
 	return {
 		topic: existing.topic ?? legacy.topic ?? null,
-		startedAt: existing.started_at <= legacy.startedAt ? existing.started_at : legacy.startedAt,
-		lastMessageAt:
-			existing.last_message_at >= legacy.lastMessageAt
-				? existing.last_message_at
-				: legacy.lastMessageAt,
+		startedAt: pickEarlierInstant(existing.started_at, legacy.startedAt),
+		lastMessageAt: pickLaterInstant(existing.last_message_at, legacy.lastMessageAt),
 		lastReadAt: mergeLastReadAt(existing.last_read_at, legacy.lastReadAt ?? null),
 		status: mergeStatus(existing.status, legacy.status),
 	};
 }
 
+/** Returns the timestamp with the earlier instant (MIN). */
+function pickEarlierInstant(a: string, b: string): string {
+	return compareTimestampInstants(a, b) <= 0 ? a : b;
+}
+
+/** Returns the timestamp with the later instant (MAX). */
+function pickLaterInstant(a: string, b: string): string {
+	return compareTimestampInstants(a, b) >= 0 ? a : b;
+}
+
+/**
+ * Compare two ISO 8601 timestamps as instants (milliseconds since epoch).
+ * Returns negative if `a` is earlier, positive if `a` is later, zero if
+ * equal. Uses `Date.parse` so mixed precision (`...00Z` vs `...00.500Z`)
+ * and mixed timezones (`+00:00` vs `Z`, or `Z` vs `-01:00`) compare
+ * correctly. The migration validator rejects unparseable timestamps before
+ * the merge runs, so a NaN result here can only come from a runtime row
+ * we did not validate; in that case fall back to lexical order to remain
+ * deterministic.
+ */
+function compareTimestampInstants(a: string, b: string): number {
+	const aMs = Date.parse(a);
+	const bMs = Date.parse(b);
+	if (Number.isNaN(aMs) || Number.isNaN(bMs)) {
+		if (a === b) return 0;
+		return a < b ? -1 : 1;
+	}
+	return aMs - bMs;
+}
+
 function mergeLastReadAt(existing: string | null, legacy: string | null): string | null {
 	if (existing === null) return legacy;
 	if (legacy === null) return existing;
-	return existing >= legacy ? existing : legacy;
+	return pickLaterInstant(existing, legacy);
 }
 
 const STATUS_RANK: Record<string, number> = { active: 0, completed: 1, archived: 2 };
@@ -427,11 +454,34 @@ function mergeStatus(
  * Shape validator for import. Rejects a log whose message array contains a
  * row that would fail at INSERT time. Running this before the transaction
  * opens keeps `importLog` all-or-nothing even for malformed input.
+ *
+ * Also rejects top-level timestamps (`startedAt`, `lastMessageAt`,
+ * `lastReadAt`) and per-message timestamps that `Date.parse` cannot
+ * interpret. This is a hard requirement for the merge step:
+ * `mergeImportMetadata` compares timestamps as instants, so any value
+ * that yields `NaN` from `Date.parse` would otherwise silently fall
+ * through to a lexical fallback. Reject it upstream and force the
+ * caller to surface the error per-file via the migration's error list.
  */
 function validateConversationLogForImport(log: ConversationLog): void {
 	if (!Array.isArray(log.messages)) {
 		throw new Error(`importLog: conversation ${log.conversationId} messages is not an array`);
 	}
+
+	const topErr = (field: string, issue: string) =>
+		new Error(`importLog: conversation ${log.conversationId} ${field} ${issue}`);
+	if (typeof log.startedAt !== "string" || !isParseableInstant(log.startedAt)) {
+		throw topErr("startedAt", "is not a parseable ISO 8601 instant");
+	}
+	if (typeof log.lastMessageAt !== "string" || !isParseableInstant(log.lastMessageAt)) {
+		throw topErr("lastMessageAt", "is not a parseable ISO 8601 instant");
+	}
+	if (log.lastReadAt !== undefined && log.lastReadAt !== null) {
+		if (typeof log.lastReadAt !== "string" || !isParseableInstant(log.lastReadAt)) {
+			throw topErr("lastReadAt", "is not a parseable ISO 8601 instant");
+		}
+	}
+
 	const msgErr = (i: number, issue: string) =>
 		new Error(`importLog: conversation ${log.conversationId} message[${i}] ${issue}`);
 	for (let i = 0; i < log.messages.length; i += 1) {
@@ -439,6 +489,8 @@ function validateConversationLogForImport(log: ConversationLog): void {
 		if (!message || typeof message !== "object") throw msgErr(i, "is not an object");
 		if (typeof message.timestamp !== "string" || message.timestamp.length === 0)
 			throw msgErr(i, "has missing or non-string timestamp");
+		if (!isParseableInstant(message.timestamp))
+			throw msgErr(i, `has non-parseable timestamp: ${message.timestamp}`);
 		if (message.direction !== "incoming" && message.direction !== "outgoing")
 			throw msgErr(i, `has invalid direction: ${String(message.direction)}`);
 		if (typeof message.scope !== "string") throw msgErr(i, "has non-string scope");
@@ -450,6 +502,11 @@ function validateConversationLogForImport(log: ConversationLog): void {
 		if (message.messageId !== undefined && typeof message.messageId !== "string")
 			throw msgErr(i, "has non-string messageId");
 	}
+}
+
+function isParseableInstant(value: string): boolean {
+	if (value.length === 0) return false;
+	return !Number.isNaN(Date.parse(value));
 }
 
 function rowToConversationLog(row: ConversationRow, messages: MessageRow[]): ConversationLog {

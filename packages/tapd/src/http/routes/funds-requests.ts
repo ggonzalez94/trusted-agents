@@ -4,7 +4,7 @@ import type {
 	TapRequestFundsResult,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord } from "../validation.js";
+import { asRecord, requireBody } from "../validation.js";
 
 function isFundsRequestBody(value: unknown): value is TapRequestFundsInput {
 	const v = asRecord(value);
@@ -26,11 +26,11 @@ export function createFundsRequestsRoute(
 	service: TapMessagingService,
 ): RouteHandler<unknown, TapRequestFundsResult> {
 	return async (_params, body) => {
-		if (!isFundsRequestBody(body)) {
-			throw new Error(
-				"funds-requests POST requires { peer, asset, amount, chain, toAddress, note? }",
-			);
-		}
+		requireBody(
+			body,
+			isFundsRequestBody,
+			"funds-requests POST requires { peer, asset, amount, chain, toAddress, note? }",
+		);
 		return await service.requestFunds(body);
 	};
 }

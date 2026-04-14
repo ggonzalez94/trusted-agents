@@ -1008,4 +1008,176 @@ describe("sqlite migration", () => {
 
 		logger.close();
 	});
+
+	it("merges metadata by temporal instant, not lexical string order, under mixed timestamp precision", async () => {
+		// Codex residual: string `<`/`>` does not equal temporal order
+		// for ISO 8601 with varying precision or timezone offsets. The
+		// classic pitfall is `...00Z` vs `...00.500Z` — the SHORTER
+		// string is GREATER lexically (because 'Z' (90) > '.' (46) at
+		// position 18) but EARLIER temporally. A naive `>= a ? a : b`
+		// merge would let a legacy "00Z" snapshot beat an existing
+		// "00.500Z" runtime value, rolling lastMessageAt backward.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationId = "conv-precision";
+		const legacy = {
+			conversationId,
+			connectionId: "conn-1",
+			peerAgentId: 31,
+			peerDisplayName: "Carla",
+			topic: "Mixed precision",
+			startedAt: "2026-04-01T00:00:00Z",
+			lastMessageAt: "2026-04-10T12:00:00Z",
+			lastReadAt: "2026-04-10T12:00:00Z",
+			status: "active" as const,
+			messages: [
+				{
+					messageId: "legacy-only",
+					timestamp: "2026-04-01T00:00:00Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "older legacy message",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		await writeFile(join(dataDir, "conversations", "conv-precision.json"), JSON.stringify(legacy));
+
+		const logger = new SqliteConversationLogger(dataDir);
+		await logger.logMessage(
+			conversationId,
+			{
+				messageId: "runtime-precise",
+				timestamp: "2026-04-10T12:00:00.500Z",
+				direction: "incoming",
+				scope: "default",
+				content: "newer runtime message at .5s",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{ connectionId: "conn-1", peerAgentId: 31, peerDisplayName: "Carla" },
+		);
+		await logger.markRead(conversationId, "2026-04-10T12:00:00.500Z");
+
+		// Sanity check the lexical bug exists in the raw strings — the
+		// SHORTER (legacy) string is lexically GREATER even though it
+		// represents an EARLIER instant.
+		expect("2026-04-10T12:00:00Z" > "2026-04-10T12:00:00.500Z").toBe(true);
+
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+		expect(report.migrated).toBe(1);
+
+		const merged = await logger.getConversation(conversationId);
+		expect(merged).not.toBeNull();
+		if (!merged) return;
+
+		// MAX(runtime, legacy) by INSTANT — runtime wins because .500Z
+		// is 500ms LATER than 00Z. A lexical comparison would have
+		// rolled this back to "2026-04-10T12:00:00Z".
+		expect(merged.lastMessageAt).toBe("2026-04-10T12:00:00.500Z");
+		expect(merged.lastReadAt).toBe("2026-04-10T12:00:00.500Z");
+
+		logger.close();
+	});
+
+	it("merges metadata by temporal instant under mixed timezone offsets", async () => {
+		// Same root issue as the precision test, but under timezone
+		// offset differences. We use a legacy timestamp that is
+		// ACTUALLY 1 second earlier than the runtime instant but
+		// lexically greater because of the offset notation.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationId = "conv-tz";
+		const legacy = {
+			conversationId,
+			connectionId: "conn-1",
+			peerAgentId: 47,
+			peerDisplayName: "Dan",
+			startedAt: "2026-04-10T13:00:00+01:00", // = noon UTC
+			lastMessageAt: "2026-04-10T13:00:00+01:00", // = noon UTC
+			lastReadAt: null,
+			status: "active" as const,
+			messages: [
+				{
+					messageId: "legacy-tz",
+					timestamp: "2026-04-10T13:00:00+01:00",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "legacy in +01:00",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		await writeFile(join(dataDir, "conversations", "conv-tz.json"), JSON.stringify(legacy));
+
+		const logger = new SqliteConversationLogger(dataDir);
+		// Runtime row's timestamp is strictly LATER (1 second after
+		// noon UTC) but lexically LESS than `13:00:00+01:00`.
+		await logger.logMessage(
+			conversationId,
+			{
+				messageId: "runtime-tz",
+				timestamp: "2026-04-10T12:00:01Z",
+				direction: "incoming",
+				scope: "default",
+				content: "runtime 1s after legacy noon",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{ connectionId: "conn-1", peerAgentId: 47, peerDisplayName: "Dan" },
+		);
+
+		// Sanity: lexical order says runtime < legacy, but instant
+		// order says runtime > legacy.
+		expect("2026-04-10T12:00:01Z" < "2026-04-10T13:00:00+01:00").toBe(true);
+		expect(Date.parse("2026-04-10T12:00:01Z")).toBeGreaterThan(
+			Date.parse("2026-04-10T13:00:00+01:00"),
+		);
+
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+		expect(report.migrated).toBe(1);
+
+		const merged = await logger.getConversation(conversationId);
+		expect(merged).not.toBeNull();
+		if (!merged) return;
+
+		// MAX by INSTANT picks the runtime value, even though it loses
+		// a lexical comparison to the legacy offset-form string.
+		expect(merged.lastMessageAt).toBe("2026-04-10T12:00:01Z");
+
+		logger.close();
+	});
+
+	it("rejects legacy logs with non-parseable top-level timestamps", async () => {
+		// The merge depends on Date.parse succeeding on both sides.
+		// validateConversationLogForImport rejects non-parseable
+		// top-level timestamps so the merge never silently picks a
+		// NaN side.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "conv-bad-ts.json"),
+			JSON.stringify({
+				conversationId: "conv-bad-ts",
+				connectionId: "conn-1",
+				peerAgentId: 1,
+				peerDisplayName: "X",
+				startedAt: "not a real timestamp",
+				lastMessageAt: "2026-04-01T00:00:00Z",
+				status: "active",
+				messages: [],
+			}),
+		);
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toHaveLength(1);
+		expect(report.errors[0].file).toBe("conv-bad-ts.json");
+		expect(report.errors[0].error).toMatch(/startedAt/);
+		expect(report.migrated).toBe(0);
+		expect(await logger.getConversation("conv-bad-ts")).toBeNull();
+
+		logger.close();
+	});
 });

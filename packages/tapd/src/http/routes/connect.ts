@@ -1,6 +1,6 @@
 import type { TapConnectResult, TapMessagingService } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord } from "../validation.js";
+import { asRecord, requireBody } from "../validation.js";
 
 interface ConnectBody {
 	inviteUrl: string;
@@ -24,9 +24,11 @@ export function createConnectRoute(
 	service: TapMessagingService,
 ): RouteHandler<unknown, TapConnectResult> {
 	return async (_params, body) => {
-		if (!isConnectBody(body)) {
-			throw new Error("connect POST requires { inviteUrl: string, waitMs?: number }");
-		}
+		requireBody(
+			body,
+			isConnectBody,
+			"connect POST requires { inviteUrl: string, waitMs?: number }",
+		);
 		return await service.connect({ inviteUrl: body.inviteUrl, waitMs: body.waitMs });
 	};
 }
