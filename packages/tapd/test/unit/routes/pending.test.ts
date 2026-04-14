@@ -20,6 +20,7 @@ function makePendingRequest(overrides: Partial<TapPendingRequest> = {}): TapPend
 		requestId: "req-1",
 		method: "action/request",
 		peerAgentId: 99,
+		peerChain: "eip155:8453",
 		direction: "inbound",
 		kind: "request",
 		status: "pending",

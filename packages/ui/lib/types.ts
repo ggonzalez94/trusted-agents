@@ -113,6 +113,14 @@ export interface PendingItem {
 	requestId: string;
 	method: string;
 	peerAgentId: number;
+	/**
+	 * CAIP-2 chain id of the counterparty. Mirrors core's `TapPendingRequest`
+	 * — peer identity is `(peerAgentId, peerChain)` because agent IDs can
+	 * collide across chains. Empty string means the chain couldn't be
+	 * resolved (unique-contact lookup failed); treat as "unknown" and
+	 * fail closed on routing. See F2.3.
+	 */
+	peerChain: string;
 	direction: string;
 	kind: string;
 	status: string;

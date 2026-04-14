@@ -194,6 +194,19 @@ export interface TapPendingRequest {
 	requestId: string;
 	method: string;
 	peerAgentId: number;
+	/**
+	 * CAIP-2 chain id of the counterparty. The canonical peer identity is
+	 * `(peerAgentId, peerChain)` because numeric agent IDs can collide
+	 * across chains — a Base agent #42 and a Taiko agent #42 are different
+	 * peers. UIs and host plugins MUST filter pending entries by both
+	 * fields before surfacing them under a specific thread/contact (F2.3).
+	 *
+	 * Empty string when the chain cannot be determined from the journal
+	 * entry's metadata and no unique contact lookup exists. Consumers
+	 * should treat an empty `peerChain` as "unknown" and fail closed on
+	 * routing decisions rather than assuming it matches any chain.
+	 */
+	peerChain: string;
 	direction: string;
 	kind: string;
 	status: string;
@@ -739,10 +752,13 @@ export class TapMessagingService {
 	}
 
 	async listPendingRequests(): Promise<TapServiceStatus["pendingRequests"]> {
-		const pending = await this.context.requestJournal.listPending();
+		const [pending, contacts] = await Promise.all([
+			this.context.requestJournal.listPending(),
+			this.context.trustStore.getContacts(),
+		]);
 		return pending
 			.filter((entry) => entry.kind === "request" && !isOutboundDeliveryEntry(entry))
-			.map(toPendingRequestView);
+			.map((entry) => toPendingRequestView(entry, contacts));
 	}
 
 	private async findCancellableSchedulingRequest(
@@ -1404,7 +1420,7 @@ export class TapMessagingService {
 				request,
 				requestId,
 				timestamp,
-				{ actionType },
+				{ actionType, peerChain: contact.peerChain },
 			);
 
 			const outboundKind: TapActionKind = actionType.startsWith("scheduling/")
@@ -1615,7 +1631,7 @@ export class TapMessagingService {
 				request,
 				requestId,
 				timestamp,
-				undefined,
+				{ peerChain: contact.peerChain },
 				() => waiter.cancel(),
 			);
 
@@ -2005,10 +2021,13 @@ export class TapMessagingService {
 	private async buildSyncReport(processed: number): Promise<TapSyncReport> {
 		// Single journal scan partitioned into the two views the report needs.
 		// Avoids reading request-journal.json twice per sync.
-		const allPending = await this.context.requestJournal.listPending();
+		const [allPending, contacts] = await Promise.all([
+			this.context.requestJournal.listPending(),
+			this.context.trustStore.getContacts(),
+		]);
 		const pendingRequests = allPending
 			.filter((entry) => entry.kind === "request" && !isOutboundDeliveryEntry(entry))
-			.map(toPendingRequestView);
+			.map((entry) => toPendingRequestView(entry, contacts));
 		const pendingDeliveries = allPending
 			.filter((entry) => entry.direction === "outbound" && isDeliveryEntry(entry))
 			.map((entry) => toPendingDeliveryView(entry, Date.now()));
@@ -5509,11 +5528,42 @@ function isOutboundDeliveryEntry(entry: RequestJournalEntry): boolean {
 	return entry.direction === "outbound" && isDeliveryEntry(entry);
 }
 
-function toPendingRequestView(entry: RequestJournalEntry): TapPendingRequest {
+/**
+ * Build a `TapPendingRequest` view for the given journal entry.
+ *
+ * `peerChain` resolution order (F2.3):
+ *   1. Use `metadata.peerChain` when the journal entry carries it — this
+ *      is the case for inbound and outbound action/request entries,
+ *      whose details are persisted via `serializePending*RequestDetails`.
+ *   2. Fall back to a unique trust-store match on `peerAgentId`. This
+ *      only returns a chain when exactly one contact in `contacts`
+ *      matches the agent id. Multi-chain collisions leave the field
+ *      empty rather than picking an arbitrary one.
+ *   3. Leave the field empty. Downstream consumers must treat an empty
+ *      `peerChain` as "unknown" and fail closed on routing.
+ */
+function toPendingRequestView(
+	entry: RequestJournalEntry,
+	contacts: readonly Contact[],
+): TapPendingRequest {
+	const metadataChain =
+		typeof (entry.metadata as { peerChain?: unknown } | undefined)?.peerChain === "string"
+			? ((entry.metadata as { peerChain?: string }).peerChain as string)
+			: undefined;
+
+	let peerChain = metadataChain ?? "";
+	if (!peerChain) {
+		const candidates = contacts.filter((c) => c.peerAgentId === entry.peerAgentId);
+		if (candidates.length === 1) {
+			peerChain = candidates[0]?.peerChain ?? "";
+		}
+	}
+
 	return {
 		requestId: entry.requestId,
 		method: entry.method,
 		peerAgentId: entry.peerAgentId,
+		peerChain,
 		direction: entry.direction,
 		kind: entry.kind,
 		status: entry.status,

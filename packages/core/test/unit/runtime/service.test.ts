@@ -3285,7 +3285,10 @@ describe("TapMessagingService", () => {
 		expect(entry!.method).toBe("action/request");
 		expect(entry!.peerAgentId).toBe(PEER_AGENT.agentId);
 		expect(entry!.status).toBe("pending");
-		expect(entry!.metadata).toEqual({ actionType: "bet/propose" });
+		expect(entry!.metadata).toEqual({
+			actionType: "bet/propose",
+			peerChain: PEER_AGENT.chain,
+		});
 
 		await service.stop();
 	});

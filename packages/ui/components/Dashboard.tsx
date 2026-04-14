@@ -7,6 +7,7 @@ import { Thread } from "@/components/chat/Thread";
 import { Sidebar } from "@/components/rail/Sidebar";
 import { TapdClient } from "@/lib/api";
 import { EventStream } from "@/lib/events";
+import { filterPendingForContact } from "@/lib/pending";
 import { getToken } from "@/lib/token";
 import type { Contact, ConversationLog, Identity, PendingItem, TapEvent } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -115,10 +116,7 @@ export function Dashboard() {
 
 	const pendingForThread = useMemo<PendingItem[]>(() => {
 		if (!pending || !selectedContact) return [];
-		return pending.filter(
-			(item) =>
-				item.peerAgentId === selectedContact.peerAgentId && item.method === "action/request",
-		);
+		return filterPendingForContact(pending, selectedContact);
 	}, [pending, selectedContact]);
 
 	const handleApprove = useCallback(
