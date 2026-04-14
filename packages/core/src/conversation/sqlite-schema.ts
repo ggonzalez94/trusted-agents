@@ -55,9 +55,9 @@ export function applySchema(db: Database.Database): void {
 
 	db.exec(SCHEMA_SQL);
 
-	const meta = db
-		.prepare("SELECT value FROM schema_meta WHERE key = 'version'")
-		.get() as { value: string } | undefined;
+	const meta = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as
+		| { value: string }
+		| undefined;
 	if (!meta) {
 		db.prepare("INSERT INTO schema_meta(key, value) VALUES('version', ?)").run(
 			String(CURRENT_SCHEMA_VERSION),
@@ -66,9 +66,9 @@ export function applySchema(db: Database.Database): void {
 }
 
 export function getSchemaVersion(db: Database.Database): number {
-	const row = db
-		.prepare("SELECT value FROM schema_meta WHERE key = 'version'")
-		.get() as { value: string } | undefined;
+	const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as
+		| { value: string }
+		| undefined;
 	if (!row) return 0;
 	const parsed = Number.parseInt(row.value, 10);
 	return Number.isFinite(parsed) ? parsed : 0;

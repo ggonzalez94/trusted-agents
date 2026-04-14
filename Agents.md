@@ -300,7 +300,8 @@ File: `packages/sdk/src/orchestrator.ts`
 ├── apps/                    # app-scoped state
 │   ├── transfer/state.json
 │   └── scheduling/state.json
-├── conversations/<id>.json  # Per-peer message transcripts
+├── conversations.db         # SQLite store for conversation logs (v2, replaces conversations/*.json)
+├── conversations.bak/       # Pre-migration JSON backups (safe to delete after a release)
 └── xmtp/<inboxId>.db3       # XMTP client DB (encrypted)
 ```
 - Resolution order: `--data-dir` flag > `TAP_DATA_DIR` env > `~/.trustedagents`

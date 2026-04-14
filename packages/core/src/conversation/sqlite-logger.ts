@@ -129,9 +129,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 
 			if (!existing) {
 				if (!context) {
-					throw new Error(
-						"context is required when creating a new conversation log entry",
-					);
+					throw new Error("context is required when creating a new conversation log entry");
 				}
 				this.stmtInsertConversation.run(
 					conversationId,
@@ -180,9 +178,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 	}
 
 	async getConversation(conversationId: string): Promise<ConversationLog | null> {
-		const row = this.stmtSelectConversation.get(conversationId) as
-			| ConversationRow
-			| undefined;
+		const row = this.stmtSelectConversation.get(conversationId) as ConversationRow | undefined;
 		if (!row) return null;
 
 		const messageRows = this.stmtSelectMessages.all(conversationId) as MessageRow[];
@@ -215,10 +211,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 	}
 }
 
-function rowToConversationLog(
-	row: ConversationRow,
-	messages: MessageRow[],
-): ConversationLog {
+function rowToConversationLog(row: ConversationRow, messages: MessageRow[]): ConversationLog {
 	return {
 		conversationId: row.conversation_id,
 		connectionId: row.connection_id,
@@ -241,8 +234,7 @@ function rowToMessage(row: MessageRow): ConversationMessage {
 		scope: row.scope,
 		content: row.content,
 		humanApprovalRequired: row.human_approval_required === 1,
-		humanApprovalGiven:
-			row.human_approval_given === null ? null : row.human_approval_given === 1,
+		humanApprovalGiven: row.human_approval_given === null ? null : row.human_approval_given === 1,
 		...(row.human_approval_at ? { humanApprovalAt: row.human_approval_at } : {}),
 	};
 }

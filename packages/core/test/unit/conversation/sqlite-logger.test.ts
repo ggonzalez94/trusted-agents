@@ -63,15 +63,12 @@ describe("SqliteConversationLogger", () => {
 	});
 
 	it("appends to an existing conversation", async () => {
-		await logger.logMessage(
-			"conv-1",
-			makeMessage("2026-04-01T00:00:00.000Z", "first"),
-			{ connectionId: "conn-1", peerAgentId: 42, peerDisplayName: "Alice" },
-		);
-		await logger.logMessage(
-			"conv-1",
-			makeMessage("2026-04-01T00:01:00.000Z", "second"),
-		);
+		await logger.logMessage("conv-1", makeMessage("2026-04-01T00:00:00.000Z", "first"), {
+			connectionId: "conn-1",
+			peerAgentId: 42,
+			peerDisplayName: "Alice",
+		});
+		await logger.logMessage("conv-1", makeMessage("2026-04-01T00:01:00.000Z", "second"));
 
 		const log = await logger.getConversation("conv-1");
 		expect(log?.messages.map((m) => m.content)).toEqual(["first", "second"]);
@@ -134,11 +131,10 @@ describe("SqliteConversationLogger", () => {
 			peerDisplayName: "Alice",
 		};
 		await logger.logMessage("conv-1", makeMessage("2026-04-01T00:00:00.000Z", "a"), ctx);
-		await logger.logMessage(
-			"conv-1",
-			makeMessage("2026-04-01T00:01:00.000Z", "b"),
-			{ ...ctx, topic: "New topic" },
-		);
+		await logger.logMessage("conv-1", makeMessage("2026-04-01T00:01:00.000Z", "b"), {
+			...ctx,
+			topic: "New topic",
+		});
 		const log = await logger.getConversation("conv-1");
 		expect(log?.topic).toBe("New topic");
 	});
@@ -206,15 +202,11 @@ describe("SqliteConversationLogger", () => {
 	});
 
 	it("generateTranscript returns markdown for an existing conversation", async () => {
-		await logger.logMessage(
-			"conv-1",
-			makeMessage("2026-04-01T00:00:00.000Z", "hello from test"),
-			{
-				connectionId: "conn-1",
-				peerAgentId: 42,
-				peerDisplayName: "Alice",
-			},
-		);
+		await logger.logMessage("conv-1", makeMessage("2026-04-01T00:00:00.000Z", "hello from test"), {
+			connectionId: "conn-1",
+			peerAgentId: 42,
+			peerDisplayName: "Alice",
+		});
 		const md = await logger.generateTranscript("conv-1");
 		expect(md).toContain("hello from test");
 		expect(md).toContain("Alice");

@@ -122,9 +122,7 @@ export async function migrateFileLogsToSqlite(
 	} catch (error: unknown) {
 		report.errors.push({
 			file: CONVERSATIONS_DIRNAME,
-			error: `rename to backup failed: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			error: `rename to backup failed: ${error instanceof Error ? error.message : String(error)}`,
 		});
 	}
 
