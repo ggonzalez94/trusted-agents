@@ -102,12 +102,19 @@ interface HermesStatus {
 	gateway_pid: number | null;
 	manages_this_data_dir: boolean;
 	configured_identities: string[];
+	/** Populated when the plugin config exists but cannot be parsed. */
+	config_error?: string;
 }
 
 interface MessageSummary {
 	peer: string;
 	peer_agent_id: number;
 	at: string;
+}
+
+interface ReadResult<T> {
+	value: T;
+	error?: string;
 }
 
 interface StatusFlags {
@@ -133,9 +140,9 @@ export async function statusCommand(flags: StatusFlags, opts: GlobalOptions): Pr
 		const ownerAlive = rawOwner ? isProcessAlive(rawOwner.pid) : false;
 		const transportOwner = rawOwner ? { ...rawOwner, alive: ownerAlive } : null;
 
-		const contacts = await readContacts(dataDir);
-		const journalEntries = await readJournal(dataDir);
-		const conversations = await readConversations(dataDir);
+		const contactsRead = await readContacts(dataDir);
+		const journalRead = await readJournal(dataDir);
+		const conversationsRead = await readConversations(dataDir);
 		const hermes = await readHermesStatus(flags.hermesHome, dataDir);
 
 		const mode = detectMode({
@@ -144,9 +151,9 @@ export async function statusCommand(flags: StatusFlags, opts: GlobalOptions): Pr
 			transportOwner,
 		});
 
-		const contactsSummary = summarizeContacts(contacts);
-		const messages = summarizeMessages(conversations);
-		const journalSummary = summarizeJournal(journalEntries);
+		const contactsSummary = summarizeContacts(contactsRead.value);
+		const messages = summarizeMessages(conversationsRead.value);
+		const journalSummary = summarizeJournal(journalRead.value);
 
 		const warnings = buildWarnings({
 			configState,
@@ -155,6 +162,11 @@ export async function statusCommand(flags: StatusFlags, opts: GlobalOptions): Pr
 			contactsSummary,
 			journalSummary,
 			hermes,
+			readErrors: {
+				contacts: contactsRead.error,
+				journal: journalRead.error,
+				conversations: conversationsRead.error,
+			},
 		});
 
 		const payload: StatusPayload = {
@@ -233,28 +245,41 @@ function readConfigState(configPath: string): ConfigState {
 	return { kind: "parsed", agentId, chain };
 }
 
-async function readContacts(dataDir: string): Promise<Contact[]> {
+// ── Readers ──
+//
+// Each reader returns `{ value, error? }` so callers can distinguish "source is
+// empty" from "source is corrupt/unreadable". Collapsing both into `[]` turns
+// genuine file corruption into a fake "healthy" state — which is exactly when
+// the operator runs `tap status` for diagnosis. The underlying File* stores
+// already treat missing files as empty via ENOENT, so any error surfaced here
+// is a real JSON-parse or I/O failure worth warning about.
+
+async function readContacts(dataDir: string): Promise<ReadResult<Contact[]>> {
 	try {
-		return await new FileTrustStore(dataDir).getContacts();
-	} catch {
-		return [];
+		return { value: await new FileTrustStore(dataDir).getContacts() };
+	} catch (err) {
+		return { value: [], error: formatReadError(err) };
 	}
 }
 
-async function readJournal(dataDir: string): Promise<RequestJournalEntry[]> {
+async function readJournal(dataDir: string): Promise<ReadResult<RequestJournalEntry[]>> {
 	try {
-		return await new FileRequestJournal(dataDir).list();
-	} catch {
-		return [];
+		return { value: await new FileRequestJournal(dataDir).list() };
+	} catch (err) {
+		return { value: [], error: formatReadError(err) };
 	}
 }
 
-async function readConversations(dataDir: string): Promise<ConversationLog[]> {
+async function readConversations(dataDir: string): Promise<ReadResult<ConversationLog[]>> {
 	try {
-		return await new FileConversationLogger(dataDir).listConversations();
-	} catch {
-		return [];
+		return { value: await new FileConversationLogger(dataDir).listConversations() };
+	} catch (err) {
+		return { value: [], error: formatReadError(err) };
 	}
+}
+
+function formatReadError(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
 }
 
 async function readHermesStatus(
@@ -262,18 +287,44 @@ async function readHermesStatus(
 	dataDir: string,
 ): Promise<HermesStatus | null> {
 	const hermesHome = resolveHermesHome(hermesHomeOverride);
-	let config: TapHermesPluginConfig;
-	try {
-		config = await loadTapHermesPluginConfig(hermesHome);
-	} catch {
-		return null;
-	}
 
 	let daemonState: TapHermesDaemonState | null = null;
 	try {
 		daemonState = await readHermesTapDaemonState(hermesHome);
 	} catch {
 		daemonState = null;
+	}
+
+	let config: TapHermesPluginConfig | null = null;
+	let configError: string | undefined;
+	try {
+		config = await loadTapHermesPluginConfig(hermesHome);
+	} catch (err) {
+		// The config file exists but is unreadable or malformed. Report this
+		// as "installed but broken" so the operator sees the root cause instead
+		// of a false "Hermes isn't installed" silence.
+		configError = formatReadError(err);
+	}
+
+	if (!config && !configError && !daemonState) {
+		// No config file, no broken config, no daemon state — genuinely not
+		// installed for this user.
+		return null;
+	}
+
+	if (!config) {
+		// We got here because configError is set OR a daemon state file exists.
+		// In either case treat Hermes as installed so the error/daemon warning
+		// paths still fire.
+		return {
+			installed: true,
+			daemon_running: daemonState ? isProcessAlive(daemonState.pid) : false,
+			daemon_pid: daemonState?.pid ?? null,
+			gateway_pid: daemonState?.gatewayPid ?? null,
+			manages_this_data_dir: false,
+			configured_identities: [],
+			...(configError ? { config_error: configError } : {}),
+		};
 	}
 
 	const daemonRunning = daemonState ? isProcessAlive(daemonState.pid) : false;
@@ -414,8 +465,31 @@ function buildWarnings(input: {
 	contactsSummary: StatusPayload["contacts"];
 	journalSummary: StatusPayload["journal"];
 	hermes: HermesStatus | null;
+	readErrors: {
+		contacts?: string;
+		journal?: string;
+		conversations?: string;
+	};
 }): string[] {
 	const warnings: string[] = [];
+
+	// Surface read failures first — if a store is unreadable, every other
+	// derived metric is silently zero and would mislead the operator.
+	if (input.readErrors.contacts) {
+		warnings.push(
+			`Failed to read contacts.json: ${input.readErrors.contacts}. Contact counts are incomplete.`,
+		);
+	}
+	if (input.readErrors.journal) {
+		warnings.push(
+			`Failed to read request-journal.json: ${input.readErrors.journal}. Journal counts are incomplete.`,
+		);
+	}
+	if (input.readErrors.conversations) {
+		warnings.push(
+			`Failed to read conversations/: ${input.readErrors.conversations}. Message counts are incomplete.`,
+		);
+	}
 
 	if (input.configState.kind === "missing") {
 		warnings.push("No TAP config at this data dir. Run `tap init` to create one.");
@@ -450,9 +524,20 @@ function buildWarnings(input: {
 		);
 	}
 
-	if (input.journalSummary.queued_commands > 0 && !input.transportOwner) {
+	// Queued commands are equally undrained whether no lock exists OR the lock
+	// belongs to a dead process. A truthy-but-`alive: false` owner must NOT
+	// swallow this warning — the operator needs to see both the stale-lock
+	// note and the "nothing is draining your queue" note.
+	const transportIdle = !input.transportOwner || !input.transportOwner.alive;
+	if (input.journalSummary.queued_commands > 0 && transportIdle) {
 		warnings.push(
-			`${input.journalSummary.queued_commands} queued command(s) in journal but no transport owner is draining them. Start \`tap message listen\` or restart the host that owns this data dir.`,
+			`${input.journalSummary.queued_commands} queued command(s) in journal but no live transport owner is draining them. Start \`tap message listen\` or restart the host that owns this data dir.`,
+		);
+	}
+
+	if (input.hermes?.config_error) {
+		warnings.push(
+			`Hermes TAP plugin config exists but cannot be parsed: ${input.hermes.config_error}. Fix it or re-run \`tap hermes configure\`.`,
 		);
 	}
 

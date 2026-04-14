@@ -431,4 +431,100 @@ describe("tap status", () => {
 		expect(output.data?.journal.queued_commands).toBe(1);
 		expect(output.data?.warnings.some((w) => w.includes("queued command"))).toBe(true);
 	});
+
+	it("flags queued commands even when a stale (dead-pid) lock is present", async () => {
+		// Prior bug: the queued-commands warning was gated on
+		// `!input.transportOwner`, which is false when a stale lock file exists.
+		// In that state the operator only saw "stale lock" but not "nothing is
+		// draining your queue". Both matter because queued work is equally
+		// undrained in both cases.
+		const dataDir = await makeAgentDir(tempRoot);
+
+		// Write a lock file pointing at a pid that can't be alive.
+		const lockPath = join(dataDir, ".transport.lock");
+		await writeFile(
+			lockPath,
+			JSON.stringify({
+				pid: 999_999_999,
+				owner: "tap:listen",
+				acquiredAt: new Date().toISOString(),
+			}),
+			"utf-8",
+		);
+
+		const journal = new FileRequestJournal(dataDir);
+		await journal.putOutbound({
+			requestId: "cmd-stale",
+			requestKey: "outbound:command:cmd-stale",
+			direction: "outbound",
+			kind: "request",
+			method: "command/connect",
+			peerAgentId: 0,
+			status: "queued",
+			metadata: { commandType: "connect", commandPayload: { inviteUrl: "tap://demo" } },
+		});
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(output.data?.host.transport_owner?.alive).toBe(false);
+		expect(output.data?.warnings.some((w) => w.includes("Stale transport lock"))).toBe(true);
+		expect(
+			output.data?.warnings.some((w) => w.includes("queued command") && w.includes("draining")),
+		).toBe(true);
+	});
+
+	it("surfaces corrupt request-journal.json as a warning instead of silent zero", async () => {
+		// A diagnosis command must never silently turn file corruption into
+		// "everything is fine". Prior bug: a catch-all in readJournal returned
+		// [] for JSON parse failures.
+		const dataDir = await makeAgentDir(tempRoot);
+		await writeFile(join(dataDir, "request-journal.json"), "{ not json", "utf-8");
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(output.data?.journal.inbound_pending).toBe(0);
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Failed to read request-journal.json") && w.includes("incomplete"),
+			),
+		).toBe(true);
+	});
+
+	it("surfaces corrupt contacts.json as a warning", async () => {
+		const dataDir = await makeAgentDir(tempRoot);
+		await writeFile(join(dataDir, "contacts.json"), "[not an object", "utf-8");
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Failed to read contacts.json") && w.includes("incomplete"),
+			),
+		).toBe(true);
+	});
+
+	it("surfaces a broken Hermes plugin config instead of reporting not-installed", async () => {
+		// Prior bug: readHermesStatus caught all errors from
+		// loadTapHermesPluginConfig and returned null, making "installed but
+		// config.json is garbage" indistinguishable from "Hermes is not
+		// installed". The whole point of the debug command is to expose the
+		// root cause.
+		const dataDir = await makeAgentDir(tempRoot);
+		const hermesPluginDir = join(hermesHome, "plugins", "trusted-agents-tap");
+		await mkdir(hermesPluginDir, { recursive: true });
+		await writeFile(join(hermesPluginDir, "config.json"), "{ not: json", "utf-8");
+
+		await statusCommand({ hermesHome }, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(output.data?.host.hermes).not.toBeNull();
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Hermes TAP plugin config") && w.includes("cannot be parsed"),
+			),
+		).toBe(true);
+	});
 });
