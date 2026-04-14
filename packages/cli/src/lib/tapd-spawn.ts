@@ -41,6 +41,13 @@ export interface TapdSpawnResult {
  * Spawn tapd as a detached background process. Writes a pidfile to
  * `<dataDir>/.tapd.pid`, redirects stdio to `<dataDir>/.tapd.log`, and waits
  * for the port file to appear before resolving.
+ *
+ * Also guards against two split-brain failure modes:
+ * 1. A stale `.tapd.port` file from a prior (now-dead) daemon is unlinked
+ *    before spawn so `waitForPortFile` cannot match it and report success
+ *    for a process that hasn't actually bound a port yet.
+ * 2. If the child crashes before writing the port file, we raise a clear
+ *    error (including the log path) rather than waiting for the timeout.
  */
 export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<TapdSpawnResult> {
 	const binPath = options.binPath ?? resolveTapdBinPath();
@@ -53,6 +60,11 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 	const logPath = join(options.dataDir, LOG_FILE);
 	const pidPath = join(options.dataDir, PID_FILE);
 	const portPath = join(options.dataDir, PORT_FILE);
+
+	// Unlink any stale port file from a previous run. Without this, the port
+	// wait below can return a stale port from a dead daemon and the caller
+	// never notices the new child crashed (finding F3.2).
+	await rm(portPath, { force: true }).catch(() => {});
 
 	// Truncate the log on each spawn so users see the current run cleanly.
 	const logHandle = await open(logPath, "w", 0o600);
@@ -73,17 +85,33 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 		throw new Error("Failed to spawn tapd: no pid assigned");
 	}
 
+	const childPid = child.pid;
 	const { writeFile } = await import("node:fs/promises");
-	await writeFile(pidPath, String(child.pid), { encoding: "utf-8", mode: 0o600 });
+	await writeFile(pidPath, String(childPid), { encoding: "utf-8", mode: 0o600 });
 
 	const timeoutMs = options.startupTimeoutMs ?? 5_000;
-	const port = await waitForPortFile(portPath, timeoutMs);
-	return { pid: child.pid, port, logPath, pidPath };
+	try {
+		const port = await waitForPortFileAndLiveness(portPath, childPid, timeoutMs);
+		return { pid: childPid, port, logPath, pidPath };
+	} catch (error) {
+		// Remove the pidfile we just wrote — the child is dead or never bound,
+		// so leaving the pidfile around would make the status/stop commands
+		// think a real daemon is running.
+		await rm(pidPath, { force: true }).catch(() => {});
+		if (error instanceof TapdStartupError) {
+			throw new Error(`${error.message} See ${logPath} for details.`);
+		}
+		throw error;
+	}
 }
 
 /**
  * Stops a running tapd by reading the pidfile, sending SIGTERM, and waiting
- * for the port file to disappear. Removes both files when shutdown completes.
+ * for the child process to actually exit. Removes both files when shutdown
+ * completes. If SIGTERM times out, escalates to SIGKILL. If SIGKILL also
+ * fails to terminate the process, leaves the pidfile in place (as evidence)
+ * and raises an error — so `tap daemon status` doesn't claim success against
+ * a zombie process (finding F3.2).
  */
 export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Promise<number> {
 	const pidPath = join(dataDir, PID_FILE);
@@ -99,12 +127,18 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 		throw new Error(`Invalid pid in ${pidPath}`);
 	}
 
+	// Fast path — process already gone. Clean up and return.
+	if (!isProcessAlive(pid)) {
+		await rm(pidPath, { force: true }).catch(() => {});
+		await rm(portPath, { force: true }).catch(() => {});
+		return pid;
+	}
+
 	try {
 		process.kill(pid, "SIGTERM");
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code;
 		if (code === "ESRCH") {
-			// Process already gone — clean up files and return.
 			await rm(pidPath, { force: true }).catch(() => {});
 			await rm(portPath, { force: true }).catch(() => {});
 			return pid;
@@ -112,16 +146,80 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 		throw err;
 	}
 
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (!existsSync(portPath)) break;
-		await new Promise((r) => setTimeout(r, 100));
+	if (await waitForExit(pid, portPath, timeoutMs)) {
+		await rm(pidPath, { force: true }).catch(() => {});
+		await rm(portPath, { force: true }).catch(() => {});
+		return pid;
 	}
-	await rm(pidPath, { force: true }).catch(() => {});
-	return pid;
+
+	// SIGTERM was ignored — escalate. Give the process a short window to
+	// finish the KILL before giving up.
+	try {
+		process.kill(pid, "SIGKILL");
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ESRCH") {
+			await rm(pidPath, { force: true }).catch(() => {});
+			await rm(portPath, { force: true }).catch(() => {});
+			return pid;
+		}
+		// SIGKILL delivery failed for some other reason (EPERM, etc). Leave
+		// the pidfile in place as evidence and surface the error.
+		throw new Error(
+			`tapd (pid ${pid}) could not be killed: ${err instanceof Error ? err.message : String(err)}. Pidfile left in place.`,
+		);
+	}
+
+	if (await waitForExit(pid, portPath, 1_000)) {
+		await rm(pidPath, { force: true }).catch(() => {});
+		await rm(portPath, { force: true }).catch(() => {});
+		return pid;
+	}
+
+	// SIGKILL was delivered but the process is STILL alive (e.g. uninterruptible
+	// wait). Leave the pidfile as evidence so status reports it.
+	throw new Error(
+		`tapd (pid ${pid}) did not exit after SIGKILL. Pidfile left in place for diagnostics.`,
+	);
 }
 
-async function waitForPortFile(portPath: string, timeoutMs: number): Promise<number> {
+/**
+ * Returns true when `pid` is alive (or we cannot tell — in which case we err
+ * on the "alive" side to avoid stomping on a running daemon).
+ */
+export function isProcessAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ESRCH") return false;
+		// EPERM means the process exists but we can't signal it — still alive.
+		return true;
+	}
+}
+
+async function waitForExit(pid: number, portPath: string, timeoutMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (!isProcessAlive(pid) && !existsSync(portPath)) return true;
+		if (!isProcessAlive(pid)) return true;
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	return !isProcessAlive(pid);
+}
+
+/**
+ * Thin wrapper type so `spawnTapdDetached` can distinguish its own startup
+ * errors (child crashed, port never bound) from unexpected exceptions.
+ */
+class TapdStartupError extends Error {}
+
+async function waitForPortFileAndLiveness(
+	portPath: string,
+	childPid: number,
+	timeoutMs: number,
+): Promise<number> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		try {
@@ -131,7 +229,15 @@ async function waitForPortFile(portPath: string, timeoutMs: number): Promise<num
 		} catch {
 			// not yet
 		}
+		if (!isProcessAlive(childPid)) {
+			throw new TapdStartupError(`tapd (pid ${childPid}) exited before writing the port file.`);
+		}
 		await new Promise((r) => setTimeout(r, 50));
 	}
-	throw new Error(`Timed out waiting for tapd to bind a port (${portPath})`);
+	// Timed out. If the child is still alive it's just slow; if it's dead,
+	// surface the crash explicitly.
+	if (!isProcessAlive(childPid)) {
+		throw new TapdStartupError(`tapd (pid ${childPid}) exited before writing the port file.`);
+	}
+	throw new TapdStartupError(`Timed out waiting for tapd to bind a port (${portPath}).`);
 }
