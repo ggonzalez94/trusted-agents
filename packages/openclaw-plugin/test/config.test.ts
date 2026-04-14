@@ -18,9 +18,7 @@ describe("parseTapOpenClawPluginConfig", () => {
 	});
 
 	it("rejects non-object configs", () => {
-		expect(() => parseTapOpenClawPluginConfig([])).toThrow(
-			"TAP plugin config must be an object",
-		);
+		expect(() => parseTapOpenClawPluginConfig([])).toThrow("TAP plugin config must be an object");
 		expect(() => parseTapOpenClawPluginConfig("oops")).toThrow(
 			"TAP plugin config must be an object",
 		);
@@ -28,8 +26,6 @@ describe("parseTapOpenClawPluginConfig", () => {
 
 	it("rejects empty string fields", () => {
 		expect(() => parseTapOpenClawPluginConfig({ dataDir: "" })).toThrow("dataDir");
-		expect(() => parseTapOpenClawPluginConfig({ tapdSocketPath: "   " })).toThrow(
-			"tapdSocketPath",
-		);
+		expect(() => parseTapOpenClawPluginConfig({ tapdSocketPath: "   " })).toThrow("tapdSocketPath");
 	});
 });

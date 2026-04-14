@@ -37,7 +37,11 @@ function createFakeApi(pluginConfig: Record<string, unknown> = {}): FakeApiHandl
 			warn: vi.fn(),
 			error: vi.fn(),
 		},
-		registerService: (svc: { id: string; start?: () => Promise<void>; stop?: () => Promise<void> }) => {
+		registerService: (svc: {
+			id: string;
+			start?: () => Promise<void>;
+			stop?: () => Promise<void>;
+		}) => {
 			(async () => {
 				try {
 					await svc.start?.();

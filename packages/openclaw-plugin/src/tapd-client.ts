@@ -12,7 +12,9 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  */
 export class TapdNotRunningError extends Error {
 	constructor(public readonly socketPath: string) {
-		super(`tapd is not running (socket not found at ${socketPath}). Start it with: tap daemon start`);
+		super(
+			`tapd is not running (socket not found at ${socketPath}). Start it with: tap daemon start`,
+		);
 		this.name = "TapdNotRunningError";
 	}
 }
@@ -122,17 +124,11 @@ export class OpenClawTapdClient {
 	}
 
 	async respondMeeting(schedulingId: string, input: unknown): Promise<unknown> {
-		return await this.post(
-			`/api/meetings/${encodeURIComponent(schedulingId)}/respond`,
-			input,
-		);
+		return await this.post(`/api/meetings/${encodeURIComponent(schedulingId)}/respond`, input);
 	}
 
 	async cancelMeeting(schedulingId: string, input: unknown): Promise<unknown> {
-		return await this.post(
-			`/api/meetings/${encodeURIComponent(schedulingId)}/cancel`,
-			input,
-		);
+		return await this.post(`/api/meetings/${encodeURIComponent(schedulingId)}/cancel`, input);
 	}
 
 	async listPending(): Promise<unknown> {

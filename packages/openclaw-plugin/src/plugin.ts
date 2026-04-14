@@ -11,8 +11,7 @@ const ESCALATION_SESSION_KEY = "tap:escalation";
 const plugin = {
 	id: "trusted-agents-tap",
 	name: "Trusted Agents TAP",
-	description:
-		"Run the Trusted Agents Protocol inside OpenClaw Gateway via the local tapd daemon.",
+	description: "Run the Trusted Agents Protocol inside OpenClaw Gateway via the local tapd daemon.",
 	configSchema: tapOpenClawPluginConfigSchema,
 	register(api: OpenClawPluginApi) {
 		const pluginConfig = parseTapOpenClawPluginConfig(api.pluginConfig);
@@ -51,8 +50,7 @@ const plugin = {
 					escalationWatcher.start();
 				} catch (error: unknown) {
 					api.logger.error(
-						`[trusted-agents-tap] tapd is not reachable: ${toErrorMessage(error)}. ` +
-							"Run 'tap daemon start' to launch it. The TAP gateway tool will return errors until then.",
+						`[trusted-agents-tap] tapd is not reachable: ${toErrorMessage(error)}. Run 'tap daemon start' to launch it. The TAP gateway tool will return errors until then.`,
 					);
 				}
 			},
@@ -68,9 +66,7 @@ const plugin = {
 				const result = await drainAndFormatNotifications(client);
 				return result ?? undefined;
 			} catch (error: unknown) {
-				api.logger.warn(
-					`[trusted-agents-tap] notification drain failed: ${toErrorMessage(error)}`,
-				);
+				api.logger.warn(`[trusted-agents-tap] notification drain failed: ${toErrorMessage(error)}`);
 				return undefined;
 			}
 		});

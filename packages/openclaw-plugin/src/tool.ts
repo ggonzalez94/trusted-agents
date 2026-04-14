@@ -186,13 +186,10 @@ async function executeTapGatewayAction(
 				note: optionalString(params.note),
 			});
 		case "respond_meeting":
-			return await client.respondMeeting(
-				requireString(params.schedulingId, "schedulingId"),
-				{
-					approve: requireMeetingAccept(params.meetingAction),
-					reason: optionalString(params.reason),
-				},
-			);
+			return await client.respondMeeting(requireString(params.schedulingId, "schedulingId"), {
+				approve: requireMeetingAccept(params.meetingAction),
+				reason: optionalString(params.reason),
+			});
 		case "cancel_meeting":
 			return await client.cancelMeeting(requireString(params.schedulingId, "schedulingId"), {
 				reason: optionalString(params.reason),

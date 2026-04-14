@@ -1,10 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import {
-	type IncomingMessage,
-	type Server,
-	type ServerResponse,
-	createServer,
-} from "node:http";
+import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,7 +56,10 @@ export async function startFakeTapd(options: FakeTapdOptions): Promise<FakeTapdH
 					res.writeHead(500, { "Content-Type": "application/json" });
 					res.end(
 						JSON.stringify({
-							error: { code: "internal", message: error instanceof Error ? error.message : String(error) },
+							error: {
+								code: "internal",
+								message: error instanceof Error ? error.message : String(error),
+							},
 						}),
 					);
 				}
@@ -134,7 +132,9 @@ async function handle(
 	const route = routes.find((r) => r.method === method && matchPath(r.path, path));
 	if (!route) {
 		res.writeHead(404, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ error: { code: "not_found", message: `no route ${method} ${path}` } }));
+		res.end(
+			JSON.stringify({ error: { code: "not_found", message: `no route ${method} ${path}` } }),
+		);
 		return;
 	}
 
@@ -151,7 +151,10 @@ async function handle(
 		res.writeHead(500, { "Content-Type": "application/json" });
 		res.end(
 			JSON.stringify({
-				error: { code: "internal", message: error instanceof Error ? error.message : String(error) },
+				error: {
+					code: "internal",
+					message: error instanceof Error ? error.message : String(error),
+				},
 			}),
 		);
 	}

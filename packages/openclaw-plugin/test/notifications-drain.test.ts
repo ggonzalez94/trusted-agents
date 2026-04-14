@@ -8,11 +8,7 @@ function clientWith(notifications: TapNotification[]): OpenClawTapdClient {
 	} as unknown as OpenClawTapdClient;
 }
 
-function note(
-	id: string,
-	type: TapNotification["type"],
-	oneLiner: string,
-): TapNotification {
+function note(id: string, type: TapNotification["type"], oneLiner: string): TapNotification {
 	return { id, type, oneLiner, createdAt: "2026-01-01T00:00:00Z" };
 }
 
@@ -53,11 +49,7 @@ describe("drainAndFormatNotifications", () => {
 
 	it("skips entries with empty one-liners", async () => {
 		const result = await drainAndFormatNotifications(
-			clientWith([
-				note("1", "info", "  "),
-				note("2", "info", "kept"),
-				note("3", "info", ""),
-			]),
+			clientWith([note("1", "info", "  "), note("2", "info", "kept"), note("3", "info", "")]),
 		);
 		expect(result?.prependContext).toBe(["[TAP Notifications]", "- INFO: kept"].join("\n"));
 	});
