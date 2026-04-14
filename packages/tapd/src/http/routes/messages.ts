@@ -1,5 +1,6 @@
 import type { TapMessagingService } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
+import { asRecord } from "../validation.js";
 
 interface SendMessageBody {
 	peer: string;
@@ -17,8 +18,8 @@ interface SendMessageBody {
 }
 
 function isSendMessageBody(value: unknown): value is SendMessageBody {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	const v = asRecord(value);
+	if (!v) return false;
 	if (typeof v.peer !== "string" || v.peer.length === 0) return false;
 	if (typeof v.text !== "string") return false;
 	if (v.scope !== undefined && typeof v.scope !== "string") return false;

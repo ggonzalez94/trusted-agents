@@ -4,10 +4,11 @@ import type {
 	TapRequestFundsResult,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
+import { asRecord } from "../validation.js";
 
 function isFundsRequestBody(value: unknown): value is TapRequestFundsInput {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	const v = asRecord(value);
+	if (!v) return false;
 	if (typeof v.peer !== "string" || v.peer.length === 0) return false;
 	if (v.asset !== "native" && v.asset !== "usdc") return false;
 	if (typeof v.amount !== "string" || v.amount.length === 0) return false;

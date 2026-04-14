@@ -1,5 +1,6 @@
 import type { TapMessagingService, TapPendingRequest } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
+import { requireParam } from "../validation.js";
 
 export interface PendingRoutes {
 	list: RouteHandler<unknown, TapPendingRequest[]>;
@@ -22,18 +23,12 @@ export function createPendingRoutes(service: TapMessagingService): PendingRoutes
 			return status.pendingRequests;
 		},
 		approve: async (params, body) => {
-			const id = params.id;
-			if (!id) {
-				throw new Error("missing pending id");
-			}
+			const id = requireParam(params, "id");
 			await service.resolvePending(id, true, readStringField(body, "note"));
 			return { resolved: true };
 		},
 		deny: async (params, body) => {
-			const id = params.id;
-			if (!id) {
-				throw new Error("missing pending id");
-			}
+			const id = requireParam(params, "id");
 			await service.resolvePending(id, false, readStringField(body, "reason"));
 			return { resolved: true };
 		},

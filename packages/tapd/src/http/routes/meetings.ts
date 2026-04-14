@@ -11,6 +11,7 @@ import {
 	validateSchedulingProposal,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
+import { asRecord, requireParam } from "../validation.js";
 
 /**
  * Full-shape body. Back-compat for the CLI `tap message request-meeting`
@@ -45,8 +46,8 @@ function isFullShape(value: Record<string, unknown>): boolean {
 }
 
 function isRequestMeetingFullBody(value: unknown): value is RequestMeetingFullBody {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	const v = asRecord(value);
+	if (!v) return false;
 	if (typeof v.peer !== "string" || v.peer.length === 0) return false;
 	if (!v.proposal || typeof v.proposal !== "object") return false;
 	const p = v.proposal as Record<string, unknown>;
@@ -59,8 +60,8 @@ function isRequestMeetingFullBody(value: unknown): value is RequestMeetingFullBo
 }
 
 function isRequestMeetingFlatBody(value: unknown): value is RequestMeetingFlatBody {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	const v = asRecord(value);
+	if (!v) return false;
 	if (typeof v.peer !== "string" || v.peer.length === 0) return false;
 	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
 	if (typeof v.duration !== "number" || !Number.isFinite(v.duration) || v.duration <= 0) {
@@ -81,8 +82,8 @@ interface RespondBody {
 }
 
 function isRespondBody(value: unknown): value is RespondBody {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	const v = asRecord(value);
+	if (!v) return false;
 	if (typeof v.approve !== "boolean") return false;
 	if (v.reason !== undefined && typeof v.reason !== "string") return false;
 	return true;
@@ -147,12 +148,12 @@ export function createMeetingsRoutes(
 
 	return {
 		request: async (_params, body) => {
-			if (!body || typeof body !== "object") {
+			const raw = asRecord(body);
+			if (!raw) {
 				throw new Error(
 					"meetings POST requires { peer, proposal } or { peer, title, duration, ... }",
 				);
 			}
-			const raw = body as Record<string, unknown>;
 
 			if (isFullShape(raw)) {
 				if (!isRequestMeetingFullBody(body)) {
@@ -175,10 +176,7 @@ export function createMeetingsRoutes(
 		},
 
 		respond: async (params, body) => {
-			const schedulingId = params.id;
-			if (!schedulingId) {
-				throw new Error("missing schedulingId");
-			}
+			const schedulingId = requireParam(params, "id");
 			if (!isRespondBody(body)) {
 				throw new Error("respond requires { approve: boolean, reason?: string }");
 			}
@@ -202,10 +200,7 @@ export function createMeetingsRoutes(
 		},
 
 		cancel: async (params, body) => {
-			const schedulingId = params.id;
-			if (!schedulingId) {
-				throw new Error("missing schedulingId");
-			}
+			const schedulingId = requireParam(params, "id");
 			if (!isCancelBody(body)) {
 				throw new Error("cancel body must be { reason?: string } or empty");
 			}
