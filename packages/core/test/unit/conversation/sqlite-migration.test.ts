@@ -1144,8 +1144,152 @@ describe("sqlite migration", () => {
 		if (!merged) return;
 
 		// MAX by INSTANT picks the runtime value, even though it loses
-		// a lexical comparison to the legacy offset-form string.
-		expect(merged.lastMessageAt).toBe("2026-04-10T12:00:01Z");
+		// a lexical comparison to the legacy offset-form string. The
+		// stored value is the CANONICAL 24-char `YYYY-MM-DDTHH:mm:ss.sssZ`
+		// form, not the raw input — every write path canonicalizes via
+		// `canonicalizeTimestamp` so the SQLite store only ever holds
+		// canonical strings and lexical ORDER BY equals instant order.
+		expect(merged.lastMessageAt).toBe("2026-04-10T12:00:01.000Z");
+
+		logger.close();
+	});
+
+	it("returns messages in true temporal order even after canonicalizing mixed encodings", async () => {
+		// Codex residual (medium): even with the merge fixed, the
+		// logger still ORDERS messages and conversations by lexical
+		// `timestamp` / `last_message_at` columns. The canonicalization
+		// fix puts every row in the strict 24-char form, so lexical
+		// order must equal instant order. Verify with an import that
+		// holds messages in mixed encodings — they should come back
+		// in true temporal order, not source order.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationId = "conv-order";
+		const log = {
+			conversationId,
+			connectionId: "conn-1",
+			peerAgentId: 81,
+			peerDisplayName: "Eve",
+			startedAt: "2026-04-10T12:00:00Z",
+			lastMessageAt: "2026-04-10T13:00:01+01:00",
+			status: "active" as const,
+			messages: [
+				// (1) noon UTC = 12:00:00Z
+				{
+					messageId: "m-noon",
+					timestamp: "2026-04-10T12:00:00Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "first noon UTC",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				// (3) 1 second after noon UTC, with .500 fraction
+				{
+					messageId: "m-late",
+					timestamp: "2026-04-10T12:00:01.500Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "third late",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				// (2) noon UTC + 0.5s, expressed in +01:00 offset form.
+				// Lexically this is greater than `12:00:01.500Z`
+				// because '1' (49) > '0' (48) at position 11. The
+				// pre-canonicalization logger would have ordered (3)
+				// before (2), wrong. With canonicalization, (2)
+				// becomes `2026-04-10T12:00:00.500Z` and (3) stays as
+				// `2026-04-10T12:00:01.500Z`, so lexical order matches
+				// instant order.
+				{
+					messageId: "m-mid",
+					timestamp: "2026-04-10T13:00:00.500+01:00",
+					direction: "incoming" as const,
+					scope: "default",
+					content: "second mid +01:00",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		await writeFile(join(dataDir, "conversations", "conv-order.json"), JSON.stringify(log));
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+		expect(report.migrated).toBe(1);
+
+		const stored = await logger.getConversation(conversationId);
+		expect(stored).not.toBeNull();
+		if (!stored) return;
+
+		// Messages return in true temporal order (canonicalized)
+		// regardless of input order or encoding form.
+		expect(stored.messages.map((m) => m.messageId)).toEqual(["m-noon", "m-mid", "m-late"]);
+		// Every stored timestamp is in the canonical 24-char form.
+		for (const m of stored.messages) {
+			expect(m.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+		}
+
+		logger.close();
+	});
+
+	it("returns conversation list in true temporal order even after canonicalizing mixed encodings", async () => {
+		// Companion to the message-ordering test: list conversations
+		// must also use lexical-on-canonical ordering, which the
+		// canonicalization invariant guarantees matches instant order.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const seedLog = (id: string, lastMessageAt: string, content: string) => ({
+			conversationId: id,
+			connectionId: `conn-${id}`,
+			peerAgentId: id.charCodeAt(0),
+			peerDisplayName: id,
+			startedAt: "2026-04-10T00:00:00Z",
+			lastMessageAt,
+			status: "active" as const,
+			messages: [
+				{
+					messageId: `${id}-1`,
+					timestamp: lastMessageAt,
+					direction: "outgoing" as const,
+					scope: "default",
+					content,
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		});
+
+		// Three conversations with mixed-encoding lastMessageAt that
+		// would sort in the WRONG order lexically:
+		//   (a) 2026-04-10T13:00:00+01:00 = noon UTC
+		//   (b) 2026-04-10T12:00:00.500Z   = noon UTC + 500ms
+		//   (c) 2026-04-10T12:00:01Z       = noon UTC + 1s
+		// Lexical order on raw strings would put (b) before (c) before
+		// (a), which is wrong (a is earliest). Canonicalized, all
+		// three become Z-form milliseconds and lexical = instant order.
+		await writeFile(
+			join(dataDir, "conversations", "conv-a.json"),
+			JSON.stringify(seedLog("a", "2026-04-10T13:00:00+01:00", "earliest")),
+		);
+		await writeFile(
+			join(dataDir, "conversations", "conv-b.json"),
+			JSON.stringify(seedLog("b", "2026-04-10T12:00:00.500Z", "middle")),
+		);
+		await writeFile(
+			join(dataDir, "conversations", "conv-c.json"),
+			JSON.stringify(seedLog("c", "2026-04-10T12:00:01Z", "latest")),
+		);
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+		expect(report.migrated).toBe(3);
+
+		const list = await logger.listConversations();
+		// `listConversations` orders by `last_message_at DESC`, so
+		// latest first: c (12:00:01Z) > b (12:00:00.500Z) > a (noon).
+		expect(list.map((c) => c.conversationId)).toEqual(["c", "b", "a"]);
 
 		logger.close();
 	});

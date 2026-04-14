@@ -573,11 +573,6 @@ function validateConversationLogForImport(log: ConversationLog): void {
 	}
 }
 
-function isParseableInstant(value: string): boolean {
-	if (value.length === 0) return false;
-	return !Number.isNaN(Date.parse(value));
-}
-
 /**
  * Strict RFC 3339 / ISO 8601 timestamp regex with REQUIRED explicit offset.
  *
