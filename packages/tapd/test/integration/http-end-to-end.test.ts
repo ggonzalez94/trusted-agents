@@ -234,6 +234,35 @@ describe("tapd HTTP end-to-end", () => {
 			"general-chat",
 		]);
 	});
+
+	it("GET /api/notifications/drain returns queued entries after the service emits action.pending", async () => {
+		// Acceptance test for F4.2/F5.2: the bus → NotificationQueue producer
+		// must flow an action.pending event all the way through to the drain
+		// endpoint that Hermes and OpenClaw poll on their pre-prompt hooks.
+		service.hooks.onTypedEvent?.({
+			id: "evt-e2e-pending",
+			occurredAt: "2026-04-13T00:00:00.000Z",
+			identityAgentId: 42,
+			type: "action.pending",
+			conversationId: "conv-1",
+			requestId: "req-e2e-pending",
+			kind: "transfer",
+			payload: {},
+			awaitingDecision: true,
+		});
+
+		const response = await fetchTapd("/api/notifications/drain");
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			notifications: Array<{ type: string; oneLiner: string; data?: Record<string, unknown> }>;
+		};
+		expect(body.notifications.length).toBeGreaterThanOrEqual(1);
+		const escalation = body.notifications.find(
+			(n) => typeof n.data?.requestId === "string" && n.data.requestId === "req-e2e-pending",
+		);
+		expect(escalation).toBeDefined();
+		expect(escalation?.type).toBe("escalation");
+	});
 });
 
 describe("tapd HTTP + SqliteConversationLogger", () => {

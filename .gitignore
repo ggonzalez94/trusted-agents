@@ -16,3 +16,4 @@ packages/cli/skills/
 .next/
 out/
 .superpowers/
+.superset/
