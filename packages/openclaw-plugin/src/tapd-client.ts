@@ -119,7 +119,24 @@ export class OpenClawTapdClient {
 		return await this.post("/api/grants/request", input);
 	}
 
-	async requestMeeting(input: unknown): Promise<unknown> {
+	/**
+	 * Post a meeting request to tapd's /api/meetings endpoint. Sends the
+	 * flat shape tapd accepts alongside the full `{ peer, proposal }`
+	 * back-compat shape — tapd builds the full SchedulingProposal
+	 * internally (generating the schedulingId, defaulting slots to a
+	 * placeholder ~24h ahead or to the caller-supplied `preferred` time,
+	 * defaulting originTimezone to the daemon's local zone). The OpenClaw
+	 * plugin never builds proposals itself.
+	 */
+	async requestMeeting(input: {
+		peer: string;
+		title: string;
+		duration: number;
+		preferred?: string;
+		location?: string;
+		note?: string;
+		schedulingId?: string;
+	}): Promise<unknown> {
 		return await this.post("/api/meetings", input);
 	}
 
