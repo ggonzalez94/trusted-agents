@@ -16,6 +16,7 @@ import {
 import { createFundsRequestsRoute } from "./http/routes/funds-requests.js";
 import { createGrantsRoutes } from "./http/routes/grants.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
+import { type InviteCreator, createInvitesRoute } from "./http/routes/invites.js";
 import { createMeetingsRoutes } from "./http/routes/meetings.js";
 import { createMessagesRoute } from "./http/routes/messages.js";
 import { createNotificationsRoute } from "./http/routes/notifications.js";
@@ -42,6 +43,12 @@ export interface DaemonOptions {
 	 * configs the daemon was started with. When omitted the route returns 500.
 	 */
 	executeTransfer?: TransferExecutor;
+	/**
+	 * Creates a signed TAP invite URL. Wired by the host to `generateInvite`
+	 * from core using the daemon's signing provider. When omitted the
+	 * `POST /api/invites` route returns 500.
+	 */
+	createInvite?: InviteCreator;
 	/**
 	 * Directory containing the bundled UI's static export. When set, tapd
 	 * serves the UI at `/` and at any non-API GET path.
@@ -272,6 +279,17 @@ export class Daemon {
 			return fn(request);
 		};
 		router.add("POST", "/api/transfers", createTransfersRoute(executeTransfer));
+
+		const createInvite: InviteCreator = (request) => {
+			const fn = this.options.createInvite;
+			if (!fn) {
+				throw new Error(
+					"invites route is not wired: pass createInvite when constructing the daemon",
+				);
+			}
+			return fn(request);
+		};
+		router.add("POST", "/api/invites", createInvitesRoute(createInvite));
 
 		const notifications = createNotificationsRoute(this.notifications);
 		router.add("GET", "/api/notifications/drain", notifications);

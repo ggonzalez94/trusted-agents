@@ -7,6 +7,7 @@ import {
 	TapMessagingService,
 	buildDefaultTapRuntimeContext,
 	executeOnchainTransfer,
+	generateInvite,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import { resolveTapdConfig } from "./config.js";
@@ -80,6 +81,16 @@ async function main(): Promise<void> {
 				chain: request.chain,
 				toAddress: request.toAddress,
 			}),
+		createInvite: async (request) => {
+			const expirySeconds = request.expiresInSeconds ?? 3600;
+			const result = await generateInvite({
+				agentId: trustedAgentsConfig.agentId,
+				chain: trustedAgentsConfig.chain,
+				signingProvider,
+				expirySeconds,
+			});
+			return { url: result.url, expiresInSeconds: expirySeconds };
+		},
 		staticAssetsDir,
 	});
 
