@@ -45,6 +45,7 @@ export {
 	findContactForPeer,
 	findUniqueContactForAgentId,
 	requireActiveContact,
+	resolveConversationId,
 	DEFAULT_MESSAGE_SCOPE,
 } from "./message-conversations.js";
 export {
