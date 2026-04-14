@@ -117,6 +117,26 @@ export class TapdHttpServer {
 		res: ServerResponse,
 		transport: "unix" | "tcp",
 	): Promise<void> {
+		const method = req.method ?? "GET";
+		const rawUrl = req.url ?? "/";
+		const requestPath = rawUrl.split("?")[0];
+		const isApiPath =
+			requestPath.startsWith("/api/") || requestPath.startsWith("/daemon/");
+
+		// Static assets (the bundled UI bundle) are served unauthenticated. The
+		// JS bundle itself contains no secrets — the bearer token is supplied
+		// by the user's own URL hash and never embedded in the build. Letting
+		// the HTML/JS load without auth is the only way the in-page React app
+		// can then read the token and start making authenticated API calls.
+		if (
+			method === "GET" &&
+			!isApiPath &&
+			this.staticAssetsDir &&
+			(await this.tryServeStatic(requestPath, res))
+		) {
+			return;
+		}
+
 		if (!authorizeRequest(req, { transport, expectedToken: this.authToken })) {
 			sendUnauthorized(res);
 			return;
@@ -126,59 +146,53 @@ export class TapdHttpServer {
 			return;
 		}
 
-		const method = req.method ?? "GET";
-		const url = req.url ?? "/";
-		const path = url.split("?")[0];
-
 		let body: unknown;
 		if (method !== "GET" && method !== "HEAD") {
 			body = await readJsonBody(req);
 		}
 
-		const result = await this.router.dispatch(method, path, body);
-		if (result !== null) {
-			sendJson(res, 200, result);
+		const result = await this.router.dispatch(method, requestPath, body);
+		if (result === null) {
+			sendNotFound(res);
 			return;
 		}
+		sendJson(res, 200, result);
+	}
 
-		// Route did not match. For GET requests we attempt to serve the bundled
-		// UI's static export. The UI is served at /, /_next/*, and any other
-		// non-API path; failing both the router and the static lookup falls
-		// through to a 404.
-		if (
-			method === "GET" &&
-			this.staticAssetsDir &&
-			!path.startsWith("/api/") &&
-			!path.startsWith("/daemon/")
-		) {
-			const asset = await resolveStaticAsset(this.staticAssetsDir, path);
-			if (asset) {
-				res.writeHead(200, {
-					"Content-Type": asset.contentType,
-					"Content-Length": asset.body.length,
-					"Cache-Control": "no-store",
-				});
-				res.end(asset.body);
-				return;
-			}
-			// SPA fallback: serve index.html for client-routed paths so the
-			// React app can resolve its own routes. Skip files with extensions
-			// (those are real misses) to keep 404s honest for missing assets.
-			if (!extname(path)) {
-				const index = await resolveStaticAsset(this.staticAssetsDir, "/");
-				if (index) {
-					res.writeHead(200, {
-						"Content-Type": index.contentType,
-						"Content-Length": index.body.length,
-						"Cache-Control": "no-store",
-					});
-					res.end(index.body);
-					return;
-				}
-			}
+	private async tryServeStatic(
+		requestPath: string,
+		res: ServerResponse,
+	): Promise<boolean> {
+		if (!this.staticAssetsDir) return false;
+
+		const asset = await resolveStaticAsset(this.staticAssetsDir, requestPath);
+		if (asset) {
+			res.writeHead(200, {
+				"Content-Type": asset.contentType,
+				"Content-Length": asset.body.length,
+				"Cache-Control": "no-store",
+			});
+			res.end(asset.body);
+			return true;
 		}
 
-		sendNotFound(res);
+		// SPA fallback: serve index.html for client-routed paths so the React
+		// app can resolve its own routes. Skip paths with file extensions
+		// (those are real misses for fonts, images, etc.) so 404s on missing
+		// assets remain honest.
+		if (!extname(requestPath)) {
+			const index = await resolveStaticAsset(this.staticAssetsDir, "/");
+			if (index) {
+				res.writeHead(200, {
+					"Content-Type": index.contentType,
+					"Content-Length": index.body.length,
+					"Cache-Control": "no-store",
+				});
+				res.end(index.body);
+				return true;
+			}
+		}
+		return false;
 	}
 }
 
