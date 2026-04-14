@@ -1,11 +1,15 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TapEvent } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Daemon } from "../../src/daemon.js";
 
 interface FakeService {
-	hooks: { emitEvent?: (payload: Record<string, unknown>) => void };
+	hooks: {
+		emitEvent?: (payload: Record<string, unknown>) => void;
+		onTypedEvent?: (event: TapEvent) => void;
+	};
 	start: () => Promise<void>;
 	stop: () => Promise<void>;
 	getStatus: () => Promise<{ running: boolean; lock: null; pendingRequests: never[] }>;

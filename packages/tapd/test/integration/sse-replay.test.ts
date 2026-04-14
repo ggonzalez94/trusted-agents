@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Daemon } from "../../src/daemon.js";
 
 interface FakeService {
-	hooks: { emitEvent?: (payload: Record<string, unknown>) => void };
+	hooks: {
+		emitEvent?: (payload: Record<string, unknown>) => void;
+		onTypedEvent?: (event: TapEvent) => void;
+	};
 	start: () => Promise<void>;
 	stop: () => Promise<void>;
 	getStatus: () => Promise<{ running: boolean; lock: null; pendingRequests: never[] }>;
@@ -126,26 +129,40 @@ describe("tapd SSE replay", () => {
 	});
 
 	it("delivers events emitted via the underlying service hook", async () => {
-		// Emit two raw payloads through the service hook BEFORE the SSE client
+		// Emit two typed events through the service hook BEFORE the SSE client
 		// connects. New clients (no Last-Event-ID) start fresh, so the client
 		// must reconnect with the id of the last seen event to get replay.
-		service.hooks.emitEvent?.({
-			direction: "incoming",
-			from: 99,
-			method: "message/send",
-			id: "wire-1",
-			receipt_status: "delivered",
-			messageText: "hello",
+		service.hooks.onTypedEvent?.({
+			id: "evt-1",
+			occurredAt: "2026-04-13T00:00:00.000Z",
+			identityAgentId: 1,
+			type: "message.received",
 			conversationId: "conv-1",
+			peer: {
+				connectionId: "conn-1",
+				peerAgentId: 99,
+				peerName: "Bob",
+				peerChain: "eip155:8453",
+			},
+			messageId: "wire-1",
+			text: "hello",
+			scope: "general-chat",
 		});
-		service.hooks.emitEvent?.({
-			direction: "incoming",
-			from: 99,
-			method: "message/send",
-			id: "wire-2",
-			receipt_status: "delivered",
-			messageText: "world",
+		service.hooks.onTypedEvent?.({
+			id: "evt-2",
+			occurredAt: "2026-04-13T00:00:00.000Z",
+			identityAgentId: 1,
+			type: "message.received",
 			conversationId: "conv-1",
+			peer: {
+				connectionId: "conn-1",
+				peerAgentId: 99,
+				peerName: "Bob",
+				peerChain: "eip155:8453",
+			},
+			messageId: "wire-2",
+			text: "world",
+			scope: "general-chat",
 		});
 
 		// Connect the SSE client with a non-existent Last-Event-ID — semantics
@@ -164,23 +181,37 @@ describe("tapd SSE replay", () => {
 	});
 
 	it("replays only events strictly after the given Last-Event-ID", async () => {
-		service.hooks.emitEvent?.({
-			direction: "incoming",
-			from: 99,
-			method: "message/send",
-			id: "wire-1",
-			receipt_status: "delivered",
-			messageText: "first",
+		service.hooks.onTypedEvent?.({
+			id: "evt-a",
+			occurredAt: "2026-04-13T00:00:00.000Z",
+			identityAgentId: 1,
+			type: "message.received",
 			conversationId: "conv-1",
+			peer: {
+				connectionId: "conn-1",
+				peerAgentId: 99,
+				peerName: "Bob",
+				peerChain: "eip155:8453",
+			},
+			messageId: "wire-1",
+			text: "first",
+			scope: "general-chat",
 		});
-		service.hooks.emitEvent?.({
-			direction: "incoming",
-			from: 99,
-			method: "message/send",
-			id: "wire-2",
-			receipt_status: "delivered",
-			messageText: "second",
+		service.hooks.onTypedEvent?.({
+			id: "evt-b",
+			occurredAt: "2026-04-13T00:00:00.000Z",
+			identityAgentId: 1,
+			type: "message.received",
 			conversationId: "conv-1",
+			peer: {
+				connectionId: "conn-1",
+				peerAgentId: 99,
+				peerName: "Bob",
+				peerChain: "eip155:8453",
+			},
+			messageId: "wire-2",
+			text: "second",
+			scope: "general-chat",
 		});
 
 		// Inspect the bus directly to find the actual generated event id of the first event.

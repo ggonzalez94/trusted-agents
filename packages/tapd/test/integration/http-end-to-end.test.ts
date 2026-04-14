@@ -1,13 +1,16 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteConversationLogger } from "trusted-agents-core";
+import { SqliteConversationLogger, type TapEvent } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Daemon } from "../../src/daemon.js";
 
 function makeFakeService() {
 	return {
-		hooks: {} as { emitEvent?: (payload: Record<string, unknown>) => void },
+		hooks: {} as {
+			emitEvent?: (payload: Record<string, unknown>) => void;
+			onTypedEvent?: (event: TapEvent) => void;
+		},
 		start: vi.fn(async () => {}),
 		stop: vi.fn(async () => {}),
 		getStatus: vi.fn(async () => ({ running: true, lock: null, pendingRequests: [] })),

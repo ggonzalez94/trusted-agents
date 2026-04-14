@@ -4,7 +4,7 @@ import { EventBus } from "../../src/event-bus.js";
 import { TapdRuntime } from "../../src/runtime.js";
 
 interface FakeService {
-	hooks: { emitEvent?: (payload: Record<string, unknown>) => void };
+	hooks: { onTypedEvent?: (event: TapEvent) => void };
 	start: ReturnType<typeof vi.fn>;
 	stop: ReturnType<typeof vi.fn>;
 }
@@ -15,6 +15,26 @@ function makeService(): FakeService {
 		start: vi.fn(async () => {}),
 		stop: vi.fn(async () => {}),
 	};
+}
+
+function makeMessageReceivedEvent(overrides?: Partial<TapEvent>): TapEvent {
+	return {
+		id: "evt-1",
+		occurredAt: "2026-04-13T00:00:00.000Z",
+		identityAgentId: 42,
+		type: "message.received",
+		conversationId: "conv-1",
+		peer: {
+			connectionId: "conn-1",
+			peerAgentId: 99,
+			peerName: "Bob",
+			peerChain: "eip155:8453",
+		},
+		messageId: "msg-1",
+		text: "hello",
+		scope: "general-chat",
+		...(overrides as object),
+	} as TapEvent;
 }
 
 describe("TapdRuntime", () => {
@@ -41,7 +61,7 @@ describe("TapdRuntime", () => {
 		expect(service.stop).toHaveBeenCalledTimes(1);
 	});
 
-	it("translates raw emitEvent payloads into typed bus events", async () => {
+	it("forwards typed events emitted by the service onto the bus", async () => {
 		const service = makeService();
 		const bus = new EventBus({ ringBufferSize: 10 });
 		const runtime = new TapdRuntime({
@@ -56,30 +76,25 @@ describe("TapdRuntime", () => {
 			captured.push(event);
 		});
 
-		// Simulate the service emitting a raw payload through its hook.
-		service.hooks.emitEvent?.({
-			direction: "incoming",
-			from: 99,
-			method: "message/send",
-			id: "req-1",
-			receipt_status: "delivered",
-			messageText: "hello",
-			conversationId: "conv-1",
-			peerName: "Bob",
-		});
+		service.hooks.onTypedEvent?.(makeMessageReceivedEvent());
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0].type).toBe("message.received");
-		expect(captured[0].identityAgentId).toBe(42);
-		if (captured[0].type === "message.received") {
+		expect(captured[0]?.type).toBe("message.received");
+		if (captured[0]?.type === "message.received") {
 			expect(captured[0].text).toBe("hello");
 			expect(captured[0].peer.peerAgentId).toBe(99);
 		}
 	});
 
-	it("emits action.requested for outbound action requests", async () => {
+	it("preserves any pre-existing onTypedEvent hook and calls it first", async () => {
 		const service = makeService();
 		const bus = new EventBus({ ringBufferSize: 10 });
+
+		const priorCalls: TapEvent[] = [];
+		service.hooks.onTypedEvent = (event) => {
+			priorCalls.push(event);
+		};
+
 		const runtime = new TapdRuntime({
 			service: service as never,
 			identityAgentId: 42,
@@ -92,27 +107,13 @@ describe("TapdRuntime", () => {
 			captured.push(event);
 		});
 
-		service.hooks.emitEvent?.({
-			direction: "outgoing",
-			from: 42,
-			to: 99,
-			method: "action/request",
-			id: "req-2",
-			receipt_status: "queued",
-			actionKind: "transfer",
-			conversationId: "conv-1",
-			peerName: "Bob",
-		});
+		service.hooks.onTypedEvent?.(makeMessageReceivedEvent());
 
+		expect(priorCalls).toHaveLength(1);
 		expect(captured).toHaveLength(1);
-		expect(captured[0].type).toBe("action.requested");
-		if (captured[0].type === "action.requested") {
-			expect(captured[0].direction).toBe("outbound");
-			expect(captured[0].kind).toBe("transfer");
-		}
 	});
 
-	it("ignores unknown raw payloads silently", async () => {
+	it("forwards action.requested events as action.requested on the bus", async () => {
 		const service = makeService();
 		const bus = new EventBus({ ringBufferSize: 10 });
 		const runtime = new TapdRuntime({
@@ -127,14 +128,29 @@ describe("TapdRuntime", () => {
 			captured.push(event);
 		});
 
-		service.hooks.emitEvent?.({
-			direction: "weird",
-			from: 99,
-			method: "totally/unknown",
-			id: "x",
-			receipt_status: "?",
-		});
+		const event: TapEvent = {
+			id: "evt-2",
+			occurredAt: "2026-04-13T00:00:00.000Z",
+			identityAgentId: 42,
+			type: "action.requested",
+			conversationId: "conv-1",
+			peer: {
+				connectionId: "conn-1",
+				peerAgentId: 99,
+				peerName: "Bob",
+				peerChain: "eip155:8453",
+			},
+			requestId: "req-1",
+			kind: "scheduling",
+			payload: {},
+			direction: "outbound",
+		};
+		service.hooks.onTypedEvent?.(event);
 
-		expect(captured).toHaveLength(0);
+		expect(captured).toHaveLength(1);
+		if (captured[0]?.type === "action.requested") {
+			expect(captured[0].kind).toBe("scheduling");
+			expect(captured[0].direction).toBe("outbound");
+		}
 	});
 });
