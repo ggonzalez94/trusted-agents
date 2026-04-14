@@ -256,9 +256,11 @@ export class SqliteConversationLogger implements IConversationLogger {
 		const sortedMessages = [...log.messages].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
 		const importFn = this.db.transaction(() => {
-			// Insert the conversation row if it doesn't exist. Start with
-			// minimal fields; the UPDATE below establishes canonical metadata.
-			this.stmtInsertConversation.run(
+			// INSERT OR IGNORE — returns `changes: 1` when a fresh row was
+			// created and `changes: 0` when the row already existed. The
+			// change count is the gate that decides whether we overwrite
+			// canonical metadata from the legacy log (below).
+			const insertInfo = this.stmtInsertConversation.run(
 				log.conversationId,
 				log.connectionId,
 				log.peerAgentId,
@@ -268,17 +270,38 @@ export class SqliteConversationLogger implements IConversationLogger {
 				log.lastMessageAt,
 			);
 
-			// Restore canonical metadata. The stmtInsertConversation above
-			// hard-codes status='active' and last_read_at=NULL, so overwrite
-			// them with the source log's authoritative values.
-			this.stmtImportUpdateMetadata.run(
-				log.topic ?? null,
-				log.startedAt,
-				log.lastMessageAt,
-				log.lastReadAt ?? null,
-				log.status,
-				log.conversationId,
-			);
+			// Canonical metadata write is ONLY safe on a fresh insert. If
+			// the conversation row already existed, it was put there by one
+			// of two paths:
+			//   (a) a previous migration attempt on this same file that
+			//       failed partway and left the row behind. The new import
+			//       transaction would have rolled that back, but we can
+			//       still hit this case when a pre-residual-2 install
+			//       landed partial state before the fix, or when runtime
+			//       activity touched the conversation between a failed
+			//       first-attempt and a successful retry.
+			//   (b) the normal runtime append path (logMessage) mutated
+			//       the row between a failed migration attempt and a
+			//       later successful retry on the fixed legacy file.
+			//
+			// In either case, the existing row's metadata is either stale
+			// (case a — but identical to what we'd write, so harmless to
+			// keep) or newer than the legacy JSON (case b — overwriting
+			// would roll back runtime state). Skipping the UPDATE when the
+			// row already exists is the safest monotonic-merge rule.
+			// Runtime messages not yet in the legacy log stay; legacy
+			// messages missing from the runtime table get inserted by the
+			// replay loop below.
+			if (insertInfo.changes > 0) {
+				this.stmtImportUpdateMetadata.run(
+					log.topic ?? null,
+					log.startedAt,
+					log.lastMessageAt,
+					log.lastReadAt ?? null,
+					log.status,
+					log.conversationId,
+				);
+			}
 
 			// Replay messages. Each INSERT goes through the dedupe check so
 			// retries after a crash are idempotent. Counting existing rows
@@ -323,48 +346,23 @@ function validateConversationLogForImport(log: ConversationLog): void {
 	if (!Array.isArray(log.messages)) {
 		throw new Error(`importLog: conversation ${log.conversationId} messages is not an array`);
 	}
+	const msgErr = (i: number, issue: string) =>
+		new Error(`importLog: conversation ${log.conversationId} message[${i}] ${issue}`);
 	for (let i = 0; i < log.messages.length; i += 1) {
 		const message = log.messages[i];
-		if (!message || typeof message !== "object") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] is not an object`,
-			);
-		}
-		if (typeof message.timestamp !== "string" || message.timestamp.length === 0) {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has missing or non-string timestamp`,
-			);
-		}
-		if (message.direction !== "incoming" && message.direction !== "outgoing") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has invalid direction: ${String(message.direction)}`,
-			);
-		}
-		if (typeof message.scope !== "string") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has non-string scope`,
-			);
-		}
-		if (typeof message.content !== "string") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has non-string content`,
-			);
-		}
-		if (typeof message.humanApprovalRequired !== "boolean") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has non-boolean humanApprovalRequired`,
-			);
-		}
-		if (message.humanApprovalGiven !== null && typeof message.humanApprovalGiven !== "boolean") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has invalid humanApprovalGiven`,
-			);
-		}
-		if (message.messageId !== undefined && typeof message.messageId !== "string") {
-			throw new Error(
-				`importLog: conversation ${log.conversationId} message[${i}] has non-string messageId`,
-			);
-		}
+		if (!message || typeof message !== "object") throw msgErr(i, "is not an object");
+		if (typeof message.timestamp !== "string" || message.timestamp.length === 0)
+			throw msgErr(i, "has missing or non-string timestamp");
+		if (message.direction !== "incoming" && message.direction !== "outgoing")
+			throw msgErr(i, `has invalid direction: ${String(message.direction)}`);
+		if (typeof message.scope !== "string") throw msgErr(i, "has non-string scope");
+		if (typeof message.content !== "string") throw msgErr(i, "has non-string content");
+		if (typeof message.humanApprovalRequired !== "boolean")
+			throw msgErr(i, "has non-boolean humanApprovalRequired");
+		if (message.humanApprovalGiven !== null && typeof message.humanApprovalGiven !== "boolean")
+			throw msgErr(i, "has invalid humanApprovalGiven");
+		if (message.messageId !== undefined && typeof message.messageId !== "string")
+			throw msgErr(i, "has non-string messageId");
 	}
 }
 

@@ -747,4 +747,145 @@ describe("sqlite migration", () => {
 
 		logger.close();
 	});
+
+	it("does not roll back canonical metadata when a fixed legacy file is retried after runtime activity", async () => {
+		// Residual 2 tertiary continuation: if a legacy file fails on the
+		// first import attempt, runtime activity then lands on that
+		// conversation, and the user later fixes the file on disk, the
+		// eventual successful retry must NOT restore the legacy JSON's
+		// topic/startedAt/lastMessageAt/lastReadAt/status over the newer
+		// runtime state.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationId = "conv-eventual";
+
+		// Step 1: seed the legacy file with a malformed message so the
+		// first migration attempt rejects it.
+		const brokenLog = {
+			conversationId,
+			connectionId: "conn-1",
+			peerAgentId: 17,
+			peerDisplayName: "Alice",
+			topic: "stale topic",
+			startedAt: "2026-04-01T00:00:00.000Z",
+			lastMessageAt: "2026-04-01T00:01:00.000Z",
+			lastReadAt: "2026-04-01T00:00:30.000Z",
+			status: "active" as const,
+			messages: [
+				{
+					messageId: "legacy-1",
+					timestamp: "2026-04-01T00:00:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "legacy first",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{
+					messageId: "legacy-2",
+					timestamp: "2026-04-01T00:01:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: 42 as unknown as string, // malformed: not a string
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		const filePath = join(dataDir, "conversations", "conv-eventual.json");
+		await writeFile(filePath, JSON.stringify(brokenLog));
+
+		const logger = new SqliteConversationLogger(dataDir);
+
+		const firstReport = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(firstReport.errors).toHaveLength(1);
+		expect(firstReport.migrated).toBe(0);
+		expect(await logger.getConversation(conversationId)).toBeNull();
+
+		// Step 2: runtime activity lands. A new message arrives via the
+		// normal append path. This creates the conversation row with the
+		// runtime's authoritative metadata.
+		await logger.logMessage(
+			conversationId,
+			{
+				messageId: "runtime-1",
+				timestamp: "2026-04-10T12:00:00.000Z",
+				direction: "incoming",
+				scope: "default",
+				content: "runtime message that arrived after the failed migration",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{ connectionId: "conn-1", peerAgentId: 17, peerDisplayName: "Alice" },
+		);
+		// Mark it read so we can assert lastReadAt is preserved too.
+		await logger.markRead(conversationId, "2026-04-10T12:00:05.000Z");
+
+		const runtimeState = await logger.getConversation(conversationId);
+		expect(runtimeState).not.toBeNull();
+		if (!runtimeState) return;
+		expect(runtimeState.lastMessageAt).toBe("2026-04-10T12:00:00.000Z");
+		expect(runtimeState.lastReadAt).toBe("2026-04-10T12:00:05.000Z");
+		expect(runtimeState.topic).toBeUndefined();
+
+		// Step 3: fix the legacy file on disk (replace the bad message
+		// with a valid one). The fixed legacy log has OLDER timestamps
+		// than the runtime state.
+		const fixedLog = {
+			...brokenLog,
+			messages: [
+				brokenLog.messages[0],
+				{
+					...brokenLog.messages[1],
+					content: "legacy second (fixed)",
+				},
+			],
+		};
+		await writeFile(filePath, JSON.stringify(fixedLog));
+
+		// Step 4: retry. The file now validates, so importLog runs
+		// successfully. Because the conversation row already exists from
+		// the runtime activity in step 2, importLog MUST skip the
+		// canonical metadata UPDATE — otherwise it would roll back
+		// lastMessageAt from 2026-04-10 to 2026-04-01, lastReadAt from
+		// 2026-04-10 to 2026-04-01, and topic from undefined to "stale topic".
+		const secondReport = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(secondReport.errors).toEqual([]);
+		expect(secondReport.migrated).toBe(1);
+
+		const afterRetry = await logger.getConversation(conversationId);
+		expect(afterRetry).not.toBeNull();
+		if (!afterRetry) return;
+
+		// Runtime metadata must be preserved.
+		expect(afterRetry.lastMessageAt).toBe("2026-04-10T12:00:00.000Z");
+		expect(afterRetry.lastReadAt).toBe("2026-04-10T12:00:05.000Z");
+		// Topic stays undefined (runtime never set it).
+		expect(afterRetry.topic).toBeUndefined();
+		// startedAt stays at whatever the runtime row holds (the runtime
+		// insert used the runtime message timestamp as started_at since
+		// the row was freshly created there).
+		expect(afterRetry.startedAt).toBe("2026-04-10T12:00:00.000Z");
+
+		// Legacy messages are still inserted via the replay + dedupe path.
+		// The runtime message AND both legacy messages must coexist.
+		expect(afterRetry.messages.find((m) => m.messageId === "runtime-1")).toBeDefined();
+		expect(afterRetry.messages.find((m) => m.messageId === "legacy-1")).toBeDefined();
+		expect(afterRetry.messages.find((m) => m.messageId === "legacy-2")).toBeDefined();
+
+		// Messages come back sorted by (timestamp ASC, insert_order ASC).
+		// Legacy timestamps are older, runtime is newest.
+		expect(afterRetry.messages.map((m) => m.messageId)).toEqual([
+			"runtime-1", // 2026-04-10 — inserted first chronologically by runtime
+			"legacy-1", // 2026-04-01 — BUT sorted before runtime-1 by timestamp
+			"legacy-2", // 2026-04-01 — same timestamp as legacy-1, sort by insert_order
+		].sort((a, b) => {
+			const tsA =
+				a === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
+			const tsB =
+				b === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
+			return tsA.localeCompare(tsB);
+		}));
+
+		logger.close();
+	});
 });

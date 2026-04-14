@@ -295,22 +295,11 @@ export class Daemon {
 			return this.runtime.tapMessagingService;
 		};
 
-		// Adapter exposing only the methods the pending routes need. We pass the
-		// adapter (typed as `TapMessagingService`) so the routes don't need a
-		// reference to the live runtime — they re-resolve it on every call.
-		const pendingAdapter = {
+		// Adapter that re-resolves the live runtime on every call so it remains
+		// valid across daemon restarts that swap the service. Typed as
+		// TapMessagingService so route factories don't need a runtime reference.
+		const serviceAdapter = {
 			getStatus: () => ensureRuntime().getStatus(),
-			resolvePending: (id: string, approve: boolean, reason?: string) =>
-				ensureRuntime().resolvePending(id, approve, reason),
-		} as unknown as TapMessagingService;
-		const pending = createPendingRoutes(pendingAdapter);
-		router.add("GET", "/api/pending", pending.list);
-		router.add("POST", "/api/pending/:id/approve", pending.approve);
-		router.add("POST", "/api/pending/:id/deny", pending.deny);
-
-		// Write routes — adapters re-resolve the live runtime on every call so
-		// they remain valid across daemon restarts that swap the service.
-		const writeAdapter = {
 			sendMessage: (
 				peer: string,
 				text: string,
@@ -342,22 +331,28 @@ export class Daemon {
 				reason?: string,
 			) => ensureRuntime().revokeConnection(contact, reason),
 		} as unknown as TapMessagingService;
-		router.add("POST", "/api/messages", createMessagesRoute(writeAdapter));
-		router.add("POST", "/api/connect", createConnectRoute(writeAdapter));
-		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(writeAdapter));
 
-		const meetings = createMeetingsRoutes(writeAdapter, {
+		const pending = createPendingRoutes(serviceAdapter);
+		router.add("GET", "/api/pending", pending.list);
+		router.add("POST", "/api/pending/:id/approve", pending.approve);
+		router.add("POST", "/api/pending/:id/deny", pending.deny);
+
+		router.add("POST", "/api/messages", createMessagesRoute(serviceAdapter));
+		router.add("POST", "/api/connect", createConnectRoute(serviceAdapter));
+		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(serviceAdapter));
+
+		const meetings = createMeetingsRoutes(serviceAdapter, {
 			calendarProvider: this.options.calendarProvider ?? null,
 		});
 		router.add("POST", "/api/meetings", meetings.request);
 		router.add("POST", "/api/meetings/:id/respond", meetings.respond);
 		router.add("POST", "/api/meetings/:id/cancel", meetings.cancel);
 
-		const grants = createGrantsRoutes(writeAdapter);
+		const grants = createGrantsRoutes(serviceAdapter);
 		router.add("POST", "/api/grants/publish", grants.publish);
 		router.add("POST", "/api/grants/request", grants.request);
 
-		const contactsWrite = createContactsWriteRoutes(writeAdapter, this.options.trustStore);
+		const contactsWrite = createContactsWriteRoutes(serviceAdapter, this.options.trustStore);
 		router.add("POST", "/api/contacts/:connectionId/revoke", contactsWrite.revoke);
 
 		const executeTransfer: TransferExecutor = (request) => {

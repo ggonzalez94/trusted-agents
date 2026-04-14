@@ -161,34 +161,22 @@ export class TapdHttpServer {
 	private async tryServeStatic(requestPath: string, res: ServerResponse): Promise<boolean> {
 		if (!this.staticAssetsDir) return false;
 
-		const asset = await resolveStaticAsset(this.staticAssetsDir, requestPath);
-		if (asset) {
-			res.writeHead(200, {
-				"Content-Type": asset.contentType,
-				"Content-Length": asset.body.length,
-				"Cache-Control": "no-store",
-			});
-			res.end(asset.body);
-			return true;
-		}
+		const asset =
+			(await resolveStaticAsset(this.staticAssetsDir, requestPath)) ??
+			// SPA fallback: serve index.html for client-routed paths so the React
+			// app can resolve its own routes. Skip paths with file extensions
+			// (those are real misses for fonts, images, etc.) so 404s on missing
+			// assets remain honest.
+			(!extname(requestPath) ? await resolveStaticAsset(this.staticAssetsDir, "/") : null);
 
-		// SPA fallback: serve index.html for client-routed paths so the React
-		// app can resolve its own routes. Skip paths with file extensions
-		// (those are real misses for fonts, images, etc.) so 404s on missing
-		// assets remain honest.
-		if (!extname(requestPath)) {
-			const index = await resolveStaticAsset(this.staticAssetsDir, "/");
-			if (index) {
-				res.writeHead(200, {
-					"Content-Type": index.contentType,
-					"Content-Length": index.body.length,
-					"Cache-Control": "no-store",
-				});
-				res.end(index.body);
-				return true;
-			}
-		}
-		return false;
+		if (!asset) return false;
+		res.writeHead(200, {
+			"Content-Type": asset.contentType,
+			"Content-Length": asset.body.length,
+			"Cache-Control": "no-store",
+		});
+		res.end(asset.body);
+		return true;
 	}
 }
 
