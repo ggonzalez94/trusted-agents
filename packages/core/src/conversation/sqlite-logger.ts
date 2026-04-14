@@ -257,9 +257,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 
 		const importFn = this.db.transaction(() => {
 			// INSERT OR IGNORE — returns `changes: 1` when a fresh row was
-			// created and `changes: 0` when the row already existed. The
-			// change count is the gate that decides whether we overwrite
-			// canonical metadata from the legacy log (below).
+			// created and `changes: 0` when the row already existed.
 			const insertInfo = this.stmtInsertConversation.run(
 				log.conversationId,
 				log.connectionId,
@@ -270,28 +268,32 @@ export class SqliteConversationLogger implements IConversationLogger {
 				log.lastMessageAt,
 			);
 
-			// Canonical metadata write is ONLY safe on a fresh insert. If
-			// the conversation row already existed, it was put there by one
-			// of two paths:
-			//   (a) a previous migration attempt on this same file that
-			//       failed partway and left the row behind. The new import
-			//       transaction would have rolled that back, but we can
-			//       still hit this case when a pre-residual-2 install
-			//       landed partial state before the fix, or when runtime
-			//       activity touched the conversation between a failed
-			//       first-attempt and a successful retry.
-			//   (b) the normal runtime append path (logMessage) mutated
-			//       the row between a failed migration attempt and a
-			//       later successful retry on the fixed legacy file.
+			// Metadata strategy: monotonic field-level merge.
 			//
-			// In either case, the existing row's metadata is either stale
-			// (case a — but identical to what we'd write, so harmless to
-			// keep) or newer than the legacy JSON (case b — overwriting
-			// would roll back runtime state). Skipping the UPDATE when the
-			// row already exists is the safest monotonic-merge rule.
-			// Runtime messages not yet in the legacy log stay; legacy
-			// messages missing from the runtime table get inserted by the
-			// replay loop below.
+			// On a fresh insert (changes > 0), apply the legacy log's
+			// canonical metadata directly — it's the only source of truth.
+			//
+			// On an existing row (changes === 0), the row could have come
+			// from one of two paths:
+			//   (a) Pre-residual-2 partial import: the OLD migration code
+			//       used logMessage() in a loop, so a failure mid-file
+			//       could leave the row behind with placeholder metadata
+			//       (started_at = first replayed message's timestamp,
+			//       last_read_at = NULL, status = 'active'). On retry the
+			//       legacy log holds the true canonical metadata and we
+			//       MUST repair the placeholder, otherwise the partial
+			//       state is permanent.
+			//   (b) Runtime activity touched the conversation between a
+			//       failed first-attempt and a successful retry of a
+			//       fixed legacy file. The runtime row carries newer
+			//       authoritative metadata that must NOT be rolled back
+			//       to the legacy snapshot.
+			//
+			// A blanket "skip the UPDATE" suppresses (a). A blanket
+			// "overwrite" rolls back (b). The safe rule is field-level
+			// monotonic merge: each column resolves to the more-canonical
+			// of the two values, where "more canonical" is well-defined
+			// per field. See `mergeImportMetadata` below.
 			if (insertInfo.changes > 0) {
 				this.stmtImportUpdateMetadata.run(
 					log.topic ?? null,
@@ -301,6 +303,21 @@ export class SqliteConversationLogger implements IConversationLogger {
 					log.status,
 					log.conversationId,
 				);
+			} else {
+				const existing = this.stmtSelectConversation.get(log.conversationId) as
+					| ConversationRow
+					| undefined;
+				if (existing) {
+					const merged = mergeImportMetadata(existing, log);
+					this.stmtImportUpdateMetadata.run(
+						merged.topic,
+						merged.startedAt,
+						merged.lastMessageAt,
+						merged.lastReadAt,
+						merged.status,
+						log.conversationId,
+					);
+				}
 			}
 
 			// Replay messages. Each INSERT goes through the dedupe check so
@@ -335,6 +352,75 @@ export class SqliteConversationLogger implements IConversationLogger {
 
 		importFn();
 	}
+}
+
+interface MergedImportMetadata {
+	topic: string | null;
+	startedAt: string;
+	lastMessageAt: string;
+	lastReadAt: string | null;
+	status: "active" | "completed" | "archived";
+}
+
+/**
+ * Field-level monotonic merge of an existing conversation row with the
+ * canonical metadata from a legacy log being imported. Each column resolves
+ * to the more-canonical of the two values:
+ *
+ *   - **topic**: prefer existing if set (runtime owns it once written),
+ *     else fall back to the legacy topic. Strict "any state wins over no
+ *     state".
+ *   - **startedAt**: MIN — the conversation actually started at the earlier
+ *     of the two known starts. A conversation reactivated after a long
+ *     pause should keep its earliest known start, not the row creation time.
+ *   - **lastMessageAt**: MAX — only the latest known activity is canonical.
+ *     Runtime writes always advance this; legacy can only fill it in when
+ *     the existing row's value was a placeholder behind the legacy snapshot.
+ *   - **lastReadAt**: MAX with NULL-as-`-infinity`. A non-NULL read marker
+ *     is always more canonical than NULL.
+ *   - **status**: monotonic order `active < completed < archived`. The more
+ *     "progressed" status wins so runtime cannot un-archive nor un-complete
+ *     a thread, but a legacy archive does override a placeholder `active`.
+ *
+ * This is the safe rule for both the pre-fix partial-import upgrade path
+ * (legacy values repair placeholder runtime state) and the failed-then-runtime
+ * eventual-success path (runtime values are not rolled back).
+ */
+function mergeImportMetadata(
+	existing: ConversationRow,
+	legacy: ConversationLog,
+): MergedImportMetadata {
+	return {
+		topic: existing.topic ?? legacy.topic ?? null,
+		startedAt: existing.started_at <= legacy.startedAt ? existing.started_at : legacy.startedAt,
+		lastMessageAt:
+			existing.last_message_at >= legacy.lastMessageAt
+				? existing.last_message_at
+				: legacy.lastMessageAt,
+		lastReadAt: mergeLastReadAt(existing.last_read_at, legacy.lastReadAt ?? null),
+		status: mergeStatus(existing.status, legacy.status),
+	};
+}
+
+function mergeLastReadAt(existing: string | null, legacy: string | null): string | null {
+	if (existing === null) return legacy;
+	if (legacy === null) return existing;
+	return existing >= legacy ? existing : legacy;
+}
+
+const STATUS_RANK: Record<string, number> = { active: 0, completed: 1, archived: 2 };
+
+function mergeStatus(
+	existing: string,
+	legacy: ConversationLog["status"],
+): "active" | "completed" | "archived" {
+	const existingRank = STATUS_RANK[existing] ?? 0;
+	const legacyRank = STATUS_RANK[legacy] ?? 0;
+	const winner = existingRank >= legacyRank ? existing : legacy;
+	if (winner === "active" || winner === "completed" || winner === "archived") {
+		return winner;
+	}
+	return "active";
 }
 
 /**

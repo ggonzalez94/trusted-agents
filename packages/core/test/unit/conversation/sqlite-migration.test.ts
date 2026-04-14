@@ -856,15 +856,21 @@ describe("sqlite migration", () => {
 		expect(afterRetry).not.toBeNull();
 		if (!afterRetry) return;
 
-		// Runtime metadata must be preserved.
+		// Runtime metadata that's NEWER must be preserved (no rollback).
+		// The merge picks MAX(legacy.lastMessageAt, runtime.lastMessageAt) =
+		// runtime, and MAX(last_read_at) = runtime.
 		expect(afterRetry.lastMessageAt).toBe("2026-04-10T12:00:00.000Z");
 		expect(afterRetry.lastReadAt).toBe("2026-04-10T12:00:05.000Z");
-		// Topic stays undefined (runtime never set it).
-		expect(afterRetry.topic).toBeUndefined();
-		// startedAt stays at whatever the runtime row holds (the runtime
-		// insert used the runtime message timestamp as started_at since
-		// the row was freshly created there).
-		expect(afterRetry.startedAt).toBe("2026-04-10T12:00:00.000Z");
+
+		// Legacy metadata that ADDS missing context fills the gaps:
+		//   - Topic is COALESCE(runtime, legacy). Runtime never set a
+		//     topic, so the legacy topic now backfills the row.
+		//   - startedAt is MIN(legacy.startedAt, runtime.startedAt) = legacy.
+		//     The conversation actually started on 2026-04-01 per legacy
+		//     even though the runtime row was created later from a fresh
+		//     append. The MIN merge restores that earlier start.
+		expect(afterRetry.topic).toBe("stale topic");
+		expect(afterRetry.startedAt).toBe("2026-04-01T00:00:00.000Z");
 
 		// Legacy messages are still inserted via the replay + dedupe path.
 		// The runtime message AND both legacy messages must coexist.
@@ -873,18 +879,132 @@ describe("sqlite migration", () => {
 		expect(afterRetry.messages.find((m) => m.messageId === "legacy-2")).toBeDefined();
 
 		// Messages come back sorted by (timestamp ASC, insert_order ASC).
-		// Legacy timestamps are older, runtime is newest.
-		expect(afterRetry.messages.map((m) => m.messageId)).toEqual(
-			[
-				"runtime-1", // 2026-04-10 — inserted first chronologically by runtime
-				"legacy-1", // 2026-04-01 — BUT sorted before runtime-1 by timestamp
-				"legacy-2", // 2026-04-01 — same timestamp as legacy-1, sort by insert_order
-			].sort((a, b) => {
-				const tsA = a === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
-				const tsB = b === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
-				return tsA.localeCompare(tsB);
-			}),
+		// Legacy messages have timestamps older than the runtime message,
+		// so they come first in the timeline regardless of insert order.
+		expect(afterRetry.messages.map((m) => m.messageId)).toEqual([
+			"legacy-1", // 2026-04-01T00:00:00 — legacy, oldest
+			"legacy-2", // 2026-04-01T00:01:00 — legacy
+			"runtime-1", // 2026-04-10T12:00:00 — runtime, newest
+		]);
+
+		logger.close();
+	});
+
+	it("repairs canonical metadata on a pre-fix partial-import row when a fixed retry runs", async () => {
+		// Upgrade-path coverage: a pre-residual-2 install could have
+		// landed a conversation row plus some messages with placeholder
+		// metadata (started_at = first replayed message ts, last_read_at
+		// = NULL, status = 'active') because the OLD migration code
+		// used logMessage() in a per-message transaction loop. After
+		// upgrading to the residual-fix code, importLog must REPAIR
+		// that placeholder metadata when the legacy file is retried,
+		// not skip the UPDATE and leave the conversation permanently
+		// stale.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationId = "conv-upgrade-path";
+
+		const canonical = {
+			conversationId,
+			connectionId: "conn-1",
+			peerAgentId: 21,
+			peerDisplayName: "Bob",
+			topic: "Project sync",
+			startedAt: "2026-04-01T00:00:00.000Z",
+			lastMessageAt: "2026-04-01T00:02:00.000Z",
+			lastReadAt: "2026-04-01T00:01:30.000Z",
+			status: "completed" as const,
+			messages: [
+				{
+					messageId: "leg-1",
+					timestamp: "2026-04-01T00:00:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "first",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{
+					messageId: "leg-2",
+					timestamp: "2026-04-01T00:01:00.000Z",
+					direction: "incoming" as const,
+					scope: "default",
+					content: "second",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{
+					messageId: "leg-3",
+					timestamp: "2026-04-01T00:02:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "third",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		await writeFile(
+			join(dataDir, "conversations", "conv-upgrade-path.json"),
+			JSON.stringify(canonical),
 		);
+
+		// Step 1: simulate the pre-fix partial state directly. The OLD
+		// migration would have inserted the conversation row (via the
+		// first replayed message's timestamp) plus the first two
+		// messages, then crashed before writing the canonical metadata
+		// UPDATE and before marking the file in migrated_files. Here we
+		// reproduce that state by calling logMessage twice — which
+		// uses the same INSERT path the legacy code did — and asserting
+		// the placeholder metadata.
+		const logger = new SqliteConversationLogger(dataDir);
+		await logger.logMessage(conversationId, canonical.messages[0], {
+			connectionId: "conn-1",
+			peerAgentId: 21,
+			peerDisplayName: "Bob",
+		});
+		await logger.logMessage(conversationId, canonical.messages[1]);
+
+		const placeholder = await logger.getConversation(conversationId);
+		expect(placeholder).not.toBeNull();
+		if (!placeholder) return;
+		// Confirm we're in the "placeholder" state the upgrade path needs
+		// to repair: started_at derived from msg[0], last_message_at from
+		// msg[1], topic null, lastReadAt null, status default 'active'.
+		expect(placeholder.startedAt).toBe("2026-04-01T00:00:00.000Z");
+		expect(placeholder.lastMessageAt).toBe("2026-04-01T00:01:00.000Z");
+		expect(placeholder.topic).toBeUndefined();
+		expect(placeholder.lastReadAt).toBeUndefined();
+		expect(placeholder.status).toBe("active");
+
+		// Step 2: retry the migration. The conversation row already
+		// exists from the simulated pre-fix partial state, so the
+		// importLog INSERT OR IGNORE returns changes=0. The fix MUST
+		// then run the merge UPDATE so the placeholder metadata gets
+		// repaired from the legacy log's canonical values.
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+		expect(report.migrated).toBe(1);
+
+		const repaired = await logger.getConversation(conversationId);
+		expect(repaired).not.toBeNull();
+		if (!repaired) return;
+
+		// Canonical metadata is now repaired:
+		//   - topic: pre-existing was null, legacy is "Project sync" → COALESCE picks legacy
+		//   - startedAt: MIN — both are "2026-04-01T00:00:00.000Z" → unchanged
+		//   - lastMessageAt: MAX — placeholder had msg[1] ts, legacy has msg[2] ts (later) → legacy
+		//   - lastReadAt: placeholder NULL, legacy non-null → legacy
+		//   - status: rank('active')=0, rank('completed')=1 → 'completed' wins
+		expect(repaired.topic).toBe("Project sync");
+		expect(repaired.startedAt).toBe("2026-04-01T00:00:00.000Z");
+		expect(repaired.lastMessageAt).toBe("2026-04-01T00:02:00.000Z");
+		expect(repaired.lastReadAt).toBe("2026-04-01T00:01:30.000Z");
+		expect(repaired.status).toBe("completed");
+
+		// All three legacy messages must be in the DB. The first two
+		// were inserted by the simulated pre-fix path; the third gets
+		// added by the import replay loop's dedupe-aware insert.
+		expect(repaired.messages.map((m) => m.messageId)).toEqual(["leg-1", "leg-2", "leg-3"]);
 
 		logger.close();
 	});
