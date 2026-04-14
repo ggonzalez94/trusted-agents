@@ -50,6 +50,10 @@ export class TapdHttpServer {
 			this.bound.map(
 				({ server }) =>
 					new Promise<void>((resolve) => {
+						// Force-close any in-flight connections (e.g., long-lived SSE
+						// streams) so server.close() can resolve. Without this, an open
+						// SSE connection holds the server open forever.
+						server.closeAllConnections?.();
 						server.close(() => resolve());
 					}),
 			),
