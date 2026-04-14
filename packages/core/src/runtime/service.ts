@@ -710,15 +710,15 @@ export class TapMessagingService {
 	// ──────────────────────────────────────────────────────────────
 
 	async syncOnce(): Promise<TapSyncReport> {
-		const processed = await this.executionMutex.runExclusive(
-			async () => await this.withTransportSession(async () => await this.runMaintenanceCycle(true)),
+		const processed = await this.executionMutex.runExclusive(() =>
+			this.withTransportSession(() => this.runMaintenanceCycle(true)),
 		);
 		return await this.buildSyncReport(processed);
 	}
 
 	async processOutboxOnce(): Promise<number> {
-		return await this.executionMutex.runExclusive(
-			async () => await this.withTransportSession(async () => await this.processOutboxInternal()),
+		return await this.executionMutex.runExclusive(() =>
+			this.withTransportSession(() => this.processOutboxInternal()),
 		);
 	}
 
@@ -1666,7 +1666,7 @@ export class TapMessagingService {
 			const request = buildOutgoingActionRequest(
 				contact,
 				buildSchedulingProposalText(proposal),
-				proposal as Record<string, unknown>,
+				proposal as unknown as Record<string, unknown>,
 				"scheduling/request",
 			);
 			const requestId = String(request.id);
@@ -1701,7 +1701,7 @@ export class TapMessagingService {
 				peer: this.peerRefFromContact(contact),
 				requestId,
 				kind: "scheduling",
-				payload: proposal as Record<string, unknown>,
+				payload: proposal as unknown as Record<string, unknown>,
 				direction: "outbound",
 			});
 
@@ -1753,9 +1753,7 @@ export class TapMessagingService {
 		const allPending = await journal.listPending("outbound");
 		for (const entry of allPending) {
 			if (!entry.method.startsWith("command/")) continue;
-			const claim = (entry.metadata as Record<string, unknown> | undefined)?.claim as
-				| { claimedAt?: string }
-				| undefined;
+			const claim = entry.metadata?.claim as { claimedAt?: string } | undefined;
 			if (!claim?.claimedAt) continue;
 			const claimedAt = Date.parse(claim.claimedAt);
 			if (Number.isFinite(claimedAt) && Date.now() - claimedAt >= QUEUED_JOURNAL_STALE_CLAIM_MS) {
@@ -1794,11 +1792,10 @@ export class TapMessagingService {
 			await journal.updateMetadata(entry.requestId, claimMeta);
 			await journal.updateStatus(entry.requestId, "pending");
 
-			const commandType = (entry.metadata as Record<string, unknown> | undefined)?.commandType as
-				| TapCommandJob["type"]
+			const commandType = entry.metadata?.commandType as TapCommandJob["type"] | undefined;
+			const commandPayload = entry.metadata?.commandPayload as
+				| TapCommandJob["payload"]
 				| undefined;
-			const commandPayload = (entry.metadata as Record<string, unknown> | undefined)
-				?.commandPayload as TapCommandJob["payload"] | undefined;
 
 			if (!commandType || commandPayload === undefined) {
 				this.log(
@@ -2601,7 +2598,7 @@ export class TapMessagingService {
 						peer: this.peerRefFromContact(contact),
 						requestId: String(envelope.message.id),
 						kind: "scheduling",
-						payload: schedulingRequest as Record<string, unknown>,
+						payload: schedulingRequest as unknown as Record<string, unknown>,
 						direction: "inbound",
 					});
 				}
@@ -3464,7 +3461,7 @@ export class TapMessagingService {
 					conversationId: resolveConversationId(contact),
 					requestId,
 					kind: "scheduling",
-					payload: proposal as Record<string, unknown>,
+					payload: proposal as unknown as Record<string, unknown>,
 					awaitingDecision: true,
 				});
 				break;
@@ -3909,7 +3906,7 @@ export class TapMessagingService {
 					conversationId: schedConversationId,
 					requestId: schedRequestId,
 					kind: "scheduling",
-					result: schedulingResponse as Record<string, unknown>,
+					result: schedulingResponse as unknown as Record<string, unknown>,
 					completedAt: nowISO(),
 				});
 			} else if (
@@ -4994,10 +4991,7 @@ function serializePendingTransferRequestDetails(
 	dataDir: string,
 ): Record<string, unknown> {
 	return {
-		...(buildPendingTransferDetails(contact, request, dataDir) as unknown as Record<
-			string,
-			unknown
-		>),
+		...(buildPendingTransferDetails(contact, request, dataDir) as unknown as Record<string, unknown>),
 		request: {
 			type: "transfer-request",
 			payload: request,
@@ -5029,7 +5023,7 @@ function serializePendingSchedulingRequestDetails(
 		ledgerPath: getPermissionLedgerPath(dataDir),
 	};
 	return {
-		...(details as Record<string, unknown>),
+		...(details as unknown as Record<string, unknown>),
 		request: {
 			type: "scheduling-request",
 			payload: request,
