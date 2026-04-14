@@ -5,6 +5,7 @@ import {
 	AsyncMutex,
 	assertPathWithinBase,
 	assertSafeFileComponent,
+	fsErrorCode,
 	resolveDataDir,
 } from "../common/index.js";
 import { generateMarkdownTranscript } from "./transcript.js";
@@ -142,13 +143,7 @@ export class FileConversationLogger implements IConversationLogger {
 			const raw = await readFile(filePath, "utf-8");
 			return normalizeConversationLog(JSON.parse(raw) as ConversationLog);
 		} catch (err: unknown) {
-			if (
-				err instanceof Error &&
-				"code" in err &&
-				(err as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return null;
-			}
+			if (fsErrorCode(err) === "ENOENT") return null;
 			throw err;
 		}
 	}

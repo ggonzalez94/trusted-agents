@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fsErrorCode } from "trusted-agents-core";
 
 const TOKEN_FILE = ".tapd-token";
 
@@ -19,13 +20,7 @@ export async function loadAuthToken(dataDir: string): Promise<string | null> {
 		const contents = await readFile(join(dataDir, TOKEN_FILE), "utf-8");
 		return contents.trim() || null;
 	} catch (error: unknown) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			(error as NodeJS.ErrnoException).code === "ENOENT"
-		) {
-			return null;
-		}
+		if (fsErrorCode(error) === "ENOENT") return null;
 		throw error;
 	}
 }

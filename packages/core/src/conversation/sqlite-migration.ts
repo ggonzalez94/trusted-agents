@@ -1,6 +1,6 @@
 import { readFile, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveDataDir, toErrorMessage } from "../common/index.js";
+import { fsErrorCode, resolveDataDir, toErrorMessage } from "../common/index.js";
 import type { SqliteConversationLogger } from "./sqlite-logger.js";
 import type { ConversationLog } from "./types.js";
 
@@ -61,7 +61,7 @@ export async function migrateFileLogsToSqlite(
 	try {
 		entries = await readdir(conversationsDir);
 	} catch (error: unknown) {
-		if (isNodeErrorCode(error, "ENOENT")) {
+		if (fsErrorCode(error) === "ENOENT") {
 			// No legacy data — mark as migrated and exit cleanly.
 			markMigrationComplete(logger);
 			return { migrated: 0, skipped: 0, errors: [] };
@@ -165,7 +165,7 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 		await rename(source, target);
 		return;
 	} catch (error: unknown) {
-		if (isNodeErrorCode(error, "ENOENT")) return;
+		if (fsErrorCode(error) === "ENOENT") return;
 		// ENOTEMPTY falls through to the suffix strategy below; all other
 		// errors also fall through and get retried with a numbered suffix.
 	}
@@ -176,17 +176,11 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 			await rename(source, target);
 			return;
 		} catch (error: unknown) {
-			if (isNodeErrorCode(error, "ENOENT")) return;
+			if (fsErrorCode(error) === "ENOENT") return;
 			suffix += 1;
 		}
 	}
 	throw new Error("unable to find unique backup destination for conversations directory");
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-	return (
-		error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === code
-	);
 }
 
 function isConversationLog(value: unknown): value is ConversationLog {

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { open, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fsErrorCode } from "trusted-agents-core";
 import { toErrorMessage } from "./errors.js";
 
 /**
@@ -140,7 +141,7 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 	try {
 		process.kill(pid, "SIGTERM");
 	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ESRCH") return await cleanupAndReturn();
+		if (fsErrorCode(err) === "ESRCH") return await cleanupAndReturn();
 		throw err;
 	}
 
@@ -151,7 +152,7 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 	try {
 		process.kill(pid, "SIGKILL");
 	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ESRCH") return await cleanupAndReturn();
+		if (fsErrorCode(err) === "ESRCH") return await cleanupAndReturn();
 		// SIGKILL delivery failed for some other reason (EPERM, etc). Leave
 		// the pidfile in place as evidence and surface the error.
 		throw new Error(
