@@ -32,9 +32,7 @@ export function Sidebar({
 			</div>
 			<div className="px-4 py-3 border-t border-bg-border text-[10px] font-mono uppercase tracking-[0.18em] text-text-ghost flex items-center justify-between">
 				<span>tapd</span>
-				<span className="text-text-faint normal-case tracking-normal italic">
-					local
-				</span>
+				<span className="text-text-faint normal-case tracking-normal italic">local</span>
 			</div>
 		</aside>
 	);

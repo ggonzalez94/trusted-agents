@@ -1,9 +1,9 @@
-import { CalendarDays, DollarSign, ShieldCheck } from "lucide-react";
-import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import type { ActionKind } from "@/lib/types";
+import { CalendarDays, DollarSign, ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
 
 export type ActionCardStatus = "pending" | "completed" | "failed";
 
@@ -47,10 +47,8 @@ const KIND_META: Record<ActionKind, KindMeta> = {
 };
 
 const STATUS_STYLES: Record<ActionCardStatus, string> = {
-	pending:
-		"bg-amber-500/10 text-amber-300 border border-amber-400/30",
-	completed:
-		"bg-emerald-500/10 text-emerald-300 border border-emerald-400/30",
+	pending: "bg-amber-500/10 text-amber-300 border border-amber-400/30",
+	completed: "bg-emerald-500/10 text-emerald-300 border border-emerald-400/30",
 	failed: "bg-red-500/10 text-red-300 border border-red-400/30",
 };
 
@@ -75,12 +73,7 @@ export function ActionCard({
 	const meta = KIND_META[kind];
 	const showActions = !!(onApprove || onDeny);
 	return (
-		<Card
-			className={cn(
-				"max-w-[420px] p-4",
-				outgoing ? "ml-auto mr-12" : "ml-12",
-			)}
-		>
+		<Card className={cn("max-w-[420px] p-4", outgoing ? "ml-auto mr-12" : "ml-12")}>
 			<div className="flex items-center gap-2 mb-3">
 				<span
 					className={cn(
@@ -95,13 +88,9 @@ export function ActionCard({
 				</span>
 			</div>
 
-			<div className="text-[15px] font-semibold tracking-tight text-text mb-0.5">
-				{title}
-			</div>
+			<div className="text-[15px] font-semibold tracking-tight text-text mb-0.5">{title}</div>
 			{subtitle && (
-				<div className="text-[11.5px] text-text-muted mb-3 leading-snug">
-					{subtitle}
-				</div>
+				<div className="text-[11.5px] text-text-muted mb-3 leading-snug">{subtitle}</div>
 			)}
 
 			{rows && rows.length > 0 && (

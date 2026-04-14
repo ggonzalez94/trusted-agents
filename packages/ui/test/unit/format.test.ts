@@ -10,9 +10,7 @@ import {
 describe("format", () => {
 	describe("formatAddress", () => {
 		it("truncates the middle of an Ethereum address", () => {
-			expect(formatAddress("0x1234567890abcdef1234567890abcdef12345678")).toBe(
-				"0x1234…5678",
-			);
+			expect(formatAddress("0x1234567890abcdef1234567890abcdef12345678")).toBe("0x1234…5678");
 		});
 
 		it("returns short addresses unchanged", () => {

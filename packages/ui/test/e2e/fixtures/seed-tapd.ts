@@ -51,8 +51,7 @@ export async function seedTapd(): Promise<SeededTapd> {
 
 	const trustStore = {
 		getContacts: async () => [seedContact],
-		getContact: async (id: string) =>
-			id === seedContact.connectionId ? seedContact : null,
+		getContact: async (id: string) => (id === seedContact.connectionId ? seedContact : null),
 	};
 
 	const conversationLogger = {

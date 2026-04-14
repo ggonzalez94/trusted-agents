@@ -20,17 +20,11 @@ const SIZE_STYLES: Record<Size, string> = {
 const VARIANT_STYLES: Record<Variant, string> = {
 	primary:
 		"bg-gradient-to-br from-accent-primary to-accent-secondary text-white shadow-[0_4px_12px_-4px_rgba(99,102,241,0.5)]",
-	warm:
-		"bg-gradient-to-br from-amber-500 to-rose-600 text-white shadow-[0_4px_12px_-4px_rgba(244,114,182,0.4)]",
+	warm: "bg-gradient-to-br from-amber-500 to-rose-600 text-white shadow-[0_4px_12px_-4px_rgba(244,114,182,0.4)]",
 	neutral: "bg-bg-elevated text-text-dim",
 };
 
-export function Avatar({
-	initials,
-	size = "md",
-	variant = "primary",
-	className,
-}: AvatarProps) {
+export function Avatar({ initials, size = "md", variant = "primary", className }: AvatarProps) {
 	return (
 		<div
 			className={cn(

@@ -8,25 +8,11 @@ interface MessageBubbleProps {
 	authorInitials: string;
 }
 
-export function MessageBubble({
-	text,
-	timestamp,
-	direction,
-	authorInitials,
-}: MessageBubbleProps) {
+export function MessageBubble({ text, timestamp, direction, authorInitials }: MessageBubbleProps) {
 	const outgoing = direction === "outgoing";
 	return (
-		<div
-			className={cn(
-				"flex gap-3 max-w-[78%]",
-				outgoing && "ml-auto flex-row-reverse",
-			)}
-		>
-			<Avatar
-				initials={authorInitials}
-				size="md"
-				variant={outgoing ? "warm" : "primary"}
-			/>
+		<div className={cn("flex gap-3 max-w-[78%]", outgoing && "ml-auto flex-row-reverse")}>
+			<Avatar initials={authorInitials} size="md" variant={outgoing ? "warm" : "primary"} />
 			<div className={cn("min-w-0", outgoing && "text-right")}>
 				<div
 					className={cn(

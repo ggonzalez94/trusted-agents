@@ -7,13 +7,17 @@
 	--font-display: "Inter Tight", -apple-system, system-ui, sans-serif;
 	--font-sans: -apple-system, "SF Pro Text", system-ui, sans-serif;
 	--font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+	--bg-default: #0e0e12;
+	--bg-divider: #26262e;
+	--bg-elevated: #1b1b23;
+	--text-default: #e8e8ec;
 }
 
 html,
 body {
 	height: 100%;
-	background: theme("colors.bg.DEFAULT");
-	color: theme("colors.text.DEFAULT");
+	background: var(--bg-default);
+	color: var(--text-default);
 	font-family: var(--font-sans);
 	-webkit-font-smoothing: antialiased;
 	font-feature-settings: "ss01", "cv11";
@@ -28,13 +32,13 @@ body {
 	background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-	background: theme("colors.bg.divider");
+	background: var(--bg-divider);
 	border-radius: 10px;
 	border: 2px solid transparent;
 	background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-	background: theme("colors.bg.elevated");
+	background: var(--bg-elevated);
 	background-clip: padding-box;
 	border: 2px solid transparent;
 }

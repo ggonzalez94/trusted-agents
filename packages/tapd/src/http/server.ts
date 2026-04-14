@@ -120,8 +120,7 @@ export class TapdHttpServer {
 		const method = req.method ?? "GET";
 		const rawUrl = req.url ?? "/";
 		const requestPath = rawUrl.split("?")[0];
-		const isApiPath =
-			requestPath.startsWith("/api/") || requestPath.startsWith("/daemon/");
+		const isApiPath = requestPath.startsWith("/api/") || requestPath.startsWith("/daemon/");
 
 		// Static assets (the bundled UI bundle) are served unauthenticated. The
 		// JS bundle itself contains no secrets — the bearer token is supplied
@@ -159,10 +158,7 @@ export class TapdHttpServer {
 		sendJson(res, 200, result);
 	}
 
-	private async tryServeStatic(
-		requestPath: string,
-		res: ServerResponse,
-	): Promise<boolean> {
+	private async tryServeStatic(requestPath: string, res: ServerResponse): Promise<boolean> {
 		if (!this.staticAssetsDir) return false;
 
 		const asset = await resolveStaticAsset(this.staticAssetsDir, requestPath);

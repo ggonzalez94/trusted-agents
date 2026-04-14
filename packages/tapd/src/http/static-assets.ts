@@ -45,8 +45,7 @@ export async function resolveStaticAsset(
 	const candidate = resolve(join(normalizedRoot, cleaned));
 
 	const insideRoot =
-		candidate === normalizedRoot ||
-		candidate.startsWith(`${normalizedRoot}${sep}`);
+		candidate === normalizedRoot || candidate.startsWith(`${normalizedRoot}${sep}`);
 	if (!insideRoot) return null;
 
 	let target = candidate;
@@ -56,8 +55,7 @@ export async function resolveStaticAsset(
 			target = join(target, "index.html");
 		}
 		const body = await readFile(target);
-		const contentType =
-			CONTENT_TYPES[extname(target).toLowerCase()] ?? "application/octet-stream";
+		const contentType = CONTENT_TYPES[extname(target).toLowerCase()] ?? "application/octet-stream";
 		return { body, contentType };
 	} catch {
 		return null;

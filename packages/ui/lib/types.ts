@@ -23,12 +23,7 @@ export interface Identity {
 // Contacts (GET /api/contacts → Contact[])
 // ──────────────────────────────────────────────────────────────
 
-export type ConnectionStatus =
-	| "connecting"
-	| "active"
-	| "idle"
-	| "stale"
-	| "revoked";
+export type ConnectionStatus = "connecting" | "active" | "idle" | "stale" | "revoked";
 
 export interface ContactPermissionEntry {
 	version: string;
@@ -112,9 +107,7 @@ export interface PendingSchedulingDetails {
 	ledgerPath: string;
 }
 
-export type PendingRequestDetails =
-	| PendingTransferDetails
-	| PendingSchedulingDetails;
+export type PendingRequestDetails = PendingTransferDetails | PendingSchedulingDetails;
 
 export interface PendingItem {
 	requestId: string;

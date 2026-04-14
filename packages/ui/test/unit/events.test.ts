@@ -58,11 +58,7 @@ describe("EventStream", () => {
 	});
 
 	it("opens an EventSource against the given URL with token query param", () => {
-		const stream = new EventStream(
-			"http://localhost:6810",
-			"abc-token",
-			() => {},
-		);
+		const stream = new EventStream("http://localhost:6810", "abc-token", () => {});
 		stream.start();
 		expect(createdSources[0].url).toContain("/api/events/stream");
 		expect(createdSources[0].url).toContain("token=abc-token");
@@ -70,11 +66,7 @@ describe("EventStream", () => {
 
 	it("dispatches typed events to the handler", () => {
 		const events: unknown[] = [];
-		const stream = new EventStream(
-			"http://localhost:6810",
-			"abc",
-			(event) => events.push(event),
-		);
+		const stream = new EventStream("http://localhost:6810", "abc", (event) => events.push(event));
 		stream.start();
 		createdSources[0].emit(
 			"message.received",
@@ -102,22 +94,14 @@ describe("EventStream", () => {
 	});
 
 	it("closes the EventSource on stop()", () => {
-		const stream = new EventStream(
-			"http://localhost:6810",
-			"abc",
-			() => {},
-		);
+		const stream = new EventStream("http://localhost:6810", "abc", () => {});
 		stream.start();
 		stream.stop();
 		expect(createdSources[0].closed).toBe(true);
 	});
 
 	it("sends lastEventId on reconnect after seeing an event", () => {
-		const stream = new EventStream(
-			"http://localhost:6810",
-			"abc",
-			() => {},
-		);
+		const stream = new EventStream("http://localhost:6810", "abc", () => {});
 		stream.start();
 		createdSources[0].emit(
 			"daemon.status",

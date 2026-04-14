@@ -33,10 +33,7 @@ export function formatInitials(name: string): string {
 	return trimmed.slice(0, 2).toUpperCase();
 }
 
-export function formatRelativeTime(
-	isoString: string,
-	now: Date = new Date(),
-): string {
+export function formatRelativeTime(isoString: string, now: Date = new Date()): string {
 	const past = new Date(isoString);
 	const diffMs = now.getTime() - past.getTime();
 	const diffSec = Math.round(diffMs / 1000);

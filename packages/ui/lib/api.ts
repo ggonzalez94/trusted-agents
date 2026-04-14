@@ -19,12 +19,7 @@ export class TapdApiError extends Error {
 	readonly status: number;
 	readonly details?: Record<string, unknown>;
 
-	constructor(
-		code: string,
-		message: string,
-		status: number,
-		details?: Record<string, unknown>,
-	) {
+	constructor(code: string, message: string, status: number, details?: Record<string, unknown>) {
 		super(message);
 		this.name = "TapdApiError";
 		this.code = code;
@@ -49,9 +44,7 @@ export class TapdClient {
 	}
 
 	getContact(connectionId: string): Promise<Contact | null> {
-		return this.get<Contact | null>(
-			`/api/contacts/${encodeURIComponent(connectionId)}`,
-		);
+		return this.get<Contact | null>(`/api/contacts/${encodeURIComponent(connectionId)}`);
 	}
 
 	listConversations(): Promise<ConversationLog[]> {
@@ -59,16 +52,11 @@ export class TapdClient {
 	}
 
 	getConversation(id: string): Promise<ConversationLog | null> {
-		return this.get<ConversationLog | null>(
-			`/api/conversations/${encodeURIComponent(id)}`,
-		);
+		return this.get<ConversationLog | null>(`/api/conversations/${encodeURIComponent(id)}`);
 	}
 
 	markConversationRead(id: string): Promise<{ ok: true }> {
-		return this.post<{ ok: true }>(
-			`/api/conversations/${encodeURIComponent(id)}/mark-read`,
-			{},
-		);
+		return this.post<{ ok: true }>(`/api/conversations/${encodeURIComponent(id)}/mark-read`, {});
 	}
 
 	listPending(): Promise<PendingItem[]> {

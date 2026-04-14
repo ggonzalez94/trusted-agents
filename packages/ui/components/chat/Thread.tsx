@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { formatChain, formatInitials, formatRelativeTime } from "@/lib/format";
 import type { Contact, ConversationLog } from "@/lib/types";
+import { useEffect, useRef } from "react";
 import { MessageBubble } from "./MessageBubble";
 
 interface ThreadProps {
@@ -16,23 +16,20 @@ export function Thread({ contact, conversation, footer }: ThreadProps) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const messageCount = conversation?.messages.length ?? 0;
 
-	// Scroll to the bottom whenever a new message lands. Using only the
-	// primitive count keeps the effect dep stable and avoids unnecessary work
-	// on selection changes that already remount the component.
+	// Scroll to the bottom whenever a new message lands. Reading messageCount
+	// inside the effect documents intent and keeps the dep array honest — the
+	// effect re-fires only when the primitive count changes, which is exactly
+	// when we want to glue the viewport to the latest message.
 	useEffect(() => {
 		const el = scrollRef.current;
-		if (!el) return;
+		if (!el || messageCount === 0) return;
 		el.scrollTop = el.scrollHeight;
 	}, [messageCount]);
 
 	return (
 		<div className="flex-1 flex flex-col bg-bg-main min-w-0">
 			<header className="px-6 py-4 border-b border-bg-border flex items-center gap-3.5">
-				<Avatar
-					initials={formatInitials(contact.peerDisplayName)}
-					size="lg"
-					variant="primary"
-				/>
+				<Avatar initials={formatInitials(contact.peerDisplayName)} size="lg" variant="primary" />
 				<div className="min-w-0">
 					<div className="text-sm font-semibold tracking-tight truncate text-text">
 						{contact.peerDisplayName}
@@ -52,10 +49,7 @@ export function Thread({ contact, conversation, footer }: ThreadProps) {
 				</div>
 			</header>
 
-			<div
-				ref={scrollRef}
-				className="flex-1 overflow-y-auto px-6 py-6 space-y-4"
-			>
+			<div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
 				{conversation && conversation.messages.length > 0 ? (
 					conversation.messages.map((message, idx) => (
 						<MessageBubble
@@ -64,16 +58,12 @@ export function Thread({ contact, conversation, footer }: ThreadProps) {
 							direction={message.direction}
 							timestamp={formatRelativeTime(message.timestamp)}
 							authorInitials={
-								message.direction === "outgoing"
-									? "ME"
-									: formatInitials(contact.peerDisplayName)
+								message.direction === "outgoing" ? "ME" : formatInitials(contact.peerDisplayName)
 							}
 						/>
 					))
 				) : (
-					<div className="text-center text-text-dim text-sm py-12 italic">
-						No messages yet
-					</div>
+					<div className="text-center text-text-dim text-sm py-12 italic">No messages yet</div>
 				)}
 				{footer}
 			</div>

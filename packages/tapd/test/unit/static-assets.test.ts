@@ -27,10 +27,7 @@ describe("resolveStaticAsset", () => {
 	});
 
 	it("resolves nested asset paths", async () => {
-		const result = await resolveStaticAsset(
-			assetsRoot,
-			"/_next/static/css/app.css",
-		);
+		const result = await resolveStaticAsset(assetsRoot, "/_next/static/css/app.css");
 		expect(result?.contentType).toBe("text/css; charset=utf-8");
 		expect(result?.body.toString("utf-8")).toBe("body{}");
 	});

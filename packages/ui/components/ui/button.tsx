@@ -1,5 +1,5 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 type Variant = "primary" | "ghost" | "danger";
 type Size = "sm" | "md";

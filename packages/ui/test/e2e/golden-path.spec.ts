@@ -13,9 +13,7 @@ test.afterAll(async () => {
 	}
 });
 
-test("loads the dashboard with seeded identity and contact", async ({
-	page,
-}) => {
+test("loads the dashboard with seeded identity and contact", async ({ page }) => {
 	await page.goto(`${tapd.url}/#token=${tapd.token}`);
 	// The sidebar shows the operator identity.
 	await expect(page.getByText("Alice", { exact: true })).toBeVisible();
@@ -23,15 +21,11 @@ test("loads the dashboard with seeded identity and contact", async ({
 	await expect(page.getByText("Bob", { exact: true }).first()).toBeVisible();
 });
 
-test("clicking the contact opens the thread with seeded messages", async ({
-	page,
-}) => {
+test("clicking the contact opens the thread with seeded messages", async ({ page }) => {
 	await page.goto(`${tapd.url}/#token=${tapd.token}`);
 	// Auto-selects the only active contact, but explicitly click to be safe.
 	await page.getByText("Bob", { exact: true }).first().click();
-	await expect(
-		page.getByText(/thanks for connecting\. My operator/i),
-	).toBeVisible();
+	await expect(page.getByText(/thanks for connecting\. My operator/i)).toBeVisible();
 	await expect(page.getByText(/sending \$10 now/)).toBeVisible();
 });
 

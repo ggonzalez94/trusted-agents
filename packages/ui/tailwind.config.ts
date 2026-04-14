@@ -32,25 +32,9 @@ const config: Config = {
 				},
 			},
 			fontFamily: {
-				display: [
-					'"Inter Tight"',
-					"-apple-system",
-					"system-ui",
-					"sans-serif",
-				],
-				sans: [
-					"-apple-system",
-					'"SF Pro Text"',
-					"system-ui",
-					"sans-serif",
-				],
-				mono: [
-					"ui-monospace",
-					'"JetBrains Mono"',
-					"SFMono-Regular",
-					"Menlo",
-					"monospace",
-				],
+				display: ['"Inter Tight"', "-apple-system", "system-ui", "sans-serif"],
+				sans: ["-apple-system", '"SF Pro Text"', "system-ui", "sans-serif"],
+				mono: ["ui-monospace", '"JetBrains Mono"', "SFMono-Regular", "Menlo", "monospace"],
 			},
 			borderRadius: {
 				bubble: "14px",

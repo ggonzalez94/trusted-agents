@@ -113,9 +113,7 @@ describe("TapdHttpServer", () => {
 		await server.start();
 
 		const port = server.boundTcpPort();
-		const response = await fetch(
-			`http://127.0.0.1:${port}/api/identity?token=wrong-token`,
-		);
+		const response = await fetch(`http://127.0.0.1:${port}/api/identity?token=wrong-token`);
 		expect(response.status).toBe(401);
 	});
 

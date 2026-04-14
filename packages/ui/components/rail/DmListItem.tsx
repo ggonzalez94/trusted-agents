@@ -10,12 +10,7 @@ interface DmListItemProps {
 	onSelect: (connectionId: string) => void;
 }
 
-export function DmListItem({
-	contact,
-	active,
-	unread,
-	onSelect,
-}: DmListItemProps) {
+export function DmListItem({ contact, active, unread, onSelect }: DmListItemProps) {
 	return (
 		<button
 			type="button"
@@ -23,9 +18,7 @@ export function DmListItem({
 			className={cn(
 				"group w-full px-3 py-2 mx-1.5 rounded-md flex items-center gap-2.5 text-sm transition-colors",
 				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary/60",
-				active
-					? "bg-bg-elevated text-text"
-					: "text-text-muted hover:bg-bg-subtle hover:text-text",
+				active ? "bg-bg-elevated text-text" : "text-text-muted hover:bg-bg-subtle hover:text-text",
 			)}
 		>
 			<Avatar

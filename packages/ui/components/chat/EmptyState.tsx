@@ -11,8 +11,8 @@ export function EmptyState() {
 					Select a connection
 				</div>
 				<div className="text-[11.5px] text-text-faint mt-1.5 leading-relaxed">
-					Your agent's conversations appear here in real time. Pick a peer on
-					the left to follow along.
+					Your agent's conversations appear here in real time. Pick a peer on the left to follow
+					along.
 				</div>
 			</div>
 		</div>

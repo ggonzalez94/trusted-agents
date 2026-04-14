@@ -58,10 +58,9 @@ describe("TapdClient", () => {
 
 	it("throws TapdApiError on non-2xx with error code", async () => {
 		fetchMock.mockResolvedValue(
-			new Response(
-				JSON.stringify({ error: { code: "not_found", message: "nope" } }),
-				{ status: 404 },
-			),
+			new Response(JSON.stringify({ error: { code: "not_found", message: "nope" } }), {
+				status: 404,
+			}),
 		);
 		const client = new TapdClient("http://localhost:6810");
 		const error = await client.getIdentity().catch((e) => e);
@@ -110,9 +109,7 @@ describe("TapdClient", () => {
 	});
 
 	it("marks a conversation as read", async () => {
-		fetchMock.mockResolvedValueOnce(
-			new Response(JSON.stringify({ ok: true }), { status: 200 }),
-		);
+		fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 		const client = new TapdClient("http://localhost:6810");
 		await client.markConversationRead("conv-1");
 
@@ -133,9 +130,7 @@ describe("TapdClient", () => {
 	});
 
 	it("URL-encodes path parameters", async () => {
-		fetchMock.mockResolvedValueOnce(
-			new Response(JSON.stringify(null), { status: 200 }),
-		);
+		fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(null), { status: 200 }));
 		const client = new TapdClient("http://localhost:6810");
 		await client.getContact("conn/with/slashes");
 
@@ -145,13 +140,10 @@ describe("TapdClient", () => {
 
 	it("omits Authorization header when no token is stored", async () => {
 		sessionStorage.clear();
-		fetchMock.mockResolvedValueOnce(
-			new Response(JSON.stringify([]), { status: 200 }),
-		);
+		fetchMock.mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
 		const client = new TapdClient("http://localhost:6810");
 		await client.listContacts();
-		const headers = (fetchMock.mock.calls[0][1] as RequestInit)
-			.headers as Record<string, string>;
+		const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
 		expect(headers.Authorization).toBeUndefined();
 	});
 });

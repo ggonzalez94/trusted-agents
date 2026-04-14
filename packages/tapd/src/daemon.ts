@@ -96,11 +96,10 @@ export class Daemon {
 		// fixture) can discover where to reach us without parsing stdout.
 		const boundPort = this.server.boundTcpPort();
 		if (boundPort > 0) {
-			await writeFile(
-				join(this.options.config.dataDir, PORT_FILE),
-				String(boundPort),
-				{ encoding: "utf-8", mode: 0o600 },
-			);
+			await writeFile(join(this.options.config.dataDir, PORT_FILE), String(boundPort), {
+				encoding: "utf-8",
+				mode: 0o600,
+			});
 		}
 	}
 
