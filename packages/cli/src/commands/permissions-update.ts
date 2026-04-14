@@ -1,15 +1,8 @@
-import { requireActiveContact } from "trusted-agents-core";
-import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { readGrantFile } from "../lib/grants.js";
 import { success, verbose } from "../lib/output.js";
-import {
-	isQueuedTapCommandPending,
-	queuedTapCommandPendingFields,
-	queuedTapCommandResultFields,
-	runOrQueueTapCommand,
-} from "../lib/queued-commands.js";
+import { TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 type PermissionsDirection = "grant" | "request";
@@ -17,17 +10,11 @@ type PermissionsDirection = "grant" | "request";
 const directionConfig = {
 	grant: {
 		verb: "Publishing",
-		commandType: "publish-grant-set" as const,
-		ownerLabel: "tap:permissions-grant",
-		successFlag: "published",
-		serviceMethod: "publishGrantSet" as const,
+		successFlag: "published" as const,
 	},
 	request: {
 		verb: "Requesting",
-		commandType: "request-grant-set" as const,
-		ownerLabel: "tap:permissions-request",
-		successFlag: "requested",
-		serviceMethod: "requestGrantSet" as const,
+		successFlag: "requested" as const,
 	},
 };
 
@@ -43,9 +30,7 @@ async function permissionsUpdateCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: cfg.ownerLabel });
 		const grantSet = await readGrantFile(file);
-		const contact = requireActiveContact(await runtime.trustStore.getContacts(), peer);
 
 		if (cmdOpts?.dryRun) {
 			success(
@@ -53,9 +38,7 @@ async function permissionsUpdateCommand(
 					status: "preview",
 					dry_run: true,
 					scope: "permissions/update",
-					peer: contact.peerDisplayName,
-					agent_id: contact.peerAgentId,
-					connection_id: contact.connectionId,
+					peer,
 					grant_count: grantSet.grants.length,
 					grants: grantSet.grants,
 					...(cmdOpts.note ? { note: cmdOpts.note } : {}),
@@ -70,42 +53,16 @@ async function permissionsUpdateCommand(
 			`${cfg.verb} ${grantSet.grants.length} grants ${direction === "grant" ? "to" : "from"} ${peer}...`,
 			opts,
 		);
-		const outcome = await runOrQueueTapCommand(
-			config.dataDir,
-			{
-				type: cfg.commandType,
-				payload: {
-					peer,
-					grantSet,
-					note: cmdOpts?.note,
-				},
-			},
-			async () => await runtime.service[cfg.serviceMethod](peer, grantSet, cmdOpts?.note),
-			{
-				requestedBy: cfg.ownerLabel,
-			},
-		);
 
-		if (isQueuedTapCommandPending(outcome)) {
-			success(
-				{
-					...queuedTapCommandPendingFields(outcome),
-					peer,
-					grant_count: grantSet.grants.length,
-					grants: grantSet.grants,
-				},
-				opts,
-				startTime,
-			);
-			return;
-		}
-
-		const result = outcome.result;
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const result =
+			direction === "grant"
+				? await client.publishGrants({ peer, grantSet, note: cmdOpts?.note })
+				: await client.requestGrants({ peer, grantSet, note: cmdOpts?.note });
 
 		success(
 			{
 				[cfg.successFlag]: true,
-				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				grant_count: result.grantCount,
