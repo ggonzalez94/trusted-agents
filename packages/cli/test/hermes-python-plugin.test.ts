@@ -1,191 +1,197 @@
-import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getTapHermesPaths } from "../src/hermes/config.js";
 import { installTapHermesAssets } from "../src/hermes/install.js";
 
 const execFileAsync = promisify(execFile);
 
-describe("Hermes Python TAP bridge", () => {
+const PYTHON_BIN = (() => {
+	if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
+	try {
+		return execFileSync("which", ["python3"], { encoding: "utf-8" }).trim() || "python3";
+	} catch {
+		return "python3";
+	}
+})();
+
+/**
+ * After Phase 4 the Hermes Python plugin is a thin HTTP-over-Unix-socket
+ * client of tapd. These tests stand up an in-process Unix socket HTTP
+ * server that mimics tapd's responses for a few key endpoints, then run
+ * the real Python plugin against it.
+ */
+describe("Hermes Python TAP bridge (HTTP-over-Unix-socket)", () => {
 	let tempRoot: string;
+	let dataDir: string;
 	let hermesHome: string;
-	let binDir: string;
-	let originalPath: string | undefined;
+	let originalDataDir: string | undefined;
 	let originalHermesHome: string | undefined;
 
 	beforeEach(async () => {
-		tempRoot = await mkdtemp("/tmp/tap-hermes-python-test-");
+		tempRoot = await mkdtemp(join(tmpdir(), "tap-hermes-py-"));
+		dataDir = join(tempRoot, "data");
 		hermesHome = join(tempRoot, "hermes-home");
-		binDir = join(tempRoot, "bin");
-		await mkdir(binDir, { recursive: true });
-		originalPath = process.env.PATH;
+		await mkdir(dataDir, { recursive: true });
+		await mkdir(hermesHome, { recursive: true });
+		originalDataDir = process.env.TAP_DATA_DIR;
 		originalHermesHome = process.env.HERMES_HOME;
-		process.env.PATH = `${binDir}:/usr/bin:/bin`;
+		process.env.TAP_DATA_DIR = dataDir;
 		process.env.HERMES_HOME = hermesHome;
 		await installTapHermesAssets(hermesHome);
 	});
 
 	afterEach(async () => {
-		process.env.PATH = originalPath;
-		if (originalHermesHome === undefined) {
-			process.env.HERMES_HOME = undefined;
-		} else {
-			process.env.HERMES_HOME = originalHermesHome;
-		}
+		process.env.TAP_DATA_DIR = originalDataDir;
+		process.env.HERMES_HOME = originalHermesHome;
 		await rm(tempRoot, { recursive: true, force: true });
 	});
 
-	it("respawns the daemon when pre_llm_call cannot reach it", async () => {
-		const tapLogPath = join(tempRoot, "tap.log");
-		await writeFakeTapResponder(binDir, tapLogPath);
-
-		const statePath = getTapHermesPaths(hermesHome).daemonStatePath;
-		await writeFile(
-			statePath,
-			JSON.stringify({
-				pid: 999_999,
-				gatewayPid: 123,
-				socketPath: getTapHermesPaths(hermesHome).socketPath,
-				startedAt: "2026-04-07T00:00:00.000Z",
-				identities: ["default"],
-			}),
-			"utf-8",
+	it("returns a clean error when tapd is not running and tap is not on PATH", async () => {
+		const output = await runPluginExpression(
+			'print(json.dumps(module.send_request("drain_notifications")))',
 		);
-
-		const output = await runHermesPluginExpression(
-			hermesHome,
-			"print(json.dumps(module.inject_tap_notifications()))",
-		);
-
-		const result = JSON.parse(output) as { context?: string };
-		expect(result.context).toContain("[TAP Notifications]");
-		expect(result.context).toContain("Connection request from Alice");
-		expect(await readCommandLog(tapLogPath)).toEqual([
-			expect.stringContaining("hermes daemon run --gateway-pid"),
-		]);
+		const parsed = JSON.parse(output) as { error?: string };
+		expect(parsed.error).toBeDefined();
+		expect(parsed.error).toContain("tapd is not running");
 	});
 
-	it("respawns the daemon when tap_gateway cannot reach it", async () => {
-		const tapLogPath = join(tempRoot, "tap.log");
-		await writeFakeTapResponder(binDir, tapLogPath);
-
-		const output = await runHermesPluginExpression(
-			hermesHome,
-			'print(module.handle_tap_gateway({"action": "status"}))',
-		);
-
-		const result = JSON.parse(output) as { status?: string; healed?: boolean };
-		expect(result.status).toBe("ok");
-		expect(result.healed).toBe(true);
-		expect(await readCommandLog(tapLogPath)).toEqual([
-			expect.stringContaining("hermes daemon run --gateway-pid"),
-		]);
-	});
-
-	it("does not respawn the daemon when the socket is already healthy", async () => {
-		const tapLogPath = join(tempRoot, "tap.log");
-		await writeFakeTapLogger(binDir, tapLogPath);
-		const paths = getTapHermesPaths(hermesHome);
-
-		const server = net.createServer((socket) => {
-			socket.setEncoding("utf8");
-			socket.once("data", (chunk) => {
-				const request = JSON.parse(chunk.trim()) as { method?: string };
-				socket.end(`${JSON.stringify({ ok: true, result: { status: request.method } })}\n`);
-			});
+	it("drains notifications via GET /api/notifications/drain", async () => {
+		const server = await startFakeTapdServer(join(dataDir, ".tapd.sock"), {
+			"GET /api/notifications/drain": {
+				notifications: [
+					{
+						type: "escalation",
+						oneLiner: "Connection request from Alice",
+					},
+				],
+			},
 		});
-
-		await new Promise<void>((resolve, reject) => {
-			server.once("error", reject);
-			server.listen(paths.socketPath, resolve);
-		});
-
 		try {
-			const output = await runHermesPluginExpression(
-				hermesHome,
-				'print(module.handle_tap_gateway({"action": "status"}))',
+			const output = await runPluginExpression(
+				"print(json.dumps(module.inject_tap_notifications()))",
 			);
-			const result = JSON.parse(output) as { status?: string };
-			expect(result.status).toBe("status");
-			await expect(readCommandLog(tapLogPath)).resolves.toEqual([]);
+			const result = JSON.parse(output) as { context?: string };
+			expect(result.context).toContain("[TAP Notifications]");
+			expect(result.context).toContain("Connection request from Alice");
 		} finally {
-			await new Promise<void>((resolve, reject) =>
-				server.close((error) => (error ? reject(error) : resolve())),
-			);
+			await server.stop();
 		}
 	});
 
-	it("waits for the startup hook daemon before attempting a lazy respawn", async () => {
-		const tapLogPath = join(tempRoot, "tap.log");
-		await writeFakeTapLogger(binDir, tapLogPath);
+	it("forwards tap_gateway status to GET /daemon/health", async () => {
+		const server = await startFakeTapdServer(join(dataDir, ".tapd.sock"), {
+			"GET /daemon/health": { status: "ok", version: "test", uptime: 1, transportConnected: true },
+		});
+		try {
+			const output = await runPluginExpression(
+				'print(module.handle_tap_gateway({"action": "status"}))',
+			);
+			const result = JSON.parse(output) as { status?: string };
+			expect(result.status).toBe("ok");
+		} finally {
+			await server.stop();
+		}
+	});
 
-		const output = await runHermesPluginExpression(
-			hermesHome,
-			`
-import os
-import socket
-import threading
-import time
-from pathlib import Path
-
-socket_path = Path(os.environ["HERMES_HOME"]) / "plugins" / "trusted-agents-tap" / "state" / "tap-hermes.sock"
-state_path = Path(os.environ["HERMES_HOME"]) / "plugins" / "trusted-agents-tap" / "state" / "daemon.json"
-
-def delayed_startup():
-    time.sleep(0.25)
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.unlink(socket_path)
-    except FileNotFoundError:
-        pass
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(socket_path))
-    server.listen(1)
-    state_path.write_text(json.dumps({
-        "pid": os.getpid(),
-        "gatewayPid": os.getpid(),
-        "socketPath": str(socket_path),
-        "startedAt": "2026-04-07T00:00:00.000Z",
-        "identities": ["default"],
-    }), encoding="utf-8")
-    connection, _ = server.accept()
-    raw = connection.recv(4096).decode("utf-8").strip()
-    request = json.loads(raw.splitlines()[0]) if raw else {}
-    connection.sendall((json.dumps({
-        "ok": True,
-        "result": {"status": request.get("method"), "source": "startup"},
-    }) + "\\n").encode("utf-8"))
-    connection.close()
-    server.close()
-    try:
-        os.unlink(socket_path)
-    except FileNotFoundError:
-        pass
-
-threading.Thread(target=delayed_startup, daemon=True).start()
-print(module.handle_tap_gateway({"action": "status"}))
-`,
-		);
-
-		const result = JSON.parse(output) as { status?: string; source?: string };
-		expect(result).toEqual({ status: "status", source: "startup" });
-		await expect(readCommandLog(tapLogPath)).resolves.toEqual([]);
+	it("forwards send_message to POST /api/messages", async () => {
+		const requestSpy: { body?: string } = {};
+		const server = await startFakeTapdServer(join(dataDir, ".tapd.sock"), {
+			"POST /api/messages": (body) => {
+				requestSpy.body = body;
+				return { receipt: { messageId: "m-1", status: "delivered" } };
+			},
+		});
+		try {
+			const output = await runPluginExpression(
+				'print(module.handle_tap_gateway({"action": "send_message", "peer": "Alice", "text": "hi"}))',
+			);
+			const result = JSON.parse(output) as { receipt?: { messageId: string } };
+			expect(result.receipt?.messageId).toBe("m-1");
+			expect(requestSpy.body).toBeDefined();
+			expect(JSON.parse(requestSpy.body ?? "{}")).toEqual({ peer: "Alice", text: "hi" });
+		} finally {
+			await server.stop();
+		}
 	});
 
 	it("skips notification context injection when no notifications render any lines", async () => {
-		const output = await runHermesPluginExpression(
-			hermesHome,
-			'print(json.dumps(module.format_notification_context([{"type": "summary", "oneLiner": "   "}])) )',
+		const output = await runPluginExpression(
+			'print(json.dumps(module.format_notification_context([{"type": "summary", "oneLiner": "   "}])))',
 		);
-
 		expect(JSON.parse(output)).toBeNull();
 	});
 });
 
-async function runHermesPluginExpression(hermesHome: string, expression: string): Promise<string> {
+type FakeResponse = Record<string, unknown> | ((body: string) => Record<string, unknown>);
+
+async function startFakeTapdServer(
+	socketPath: string,
+	routes: Record<string, FakeResponse>,
+): Promise<{ stop: () => Promise<void> }> {
+	const server = net.createServer((socket) => {
+		let buf = "";
+		socket.on("data", (chunk) => {
+			buf += chunk.toString("utf-8");
+			// Wait for end of headers
+			const headerEnd = buf.indexOf("\r\n\r\n");
+			if (headerEnd === -1) return;
+			const headersBlock = buf.slice(0, headerEnd);
+			const lines = headersBlock.split("\r\n");
+			const [requestLine] = lines;
+			const [method, path] = (requestLine ?? "").split(" ");
+			const contentLengthHeader = lines.find((l) => l.toLowerCase().startsWith("content-length:"));
+			const contentLength = contentLengthHeader
+				? Number.parseInt(contentLengthHeader.split(":")[1]?.trim() ?? "0", 10)
+				: 0;
+			const bodyStart = headerEnd + 4;
+			const haveBytes = Buffer.byteLength(buf.slice(bodyStart), "utf-8");
+			if (haveBytes < contentLength) return;
+			const body = buf.slice(bodyStart, bodyStart + contentLength);
+			const key = `${method} ${path}`;
+			const route = routes[key];
+			if (route === undefined) {
+				const notFoundBody = JSON.stringify({
+					error: { code: "not_found", message: `no fake route for ${key}` },
+				});
+				socket.end(httpResponse(404, notFoundBody));
+				return;
+			}
+			const payload: Record<string, unknown> = typeof route === "function" ? route(body) : route;
+			socket.end(httpResponse(200, JSON.stringify(payload)));
+		});
+	});
+
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(socketPath, () => resolve());
+	});
+
+	return {
+		stop: () =>
+			new Promise<void>((resolve, reject) =>
+				server.close((err) => (err ? reject(err) : resolve())),
+			),
+	};
+}
+
+function httpResponse(status: number, body: string): string {
+	const reason = status === 200 ? "OK" : status === 404 ? "Not Found" : "Error";
+	const length = Buffer.byteLength(body, "utf-8");
+	return [
+		`HTTP/1.1 ${status} ${reason}`,
+		"Content-Type: application/json",
+		`Content-Length: ${length}`,
+		"Connection: close",
+		"",
+		body,
+	].join("\r\n");
+}
+
+async function runPluginExpression(expression: string): Promise<string> {
 	const script = `
 import importlib.util
 import json
@@ -206,157 +212,15 @@ spec.loader.exec_module(module)
 ${expression}
 `.trim();
 
-	const result = await execFileAsync("python3", ["-c", script], {
-		cwd: hermesHome,
-		env: {
-			...process.env,
-			HERMES_HOME: hermesHome,
-		},
-		encoding: "utf8",
-	});
-	return result.stdout.trim();
-}
-
-async function writeFakeTapResponder(binDir: string, logPath: string): Promise<void> {
-	const scriptPath = join(binDir, "tap");
-	const serverCode = String.raw`
-import json
-import os
-import socket
-import sys
-from pathlib import Path
-
-socket_path = sys.argv[1]
-state_path = sys.argv[2]
-gateway_pid = int(sys.argv[3])
-
-Path(socket_path).parent.mkdir(parents=True, exist_ok=True)
-try:
-    os.unlink(socket_path)
-except FileNotFoundError:
-    pass
-
-server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-server.bind(socket_path)
-server.listen(1)
-Path(state_path).write_text(json.dumps({
-    "pid": os.getpid(),
-    "gatewayPid": gateway_pid,
-    "socketPath": socket_path,
-    "startedAt": "2026-04-07T00:00:00.000Z",
-    "identities": ["default"],
-}), encoding="utf-8")
-
-connection, _ = server.accept()
-raw = connection.recv(4096).decode("utf-8").strip()
-request = json.loads(raw.splitlines()[0]) if raw else {}
-if request.get("method") == "drain_notifications":
-    response = {
-        "ok": True,
-        "result": {
-            "notifications": [
-                {
-                    "type": "escalation",
-                    "identity": "default",
-                    "timestamp": "2026-04-07T00:00:00.000Z",
-                    "method": "connection/request",
-                    "from": 7,
-                    "fromName": "Alice",
-                    "messageId": "msg-1",
-                    "detail": {},
-                    "oneLiner": "Connection request from Alice",
-                }
-            ]
-        },
-    }
-else:
-    response = {"ok": True, "result": {"status": "ok", "healed": True}}
-connection.sendall((json.dumps(response) + "\n").encode("utf-8"))
-connection.close()
-server.close()
-try:
-    os.unlink(socket_path)
-except FileNotFoundError:
-    pass
-`;
-
-	await writeFile(
-		scriptPath,
-		`#!/usr/bin/env python3
-import os
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-log_path = Path(${JSON.stringify(logPath)})
-log_path.parent.mkdir(parents=True, exist_ok=True)
-with log_path.open("a", encoding="utf-8") as log_file:
-    log_file.write(" ".join(sys.argv[1:]) + "\\n")
-
-args = sys.argv[1:]
-gateway_pid = args[args.index("--gateway-pid") + 1] if "--gateway-pid" in args else "0"
-hermes_home = args[args.index("--hermes-home") + 1] if "--hermes-home" in args else os.environ["HERMES_HOME"]
-state_dir = Path(hermes_home) / "plugins" / "trusted-agents-tap" / "state"
-socket_path = state_dir / "tap-hermes.sock"
-state_path = state_dir / "daemon.json"
-state_dir.mkdir(parents=True, exist_ok=True)
-
-process = subprocess.Popen(
-    [
-        sys.executable,
-        "-c",
-        ${JSON.stringify(serverCode)},
-        str(socket_path),
-        str(state_path),
-        str(gateway_pid),
-    ],
-    stdin=subprocess.DEVNULL,
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-    close_fds=True,
-)
-
-for _ in range(50):
-    if socket_path.exists():
-        break
-    time.sleep(0.05)
-
-sys.exit(0)
-`,
-		"utf-8",
-	);
-	await chmod(scriptPath, 0o755);
-}
-
-async function writeFakeTapLogger(binDir: string, logPath: string): Promise<void> {
-	const scriptPath = join(binDir, "tap");
-	await writeFile(
-		scriptPath,
-		`#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "${logPath}"
-exit 0
-`,
-		"utf-8",
-	);
-	await chmod(scriptPath, 0o755);
-}
-
-async function readCommandLog(logPath: string): Promise<string[]> {
-	try {
-		const raw = await readFile(logPath, "utf-8");
-		return raw
-			.split("\n")
-			.map((line) => line.trim())
-			.filter(Boolean);
-	} catch (error: unknown) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			(error as NodeJS.ErrnoException).code === "ENOENT"
-		) {
-			return [];
-		}
-		throw error;
+	const env: Record<string, string> = {};
+	for (const [k, v] of Object.entries(process.env)) {
+		if (typeof v === "string") env[k] = v;
 	}
+	// Force `tap` binary lookup to fail so the unhealthy-path test is
+	// deterministic. Note the python interpreter is invoked by absolute path
+	// so PATH stubbing doesn't affect spawn().
+	env.PATH = "/nonexistent";
+
+	const result = await execFileAsync(PYTHON_BIN, ["-c", script], { env, encoding: "utf8" });
+	return result.stdout.trim();
 }
