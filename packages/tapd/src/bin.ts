@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	OwsSigningProvider,
 	TapMessagingService,
@@ -37,6 +39,12 @@ async function main(): Promise<void> {
 		});
 	};
 
+	// The bundled UI lives next to this binary at `<dist>/ui/`. The tapd
+	// `postbuild` script copies `packages/ui/out` into that location, so the
+	// daemon ships with the entire dashboard inline.
+	const here = dirname(fileURLToPath(import.meta.url));
+	const staticAssetsDir = join(here, "ui");
+
 	const daemon = new Daemon({
 		config: tapdConfig,
 		identityAgentId: trustedAgentsConfig.agentId,
@@ -50,6 +58,7 @@ async function main(): Promise<void> {
 		buildService,
 		trustStore: context.trustStore,
 		conversationLogger: context.conversationLogger,
+		staticAssetsDir,
 	});
 
 	try {

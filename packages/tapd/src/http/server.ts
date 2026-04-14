@@ -1,9 +1,10 @@
 import { mkdir, rm } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
-import { dirname } from "node:path";
+import { dirname, extname } from "node:path";
 import { authorizeRequest } from "./auth.js";
 import { sendError, sendJson, sendNotFound, sendUnauthorized } from "./response.js";
 import type { Router } from "./router.js";
+import { resolveStaticAsset } from "./static-assets.js";
 
 export interface TapdHttpServerOptions {
 	router: Router;
@@ -13,6 +14,12 @@ export interface TapdHttpServerOptions {
 	authToken: string;
 	/** Optional hook for SSE upgrade — see Task 14. Returns true if handled. */
 	sseHandler?: (req: IncomingMessage, res: ServerResponse, transport: "unix" | "tcp") => boolean;
+	/**
+	 * Directory containing the bundled UI's static export. When set, GET
+	 * requests for non-API paths attempt to serve files from here before
+	 * falling through to the route dispatcher.
+	 */
+	staticAssetsDir?: string;
 }
 
 interface BoundServer {
@@ -27,6 +34,7 @@ export class TapdHttpServer {
 	private readonly tcpPort: number;
 	private readonly authToken: string;
 	private readonly sseHandler?: TapdHttpServerOptions["sseHandler"];
+	private readonly staticAssetsDir?: string;
 
 	private bound: BoundServer[] = [];
 	private actualTcpPort = 0;
@@ -38,6 +46,7 @@ export class TapdHttpServer {
 		this.tcpPort = options.tcpPort;
 		this.authToken = options.authToken;
 		this.sseHandler = options.sseHandler;
+		this.staticAssetsDir = options.staticAssetsDir;
 	}
 
 	async start(): Promise<void> {
@@ -127,11 +136,49 @@ export class TapdHttpServer {
 		}
 
 		const result = await this.router.dispatch(method, path, body);
-		if (result === null) {
-			sendNotFound(res);
+		if (result !== null) {
+			sendJson(res, 200, result);
 			return;
 		}
-		sendJson(res, 200, result);
+
+		// Route did not match. For GET requests we attempt to serve the bundled
+		// UI's static export. The UI is served at /, /_next/*, and any other
+		// non-API path; failing both the router and the static lookup falls
+		// through to a 404.
+		if (
+			method === "GET" &&
+			this.staticAssetsDir &&
+			!path.startsWith("/api/") &&
+			!path.startsWith("/daemon/")
+		) {
+			const asset = await resolveStaticAsset(this.staticAssetsDir, path);
+			if (asset) {
+				res.writeHead(200, {
+					"Content-Type": asset.contentType,
+					"Content-Length": asset.body.length,
+					"Cache-Control": "no-store",
+				});
+				res.end(asset.body);
+				return;
+			}
+			// SPA fallback: serve index.html for client-routed paths so the
+			// React app can resolve its own routes. Skip files with extensions
+			// (those are real misses) to keep 404s honest for missing assets.
+			if (!extname(path)) {
+				const index = await resolveStaticAsset(this.staticAssetsDir, "/");
+				if (index) {
+					res.writeHead(200, {
+						"Content-Type": index.contentType,
+						"Content-Length": index.body.length,
+						"Cache-Control": "no-store",
+					});
+					res.end(index.body);
+					return;
+				}
+			}
+		}
+
+		sendNotFound(res);
 	}
 }
 

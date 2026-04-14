@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,8 +86,17 @@ describe("Daemon lifecycle", () => {
 		const body = await response.json();
 		expect(body).toMatchObject({ agentId: 42, displayName: "Alice" });
 
+		// The daemon publishes its bound TCP port so clients can discover us.
+		const portFile = join(dataDir, ".tapd.port");
+		const portContents = await readFile(portFile, "utf-8");
+		expect(Number.parseInt(portContents, 10)).toBe(port);
+
 		await daemon.stop();
 		expect(service.stop).toHaveBeenCalledTimes(1);
+
+		// The port file is removed on shutdown so a stale value never points to
+		// a dead daemon.
+		await expect(stat(portFile)).rejects.toThrow();
 	});
 
 	it("serves /daemon/health over the socket", async () => {

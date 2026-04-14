@@ -1,3 +1,5 @@
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { IConversationLogger, ITrustStore, TapMessagingService } from "trusted-agents-core";
 import { generateAuthToken, persistAuthToken } from "./auth-token.js";
 import type { TapdConfig } from "./config.js";
@@ -27,7 +29,14 @@ export interface DaemonOptions {
 	buildService: () => Promise<TapMessagingService>;
 	trustStore: ITrustStore;
 	conversationLogger: IConversationLogger;
+	/**
+	 * Directory containing the bundled UI's static export. When set, tapd
+	 * serves the UI at `/` and at any non-API GET path.
+	 */
+	staticAssetsDir?: string;
 }
+
+const PORT_FILE = ".tapd.port";
 
 export class Daemon {
 	private readonly options: DaemonOptions;
@@ -71,6 +80,7 @@ export class Daemon {
 			tcpHost: this.options.config.tcpHost,
 			tcpPort: this.options.config.tcpPort,
 			authToken: this.token,
+			staticAssetsDir: this.options.staticAssetsDir,
 			sseHandler: (req, res, _transport) => {
 				if (req.method !== "GET") return false;
 				const url = req.url ?? "";
@@ -81,6 +91,17 @@ export class Daemon {
 			},
 		});
 		await this.server.start();
+
+		// Publish the bound TCP port so clients (CLI `tap ui`, the Playwright
+		// fixture) can discover where to reach us without parsing stdout.
+		const boundPort = this.server.boundTcpPort();
+		if (boundPort > 0) {
+			await writeFile(
+				join(this.options.config.dataDir, PORT_FILE),
+				String(boundPort),
+				{ encoding: "utf-8", mode: 0o600 },
+			);
+		}
 	}
 
 	async stop(): Promise<void> {
@@ -95,6 +116,9 @@ export class Daemon {
 			await this.runtime.stop();
 			this.runtime = null;
 		}
+		await rm(join(this.options.config.dataDir, PORT_FILE), {
+			force: true,
+		}).catch(() => {});
 		this.removeSignalHandlers();
 		if (this.shutdownResolve) {
 			const resolve = this.shutdownResolve;
