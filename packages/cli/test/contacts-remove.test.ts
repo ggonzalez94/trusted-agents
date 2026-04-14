@@ -1,9 +1,10 @@
 /**
- * Tests for `tap contacts remove` after the Phase 3 refactor.
+ * Tests for `tap contacts remove` (F3.1 fail-closed fix).
  *
- * The command now routes through tapd's POST /api/contacts/:id/revoke when
- * tapd is running, and falls back to a local file delete (no revoke
- * delivery) when tapd is offline. These tests exercise both branches.
+ * The command MUST route through tapd so `connection/revoke` is delivered
+ * before local state is deleted — this preserves the revoke-before-delete
+ * trust-graph invariant. When tapd is not running, the command fails closed
+ * with exit code 2 and does NOT mutate the local trust store.
  */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -46,16 +47,6 @@ vi.mock("trusted-agents-core", async () => {
 
 import { contactsRemoveCommand } from "../src/commands/contacts-remove.js";
 
-const ACTIVE_CONTACT = {
-	connectionId: "conn-abc-123",
-	peerAgentId: 42,
-	peerChain: "eip155:8453",
-	peerDisplayName: "Bob",
-	peerAgentAddress: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-	peerOwnerAddress: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-	status: "active" as const,
-};
-
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
@@ -63,14 +54,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 	});
 }
 
-describe("tap contacts remove (tapd client refactor)", () => {
+describe("tap contacts remove (F3.1 fail-closed)", () => {
 	let dataDir: string;
 
 	beforeEach(async () => {
 		dataDir = await mkdtemp(join(tmpdir(), "tap-contacts-rm-"));
 		loadConfigMock.mockResolvedValue({ dataDir });
-		getContactsMock.mockResolvedValue([ACTIVE_CONTACT]);
 		removeContactMock.mockResolvedValue(undefined);
+		getContactsMock.mockResolvedValue([]);
 	});
 
 	afterEach(async () => {
@@ -80,7 +71,7 @@ describe("tap contacts remove (tapd client refactor)", () => {
 		await rm(dataDir, { recursive: true, force: true }).catch(() => {});
 	});
 
-	it("routes through tapd when port + token are present", async () => {
+	it("routes through tapd's POST /api/contacts/:id/revoke when tapd is running", async () => {
 		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
 		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
 
@@ -104,29 +95,35 @@ describe("tap contacts remove (tapd client refactor)", () => {
 		expect(removeContactMock).not.toHaveBeenCalled();
 	});
 
-	it("falls back to local removal when tapd is not running", async () => {
+	it("fails closed with exit code 2 and does NOT touch the trust store when tapd is not running", async () => {
+		// No .tapd.port/.tapd-token files → TapdClient.forDataDir throws TapdNotRunningError.
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
 		await contactsRemoveCommand("conn-abc-123", { json: true });
 
 		expect(fetchMock).not.toHaveBeenCalled();
-		expect(removeContactMock).toHaveBeenCalledWith("conn-abc-123");
-		expect(successMock).toHaveBeenCalledOnce();
-		const payload = successMock.mock.calls[0]?.[0] as { removed: string; peer: string };
-		expect(payload.removed).toBe("conn-abc-123");
+		expect(removeContactMock).not.toHaveBeenCalled();
+		expect(successMock).not.toHaveBeenCalled();
+		expect(errorMock).toHaveBeenCalledOnce();
+		expect(errorMock.mock.calls[0]?.[0]).toBe("TAPD_NOT_RUNNING");
+		expect(errorMock.mock.calls[0]?.[1]).toContain("tap daemon start");
+		expect(process.exitCode).toBe(2);
 	});
 
-	it("returns NOT_FOUND when the contact does not exist (local fallback)", async () => {
-		getContactsMock.mockResolvedValue([]);
-		const fetchMock = vi.fn();
+	it("surfaces tapd errors (e.g. NOT_FOUND) when the daemon rejects the request", async () => {
+		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
+		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
+
+		const fetchMock = vi.fn(async () =>
+			jsonResponse({ error: { code: "NOT_FOUND", message: "unknown connection" } }, 404),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		await contactsRemoveCommand("conn-nonexistent", { json: true });
+		await contactsRemoveCommand("conn-missing", { json: true });
 
-		expect(process.exitCode).toBe(4);
-		expect(errorMock).toHaveBeenCalled();
-		expect(errorMock.mock.calls[0]?.[0]).toBe("NOT_FOUND");
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(removeContactMock).not.toHaveBeenCalled();
 		expect(successMock).not.toHaveBeenCalled();
 	});
 });
