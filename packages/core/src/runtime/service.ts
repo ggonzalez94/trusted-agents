@@ -1124,13 +1124,7 @@ export class TapMessagingService {
 				});
 			}
 
-			this.emit({
-				type: "connection.requested",
-				requestId,
-				peerAgentId: peerAgent.agentId,
-				peerChain: peerAgent.chain,
-				direction: "outbound",
-			});
+			this.emitConnectionRequested(requestId, peerAgent.agentId, peerAgent.chain, "outbound");
 
 			// Register a waiter before sending so that a result arriving during or
 			// immediately after send() can resolve it. waitMs === 0 means fire-and-forget.
@@ -2062,6 +2056,42 @@ export class TapMessagingService {
 		this.emit({ type: "connection.established", connectionId, peer });
 	}
 
+	private emitConnectionRequested(
+		requestId: string,
+		peerAgentId: number,
+		peerChain: string,
+		direction: "inbound" | "outbound",
+	): void {
+		this.emit({ type: "connection.requested", requestId, peerAgentId, peerChain, direction });
+	}
+
+	private emitActionCompleted(
+		conversationId: string,
+		requestId: string,
+		kind: TapActionKind,
+		result: Record<string, unknown>,
+		extras?: Record<string, unknown>,
+	): void {
+		this.emit({
+			type: "action.completed",
+			conversationId,
+			requestId,
+			kind,
+			result,
+			...extras,
+			completedAt: nowISO(),
+		});
+	}
+
+	private emitActionFailed(
+		conversationId: string,
+		requestId: string,
+		kind: TapActionKind,
+		error: string,
+	): void {
+		this.emit({ type: "action.failed", conversationId, requestId, kind, error });
+	}
+
 	private emitIncomingAndReturn<S extends string>(
 		envelope: { from: number; message: ProtocolMessage },
 		status: S,
@@ -2432,15 +2462,12 @@ export class TapMessagingService {
 			}
 
 			if (!claimed.duplicate) {
-				this.emit({
-					type: "connection.requested",
-					requestId: String(envelope.message.id),
-					peerAgentId: envelope.from,
-					peerChain:
-						(envelope.message.params as { from?: { chain?: string } } | undefined)?.from?.chain ??
-						"",
-					direction: "inbound",
-				});
+				this.emitConnectionRequested(
+					String(envelope.message.id),
+					envelope.from,
+					(envelope.message.params as { from?: { chain?: string } } | undefined)?.from?.chain ?? "",
+					"inbound",
+				);
 			}
 
 			this.enqueue(requestKey, async () => {
@@ -3823,24 +3850,22 @@ export class TapMessagingService {
 				this.log("info", `Received transfer ${response.status} result from ${peerLabel(contact)}`);
 			}
 			const transferConversationId = contact ? resolveConversationId(contact) : "";
+			const transferRequestId = response.requestId ?? response.actionId;
 			if (response.status === "completed") {
-				this.emit({
-					type: "action.completed",
-					conversationId: transferConversationId,
-					requestId: response.requestId ?? response.actionId,
-					kind: "transfer",
-					result: response as Record<string, unknown>,
-					...(response.txHash ? { txHash: response.txHash } : {}),
-					completedAt: nowISO(),
-				});
+				this.emitActionCompleted(
+					transferConversationId,
+					transferRequestId,
+					"transfer",
+					response as Record<string, unknown>,
+					response.txHash ? { txHash: response.txHash } : undefined,
+				);
 			} else if (response.status === "rejected" || response.status === "failed") {
-				this.emit({
-					type: "action.failed",
-					conversationId: transferConversationId,
-					requestId: response.requestId ?? response.actionId,
-					kind: "transfer",
-					error: response.error ?? `transfer ${response.status}`,
-				});
+				this.emitActionFailed(
+					transferConversationId,
+					transferRequestId,
+					"transfer",
+					response.error ?? `transfer ${response.status}`,
+				);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -3906,25 +3931,22 @@ export class TapMessagingService {
 			const schedConversationId = contact ? resolveConversationId(contact) : "";
 			const schedRequestId = requestId ?? schedulingResponse.schedulingId;
 			if (schedulingResponse.type === "scheduling/accept") {
-				this.emit({
-					type: "action.completed",
-					conversationId: schedConversationId,
-					requestId: schedRequestId,
-					kind: "scheduling",
-					result: schedulingResponse as unknown as Record<string, unknown>,
-					completedAt: nowISO(),
-				});
+				this.emitActionCompleted(
+					schedConversationId,
+					schedRequestId,
+					"scheduling",
+					schedulingResponse as unknown as Record<string, unknown>,
+				);
 			} else if (
 				schedulingResponse.type === "scheduling/reject" ||
 				schedulingResponse.type === "scheduling/cancel"
 			) {
-				this.emit({
-					type: "action.failed",
-					conversationId: schedConversationId,
-					requestId: schedRequestId,
-					kind: "scheduling",
-					error: (schedulingResponse as { reason?: string }).reason ?? `scheduling ${eventType}`,
-				});
+				this.emitActionFailed(
+					schedConversationId,
+					schedRequestId,
+					"scheduling",
+					(schedulingResponse as { reason?: string }).reason ?? `scheduling ${eventType}`,
+				);
 			}
 			return contact?.peerDisplayName;
 		}
