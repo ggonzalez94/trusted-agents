@@ -191,20 +191,25 @@ def send_request(action: str, params: dict | None = None) -> Any:
         return _http_request("POST", "/api/transfers", body=body)
 
     if action == "request_meeting":
-        body = {}
+        # tapd's /api/meetings accepts a flat shape and builds the full
+        # SchedulingProposal centrally (generating schedulingId, defaulting
+        # originTimezone, and turning `preferred` into a slot). The Python
+        # client only has to forward the user-facing fields.
+        body: dict[str, Any] = {}
         if params.get("peer") is not None:
             body["peer"] = params["peer"]
-        proposal: dict[str, Any] = {}
         if params.get("title") is not None:
-            proposal["title"] = params["title"]
+            body["title"] = params["title"]
         if params.get("duration") is not None:
-            proposal["duration"] = params["duration"]
+            body["duration"] = params["duration"]
         if params.get("preferred") is not None:
-            proposal["preferred"] = params["preferred"]
+            body["preferred"] = params["preferred"]
         if params.get("location") is not None:
-            proposal["location"] = params["location"]
-        if proposal:
-            body["proposal"] = proposal
+            body["location"] = params["location"]
+        if params.get("note") is not None:
+            body["note"] = params["note"]
+        if params.get("scheduling_id") is not None:
+            body["schedulingId"] = params["scheduling_id"]
         return _http_request("POST", "/api/meetings", body=body)
 
     if action == "respond_meeting":
