@@ -63,6 +63,12 @@ export async function migrateFileLogsToSqlite(
 
 	const report: MigrationReport = { migrated: 0, skipped: 0, errors: [] };
 
+	const updateCanonicalMetadata = logger.database.prepare(
+		`UPDATE conversations
+		 SET topic = ?, started_at = ?, last_message_at = ?, last_read_at = ?, status = ?
+		 WHERE conversation_id = ?`,
+	);
+
 	for (const entry of entries) {
 		if (!entry.endsWith(".json")) {
 			report.skipped += 1;
@@ -100,9 +106,17 @@ export async function migrateFileLogsToSqlite(
 					);
 			} else {
 				// Each message gets logged through the normal logMessage path so dedupe,
-				// insert_order, and timestamp normalization all apply.
+				// insert_order, and timestamp normalization all apply. Sort by
+				// timestamp ascending BEFORE replay — the legacy FileConversationLogger
+				// sorted on read, so disk order is not guaranteed chronological
+				// (finding Fv2.2). Replaying in source order would corrupt
+				// `started_at`/`last_message_at` derived from the first/last append.
+				const sortedMessages = [...log.messages].sort((a, b) =>
+					a.timestamp.localeCompare(b.timestamp),
+				);
+
 				let firstMessage = true;
-				for (const message of log.messages) {
+				for (const message of sortedMessages) {
 					await logger.logMessage(
 						log.conversationId,
 						message,
@@ -117,10 +131,22 @@ export async function migrateFileLogsToSqlite(
 					);
 					firstMessage = false;
 				}
-				if (log.lastReadAt) {
-					await logger.markRead(log.conversationId, log.lastReadAt);
-				}
 			}
+
+			// Restore canonical conversation metadata from the source JSON. The
+			// insert/replay path derives started_at from the first row and
+			// status is hard-coded to 'active' by the INSERT statement, so we
+			// explicitly overwrite with the values that existed in the legacy
+			// log (finding Fv2.2).
+			updateCanonicalMetadata.run(
+				log.topic ?? null,
+				log.startedAt,
+				log.lastMessageAt,
+				log.lastReadAt ?? null,
+				log.status,
+				log.conversationId,
+			);
+
 			report.migrated += 1;
 		} catch (error: unknown) {
 			report.errors.push({

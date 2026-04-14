@@ -396,4 +396,73 @@ describe("sqlite migration", () => {
 
 		logger.close();
 	});
+
+	// Finding Fv2.2: legacy JSON is not guaranteed to be on-disk ordered
+	// (FileConversationLogger sorted on read), so replaying in source order
+	// can corrupt timestamps. Status was also hard-coded to "active" by the
+	// insert path regardless of the source value.
+	it("sorts out-of-order messages before replay and preserves canonical metadata", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const canonical = {
+			conversationId: "conv-meta",
+			connectionId: "conn-1",
+			peerAgentId: 7,
+			peerDisplayName: "Alice",
+			topic: "Roadmap",
+			startedAt: "2026-04-01T00:00:00.000Z",
+			lastMessageAt: "2026-04-01T00:02:00.000Z",
+			lastReadAt: "2026-04-01T00:01:30.000Z",
+			status: "completed" as const,
+			messages: [
+				{
+					messageId: "m3",
+					timestamp: "2026-04-01T00:02:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "third",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{
+					messageId: "m1",
+					timestamp: "2026-04-01T00:00:00.000Z",
+					direction: "outgoing" as const,
+					scope: "default",
+					content: "first",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+				{
+					messageId: "m2",
+					timestamp: "2026-04-01T00:01:00.000Z",
+					direction: "incoming" as const,
+					scope: "default",
+					content: "second",
+					humanApprovalRequired: false,
+					humanApprovalGiven: null,
+				},
+			],
+		};
+		await writeFile(join(dataDir, "conversations", "conv-meta.json"), JSON.stringify(canonical));
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+
+		const log = await logger.getConversation("conv-meta");
+		expect(log).not.toBeNull();
+		if (!log) return;
+
+		// Messages come back sorted by (timestamp, insert_order).
+		expect(log.messages.map((m) => m.content)).toEqual(["first", "second", "third"]);
+
+		// Canonical metadata is preserved from the source JSON.
+		expect(log.startedAt).toBe("2026-04-01T00:00:00.000Z");
+		expect(log.lastMessageAt).toBe("2026-04-01T00:02:00.000Z");
+		expect(log.lastReadAt).toBe("2026-04-01T00:01:30.000Z");
+		expect(log.status).toBe("completed");
+		expect(log.topic).toBe("Roadmap");
+
+		logger.close();
+	});
 });
