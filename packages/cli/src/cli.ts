@@ -126,6 +126,15 @@ export function createCli(): Command {
 			await daemonLogsCommand(opts, cmdOpts);
 		});
 
+	program
+		.command("ui")
+		.description("Open the tapd web dashboard in your default browser")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { uiCommand } = await import("./commands/ui.js");
+			await uiCommand(opts);
+		});
+
 	const hermes = program.command("hermes").description("Manage the TAP Hermes gateway integration");
 
 	hermes
