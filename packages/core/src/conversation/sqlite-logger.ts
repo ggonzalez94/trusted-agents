@@ -132,6 +132,25 @@ export class SqliteConversationLogger implements IConversationLogger {
 		message: ConversationMessage,
 		context?: ConversationContext,
 	): Promise<void> {
+		// Canonicalize the runtime timestamp on the way in so the row we
+		// INSERT (and any conversation row we create here) hits the
+		// SQLite store in the canonical 24-char `YYYY-MM-DDTHH:mm:ss.sssZ`
+		// form. This is the runtime half of the encoding invariant —
+		// importLog handles the legacy half. With both write paths
+		// canonicalizing, lexical `ORDER BY` clauses in
+		// `stmtSelectMessages` and `stmtListAllConversations` produce
+		// true temporal order without needing a parallel epoch column.
+		if (typeof message.timestamp !== "string" || !isStrictIsoTimestamp(message.timestamp)) {
+			throw new Error(
+				`logMessage: message.timestamp must be a strict ISO 8601 timestamp with explicit offset, got: ${String(message.timestamp)}`,
+			);
+		}
+		const canonicalTimestamp = canonicalizeTimestamp(message.timestamp);
+		const canonicalApprovalAt =
+			message.humanApprovalAt === undefined || message.humanApprovalAt === null
+				? null
+				: canonicalizeTimestamp(message.humanApprovalAt);
+
 		const insert = this.db.transaction(() => {
 			const existing = this.stmtSelectConversation.get(conversationId) as
 				| ConversationRow
@@ -147,8 +166,8 @@ export class SqliteConversationLogger implements IConversationLogger {
 					context.peerAgentId,
 					context.peerDisplayName,
 					context.topic ?? null,
-					message.timestamp,
-					message.timestamp,
+					canonicalTimestamp,
+					canonicalTimestamp,
 				);
 			} else {
 				if (typeof message.messageId === "string") {
@@ -161,7 +180,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 				}
 
 				this.stmtUpdateConversationOnAppend.run(
-					message.timestamp,
+					canonicalTimestamp,
 					context?.topic ?? null,
 					conversationId,
 				);
@@ -173,13 +192,13 @@ export class SqliteConversationLogger implements IConversationLogger {
 			this.stmtInsertMessage.run(
 				conversationId,
 				message.messageId ?? null,
-				message.timestamp,
+				canonicalTimestamp,
 				message.direction,
 				message.scope,
 				message.content,
 				message.humanApprovalRequired ? 1 : 0,
 				message.humanApprovalGiven === null ? null : message.humanApprovalGiven ? 1 : 0,
-				message.humanApprovalAt ?? null,
+				canonicalApprovalAt,
 				insertOrder,
 			);
 		});
@@ -250,10 +269,34 @@ export class SqliteConversationLogger implements IConversationLogger {
 		}
 		validateConversationLogForImport(log);
 
-		// Sort messages ascending by timestamp so `insert_order` increments
-		// monotonically. Legacy FileConversationLogger sorted on read, so
-		// disk order is not a guarantee (finding Fv2.2).
-		const sortedMessages = [...log.messages].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+		// Canonicalize every timestamp on the log before persistence.
+		// `validateConversationLogForImport` has already enforced strict
+		// ISO 8601 with explicit offset; canonicalization normalizes any
+		// non-Z offset / sub-millisecond fraction / mixed precision into
+		// the single 24-char `YYYY-MM-DDTHH:mm:ss.sssZ` form, so the
+		// SQLite store only ever holds rows whose lexical order equals
+		// their instant order. Once that invariant holds for every write
+		// path (here and in `logMessage`), the lexical `ORDER BY` clauses
+		// in `stmtSelectMessages` / `stmtListAllConversations` /
+		// `stmtListConversationsByConnection` produce true temporal order
+		// and we don't need a parallel epoch column.
+		const canonicalStartedAt = canonicalizeTimestamp(log.startedAt);
+		const canonicalLastMessageAt = canonicalizeTimestamp(log.lastMessageAt);
+		const canonicalLastReadAt = canonicalizeOptionalTimestamp(log.lastReadAt ?? null);
+
+		// Sort messages by their CANONICAL timestamp ascending. We can't
+		// rely on the input order — legacy FileConversationLogger sorted
+		// on read, so disk order is not chronological — and we can't sort
+		// the raw timestamps lexically because mixed precision/offset
+		// disagrees with instant order (the Codex residual that drove
+		// this fix). Canonicalize first, then sort. The `canonical` field
+		// is also what we INSERT below so dedupe + insert_order match.
+		const sortedMessages = log.messages
+			.map((message) => ({
+				canonical: canonicalizeTimestamp(message.timestamp),
+				message,
+			}))
+			.sort((a, b) => a.canonical.localeCompare(b.canonical));
 
 		const importFn = this.db.transaction(() => {
 			// INSERT OR IGNORE — returns `changes: 1` when a fresh row was
@@ -264,8 +307,8 @@ export class SqliteConversationLogger implements IConversationLogger {
 				log.peerAgentId,
 				log.peerDisplayName,
 				log.topic ?? null,
-				log.startedAt,
-				log.lastMessageAt,
+				canonicalStartedAt,
+				canonicalLastMessageAt,
 			);
 
 			// Metadata strategy: monotonic field-level merge.
@@ -297,9 +340,9 @@ export class SqliteConversationLogger implements IConversationLogger {
 			if (insertInfo.changes > 0) {
 				this.stmtImportUpdateMetadata.run(
 					log.topic ?? null,
-					log.startedAt,
-					log.lastMessageAt,
-					log.lastReadAt ?? null,
+					canonicalStartedAt,
+					canonicalLastMessageAt,
+					canonicalLastReadAt,
 					log.status,
 					log.conversationId,
 				);
@@ -308,12 +351,23 @@ export class SqliteConversationLogger implements IConversationLogger {
 					| ConversationRow
 					| undefined;
 				if (existing) {
-					const merged = mergeImportMetadata(existing, log);
+					// `existing` may carry pre-canonical timestamps from a
+					// pre-fix install. The merge handles the comparison
+					// correctly (instant-based) and writes out the chosen
+					// VALUE, but we additionally canonicalize the chosen
+					// value before writing so the row migrates to the new
+					// invariant: every column on disk is canonical.
+					const merged = mergeImportMetadata(existing, {
+						...log,
+						startedAt: canonicalStartedAt,
+						lastMessageAt: canonicalLastMessageAt,
+						...(canonicalLastReadAt !== null ? { lastReadAt: canonicalLastReadAt } : {}),
+					});
 					this.stmtImportUpdateMetadata.run(
 						merged.topic,
-						merged.startedAt,
-						merged.lastMessageAt,
-						merged.lastReadAt,
+						canonicalizeTimestampSafe(merged.startedAt),
+						canonicalizeTimestampSafe(merged.lastMessageAt),
+						merged.lastReadAt === null ? null : canonicalizeTimestampSafe(merged.lastReadAt),
 						merged.status,
 						log.conversationId,
 					);
@@ -323,9 +377,10 @@ export class SqliteConversationLogger implements IConversationLogger {
 			// Replay messages. Each INSERT goes through the dedupe check so
 			// retries after a crash are idempotent. Counting existing rows
 			// once before the loop keeps `insert_order` monotonic across the
-			// whole file.
+			// whole file. We INSERT the CANONICAL timestamp so the message
+			// column matches the encoding invariant.
 			let insertOrder = (this.stmtCountMessages.get(log.conversationId) as { c: number }).c + 1;
-			for (const message of sortedMessages) {
+			for (const { canonical, message } of sortedMessages) {
 				if (typeof message.messageId === "string") {
 					const dup = this.stmtFindDupMessage.get(
 						log.conversationId,
@@ -337,13 +392,15 @@ export class SqliteConversationLogger implements IConversationLogger {
 				this.stmtInsertMessage.run(
 					log.conversationId,
 					message.messageId ?? null,
-					message.timestamp,
+					canonical,
 					message.direction,
 					message.scope,
 					message.content,
 					message.humanApprovalRequired ? 1 : 0,
 					message.humanApprovalGiven === null ? null : message.humanApprovalGiven ? 1 : 0,
-					message.humanApprovalAt ?? null,
+					message.humanApprovalAt === undefined
+						? null
+						: canonicalizeTimestampSafe(message.humanApprovalAt),
 					insertOrder,
 				);
 				insertOrder += 1;
@@ -470,15 +527,24 @@ function validateConversationLogForImport(log: ConversationLog): void {
 
 	const topErr = (field: string, issue: string) =>
 		new Error(`importLog: conversation ${log.conversationId} ${field} ${issue}`);
-	if (typeof log.startedAt !== "string" || !isParseableInstant(log.startedAt)) {
-		throw topErr("startedAt", "is not a parseable ISO 8601 instant");
+	if (typeof log.startedAt !== "string" || !isStrictIsoTimestamp(log.startedAt)) {
+		throw topErr(
+			"startedAt",
+			"is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)",
+		);
 	}
-	if (typeof log.lastMessageAt !== "string" || !isParseableInstant(log.lastMessageAt)) {
-		throw topErr("lastMessageAt", "is not a parseable ISO 8601 instant");
+	if (typeof log.lastMessageAt !== "string" || !isStrictIsoTimestamp(log.lastMessageAt)) {
+		throw topErr(
+			"lastMessageAt",
+			"is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)",
+		);
 	}
 	if (log.lastReadAt !== undefined && log.lastReadAt !== null) {
-		if (typeof log.lastReadAt !== "string" || !isParseableInstant(log.lastReadAt)) {
-			throw topErr("lastReadAt", "is not a parseable ISO 8601 instant");
+		if (typeof log.lastReadAt !== "string" || !isStrictIsoTimestamp(log.lastReadAt)) {
+			throw topErr(
+				"lastReadAt",
+				"is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)",
+			);
 		}
 	}
 
@@ -489,8 +555,11 @@ function validateConversationLogForImport(log: ConversationLog): void {
 		if (!message || typeof message !== "object") throw msgErr(i, "is not an object");
 		if (typeof message.timestamp !== "string" || message.timestamp.length === 0)
 			throw msgErr(i, "has missing or non-string timestamp");
-		if (!isParseableInstant(message.timestamp))
-			throw msgErr(i, `has non-parseable timestamp: ${message.timestamp}`);
+		if (!isStrictIsoTimestamp(message.timestamp))
+			throw msgErr(
+				i,
+				`has non-canonical timestamp (must be strict ISO 8601 with explicit offset): ${message.timestamp}`,
+			);
 		if (message.direction !== "incoming" && message.direction !== "outgoing")
 			throw msgErr(i, `has invalid direction: ${String(message.direction)}`);
 		if (typeof message.scope !== "string") throw msgErr(i, "has non-string scope");
@@ -507,6 +576,93 @@ function validateConversationLogForImport(log: ConversationLog): void {
 function isParseableInstant(value: string): boolean {
 	if (value.length === 0) return false;
 	return !Number.isNaN(Date.parse(value));
+}
+
+/**
+ * Strict RFC 3339 / ISO 8601 timestamp regex with REQUIRED explicit offset.
+ *
+ * Form: `YYYY-MM-DDTHH:mm:ss[.fff]<Z|±HH:MM>`
+ *
+ * What this rejects on purpose:
+ *
+ *   - Missing offset (`2026-04-10T12:00:00`). `Date.parse` interprets this
+ *     as local time, which is host-dependent and silently shifts the
+ *     instant. Always requiring `Z` or `±HH:MM` makes the encoding
+ *     unambiguous.
+ *   - RFC 2822 strings (`Mon, 10 Apr 2026 12:00:00 GMT`). They parse but
+ *     are not the canonical encoding we use anywhere else.
+ *   - Date-only strings (`2026-04-10`). Same reason as above.
+ *
+ * What this accepts:
+ *
+ *   - `2026-04-10T12:00:00Z`
+ *   - `2026-04-10T12:00:00.500Z`
+ *   - `2026-04-10T12:00:00.123456Z` (sub-millisecond fractions allowed —
+ *     `canonicalizeTimestamp` truncates them when normalizing because
+ *     JavaScript Date only carries millisecond precision; rejecting them
+ *     would force every legacy log to be rewritten before import)
+ *   - `2026-04-10T13:00:00+01:00`
+ *   - `2026-04-10T11:00:00-01:00`
+ *
+ * Both the import validator and the runtime log writer enforce this
+ * format so the SQLite store only ever holds canonical, lexically-sortable
+ * timestamps. Once everything in the DB is canonical, the lexical
+ * `ORDER BY timestamp ASC` clauses match the true temporal order and we
+ * never have to keep a parallel epoch column.
+ */
+const STRICT_ISO_OFFSET_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+function isStrictIsoTimestamp(value: string): boolean {
+	if (!STRICT_ISO_OFFSET_REGEX.test(value)) return false;
+	return !Number.isNaN(Date.parse(value));
+}
+
+/**
+ * Normalize a strict-ISO timestamp to its canonical UTC representation:
+ * `YYYY-MM-DDTHH:mm:ss.sssZ` (24 chars, milliseconds, Z offset). Throws
+ * if the input does not match the strict format.
+ *
+ * Why canonicalize: SQLite stores timestamps as TEXT and `ORDER BY` is
+ * lexical. Once every row is in this canonical 24-char form, lexical
+ * order and instant order are guaranteed to agree. Sub-millisecond
+ * precision in the input is truncated because JavaScript Date carries
+ * only millisecond precision; this is acknowledged and consistent with
+ * the rest of the codebase.
+ */
+export function canonicalizeTimestamp(value: string): string {
+	if (typeof value !== "string" || !isStrictIsoTimestamp(value)) {
+		throw new Error(
+			`canonicalizeTimestamp: not a strict ISO 8601 timestamp with explicit offset: ${String(value)}`,
+		);
+	}
+	const ms = Date.parse(value);
+	if (Number.isNaN(ms)) {
+		throw new Error(`canonicalizeTimestamp: Date.parse failed for: ${value}`);
+	}
+	return new Date(ms).toISOString();
+}
+
+/** Same as `canonicalizeTimestamp` but tolerates `null`/`undefined`. */
+function canonicalizeOptionalTimestamp(value: string | null | undefined): string | null {
+	if (value === null || value === undefined) return null;
+	return canonicalizeTimestamp(value);
+}
+
+/**
+ * Canonicalize a timestamp that may have come from an existing SQLite row
+ * (i.e. it could already be canonical, or it could be a pre-canonical
+ * legacy value). Falls back to returning the input unchanged if it is not
+ * a strict ISO timestamp — that path only fires for pre-fix runtime rows
+ * that the merge loop is already handling instant-correctly.
+ *
+ * The migration's intent is to upgrade existing rows to the canonical
+ * encoding incrementally: any row touched by an import gets canonicalized
+ * on the way out, but a row we cannot canonicalize is left as-is rather
+ * than dropping its data.
+ */
+function canonicalizeTimestampSafe(value: string): string {
+	if (isStrictIsoTimestamp(value)) return canonicalizeTimestamp(value);
+	return value;
 }
 
 function rowToConversationLog(row: ConversationRow, messages: MessageRow[]): ConversationLog {
