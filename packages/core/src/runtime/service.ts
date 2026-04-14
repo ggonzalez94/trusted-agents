@@ -1793,9 +1793,7 @@ export class TapMessagingService {
 			await journal.updateStatus(entry.requestId, "pending");
 
 			const commandType = entry.metadata?.commandType as TapCommandJob["type"] | undefined;
-			const commandPayload = entry.metadata?.commandPayload as
-				| TapCommandJob["payload"]
-				| undefined;
+			const commandPayload = entry.metadata?.commandPayload as TapCommandJob["payload"] | undefined;
 
 			if (!commandType || commandPayload === undefined) {
 				this.log(
@@ -4991,7 +4989,10 @@ function serializePendingTransferRequestDetails(
 	dataDir: string,
 ): Record<string, unknown> {
 	return {
-		...(buildPendingTransferDetails(contact, request, dataDir) as unknown as Record<string, unknown>),
+		...(buildPendingTransferDetails(contact, request, dataDir) as unknown as Record<
+			string,
+			unknown
+		>),
 		request: {
 			type: "transfer-request",
 			payload: request,

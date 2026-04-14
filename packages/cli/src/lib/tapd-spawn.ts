@@ -127,42 +127,30 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 		throw new Error(`Invalid pid in ${pidPath}`);
 	}
 
-	// Fast path — process already gone. Clean up and return.
-	if (!isProcessAlive(pid)) {
+	async function cleanupAndReturn(): Promise<number> {
 		await rm(pidPath, { force: true }).catch(() => {});
 		await rm(portPath, { force: true }).catch(() => {});
 		return pid;
 	}
+
+	// Fast path — process already gone. Clean up and return.
+	if (!isProcessAlive(pid)) return await cleanupAndReturn();
 
 	try {
 		process.kill(pid, "SIGTERM");
 	} catch (err) {
-		const code = (err as NodeJS.ErrnoException).code;
-		if (code === "ESRCH") {
-			await rm(pidPath, { force: true }).catch(() => {});
-			await rm(portPath, { force: true }).catch(() => {});
-			return pid;
-		}
+		if ((err as NodeJS.ErrnoException).code === "ESRCH") return await cleanupAndReturn();
 		throw err;
 	}
 
-	if (await waitForExit(pid, portPath, timeoutMs)) {
-		await rm(pidPath, { force: true }).catch(() => {});
-		await rm(portPath, { force: true }).catch(() => {});
-		return pid;
-	}
+	if (await waitForExit(pid, portPath, timeoutMs)) return await cleanupAndReturn();
 
 	// SIGTERM was ignored — escalate. Give the process a short window to
 	// finish the KILL before giving up.
 	try {
 		process.kill(pid, "SIGKILL");
 	} catch (err) {
-		const code = (err as NodeJS.ErrnoException).code;
-		if (code === "ESRCH") {
-			await rm(pidPath, { force: true }).catch(() => {});
-			await rm(portPath, { force: true }).catch(() => {});
-			return pid;
-		}
+		if ((err as NodeJS.ErrnoException).code === "ESRCH") return await cleanupAndReturn();
 		// SIGKILL delivery failed for some other reason (EPERM, etc). Leave
 		// the pidfile in place as evidence and surface the error.
 		throw new Error(
@@ -170,11 +158,7 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 		);
 	}
 
-	if (await waitForExit(pid, portPath, 1_000)) {
-		await rm(pidPath, { force: true }).catch(() => {});
-		await rm(portPath, { force: true }).catch(() => {});
-		return pid;
-	}
+	if (await waitForExit(pid, portPath, 1_000)) return await cleanupAndReturn();
 
 	// SIGKILL was delivered but the process is STILL alive (e.g. uninterruptible
 	// wait). Leave the pidfile as evidence so status reports it.

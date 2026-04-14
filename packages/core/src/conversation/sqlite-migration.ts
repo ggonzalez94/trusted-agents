@@ -61,11 +61,7 @@ export async function migrateFileLogsToSqlite(
 	try {
 		entries = await readdir(conversationsDir);
 	} catch (error: unknown) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			(error as NodeJS.ErrnoException).code === "ENOENT"
-		) {
+		if (isNodeErrorCode(error, "ENOENT")) {
 			// No legacy data — mark as migrated and exit cleanly.
 			markMigrationComplete(logger);
 			return { migrated: 0, skipped: 0, errors: [] };
@@ -236,21 +232,9 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 		await rename(source, target);
 		return;
 	} catch (error: unknown) {
-		if (
-			!(error instanceof Error) ||
-			!("code" in error) ||
-			(error as NodeJS.ErrnoException).code !== "ENOTEMPTY"
-		) {
-			// Fall through to suffix strategy for any rename failure except when the
-			// source itself doesn't exist (ENOENT, already moved). Re-throw ENOENT.
-			if (
-				error instanceof Error &&
-				"code" in error &&
-				(error as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return;
-			}
-		}
+		if (isNodeErrorCode(error, "ENOENT")) return;
+		// ENOTEMPTY falls through to the suffix strategy below; all other
+		// errors also fall through and get retried with a numbered suffix.
 	}
 	let suffix = 1;
 	while (suffix < 1000) {
@@ -259,17 +243,17 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 			await rename(source, target);
 			return;
 		} catch (error: unknown) {
-			if (
-				error instanceof Error &&
-				"code" in error &&
-				(error as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return;
-			}
+			if (isNodeErrorCode(error, "ENOENT")) return;
 			suffix += 1;
 		}
 	}
 	throw new Error("unable to find unique backup destination for conversations directory");
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+	return (
+		error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === code
+	);
 }
 
 function isConversationLog(value: unknown): value is ConversationLog {

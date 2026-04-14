@@ -248,22 +248,18 @@ function requireBoolean(value: boolean | undefined, name: string): boolean {
 }
 
 function requireAddress(value: string | undefined, name: string): `0x${string}` {
-	if (value === undefined || value.trim().length === 0) {
-		throw new Error(`${name} is required`);
-	}
-	if (!isEthereumAddress(value)) {
-		throw new Error(`Invalid Ethereum address: ${value}`);
-	}
-	return value;
+	const addr = validateAddress(value);
+	if (!addr) throw new Error(`${name} is required`);
+	return addr;
 }
 
 function normalizeAddress(value: string | undefined): `0x${string}` | undefined {
-	if (value === undefined || value.trim().length === 0) {
-		return undefined;
-	}
-	if (!isEthereumAddress(value)) {
-		throw new Error(`Invalid Ethereum address: ${value}`);
-	}
+	return validateAddress(value) ?? undefined;
+}
+
+function validateAddress(value: string | undefined): `0x${string}` | null {
+	if (value === undefined || value.trim().length === 0) return null;
+	if (!isEthereumAddress(value)) throw new Error(`Invalid Ethereum address: ${value}`);
 	return value;
 }
 
