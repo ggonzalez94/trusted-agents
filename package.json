@@ -7,7 +7,7 @@
     "test": "vitest run",
     "test:xmtp": "XMTP_INTEGRATION=true vitest run packages/core/test/integration/xmtp-transport.test.ts",
     "test:watch": "vitest",
-    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/core build && bun run --cwd packages/app-transfer typecheck && bun run --cwd packages/app-scheduling typecheck && bun run --cwd packages/sdk typecheck && bun run --cwd packages/sdk build && bun run --cwd packages/tapd typecheck && bun run --cwd packages/cli typecheck && bun run --cwd packages/openclaw-plugin typecheck",
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/core build && bun run --cwd packages/app-transfer typecheck && bun run --cwd packages/app-scheduling typecheck && bun run --cwd packages/sdk typecheck && bun run --cwd packages/sdk build && bun run --cwd packages/tapd typecheck && bun run --cwd packages/ui typecheck && bun run --cwd packages/cli typecheck && bun run --cwd packages/openclaw-plugin typecheck",
     "release:check": "bun run lint && bun run typecheck && bun run build && bun run test && bun run verify:release",
     "verify:release": "node scripts/verify-release-packages.mjs",
     "lint": "biome check .",

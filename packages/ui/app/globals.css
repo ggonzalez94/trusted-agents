@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	color-scheme: dark;
+	--font-display: "Inter Tight", -apple-system, system-ui, sans-serif;
+	--font-sans: -apple-system, "SF Pro Text", system-ui, sans-serif;
+	--font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body {
+	height: 100%;
+	background: theme("colors.bg.DEFAULT");
+	color: theme("colors.text.DEFAULT");
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+	font-feature-settings: "ss01", "cv11";
+}
+
+/* Scrollbar styling — subtle and flush with the dark theme */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: theme("colors.bg.divider");
+	border-radius: 10px;
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: theme("colors.bg.elevated");
+	background-clip: padding-box;
+	border: 2px solid transparent;
+}
