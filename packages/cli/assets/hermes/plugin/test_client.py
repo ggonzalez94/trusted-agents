@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -202,8 +203,16 @@ class HermesDrainAllIdentitiesTests(unittest.TestCase):
         self._responses: dict[str, Any] = {}
 
         def fake_http_request(
-            method: str, path: str, socket_path: Path, body: dict | None = None
+            method: str,
+            path: str,
+            socket_path: Path,
+            body: dict | None = None,
+            auto_start: bool = True,
         ) -> Any:
+            # The drain path now passes auto_start=False to fast-fail on
+            # missing sockets. The test fake ignores the flag because it
+            # just looks up a pre-seeded canned response by socket path.
+            del auto_start
             key = str(socket_path)
             if key in self._responses:
                 response = self._responses[key]
@@ -346,6 +355,96 @@ class HermesLegacyDataDirTests(unittest.TestCase):
             self.assertEqual(
                 client._legacy_data_dir(), Path.home() / ".trustedagents"
             )
+
+
+class HermesDrainFastFailTests(unittest.TestCase):
+    """Residual 2 continuation: drain path must NOT auto-start tapd.
+
+    ``drain_all_identities`` runs on every prompt via ``pre_llm_call``. If
+    an identity's socket is missing, the drain must fail fast (returning a
+    meta escalation) instead of spawning ``tap daemon start`` and blocking
+    the prompt for ``DAEMON_START_TIMEOUT_SECONDS``. Otherwise dead
+    identities add a 5-second stall per identity to every turn.
+    """
+
+    def setUp(self) -> None:
+        self._missing_dir = tempfile.mkdtemp(prefix="hermes-missing-")
+        self._missing_socket = Path(self._missing_dir) / client.SOCKET_NAME
+        # Guarantee the socket does NOT exist.
+        if self._missing_socket.exists():
+            self._missing_socket.unlink()
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self._missing_dir, ignore_errors=True)
+
+    def test_drain_one_returns_fast_fail_error_without_autostarting(self) -> None:
+        with mock.patch.object(client, "_ensure_tapd_running") as ensure_mock:
+            notifications, error = client._drain_one(self._missing_socket)
+        self.assertEqual(notifications, [])
+        self.assertIsNotNone(error)
+        # ``_ensure_tapd_running`` is what invokes the 5s ``tap daemon
+        # start`` wait. Drain must never call it.
+        ensure_mock.assert_not_called()
+
+    def test_drain_all_identities_fast_fails_on_dead_identity(self) -> None:
+        hermes_home = tempfile.mkdtemp(prefix="hermes-home-fastfail-")
+        try:
+            config_dir = Path(hermes_home) / "plugins" / "trusted-agents-tap"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "identities": [
+                            {"name": "dead", "dataDir": self._missing_dir},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"HERMES_HOME": hermes_home}, clear=False),
+                mock.patch.object(client, "_ensure_tapd_running") as ensure_mock,
+            ):
+                start = time.monotonic()
+                result = client.drain_all_identities()
+                elapsed = time.monotonic() - start
+
+            # Dead identity surfaces as a meta escalation, not a silent drop.
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0]["type"], "escalation")
+            self.assertEqual(result[0]["identity"], "dead")
+            self.assertIn("unable to reach tapd", result[0]["oneLiner"])
+            # ``_ensure_tapd_running`` must not be called — confirms the
+            # drain path never waited for startup.
+            ensure_mock.assert_not_called()
+            # Defensive: the whole drain with a dead identity completes
+            # well under the autostart window.
+            self.assertLess(
+                elapsed,
+                1.0,
+                f"drain took {elapsed:.3f}s; must NOT wait on DAEMON_START_TIMEOUT_SECONDS",
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(hermes_home, ignore_errors=True)
+
+    def test_http_request_auto_start_false_skips_ensure_tapd(self) -> None:
+        with mock.patch.object(client, "_ensure_tapd_running") as ensure_mock:
+            result = client._http_request(
+                "GET",
+                "/daemon/health",
+                self._missing_socket,
+                auto_start=False,
+            )
+        ensure_mock.assert_not_called()
+        self.assertIsInstance(result, dict)
+        self.assertIn("error", result)
+        self.assertIn("socket missing", result["error"])
 
 
 if __name__ == "__main__":
