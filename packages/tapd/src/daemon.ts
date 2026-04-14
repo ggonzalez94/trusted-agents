@@ -12,7 +12,9 @@ import {
 	createDaemonControlRoutes,
 } from "./http/routes/daemon-control.js";
 import { createConnectRoute } from "./http/routes/connect.js";
+import { createContactsWriteRoutes } from "./http/routes/contacts-write.js";
 import { createFundsRequestsRoute } from "./http/routes/funds-requests.js";
+import { createGrantsRoutes } from "./http/routes/grants.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
 import { createMeetingsRoutes } from "./http/routes/meetings.js";
 import { createMessagesRoute } from "./http/routes/messages.js";
@@ -229,6 +231,20 @@ export class Daemon {
 			resolvePending: (id: string, approve: boolean, reason?: string) =>
 				ensureRuntime().resolvePending(id, approve, reason),
 			listPendingRequests: () => ensureRuntime().listPendingRequests(),
+			publishGrantSet: (
+				peer: string,
+				grantSet: Parameters<TapMessagingService["publishGrantSet"]>[1],
+				note?: string,
+			) => ensureRuntime().publishGrantSet(peer, grantSet, note),
+			requestGrantSet: (
+				peer: string,
+				grantSet: Parameters<TapMessagingService["requestGrantSet"]>[1],
+				note?: string,
+			) => ensureRuntime().requestGrantSet(peer, grantSet, note),
+			revokeConnection: (
+				contact: Parameters<TapMessagingService["revokeConnection"]>[0],
+				reason?: string,
+			) => ensureRuntime().revokeConnection(contact, reason),
 		} as unknown as TapMessagingService;
 		router.add("POST", "/api/messages", createMessagesRoute(writeAdapter));
 		router.add("POST", "/api/connect", createConnectRoute(writeAdapter));
@@ -238,6 +254,13 @@ export class Daemon {
 		router.add("POST", "/api/meetings", meetings.request);
 		router.add("POST", "/api/meetings/:id/respond", meetings.respond);
 		router.add("POST", "/api/meetings/:id/cancel", meetings.cancel);
+
+		const grants = createGrantsRoutes(writeAdapter);
+		router.add("POST", "/api/grants/publish", grants.publish);
+		router.add("POST", "/api/grants/request", grants.request);
+
+		const contactsWrite = createContactsWriteRoutes(writeAdapter, this.options.trustStore);
+		router.add("POST", "/api/contacts/:connectionId/revoke", contactsWrite.revoke);
 
 		const executeTransfer: TransferExecutor = (request) => {
 			const fn = this.options.executeTransfer;
