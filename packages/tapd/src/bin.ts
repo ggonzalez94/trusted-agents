@@ -52,7 +52,7 @@ async function main(): Promise<void> {
 		agentAddress = await startupSigningProvider.getAddress();
 	} catch (err) {
 		process.stderr.write(
-			`tapd warning: failed to resolve own address from signing provider: ${err instanceof Error ? err.message : String(err)}\n`,
+			`tapd warning: failed to resolve own address from signing provider: ${toErrorMessage(err)}\n`,
 		);
 	}
 

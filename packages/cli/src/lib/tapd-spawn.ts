@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { open, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { toErrorMessage } from "./errors.js";
 
 /**
  * Resolves the absolute path to the tapd `bin.js` script. Uses the workspace
@@ -154,7 +155,7 @@ export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Prom
 		// SIGKILL delivery failed for some other reason (EPERM, etc). Leave
 		// the pidfile in place as evidence and surface the error.
 		throw new Error(
-			`tapd (pid ${pid}) could not be killed: ${err instanceof Error ? err.message : String(err)}. Pidfile left in place.`,
+			`tapd (pid ${pid}) could not be killed: ${toErrorMessage(err)}. Pidfile left in place.`,
 		);
 	}
 

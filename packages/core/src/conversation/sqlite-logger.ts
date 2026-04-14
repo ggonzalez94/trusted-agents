@@ -15,6 +15,26 @@ import type { ConversationLog, ConversationMessage } from "./types.js";
 const CANONICALIZE_BACKFILL_KEY = "canonicalize_timestamps_backfill";
 const CANONICALIZE_BACKFILL_VERSION = "1";
 
+/**
+ * Resume cursor keys for the batched, restart-safe backfill. `phase`
+ * tracks which table is in progress; `cursor` is the last-processed
+ * row identifier within the current phase. See
+ * `runCanonicalizeBackfillIfNeeded` for the resume protocol.
+ */
+const CANONICALIZE_BACKFILL_PHASE_KEY = "canonicalize_timestamps_backfill_phase";
+const CANONICALIZE_BACKFILL_CURSOR_KEY = "canonicalize_timestamps_backfill_cursor";
+
+/**
+ * Number of rows the canonicalize backfill processes per transaction.
+ * Each batch is committed independently, so a crash mid-backfill
+ * resumes from the last committed batch instead of restarting from
+ * the beginning. The exact value is a tradeoff: smaller batches give
+ * tighter resume granularity but more transaction overhead. 500 rows
+ * per batch comfortably handles tens of thousands of conversations
+ * without measurable startup latency on real TAP installs.
+ */
+const BACKFILL_BATCH_SIZE = 500;
+
 interface ConversationContext {
 	connectionId: string;
 	peerAgentId: number;
@@ -134,6 +154,34 @@ export class SqliteConversationLogger implements IConversationLogger {
 		this.runCanonicalizeBackfillIfNeeded();
 	}
 
+	/**
+	 * One-time backfill that rewrites every existing conversation/message
+	 * row's timestamp columns into the canonical 24-char form.
+	 *
+	 * **Restart-safe and bounded.** The naive approach — load every row,
+	 * UPDATE in place, mark complete — has two problems Codex flagged:
+	 * (1) memory and startup time are linear in the row count, which on
+	 * a large store can wedge the constructor for seconds and OOM on
+	 * pathological histories, and (2) if the process is killed mid-run
+	 * the next startup re-scans the entire table from the beginning,
+	 * potentially looping forever on the same large input.
+	 *
+	 * This implementation processes BOTH tables in batches of
+	 * `BACKFILL_BATCH_SIZE` rows, each batch in its own transaction with
+	 * its own checkpoint write. The checkpoint records:
+	 *
+	 *   - `canonicalize_backfill_phase`: which table we're in
+	 *     (`'conversations'` → `'messages'` → `'done'`)
+	 *   - `canonicalize_backfill_cursor`: the last row identifier
+	 *     processed in the current phase, used as `WHERE id > :cursor`
+	 *     on the next batch
+	 *
+	 * If a crash happens mid-backfill, the next constructor call resumes
+	 * from the recorded cursor instead of restarting. When both tables
+	 * finish, we set the legacy `CANONICALIZE_BACKFILL_KEY = "1"` flag so
+	 * future constructor calls early-exit without touching the cursor at
+	 * all.
+	 */
 	private runCanonicalizeBackfillIfNeeded(): void {
 		const versionRow = this.db
 			.prepare("SELECT value FROM schema_meta WHERE key = ?")
@@ -142,69 +190,157 @@ export class SqliteConversationLogger implements IConversationLogger {
 			return;
 		}
 
-		// Backfill body. Wrapped in a transaction so a partial run never
-		// leaves the DB half-canonicalized.
-		const backfill = this.db.transaction(() => {
-			// conversations table — three timestamp columns
-			const conversationRows = this.db
-				.prepare(
-					"SELECT conversation_id, started_at, last_message_at, last_read_at FROM conversations",
-				)
-				.all() as Array<{
-				conversation_id: string;
-				started_at: string;
-				last_message_at: string;
-				last_read_at: string | null;
-			}>;
-			const updateConversation = this.db.prepare(
+		const readMeta = this.db.prepare("SELECT value FROM schema_meta WHERE key = ?");
+		const writeMeta = this.db.prepare(
+			"INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)",
+		);
+
+		const phaseRow = readMeta.get(CANONICALIZE_BACKFILL_PHASE_KEY) as { value: string } | undefined;
+		let phase: "conversations" | "messages" | "done" =
+			phaseRow?.value === "messages"
+				? "messages"
+				: phaseRow?.value === "done"
+					? "done"
+					: "conversations";
+
+		const cursorRow = readMeta.get(CANONICALIZE_BACKFILL_CURSOR_KEY) as
+			| { value: string }
+			| undefined;
+		let cursor: string = cursorRow?.value ?? "";
+
+		// Phase 1: conversations. Cursor by primary key (`conversation_id`).
+		if (phase === "conversations") {
+			const select = this.db.prepare(
+				`SELECT conversation_id, started_at, last_message_at, last_read_at
+				 FROM conversations
+				 WHERE conversation_id > ?
+				 ORDER BY conversation_id ASC
+				 LIMIT ?`,
+			);
+			const update = this.db.prepare(
 				"UPDATE conversations SET started_at = ?, last_message_at = ?, last_read_at = ? WHERE conversation_id = ?",
 			);
-			for (const row of conversationRows) {
-				const startedAt = canonicalizeTimestampSafe(row.started_at);
-				const lastMessageAt = canonicalizeTimestampSafe(row.last_message_at);
-				const lastReadAt =
-					row.last_read_at === null ? null : canonicalizeTimestampSafe(row.last_read_at);
-				if (
-					startedAt !== row.started_at ||
-					lastMessageAt !== row.last_message_at ||
-					lastReadAt !== row.last_read_at
-				) {
-					updateConversation.run(startedAt, lastMessageAt, lastReadAt, row.conversation_id);
-				}
-			}
+			while (true) {
+				const batch = select.all(cursor, BACKFILL_BATCH_SIZE) as Array<{
+					conversation_id: string;
+					started_at: string;
+					last_message_at: string;
+					last_read_at: string | null;
+				}>;
+				if (batch.length === 0) break;
 
-			// messages table — two timestamp columns. We need a stable row
-			// identifier to UPDATE in place; messages has no PK, so use
-			// the (conversation_id, insert_order) pair which the schema
-			// guarantees is unique within a conversation.
-			const messageRows = this.db
-				.prepare("SELECT conversation_id, insert_order, timestamp, human_approval_at FROM messages")
-				.all() as Array<{
-				conversation_id: string;
-				insert_order: number;
-				timestamp: string;
-				human_approval_at: string | null;
-			}>;
-			const updateMessage = this.db.prepare(
+				const lastConversationId = batch[batch.length - 1]?.conversation_id ?? cursor;
+				const txn = this.db.transaction(() => {
+					for (const row of batch) {
+						const startedAt = canonicalizeTimestampSafe(row.started_at);
+						const lastMessageAt = canonicalizeTimestampSafe(row.last_message_at);
+						const lastReadAt =
+							row.last_read_at === null ? null : canonicalizeTimestampSafe(row.last_read_at);
+						if (
+							startedAt !== row.started_at ||
+							lastMessageAt !== row.last_message_at ||
+							lastReadAt !== row.last_read_at
+						) {
+							update.run(startedAt, lastMessageAt, lastReadAt, row.conversation_id);
+						}
+					}
+					writeMeta.run(CANONICALIZE_BACKFILL_CURSOR_KEY, lastConversationId);
+				});
+				txn();
+				cursor = lastConversationId;
+			}
+			// Conversations done — flip phase, reset cursor for messages phase.
+			const flip = this.db.transaction(() => {
+				writeMeta.run(CANONICALIZE_BACKFILL_PHASE_KEY, "messages");
+				writeMeta.run(CANONICALIZE_BACKFILL_CURSOR_KEY, JSON.stringify(["", 0]));
+			});
+			flip();
+			phase = "messages";
+			cursor = JSON.stringify(["", 0]);
+		}
+
+		// Phase 2: messages. Compound cursor by (conversation_id, insert_order).
+		// Encoded as a JSON `[conversationId, insertOrder]` array so it
+		// fits in a single schema_meta value.
+		if (phase === "messages") {
+			const select = this.db.prepare(
+				`SELECT conversation_id, insert_order, timestamp, human_approval_at
+				 FROM messages
+				 WHERE (conversation_id > ?)
+				    OR (conversation_id = ? AND insert_order > ?)
+				 ORDER BY conversation_id ASC, insert_order ASC
+				 LIMIT ?`,
+			);
+			const update = this.db.prepare(
 				"UPDATE messages SET timestamp = ?, human_approval_at = ? WHERE conversation_id = ? AND insert_order = ?",
 			);
-			for (const row of messageRows) {
-				const ts = canonicalizeTimestampSafe(row.timestamp);
-				const approvalAt =
-					row.human_approval_at === null ? null : canonicalizeTimestampSafe(row.human_approval_at);
-				if (ts !== row.timestamp || approvalAt !== row.human_approval_at) {
-					updateMessage.run(ts, approvalAt, row.conversation_id, row.insert_order);
+			let parsed: [string, number];
+			try {
+				const decoded = JSON.parse(cursor);
+				if (
+					Array.isArray(decoded) &&
+					decoded.length === 2 &&
+					typeof decoded[0] === "string" &&
+					typeof decoded[1] === "number"
+				) {
+					parsed = [decoded[0], decoded[1]];
+				} else {
+					parsed = ["", 0];
 				}
+			} catch {
+				parsed = ["", 0];
 			}
+			let [conversationCursor, insertOrderCursor] = parsed;
 
-			// Mark the backfill complete so subsequent constructor calls
-			// no-op without re-scanning every row.
-			this.db
-				.prepare("INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)")
-				.run(CANONICALIZE_BACKFILL_KEY, CANONICALIZE_BACKFILL_VERSION);
+			while (true) {
+				const batch = select.all(
+					conversationCursor,
+					conversationCursor,
+					insertOrderCursor,
+					BACKFILL_BATCH_SIZE,
+				) as Array<{
+					conversation_id: string;
+					insert_order: number;
+					timestamp: string;
+					human_approval_at: string | null;
+				}>;
+				if (batch.length === 0) break;
+
+				const last = batch[batch.length - 1];
+				if (!last) break;
+				const lastConvo = last.conversation_id;
+				const lastInsertOrder = last.insert_order;
+
+				const txn = this.db.transaction(() => {
+					for (const row of batch) {
+						const ts = canonicalizeTimestampSafe(row.timestamp);
+						const approvalAt =
+							row.human_approval_at === null
+								? null
+								: canonicalizeTimestampSafe(row.human_approval_at);
+						if (ts !== row.timestamp || approvalAt !== row.human_approval_at) {
+							update.run(ts, approvalAt, row.conversation_id, row.insert_order);
+						}
+					}
+					writeMeta.run(
+						CANONICALIZE_BACKFILL_CURSOR_KEY,
+						JSON.stringify([lastConvo, lastInsertOrder]),
+					);
+				});
+				txn();
+				conversationCursor = lastConvo;
+				insertOrderCursor = lastInsertOrder;
+			}
+			phase = "done";
+		}
+
+		// Phase 3: mark complete. Idempotent; a re-run hits the early
+		// exit at the top of this method.
+		const finalize = this.db.transaction(() => {
+			writeMeta.run(CANONICALIZE_BACKFILL_PHASE_KEY, "done");
+			writeMeta.run(CANONICALIZE_BACKFILL_KEY, CANONICALIZE_BACKFILL_VERSION);
 		});
-
-		backfill();
+		finalize();
 	}
 
 	close(): void {
@@ -658,6 +794,24 @@ function validateConversationLogForImport(log: ConversationLog): void {
 			throw msgErr(i, "has non-boolean humanApprovalRequired");
 		if (message.humanApprovalGiven !== null && typeof message.humanApprovalGiven !== "boolean")
 			throw msgErr(i, "has invalid humanApprovalGiven");
+		if (message.humanApprovalAt !== undefined) {
+			// `humanApprovalAt` is optional, but if present it must be a
+			// strict ISO timestamp. Without this check, an invalid
+			// approval timestamp would slip past the validator and reach
+			// `canonicalizeTimestampSafe`, which silently returns the
+			// input unchanged on non-strict values — letting a rollover
+			// date like `2026-04-31T...` persist into messages
+			// .human_approval_at after import. Validate at the boundary.
+			if (
+				typeof message.humanApprovalAt !== "string" ||
+				!isStrictIsoTimestamp(message.humanApprovalAt)
+			) {
+				throw msgErr(
+					i,
+					`has non-canonical humanApprovalAt (must be strict ISO 8601 with explicit offset): ${String(message.humanApprovalAt)}`,
+				);
+			}
+		}
 		if (message.messageId !== undefined && typeof message.messageId !== "string")
 			throw msgErr(i, "has non-string messageId");
 	}

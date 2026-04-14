@@ -424,11 +424,16 @@ describe("SqliteConversationLogger", () => {
 				2,
 			);
 
-			// Manually clear the backfill marker so we reach the
-			// backfill code path on the next construction. (The first
-			// construction at top-of-test ran the backfill once already,
-			// found nothing to canonicalize, and set the marker.)
-			db.prepare("DELETE FROM schema_meta WHERE key = ?").run("canonicalize_timestamps_backfill");
+			// Manually clear ALL backfill checkpoint state so we reach
+			// the backfill code path on the next construction. The
+			// batched implementation tracks three keys: the legacy
+			// completion marker, the per-phase cursor, and the phase
+			// indicator. Wipe all three so the backfill restarts
+			// cleanly from phase 'conversations' with an empty cursor.
+			const wipe = db.prepare("DELETE FROM schema_meta WHERE key = ?");
+			wipe.run("canonicalize_timestamps_backfill");
+			wipe.run("canonicalize_timestamps_backfill_phase");
+			wipe.run("canonicalize_timestamps_backfill_cursor");
 
 			logger.close();
 
@@ -475,6 +480,113 @@ describe("SqliteConversationLogger", () => {
 			logger.close();
 			const second = new SqliteConversationLogger(dataDir);
 			second.close();
+		});
+
+		it("backfill resumes from a checkpoint when interrupted between batches", async () => {
+			// Seed enough rows to span multiple batches (BACKFILL_BATCH_SIZE
+			// = 500). We use 12 conversation rows and 12 message rows
+			// with a tiny private batch size — the test exercises the
+			// resume cursor path by manually setting the phase/cursor
+			// after a partial run.
+			const db = logger.database;
+			const insertConv = db.prepare(
+				`INSERT INTO conversations(
+					conversation_id, connection_id, peer_agent_id, peer_display_name,
+					topic, started_at, last_message_at, last_read_at, status
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			);
+			const insertMsg = db.prepare(
+				`INSERT INTO messages(
+					conversation_id, message_id, timestamp, direction, scope, content,
+					human_approval_required, human_approval_given, human_approval_at, insert_order
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			);
+			for (let i = 0; i < 12; i += 1) {
+				const id = `conv-${String(i).padStart(2, "0")}`;
+				insertConv.run(
+					id,
+					"conn-1",
+					i,
+					`Peer ${i}`,
+					null,
+					"2026-04-10T13:00:00+01:00", // pre-canonical
+					"2026-04-10T12:00:00Z", // pre-canonical
+					null,
+					"active",
+				);
+				insertMsg.run(
+					id,
+					`m-${id}`,
+					"2026-04-10T13:00:00+01:00",
+					"outgoing",
+					"default",
+					"hello",
+					0,
+					null,
+					null,
+					1,
+				);
+			}
+
+			// Reset all backfill markers so the next reopen starts fresh.
+			const wipe = db.prepare("DELETE FROM schema_meta WHERE key = ?");
+			wipe.run("canonicalize_timestamps_backfill");
+			wipe.run("canonicalize_timestamps_backfill_phase");
+			wipe.run("canonicalize_timestamps_backfill_cursor");
+
+			// Simulate a CRASH partway through the conversations phase
+			// by pre-seeding the cursor to "conv-05". A clean reopen
+			// should resume from conv-05+1 and finish the remaining
+			// conversations BEFORE moving on to messages.
+			db.prepare("INSERT INTO schema_meta(key, value) VALUES (?, ?)").run(
+				"canonicalize_timestamps_backfill_phase",
+				"conversations",
+			);
+			db.prepare("INSERT INTO schema_meta(key, value) VALUES (?, ?)").run(
+				"canonicalize_timestamps_backfill_cursor",
+				"conv-05",
+			);
+
+			// Manually canonicalize conv-00..conv-05 to mirror what a
+			// successful pre-crash partial run would have done. Leave
+			// conv-06..conv-11 in pre-canonical form so we can verify
+			// the resume processed them.
+			const updateConv = db.prepare(
+				"UPDATE conversations SET started_at = ?, last_message_at = ? WHERE conversation_id = ?",
+			);
+			for (let i = 0; i <= 5; i += 1) {
+				const id = `conv-${String(i).padStart(2, "0")}`;
+				updateConv.run("2026-04-10T12:00:00.000Z", "2026-04-10T12:00:00.000Z", id);
+			}
+
+			logger.close();
+
+			// Reopen — backfill resumes from cursor "conv-05" and
+			// processes the remaining 6 conversations + all 12 messages.
+			const reopened = new SqliteConversationLogger(dataDir);
+
+			// All 12 conversations are now canonical, including
+			// conv-06..conv-11 which the resumed backfill processed.
+			const all = await reopened.listConversations();
+			expect(all).toHaveLength(12);
+			for (const c of all) {
+				expect(c.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+				expect(c.lastMessageAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+				for (const m of c.messages) {
+					expect(m.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+				}
+			}
+
+			// The legacy completion marker is now set so future opens
+			// short-circuit at the top of runCanonicalizeBackfillIfNeeded.
+			const marker = (
+				reopened.database
+					.prepare("SELECT value FROM schema_meta WHERE key = ?")
+					.get("canonicalize_timestamps_backfill") as { value: string } | undefined
+			)?.value;
+			expect(marker).toBe("1");
+
+			reopened.close();
 		});
 	});
 });

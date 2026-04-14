@@ -6,6 +6,7 @@ import {
 	TapAppRegistry,
 	buildChainPublicClient,
 	migrateFileLogsToSqlite,
+	toErrorMessage,
 } from "trusted-agents-core";
 import type {
 	IAgentResolver,
@@ -65,11 +66,7 @@ export function buildContext(config: TrustedAgentsConfig): CliContext {
 	// Fire-and-forget migration on first touch. Idempotent and non-fatal —
 	// any per-file errors are swallowed here; the database remains usable.
 	void migrateFileLogsToSqlite(config.dataDir, conversationLogger).catch((err: unknown) => {
-		process.stderr.write(
-			`[tap] conversation log migration warning: ${
-				err instanceof Error ? err.message : String(err)
-			}\n`,
-		);
+		process.stderr.write(`[tap] conversation log migration warning: ${toErrorMessage(err)}\n`);
 	});
 	const requestJournal = new FileRequestJournal(config.dataDir);
 	const appRegistry = new TapAppRegistry(config.dataDir);

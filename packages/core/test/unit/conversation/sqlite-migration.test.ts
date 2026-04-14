@@ -1294,6 +1294,50 @@ describe("sqlite migration", () => {
 		logger.close();
 	});
 
+	it("rejects legacy logs with rollover dates in message.humanApprovalAt", async () => {
+		// Codex residual: humanApprovalAt was not validated by the
+		// import validator, so a rollover date like 2026-04-31T... in
+		// a legacy log's message would slip past via canonicalizeTimestampSafe
+		// (which returns the input unchanged on non-strict values) and
+		// land in messages.human_approval_at. Validate at the boundary
+		// instead.
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "conv-bad-approval.json"),
+			JSON.stringify({
+				conversationId: "conv-bad-approval",
+				connectionId: "conn-1",
+				peerAgentId: 1,
+				peerDisplayName: "X",
+				startedAt: "2026-04-01T00:00:00Z",
+				lastMessageAt: "2026-04-01T00:00:00Z",
+				status: "active",
+				messages: [
+					{
+						messageId: "m-bad-approval",
+						timestamp: "2026-04-01T00:00:00Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "valid",
+						humanApprovalRequired: true,
+						humanApprovalGiven: true,
+						humanApprovalAt: "2026-04-31T12:00:00Z", // April 31 doesn't exist
+					},
+				],
+			}),
+		);
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toHaveLength(1);
+		expect(report.errors[0].file).toBe("conv-bad-approval.json");
+		expect(report.errors[0].error).toMatch(/humanApprovalAt/);
+		expect(report.migrated).toBe(0);
+		expect(await logger.getConversation("conv-bad-approval")).toBeNull();
+
+		logger.close();
+	});
+
 	it("rejects legacy logs with non-parseable top-level timestamps", async () => {
 		// The merge depends on Date.parse succeeding on both sides.
 		// validateConversationLogForImport rejects non-parseable

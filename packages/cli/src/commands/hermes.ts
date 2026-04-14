@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { getTapHermesPaths, resolveHermesHome, upsertTapHermesIdentity } from "../hermes/config.js";
 import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { errorCode, exitCodeForError, toErrorMessage } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
 import { daemonRestartCommand } from "./daemon-restart.js";
@@ -66,7 +66,7 @@ export async function hermesConfigureCommand(
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
+		error(errorCode(err), toErrorMessage(err), opts);
 		process.exitCode = exitCodeForError(err);
 	}
 }
