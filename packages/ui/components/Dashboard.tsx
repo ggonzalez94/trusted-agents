@@ -5,10 +5,10 @@ import { EmptyState } from "@/components/chat/EmptyState";
 import { PendingActionCards } from "@/components/chat/PendingActionCards";
 import { Thread } from "@/components/chat/Thread";
 import { Sidebar } from "@/components/rail/Sidebar";
-import { TapdClient } from "@/lib/api";
+import { TapdClient, TapdUnauthorizedError } from "@/lib/api";
 import { EventStream } from "@/lib/events";
 import { filterPendingForContact } from "@/lib/pending";
-import { getToken } from "@/lib/token";
+import { captureToken, clearToken, getToken } from "@/lib/token";
 import type { Contact, ConversationLog, Identity, PendingItem, TapEvent } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
@@ -29,10 +29,27 @@ const SWR_KEYS = {
 
 type SwrKey = (typeof SWR_KEYS)[keyof typeof SWR_KEYS];
 
+/**
+ * Auth token lifecycle (F2.2).
+ *
+ * - `missing`: initial state and the state we fall back to when
+ *   `sessionStorage` has no token (user opened the dashboard directly).
+ * - `present`: we have a token and the API layer is accepting it.
+ * - `expired`: a 401 bubbled out of an SWR fetch, so tapd has restarted
+ *   (or rotated the token) and the stored value is stale. We clear it,
+ *   tear down SSE, and render the re-auth screen.
+ */
+type TokenState = "missing" | "present" | "expired";
+
 export function Dashboard() {
 	const baseUrl = useMemo(() => resolveTapdBaseUrl(), []);
 	const client = useMemo(() => new TapdClient(baseUrl), [baseUrl]);
 	const { mutate } = useSWRConfig();
+
+	const [tokenState, setTokenState] = useState<TokenState>(() => {
+		if (typeof window === "undefined") return "missing";
+		return getToken() ? "present" : "missing";
+	});
 
 	const refresh = useCallback(
 		(key: SwrKey) => {
@@ -41,12 +58,53 @@ export function Dashboard() {
 		[mutate],
 	);
 
-	const { data: identity } = useSWR<Identity>(SWR_KEYS.identity, () => client.getIdentity());
-	const { data: contacts } = useSWR<Contact[]>(SWR_KEYS.contacts, () => client.listContacts());
-	const { data: conversations } = useSWR<ConversationLog[]>(SWR_KEYS.conversations, () =>
-		client.listConversations(),
+	// Any SWR fetch that comes back 401 means the stored token is stale.
+	// Clear it exactly once and transition to the re-auth screen. This is
+	// used as the `onError` for every SWR hook below.
+	const handleSwrError = useCallback((error: unknown) => {
+		if (error instanceof TapdUnauthorizedError) {
+			clearToken();
+			setTokenState("expired");
+		}
+	}, []);
+
+	const retryAuth = useCallback(() => {
+		captureToken();
+		const next = getToken();
+		if (next) {
+			setTokenState("present");
+			// Re-run every fetcher now that we (presumably) have a fresh token.
+			void mutate(SWR_KEYS.identity);
+			void mutate(SWR_KEYS.contacts);
+			void mutate(SWR_KEYS.conversations);
+			void mutate(SWR_KEYS.pending);
+		} else {
+			setTokenState("missing");
+		}
+	}, [mutate]);
+
+	const hasToken = tokenState === "present";
+
+	const { data: identity, error: identityError } = useSWR<Identity>(
+		hasToken ? SWR_KEYS.identity : null,
+		() => client.getIdentity(),
+		{ onError: handleSwrError },
 	);
-	const { data: pending } = useSWR<PendingItem[]>(SWR_KEYS.pending, () => client.listPending());
+	const { data: contacts } = useSWR<Contact[]>(
+		hasToken ? SWR_KEYS.contacts : null,
+		() => client.listContacts(),
+		{ onError: handleSwrError },
+	);
+	const { data: conversations } = useSWR<ConversationLog[]>(
+		hasToken ? SWR_KEYS.conversations : null,
+		() => client.listConversations(),
+		{ onError: handleSwrError },
+	);
+	const { data: pending } = useSWR<PendingItem[]>(
+		hasToken ? SWR_KEYS.pending : null,
+		() => client.listPending(),
+		{ onError: handleSwrError },
+	);
 
 	const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 
@@ -59,8 +117,11 @@ export function Dashboard() {
 
 	// Live SSE updates → refresh the SWR cache. Granular invalidation keeps the
 	// network chatter scoped, but we still over-invalidate slightly for v1
-	// because each refetch is cheap on a local socket.
+	// because each refetch is cheap on a local socket. `tokenState` is a
+	// dependency so this effect tears down SSE on expiry and re-runs after
+	// a successful re-auth (F2.2).
 	useEffect(() => {
+		if (tokenState !== "present") return;
 		const token = getToken();
 		if (!token) return;
 		const stream = new EventStream(baseUrl, token, (event: TapEvent) => {
@@ -90,7 +151,7 @@ export function Dashboard() {
 		});
 		stream.start();
 		return () => stream.stop();
-	}, [baseUrl, refresh]);
+	}, [baseUrl, refresh, tokenState]);
 
 	const selectedContact = useMemo<Contact | null>(() => {
 		if (!contacts || !selectedConnectionId) return null;
@@ -137,12 +198,35 @@ export function Dashboard() {
 		[client, refresh],
 	);
 
-	if (!identity) {
+	// F2.2 render priority:
+	//   1. Re-auth screen when there is no usable token (fresh visit or stale
+	//      token after a daemon restart). This is the recovery path — do NOT
+	//      treat it as a loading state.
+	//   2. Loading spinner while the first identity probe is in flight.
+	//   3. Non-auth error banner when a request fails for some other reason.
+	//   4. Dashboard.
+	if (tokenState !== "present") {
+		return <ReAuthScreen onReload={retryAuth} reason={tokenState} />;
+	}
+
+	if (!identity && !identityError) {
 		return (
 			<div className="h-screen grid place-items-center bg-bg-DEFAULT text-text-dim text-sm">
 				<div className="font-mono uppercase tracking-[0.18em] text-[10px]">Loading…</div>
 			</div>
 		);
+	}
+
+	if (identityError && !(identityError instanceof TapdUnauthorizedError)) {
+		return <ErrorBanner error={identityError} />;
+	}
+
+	if (!identity) {
+		// 401 already transitioned tokenState to "expired" in the effect
+		// above; this branch only runs for one render before the re-auth
+		// screen takes over. Render a blank frame rather than flashing
+		// "Loading…".
+		return <div className="h-screen bg-bg-DEFAULT" />;
 	}
 
 	return (
@@ -176,6 +260,64 @@ export function Dashboard() {
 					<EmptyState />
 				</div>
 			)}
+		</div>
+	);
+}
+
+interface ReAuthScreenProps {
+	onReload: () => void;
+	reason: Exclude<TokenState, "present">;
+}
+
+function ReAuthScreen({ onReload, reason }: ReAuthScreenProps) {
+	const heading = reason === "expired" ? "Session ended" : "Dashboard not authenticated";
+	const body =
+		reason === "expired"
+			? "Your tapd session expired. Open a new dashboard session with:"
+			: "Open this dashboard via tap ui so the local daemon can hand you an authenticated session URL:";
+	return (
+		<div className="h-screen grid place-items-center bg-bg-DEFAULT text-text">
+			<div className="text-center max-w-md px-6">
+				<div className="text-[10px] uppercase tracking-[0.18em] text-text-faint mb-3 font-mono">
+					tapd dashboard
+				</div>
+				<div className="text-base font-semibold tracking-tight text-text mb-2">{heading}</div>
+				<div className="text-xs text-text-muted leading-relaxed mb-4">{body}</div>
+				<pre className="bg-bg-elevated px-3 py-2 rounded font-mono text-[12px] text-text inline-block select-all mb-4">
+					tap ui
+				</pre>
+				<div>
+					<button
+						type="button"
+						onClick={onReload}
+						className="text-[11px] font-mono uppercase tracking-[0.12em] text-text-muted hover:text-text border border-bg-divider rounded-pill px-3 py-1.5"
+					>
+						Reload
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+interface ErrorBannerProps {
+	error: unknown;
+}
+
+function ErrorBanner({ error }: ErrorBannerProps) {
+	const message =
+		error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+	return (
+		<div className="h-screen grid place-items-center bg-bg-DEFAULT text-text">
+			<div className="text-center max-w-md px-6">
+				<div className="text-[10px] uppercase tracking-[0.18em] text-text-faint mb-3 font-mono">
+					tapd dashboard
+				</div>
+				<div className="text-base font-semibold tracking-tight text-text mb-2">
+					tapd request failed
+				</div>
+				<div className="text-xs text-text-muted leading-relaxed font-mono">{message}</div>
+			</div>
 		</div>
 	);
 }

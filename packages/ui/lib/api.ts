@@ -28,6 +28,22 @@ export class TapdApiError extends Error {
 	}
 }
 
+/**
+ * 401 Unauthorized from tapd (F2.2).
+ *
+ * tapd generates a fresh bearer token on every `Daemon.start()`, so any
+ * daemon restart invalidates the token the UI has in sessionStorage. The
+ * dashboard narrows on this error via `instanceof` to clear the stored
+ * token, tear down SSE, and transition to a recoverable re-auth screen
+ * instead of treating every fetch failure as a loading condition.
+ */
+export class TapdUnauthorizedError extends TapdApiError {
+	constructor(code: string, message: string, details?: Record<string, unknown>) {
+		super(code, message, 401, details);
+		this.name = "TapdUnauthorizedError";
+	}
+}
+
 export class TapdClient {
 	private readonly baseUrl: string;
 
@@ -109,12 +125,12 @@ export class TapdClient {
 		}
 		if (!response.ok) {
 			const error = (body as { error?: TapdErrorPayload } | undefined)?.error;
-			throw new TapdApiError(
-				error?.code ?? "unknown_error",
-				error?.message ?? response.statusText,
-				response.status,
-				error?.details,
-			);
+			const code = error?.code ?? "unknown_error";
+			const message = error?.message ?? response.statusText;
+			if (response.status === 401) {
+				throw new TapdUnauthorizedError(code, message, error?.details);
+			}
+			throw new TapdApiError(code, message, response.status, error?.details);
 		}
 		return body as T;
 	}
