@@ -1,6 +1,10 @@
 import type Database from "better-sqlite3";
 
-export const CURRENT_SCHEMA_VERSION = 1;
+// v2 adds the ``migrated_files`` table that tracks per-file legacy
+// conversation import completion (residual 2). Once a file is imported,
+// its row here prevents a retry from replaying it and rolling back
+// canonical metadata mutated by later runtime activity.
+export const CURRENT_SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -45,6 +49,15 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_dedup
   ON messages(conversation_id, message_id, direction)
   WHERE message_id IS NOT NULL;
+
+-- Tracks which legacy JSON files (under conversations/) have already been
+-- imported into SQLite. On a retry after a partial-failure run, rows here
+-- make the migration loop skip already-imported files so their canonical
+-- metadata is never overwritten by stale source JSON (residual 2).
+CREATE TABLE IF NOT EXISTS migrated_files (
+  file_name   TEXT PRIMARY KEY,
+  migrated_at TEXT NOT NULL
+);
 `;
 
 export function applySchema(db: Database.Database): void {
@@ -55,6 +68,9 @@ export function applySchema(db: Database.Database): void {
 
 	db.exec(SCHEMA_SQL);
 
+	// Write the current schema version, upgrading from any older value.
+	// Every statement in SCHEMA_SQL is `CREATE ... IF NOT EXISTS` so
+	// bumping the version is a pure metadata update — no data moves.
 	const meta = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as
 		| { value: string }
 		| undefined;
@@ -62,6 +78,13 @@ export function applySchema(db: Database.Database): void {
 		db.prepare("INSERT INTO schema_meta(key, value) VALUES('version', ?)").run(
 			String(CURRENT_SCHEMA_VERSION),
 		);
+	} else {
+		const current = Number.parseInt(meta.value, 10);
+		if (Number.isFinite(current) && current < CURRENT_SCHEMA_VERSION) {
+			db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'version'").run(
+				String(CURRENT_SCHEMA_VERSION),
+			);
+		}
 	}
 }
 

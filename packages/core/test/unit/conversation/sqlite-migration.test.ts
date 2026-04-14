@@ -397,6 +397,193 @@ describe("sqlite migration", () => {
 		logger.close();
 	});
 
+	// Residual 2: once a file has been imported on a previous run, a
+	// retry must NOT replay it. After Fv2.1 the migration correctly
+	// fails closed on any file error, but the partial-success path
+	// replayed every file including the already-imported ones. If new
+	// messages arrived via tapd between the failed and successful
+	// attempts, the canonical metadata UPDATE would roll them back to
+	// the stale source JSON. Tracking migrated file names in a dedicated
+	// table makes the retry skip already-imported files entirely.
+	it("retry does not overwrite canonical metadata from previously-imported files", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "good.json"),
+			JSON.stringify({
+				conversationId: "conv-good",
+				connectionId: "conn-1",
+				peerAgentId: 1,
+				peerDisplayName: "Alice",
+				startedAt: "2026-04-01T00:00:00.000Z",
+				lastMessageAt: "2026-04-01T00:00:00.000Z",
+				status: "active",
+				messages: [
+					{
+						messageId: "m1",
+						timestamp: "2026-04-01T00:00:00.000Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "hello from legacy",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+				],
+			}),
+		);
+		await writeFile(join(dataDir, "conversations", "bad.json"), "{not json");
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const first = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(first.errors.length).toBe(1);
+		expect(first.errors[0]?.file).toBe("bad.json");
+		expect(first.migrated).toBe(1);
+
+		// Simulate new runtime activity: a message arrives via tapd
+		// after the partial-failure run, mutating last_message_at on
+		// the already-imported conversation.
+		await logger.logMessage("conv-good", {
+			messageId: "m2",
+			timestamp: "2026-04-01T01:00:00.000Z",
+			direction: "incoming",
+			scope: "default",
+			content: "tapd delivered this after the first attempt",
+			humanApprovalRequired: false,
+			humanApprovalGiven: null,
+		});
+		const afterRuntime = await logger.getConversation("conv-good");
+		expect(afterRuntime?.messages).toHaveLength(2);
+		expect(afterRuntime?.lastMessageAt).toBe("2026-04-01T01:00:00.000Z");
+
+		// Fix the bad file so the next run can complete.
+		await writeFile(
+			join(dataDir, "conversations", "bad.json"),
+			JSON.stringify({
+				conversationId: "conv-bad",
+				connectionId: "conn-2",
+				peerAgentId: 2,
+				peerDisplayName: "Bob",
+				startedAt: "2026-04-01T02:00:00.000Z",
+				lastMessageAt: "2026-04-01T02:00:00.000Z",
+				status: "active",
+				messages: [],
+			}),
+		);
+
+		const second = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(second.errors).toEqual([]);
+
+		// good.json was skipped on the retry because migrated_files
+		// already has a row for it. Its canonical metadata is still
+		// the post-runtime value, NOT rolled back to the source JSON.
+		expect(second.migrated).toBe(1); // only bad.json this time
+		const preserved = await logger.getConversation("conv-good");
+		expect(preserved?.messages).toHaveLength(2);
+		expect(preserved?.lastMessageAt).toBe("2026-04-01T01:00:00.000Z");
+
+		// bad.json is now imported.
+		const bad = await logger.getConversation("conv-bad");
+		expect(bad).not.toBeNull();
+
+		// The full-success path ran: backup created, global flag set.
+		const entries = (await readdir(dataDir)).filter((e) => e.startsWith("conversations"));
+		expect(entries).toContain("conversations.bak");
+		expect(entries).not.toContain("conversations");
+		const flag = logger.database
+			.prepare("SELECT value FROM schema_meta WHERE key = 'conversation_logs_migrated_at'")
+			.get() as { value: string } | undefined;
+		expect(flag).toBeDefined();
+
+		logger.close();
+	});
+
+	it("records imported files in the migrated_files table", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "one.json"),
+			JSON.stringify({
+				conversationId: "conv-one",
+				connectionId: "c",
+				peerAgentId: 1,
+				peerDisplayName: "A",
+				startedAt: "2026-04-01T00:00:00.000Z",
+				lastMessageAt: "2026-04-01T00:00:00.000Z",
+				status: "active",
+				messages: [],
+			}),
+		);
+		await writeFile(join(dataDir, "conversations", "bad.json"), "not json");
+
+		const logger = new SqliteConversationLogger(dataDir);
+		await migrateFileLogsToSqlite(dataDir, logger);
+
+		const rows = logger.database
+			.prepare("SELECT file_name FROM migrated_files ORDER BY file_name")
+			.all() as { file_name: string }[];
+		expect(rows.map((r) => r.file_name)).toEqual(["one.json"]);
+
+		logger.close();
+	});
+
+	it("transaction atomicity: metadata and migrated_files land together", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "only.json"),
+			JSON.stringify({
+				conversationId: "conv-only",
+				connectionId: "c",
+				peerAgentId: 1,
+				peerDisplayName: "A",
+				startedAt: "2026-04-01T00:00:00.000Z",
+				lastMessageAt: "2026-04-01T00:00:00.000Z",
+				status: "active",
+				messages: [],
+			}),
+		);
+
+		const logger = new SqliteConversationLogger(dataDir);
+
+		// Monkey-patch the prepare layer so the migrated_files insert
+		// throws. Because the finalize step is wrapped in
+		// db.transaction(), the rollback should undo the metadata
+		// UPDATE too, leaving the file eligible for retry with no
+		// half-written state.
+		const originalPrepare = logger.database.prepare.bind(logger.database);
+		let forcedThrow = false;
+		(logger.database as { prepare: typeof originalPrepare }).prepare = ((sql: string) => {
+			const stmt = originalPrepare(sql);
+			if (sql.includes("INSERT OR REPLACE INTO migrated_files")) {
+				return {
+					...stmt,
+					run: (...args: unknown[]) => {
+						if (!forcedThrow) {
+							forcedThrow = true;
+							throw new Error("forced failure before marker insert");
+						}
+						return stmt.run(...(args as Parameters<typeof stmt.run>));
+					},
+				} as typeof stmt;
+			}
+			return stmt;
+		}) as typeof originalPrepare;
+
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors.length).toBe(1);
+		expect(report.errors[0]?.error).toContain("forced failure");
+
+		// The transaction rolled back — no migrated_files row, and the
+		// conversation row from the INSERT OR IGNORE is also gone.
+		const rows = logger.database.prepare("SELECT file_name FROM migrated_files").all() as {
+			file_name: string;
+		}[];
+		expect(rows).toHaveLength(0);
+		const conv = logger.database
+			.prepare("SELECT conversation_id FROM conversations WHERE conversation_id = ?")
+			.get("conv-only") as { conversation_id: string } | undefined;
+		expect(conv).toBeUndefined();
+
+		logger.close();
+	});
+
 	// Finding Fv2.2: legacy JSON is not guaranteed to be on-disk ordered
 	// (FileConversationLogger sorted on read), so replaying in source order
 	// can corrupt timestamps. Status was also hard-coded to "active" by the
