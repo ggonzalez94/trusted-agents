@@ -4,6 +4,7 @@ import { open, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fsErrorCode } from "trusted-agents-core";
+import { TAPD_PID_FILE, TAPD_PORT_FILE } from "trusted-agents-tapd";
 import { toErrorMessage } from "./errors.js";
 
 /**
@@ -18,8 +19,6 @@ export function resolveTapdBinPath(): string {
 	return join(pkgDir, "dist", "bin.js");
 }
 
-const PORT_FILE = ".tapd.port";
-const PID_FILE = ".tapd.pid";
 const LOG_FILE = ".tapd.log";
 
 export interface TapdSpawnOptions {
@@ -60,8 +59,8 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 	}
 
 	const logPath = join(options.dataDir, LOG_FILE);
-	const pidPath = join(options.dataDir, PID_FILE);
-	const portPath = join(options.dataDir, PORT_FILE);
+	const pidPath = join(options.dataDir, TAPD_PID_FILE);
+	const portPath = join(options.dataDir, TAPD_PORT_FILE);
 
 	// Unlink any stale port file from a previous run. Without this, the port
 	// wait below can return a stale port from a dead daemon and the caller
@@ -116,8 +115,8 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
  * a zombie process (finding F3.2).
  */
 export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Promise<number> {
-	const pidPath = join(dataDir, PID_FILE);
-	const portPath = join(dataDir, PORT_FILE);
+	const pidPath = join(dataDir, TAPD_PID_FILE);
+	const portPath = join(dataDir, TAPD_PORT_FILE);
 
 	let pid: number;
 	try {

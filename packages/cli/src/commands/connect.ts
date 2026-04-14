@@ -60,34 +60,21 @@ export async function connectCommand(
 		const client = await TapdClient.forDataDir(config.dataDir);
 		const result = await client.connect({ inviteUrl, waitMs });
 
+		const base = {
+			connection_id: result.connectionId,
+			peer_name: result.peerName,
+			peer_agent_id: result.peerAgentId,
+			receipt: result.receipt,
+		};
+
 		if (result.status === "active") {
-			success(
-				{
-					connection_id: result.connectionId,
-					peer_name: result.peerName,
-					peer_agent_id: result.peerAgentId,
-					status: "active",
-					receipt: result.receipt,
-				},
-				opts,
-				startTime,
-			);
+			success({ ...base, status: "active" }, opts, startTime);
 			return;
 		}
 
 		// status === "pending"
 		if (noWait || waitSeconds === 0) {
-			success(
-				{
-					connection_id: result.connectionId,
-					peer_name: result.peerName,
-					peer_agent_id: result.peerAgentId,
-					status: "pending",
-					receipt: result.receipt,
-				},
-				opts,
-				startTime,
-			);
+			success({ ...base, status: "pending" }, opts, startTime);
 			return;
 		}
 

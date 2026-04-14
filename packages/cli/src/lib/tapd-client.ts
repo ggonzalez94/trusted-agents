@@ -16,9 +16,7 @@ import type {
 	TapSendMessageResult,
 	TapSyncReport,
 } from "trusted-agents-core";
-
-const TOKEN_FILE = ".tapd-token";
-const PORT_FILE = ".tapd.port";
+import { TAPD_PORT_FILE, TAPD_TOKEN_FILE } from "trusted-agents-tapd";
 
 /**
  * Thrown when the tapd port file or token file is missing/empty. Callers can
@@ -60,7 +58,7 @@ export interface TapdConnectionInfo {
 export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo> {
 	let portRaw: string;
 	try {
-		portRaw = await readFile(join(dataDir, PORT_FILE), "utf-8");
+		portRaw = await readFile(join(dataDir, TAPD_PORT_FILE), "utf-8");
 	} catch {
 		throw new TapdNotRunningError();
 	}
@@ -71,7 +69,7 @@ export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo>
 
 	let token: string;
 	try {
-		token = (await readFile(join(dataDir, TOKEN_FILE), "utf-8")).trim();
+		token = (await readFile(join(dataDir, TAPD_TOKEN_FILE), "utf-8")).trim();
 	} catch {
 		throw new TapdNotRunningError();
 	}

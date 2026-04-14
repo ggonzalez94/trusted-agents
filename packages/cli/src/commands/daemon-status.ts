@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { TAPD_PID_FILE, TAPD_PORT_FILE } from "trusted-agents-tapd";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
@@ -8,11 +9,8 @@ import { TapdClient, TapdClientError, TapdNotRunningError } from "../lib/tapd-cl
 import { isProcessAlive } from "../lib/tapd-spawn.js";
 import type { GlobalOptions } from "../types.js";
 
-const PID_FILE = ".tapd.pid";
-const PORT_FILE = ".tapd.port";
-
 async function checkStalePidfile(dataDir: string): Promise<string | null> {
-	const pidPath = join(dataDir, PID_FILE);
+	const pidPath = join(dataDir, TAPD_PID_FILE);
 	if (!existsSync(pidPath)) return null;
 	let pid: number;
 	try {
@@ -26,7 +24,7 @@ async function checkStalePidfile(dataDir: string): Promise<string | null> {
 	// `tap daemon start` gets a fresh slate, and surface a clear error rather
 	// than letting the operator think tapd is healthy.
 	await rm(pidPath, { force: true }).catch(() => {});
-	await rm(join(dataDir, PORT_FILE), { force: true }).catch(() => {});
+	await rm(join(dataDir, TAPD_PORT_FILE), { force: true }).catch(() => {});
 	return `tapd exited (pidfile was stale for pid ${pid})`;
 }
 

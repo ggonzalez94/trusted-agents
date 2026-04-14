@@ -7,7 +7,7 @@ import type {
 	TapMessagingService,
 } from "trusted-agents-core";
 import { generateAuthToken, persistAuthToken } from "./auth-token.js";
-import type { TapdConfig } from "./config.js";
+import { TAPD_PORT_FILE, type TapdConfig } from "./config.js";
 import { EventBus } from "./event-bus.js";
 import { Router } from "./http/router.js";
 import { createConnectRoute } from "./http/routes/connect.js";
@@ -70,8 +70,6 @@ export interface DaemonOptions {
 	 */
 	calendarProvider?: ICalendarProvider | null;
 }
-
-const PORT_FILE = ".tapd.port";
 
 export class Daemon {
 	private readonly options: DaemonOptions;
@@ -150,7 +148,7 @@ export class Daemon {
 			// fixture) can discover where to reach us without parsing stdout.
 			const boundPort = this.server.boundTcpPort();
 			if (boundPort > 0) {
-				await writeFile(join(this.options.config.dataDir, PORT_FILE), String(boundPort), {
+				await writeFile(join(this.options.config.dataDir, TAPD_PORT_FILE), String(boundPort), {
 					encoding: "utf-8",
 					mode: 0o600,
 				});
@@ -195,7 +193,7 @@ export class Daemon {
 			this.notificationUnsubscribe();
 			this.notificationUnsubscribe = null;
 		}
-		await rm(join(this.options.config.dataDir, PORT_FILE), {
+		await rm(join(this.options.config.dataDir, TAPD_PORT_FILE), {
 			force: true,
 		}).catch(() => {});
 	}

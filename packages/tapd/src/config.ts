@@ -23,6 +23,10 @@ const DEFAULT_TCP_PORT = 6810;
 const DEFAULT_RING_BUFFER_SIZE = 1000;
 const SOCKET_FILE = ".tapd.sock";
 
+export const TAPD_PORT_FILE = ".tapd.port";
+export const TAPD_PID_FILE = ".tapd.pid";
+export const TAPD_TOKEN_FILE = ".tapd-token";
+
 export function resolveTapdConfig(
 	env: Record<string, string | undefined>,
 	options: TapdConfigOptions,

@@ -753,26 +753,15 @@ function validateConversationLogForImport(log: ConversationLog): void {
 
 	const topErr = (field: string, issue: string) =>
 		new Error(`importLog: conversation ${log.conversationId} ${field} ${issue}`);
-	if (typeof log.startedAt !== "string" || !isStrictIsoTimestamp(log.startedAt)) {
-		throw topErr(
-			"startedAt",
-			"is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)",
-		);
-	}
-	if (typeof log.lastMessageAt !== "string" || !isStrictIsoTimestamp(log.lastMessageAt)) {
-		throw topErr(
-			"lastMessageAt",
-			"is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)",
-		);
-	}
-	if (log.lastReadAt !== undefined && log.lastReadAt !== null) {
-		if (typeof log.lastReadAt !== "string" || !isStrictIsoTimestamp(log.lastReadAt)) {
-			throw topErr(
-				"lastReadAt",
-				"is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)",
-			);
+	const requireTimestamp = (field: string, value: unknown, optional = false) => {
+		if (optional && (value === undefined || value === null)) return;
+		if (typeof value !== "string" || !isStrictIsoTimestamp(value)) {
+			throw topErr(field, "is not a strict ISO 8601 timestamp with explicit offset (Z or ±HH:MM)");
 		}
-	}
+	};
+	requireTimestamp("startedAt", log.startedAt);
+	requireTimestamp("lastMessageAt", log.lastMessageAt);
+	requireTimestamp("lastReadAt", log.lastReadAt, true);
 
 	const msgErr = (i: number, issue: string) =>
 		new Error(`importLog: conversation ${log.conversationId} message[${i}] ${issue}`);
