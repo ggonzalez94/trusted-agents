@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SqliteConversationLogger } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Daemon } from "../../src/daemon.js";
 
@@ -229,5 +230,122 @@ describe("tapd HTTP end-to-end", () => {
 			"hello",
 			"general-chat",
 		]);
+	});
+});
+
+describe("tapd HTTP + SqliteConversationLogger", () => {
+	let dataDir: string;
+	let daemon: Daemon | null = null;
+	let port = 0;
+	let token = "";
+	let conversationLogger: SqliteConversationLogger;
+
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "tapd-sqlite-e2e-"));
+		conversationLogger = new SqliteConversationLogger(dataDir);
+		const service = makeFakeService();
+		daemon = new Daemon({
+			config: {
+				dataDir,
+				socketPath: join(dataDir, ".tapd.sock"),
+				tcpHost: "127.0.0.1",
+				tcpPort: 0,
+				ringBufferSize: 100,
+			},
+			identityAgentId: 1,
+			identitySource: () => ({
+				agentId: 1,
+				chain: "eip155:8453",
+				address: "0xabc",
+				displayName: "Self",
+				dataDir,
+			}),
+			buildService: async () => service as never,
+			trustStore: { getContacts: async () => [], getContact: async () => null } as never,
+			conversationLogger,
+			executeTransfer: fakeExecuteTransfer,
+		});
+		await daemon.start();
+		port = daemon.boundTcpPort();
+		token = daemon.authToken();
+	});
+
+	afterEach(async () => {
+		if (daemon) {
+			await daemon.stop().catch(() => {});
+			daemon = null;
+		}
+		conversationLogger.close();
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	const fetchTapd = (path: string, init?: RequestInit) =>
+		fetch(`http://127.0.0.1:${port}${path}`, {
+			...init,
+			headers: {
+				...(init?.headers ?? {}),
+				Authorization: `Bearer ${token}`,
+			},
+		});
+
+	it("persists conversations to SQLite and returns them via GET /api/conversations", async () => {
+		await conversationLogger.logMessage(
+			"conv-sql",
+			{
+				timestamp: "2026-04-01T00:00:00.000Z",
+				direction: "outgoing",
+				scope: "general-chat",
+				content: "hello sqlite",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{
+				connectionId: "conn-1",
+				peerAgentId: 2,
+				peerDisplayName: "Bob",
+			},
+		);
+
+		const response = await fetchTapd("/api/conversations");
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as Array<{
+			conversationId: string;
+			peerDisplayName: string;
+			messages: { content: string }[];
+		}>;
+		expect(body).toHaveLength(1);
+		expect(body[0]?.conversationId).toBe("conv-sql");
+		expect(body[0]?.peerDisplayName).toBe("Bob");
+		expect(body[0]?.messages[0]?.content).toBe("hello sqlite");
+	});
+
+	it("GET /api/conversations/:id returns a single conversation from SQLite", async () => {
+		await conversationLogger.logMessage(
+			"conv-show",
+			{
+				timestamp: "2026-04-01T00:00:00.000Z",
+				direction: "incoming",
+				scope: "default",
+				content: "incoming sqlite",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{
+				connectionId: "conn-2",
+				peerAgentId: 3,
+				peerDisplayName: "Carol",
+			},
+		);
+
+		const response = await fetchTapd("/api/conversations/conv-show");
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			conversationId: string;
+			peerDisplayName: string;
+			messages: { content: string }[];
+		} | null;
+		expect(body?.conversationId).toBe("conv-show");
+		expect(body?.peerDisplayName).toBe("Carol");
+		expect(body?.messages[0]?.content).toBe("incoming sqlite");
 	});
 });
