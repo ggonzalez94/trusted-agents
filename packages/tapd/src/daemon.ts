@@ -283,7 +283,7 @@ export class Daemon {
 			lastSyncAt: () => undefined,
 			triggerSync: async () => {
 				const service = ensureRuntime();
-				await service.syncOnce();
+				return await service.syncOnce();
 			},
 			requestShutdown: () => {
 				void this.stop();

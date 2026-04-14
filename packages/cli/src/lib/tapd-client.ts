@@ -269,8 +269,8 @@ export class TapdClient {
 		return this.get<DaemonHealth>("/daemon/health");
 	}
 
-	triggerSync(): Promise<{ ok: true }> {
-		return this.post<{ ok: true }>("/daemon/sync", {});
+	triggerSync(): Promise<{ ok: true; report?: TapSyncReport }> {
+		return this.post<{ ok: true; report?: TapSyncReport }>("/daemon/sync", {});
 	}
 
 	shutdown(): Promise<{ ok: true }> {

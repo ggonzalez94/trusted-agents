@@ -146,10 +146,12 @@ describe("tapd HTTP end-to-end", () => {
 		expect(body.transportConnected).toBe(true);
 	});
 
-	it("POST /daemon/sync returns ok", async () => {
+	it("POST /daemon/sync returns ok with the sync report", async () => {
 		const response = await fetchTapd("/daemon/sync", { method: "POST" });
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ ok: true });
+		const body = (await response.json()) as { ok: boolean; report?: Record<string, unknown> };
+		expect(body.ok).toBe(true);
+		expect(body.report).toBeDefined();
 	});
 
 	it("rejects requests without a bearer token", async () => {

@@ -1,3 +1,4 @@
+import type { TapSyncReport } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
 
 export interface DaemonControlOptions {
@@ -5,7 +6,7 @@ export interface DaemonControlOptions {
 	startedAt: number;
 	isTransportConnected: () => boolean;
 	lastSyncAt: () => string | undefined;
-	triggerSync: () => Promise<void>;
+	triggerSync: () => Promise<TapSyncReport | void>;
 	requestShutdown: () => void;
 }
 
@@ -17,9 +18,14 @@ export interface DaemonHealthResponse {
 	lastSyncAt?: string;
 }
 
+export interface DaemonSyncResponse {
+	ok: true;
+	report?: TapSyncReport;
+}
+
 export interface DaemonControlRoutes {
 	health: RouteHandler<unknown, DaemonHealthResponse>;
-	sync: RouteHandler<unknown, { ok: true }>;
+	sync: RouteHandler<unknown, DaemonSyncResponse>;
 	shutdown: RouteHandler<unknown, { ok: true }>;
 }
 
@@ -36,8 +42,8 @@ export function createDaemonControlRoutes(opts: DaemonControlOptions): DaemonCon
 			};
 		},
 		sync: async () => {
-			await opts.triggerSync();
-			return { ok: true };
+			const report = await opts.triggerSync();
+			return report ? { ok: true as const, report } : { ok: true as const };
 		},
 		shutdown: async () => {
 			opts.requestShutdown();

@@ -24,8 +24,14 @@ describe("daemon control routes", () => {
 		expect(result.uptime).toBeGreaterThanOrEqual(1000);
 	});
 
-	it("triggers sync", async () => {
-		const triggerSync = vi.fn(async () => {});
+	it("triggers sync and returns the report when one is provided", async () => {
+		const report = {
+			synced: true,
+			processed: 0,
+			pendingRequests: [],
+			pendingDeliveries: [],
+		};
+		const triggerSync = vi.fn(async () => report);
 		const { sync } = createDaemonControlRoutes({
 			version: "0.2.0-beta.6",
 			startedAt: Date.now(),
@@ -37,6 +43,21 @@ describe("daemon control routes", () => {
 
 		const result = await sync({}, undefined);
 		expect(triggerSync).toHaveBeenCalledOnce();
+		expect(result).toEqual({ ok: true, report });
+	});
+
+	it("triggers sync and omits report when triggerSync returns void", async () => {
+		const triggerSync = vi.fn(async () => undefined);
+		const { sync } = createDaemonControlRoutes({
+			version: "0.2.0-beta.6",
+			startedAt: Date.now(),
+			isTransportConnected: () => true,
+			lastSyncAt: () => undefined,
+			triggerSync,
+			requestShutdown: vi.fn(),
+		});
+
+		const result = await sync({}, undefined);
 		expect(result).toEqual({ ok: true });
 	});
 
