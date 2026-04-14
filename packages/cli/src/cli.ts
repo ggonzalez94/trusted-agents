@@ -75,6 +75,57 @@ export function createCli(): Command {
 			);
 		});
 
+	// daemon — control the long-lived tapd background process
+	const daemon = program
+		.command("daemon")
+		.description("Manage the tapd background daemon (start, stop, status, restart, logs)");
+
+	daemon
+		.command("start")
+		.description("Start tapd in the background")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonStartCommand } = await import("./commands/daemon-start.js");
+			await daemonStartCommand(opts);
+		});
+
+	daemon
+		.command("stop")
+		.description("Stop the running tapd daemon")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonStopCommand } = await import("./commands/daemon-stop.js");
+			await daemonStopCommand(opts);
+		});
+
+	daemon
+		.command("status")
+		.description("Check whether tapd is running and report its health")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonStatusCommand } = await import("./commands/daemon-status.js");
+			await daemonStatusCommand(opts);
+		});
+
+	daemon
+		.command("restart")
+		.description("Stop and start tapd (no-op stop if not running)")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonRestartCommand } = await import("./commands/daemon-restart.js");
+			await daemonRestartCommand(opts);
+		});
+
+	daemon
+		.command("logs")
+		.description("Print the tapd log file; pass --follow to tail it")
+		.option("--follow", "Tail the log file (Ctrl+C to stop)")
+		.action(async (cmdOpts: { follow?: boolean }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonLogsCommand } = await import("./commands/daemon-logs.js");
+			await daemonLogsCommand(opts, cmdOpts);
+		});
+
 	const hermes = program.command("hermes").description("Manage the TAP Hermes gateway integration");
 
 	hermes
