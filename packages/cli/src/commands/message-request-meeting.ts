@@ -1,7 +1,7 @@
 import {
 	type SchedulingProposal,
-	type TimeSlot,
 	ValidationError,
+	buildSchedulingSlots,
 	generateSchedulingId,
 	validateSchedulingProposal,
 } from "trusted-agents-core";
@@ -45,7 +45,8 @@ export async function messageRequestMeetingCommand(
 		}
 
 		const schedulingId = generateSchedulingId();
-		const slots = await buildSlots(config.dataDir, cmdOpts.preferred, durationMinutes);
+		const calendarProvider = resolveConfiguredCalendarProvider(config.dataDir) ?? null;
+		const slots = await buildSchedulingSlots(cmdOpts.preferred, durationMinutes, calendarProvider);
 		const originTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 		const proposal: SchedulingProposal = {
@@ -106,70 +107,4 @@ export async function messageRequestMeetingCommand(
 	} catch (err) {
 		handleCommandError(err, opts);
 	}
-}
-
-async function buildSlots(
-	dataDir: string,
-	preferred: string | undefined,
-	durationMinutes: number,
-): Promise<TimeSlot[]> {
-	if (!preferred) {
-		const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
-		const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-		return [{ start: start.toISOString(), end: end.toISOString() }];
-	}
-
-	const preferredDate = new Date(preferred);
-	if (Number.isNaN(preferredDate.getTime())) {
-		throw new ValidationError(`Invalid preferred time: ${preferred}. Use ISO 8601 format.`);
-	}
-
-	const calendarProvider = resolveConfiguredCalendarProvider(dataDir);
-	if (!calendarProvider) {
-		const end = new Date(preferredDate.getTime() + durationMinutes * 60 * 1000);
-		return [{ start: preferredDate.toISOString(), end: end.toISOString() }];
-	}
-
-	const windowStart = new Date(preferredDate.getTime() - 2 * 60 * 60 * 1000);
-	const windowEnd = new Date(preferredDate.getTime() + 4 * 60 * 60 * 1000);
-
-	const availability = await calendarProvider.getAvailability({
-		start: windowStart.toISOString(),
-		end: windowEnd.toISOString(),
-	});
-
-	const freeWindows = availability.filter((w) => w.status === "free");
-	const slots: TimeSlot[] = [];
-
-	for (const window of freeWindows) {
-		const windowStartMs = new Date(window.start).getTime();
-		const windowEndMs = new Date(window.end).getTime();
-		const durationMs = durationMinutes * 60 * 1000;
-
-		if (windowEndMs - windowStartMs >= durationMs) {
-			const slotStart = new Date(Math.max(windowStartMs, preferredDate.getTime() - durationMs));
-			const adjustedStart = new Date(Math.max(slotStart.getTime(), windowStartMs));
-			const adjustedEnd = new Date(adjustedStart.getTime() + durationMs);
-
-			if (adjustedEnd.getTime() <= windowEndMs) {
-				slots.push({
-					start: adjustedStart.toISOString(),
-					end: adjustedEnd.toISOString(),
-				});
-			}
-		}
-	}
-
-	if (slots.length === 0) {
-		const end = new Date(preferredDate.getTime() + durationMinutes * 60 * 1000);
-		slots.push({ start: preferredDate.toISOString(), end: end.toISOString() });
-	}
-
-	slots.sort((a, b) => {
-		const aDist = Math.abs(new Date(a.start).getTime() - preferredDate.getTime());
-		const bDist = Math.abs(new Date(b.start).getTime() - preferredDate.getTime());
-		return aDist - bDist;
-	});
-
-	return slots;
 }
