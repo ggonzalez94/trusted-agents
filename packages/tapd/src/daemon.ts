@@ -24,6 +24,7 @@ import { createPendingRoutes } from "./http/routes/pending.js";
 import { type TransferExecutor, createTransfersRoute } from "./http/routes/transfers.js";
 import { TapdHttpServer } from "./http/server.js";
 import { handleSseConnection } from "./http/sse.js";
+import { classifyEventToNotification } from "./notification-classifier.js";
 import { NotificationQueue } from "./notification-queue.js";
 import { TapdRuntime } from "./runtime.js";
 
@@ -71,6 +72,7 @@ export class Daemon {
 	private shutdownResolve: (() => void) | null = null;
 	private boundSigInt: (() => void) | null = null;
 	private boundSigTerm: (() => void) | null = null;
+	private notificationUnsubscribe: (() => void) | null = null;
 
 	constructor(options: DaemonOptions) {
 		this.options = options;
@@ -84,6 +86,18 @@ export class Daemon {
 		this.startedAt = Date.now();
 		this.token = generateAuthToken();
 		await persistAuthToken(this.options.config.dataDir, this.token);
+
+		// Bus → NotificationQueue. Host plugins (Hermes, OpenClaw) drain the
+		// queue on their pre-prompt hook; this is what keeps their context
+		// notifications non-empty. Installed in start() (not the constructor)
+		// so tests can wire alternate classifiers if needed, but the default
+		// daemon always has the canonical producer hooked up.
+		this.notificationUnsubscribe = this.bus.subscribe((event) => {
+			const notification = classifyEventToNotification(event);
+			if (notification) {
+				this.notifications.enqueue(notification);
+			}
+		});
 
 		const service = await this.options.buildService();
 		this.runtime = new TapdRuntime({
@@ -134,6 +148,10 @@ export class Daemon {
 		if (this.runtime) {
 			await this.runtime.stop();
 			this.runtime = null;
+		}
+		if (this.notificationUnsubscribe) {
+			this.notificationUnsubscribe();
+			this.notificationUnsubscribe = null;
 		}
 		await rm(join(this.options.config.dataDir, PORT_FILE), {
 			force: true,
