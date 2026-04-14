@@ -104,3 +104,22 @@ export {
 	type TapEmitEventPayload,
 	type TapEventBucket,
 } from "./event-classifier.js";
+export type {
+	ActionCompletedEvent,
+	ActionFailedEvent,
+	ActionPendingEvent,
+	ActionRequestedEvent,
+	ConnectionEstablishedEvent,
+	ConnectionFailedEvent,
+	ConnectionRequestedEvent,
+	ContactUpdatedEvent,
+	DaemonStatusEvent,
+	MessageReceivedEvent,
+	MessageSentEvent,
+	PendingResolvedEvent,
+	TapActionKind,
+	TapEvent,
+	TapEventEnvelope,
+	TapEventType,
+	TapPeerRef,
+} from "./event-types.js";
