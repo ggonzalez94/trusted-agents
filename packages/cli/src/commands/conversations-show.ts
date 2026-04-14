@@ -1,4 +1,8 @@
-import { FileConversationLogger, generateMarkdownTranscript } from "trusted-agents-core";
+import {
+	SqliteConversationLogger,
+	generateMarkdownTranscript,
+	migrateFileLogsToSqlite,
+} from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
@@ -9,12 +13,14 @@ export async function conversationsShowCommand(id: string, opts: GlobalOptions):
 
 	try {
 		const config = await loadConfig(opts);
-		const logger = new FileConversationLogger(config.dataDir);
+		const logger = new SqliteConversationLogger(config.dataDir);
+		await migrateFileLogsToSqlite(config.dataDir, logger);
 		const conversation = await logger.getConversation(id);
 
 		if (!conversation) {
 			error("NOT_FOUND", `Conversation not found: ${id}`, opts);
 			process.exitCode = 4;
+			logger.close();
 			return;
 		}
 
@@ -33,6 +39,7 @@ export async function conversationsShowCommand(id: string, opts: GlobalOptions):
 			opts,
 			startTime,
 		);
+		logger.close();
 	} catch (err) {
 		handleCommandError(err, opts);
 	}
