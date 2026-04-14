@@ -30,6 +30,17 @@ async function main(): Promise<void> {
 		signingProvider,
 	});
 
+	// Capture the agent's own address once at startup so the identity route can
+	// surface it to clients (e.g. `tap message request-funds` defaulting --to).
+	let agentAddress = "";
+	try {
+		agentAddress = await signingProvider.getAddress();
+	} catch (err) {
+		process.stderr.write(
+			`tapd warning: failed to resolve own address from signing provider: ${err instanceof Error ? err.message : String(err)}\n`,
+		);
+	}
+
 	const buildService = async (): Promise<TapMessagingService> => {
 		return new TapMessagingService(context, {
 			ownerLabel: `tapd:${process.pid}`,
@@ -53,7 +64,7 @@ async function main(): Promise<void> {
 		identitySource: () => ({
 			agentId: trustedAgentsConfig.agentId,
 			chain: trustedAgentsConfig.chain,
-			address: "",
+			address: agentAddress,
 			displayName: "",
 			dataDir: tapdConfig.dataDir,
 		}),

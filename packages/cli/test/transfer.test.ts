@@ -1,42 +1,39 @@
-import * as core from "trusted-agents-core";
+/**
+ * Tests for `tap transfer` after the Phase 3 refactor.
+ *
+ * The on-chain broadcast now happens inside tapd, so the CLI test is just:
+ * - validate flags
+ * - prompt for confirmation (or skip with --yes)
+ * - POST /api/transfers with the expected body
+ * - format the response with the legacy success shape
+ */
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as promptLib from "../src/lib/prompt.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import {
-	TEST_BASE_CHAIN,
-	buildMockExecutionPreview,
-	buildTestConfig,
-} from "./helpers/config-fixtures.js";
+import { TEST_BASE_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
 
-const { mockOwsProvider, mockExecuteOnchainTransfer } = vi.hoisted(() => ({
-	mockOwsProvider: vi.fn().mockImplementation(() => ({
-		getAddress: vi.fn().mockResolvedValue("0x0000000000000000000000000000000000000001"),
-		signMessage: vi.fn(),
-		signTypedData: vi.fn(),
-		signTransaction: vi.fn(),
-		signAuthorization: vi.fn(),
-	})),
-	mockExecuteOnchainTransfer: vi.fn().mockResolvedValue({
-		txHash: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
-	}),
-}));
+function jsonResponse(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { "Content-Type": "application/json" },
+	});
+}
 
-vi.mock("trusted-agents-core", async () => {
-	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
-	return {
-		...actual,
-		OwsSigningProvider: mockOwsProvider,
-		executeOnchainTransfer: mockExecuteOnchainTransfer,
-	};
-});
-
-describe("tap transfer", () => {
+describe("tap transfer (tapd client refactor)", () => {
 	const { stdout: stdoutWrites } = useCapturedOutput();
+	let dataDir: string;
 
-	function buildConfig() {
-		return buildTestConfig({
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "tap-transfer-"));
+		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
+		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
+
+		const config = buildTestConfig({
 			agentId: 42,
 			chains: {
 				"eip155:1": {
@@ -49,32 +46,18 @@ describe("tap transfer", () => {
 				"eip155:8453": TEST_BASE_CHAIN,
 			},
 		});
-	}
-
-	beforeEach(() => {
-		process.exitCode = undefined;
-
-		vi.spyOn(configLoader, "loadConfig").mockResolvedValue(buildConfig());
-		vi.spyOn(core, "getExecutionPreview").mockResolvedValue(
-			buildMockExecutionPreview("0x0000000000000000000000000000000000000001", {
-				executionAddress: "0x0000000000000000000000000000000000000002",
-				fundingAddress: "0x0000000000000000000000000000000000000003",
-			}),
-		);
+		// useCapturedOutput shares stdout across tests and uses captureOutput,
+		// so we override loadConfig to return our test config with the temp dataDir.
+		vi.spyOn(configLoader, "loadConfig").mockResolvedValue({ ...config, dataDir });
 		vi.spyOn(promptLib, "promptYesNo").mockResolvedValue(true);
-		vi.spyOn(core, "buildChainPublicClient").mockReturnValue({
-			estimateGas: vi.fn().mockResolvedValue(21000n),
-			estimateFeesPerGas: vi.fn().mockResolvedValue({
-				gasPrice: 1000000000n,
-				maxFeePerGas: 2000000000n,
-				maxPriorityFeePerGas: 1000000000n,
-			}),
-		} as never);
+		process.exitCode = undefined;
 	});
 
-	afterEach(() => {
-		process.exitCode = undefined;
+	afterEach(async () => {
 		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+		await rm(dataDir, { recursive: true, force: true }).catch(() => {});
+		process.exitCode = undefined;
 	});
 
 	it.each([
@@ -104,17 +87,6 @@ describe("tap transfer", () => {
 			},
 			"Unknown chain",
 		],
-		[
-			"usdc unsupported on chain",
-			{
-				to: "0x1111111111111111111111111111111111111111",
-				asset: "usdc",
-				amount: "1",
-				chain: "eip155:1",
-				yes: true,
-			},
-			"USDC is not supported",
-		],
 	])("returns validation error for %s", async (_, args, expectedMessage) => {
 		await transferCommand(args, { json: true });
 		const output = JSON.parse(stdoutWrites.join("")) as {
@@ -126,7 +98,14 @@ describe("tap transfer", () => {
 		expect(output.error?.message).toContain(expectedMessage);
 	});
 
-	it("executes a transfer using resolved chain aliases", async () => {
+	it("POSTs to /api/transfers and surfaces the legacy submitted payload", async () => {
+		const fetchMock = vi.fn(async () =>
+			jsonResponse({
+				txHash: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
 		await transferCommand(
 			{
 				to: "0x1111111111111111111111111111111111111111",
@@ -139,17 +118,14 @@ describe("tap transfer", () => {
 		);
 
 		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
-		expect(core.executeOnchainTransfer).toHaveBeenCalledWith(
-			expect.anything(),
-			expect.anything(),
-			expect.objectContaining({
-				asset: "usdc",
-				amount: "5",
-				chain: "eip155:8453",
-				toAddress: "0x1111111111111111111111111111111111111111",
-				type: "transfer/request",
-			}),
-		);
+		expect(fetchMock).toHaveBeenCalledOnce();
+		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		expect(JSON.parse(init.body as string)).toEqual({
+			asset: "usdc",
+			amount: "5",
+			chain: "eip155:8453",
+			toAddress: "0x1111111111111111111111111111111111111111",
+		});
 
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
@@ -164,6 +140,9 @@ describe("tap transfer", () => {
 	});
 
 	it("returns a preview and skips execution in dry-run mode", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
 		await transferCommand(
 			{
 				to: "0x1111111111111111111111111111111111111111",
@@ -176,8 +155,7 @@ describe("tap transfer", () => {
 		);
 
 		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
-		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
-
+		expect(fetchMock).not.toHaveBeenCalled();
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			data?: Record<string, unknown>;
@@ -186,40 +164,12 @@ describe("tap transfer", () => {
 		expect(output.data?.status).toBe("preview");
 		expect(output.data?.dry_run).toBe(true);
 		expect(output.data?.scope).toBe("transfer/execute");
-		expect(output.data?.execution_mode).toBe("eip7702");
-	});
-
-	it("passes the USDC contract address (not recipient) to gas estimation", async () => {
-		const estimateGas = vi.fn().mockResolvedValue(65000n);
-		vi.mocked(core.buildChainPublicClient).mockReturnValue({
-			estimateGas,
-			estimateFeesPerGas: vi.fn().mockResolvedValue({
-				gasPrice: 1000000000n,
-				maxFeePerGas: 2000000000n,
-				maxPriorityFeePerGas: 1000000000n,
-			}),
-		} as never);
-
-		await transferCommand(
-			{
-				to: "0x1111111111111111111111111111111111111111",
-				asset: "usdc",
-				amount: "10",
-				chain: "base",
-				yes: true,
-			},
-			{ json: true },
-		);
-
-		expect(estimateGas).toHaveBeenCalledWith(
-			expect.objectContaining({
-				to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-			}),
-		);
 	});
 
 	it("cancels cleanly when confirmation is declined", async () => {
 		vi.mocked(promptLib.promptYesNo).mockResolvedValueOnce(false);
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
 
 		await transferCommand(
 			{
@@ -230,7 +180,7 @@ describe("tap transfer", () => {
 			{ json: true },
 		);
 
-		expect(core.executeOnchainTransfer).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			data?: Record<string, unknown>;

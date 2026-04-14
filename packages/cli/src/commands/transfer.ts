@@ -1,22 +1,12 @@
-import { randomUUID } from "node:crypto";
-import {
-	ERC20_TRANSFER_ABI,
-	ValidationError,
-	buildChainPublicClient,
-	executeOnchainTransfer,
-	getExecutionPreview,
-	getUsdcAsset,
-	isEthereumAddress,
-} from "trusted-agents-core";
-import type { ChainConfig, ExecutionPreview } from "trusted-agents-core";
-import { encodeFunctionData, getAddress, parseEther, parseUnits } from "viem";
+import { ValidationError, isEthereumAddress } from "trusted-agents-core";
+import { getAddress, parseEther, parseUnits } from "viem";
 import { normalizeAsset } from "../lib/assets.js";
 import { requireChainConfig, resolveChainAlias } from "../lib/chains.js";
 import { loadConfig } from "../lib/config-loader.js";
-import { handleCommandError, toErrorMessage } from "../lib/errors.js";
+import { handleCommandError } from "../lib/errors.js";
 import { success } from "../lib/output.js";
 import { promptYesNo } from "../lib/prompt.js";
-import { createConfiguredSigningProvider } from "../lib/wallet-config.js";
+import { TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 interface TransferCommandOptions {
@@ -28,14 +18,12 @@ interface TransferCommandOptions {
 	yes?: boolean;
 }
 
-interface TransferGasEstimate {
-	gasUnits?: bigint;
-	maxFeePerGasWei?: bigint;
-	maxPriorityFeePerGasWei?: bigint;
-	gasPriceWei?: bigint;
-	warning?: string;
-}
-
+/**
+ * `tap transfer` — execute an on-chain transfer through tapd's owned signing
+ * provider. After the Phase 3 refactor the CLI is a thin client: validate
+ * inputs, prompt for confirmation, post to `/api/transfers`, format the
+ * response. The daemon owns the OWS wallet.
+ */
 export async function transferCommand(
 	cmdOpts: TransferCommandOptions,
 	opts: GlobalOptions,
@@ -50,24 +38,7 @@ export async function transferCommand(
 		const asset = normalizeAsset(cmdOpts.asset);
 		const toAddress = normalizeRecipientAddress(cmdOpts.to);
 		const amount = normalizeAmount(cmdOpts.amount);
-		const usdcAsset = asset === "usdc" ? getUsdcAsset(chain) : undefined;
-		if (asset === "usdc" && !usdcAsset) {
-			throw new ValidationError(`USDC is not supported on ${chain}`);
-		}
-		assertAmountIsParsable(asset, amount, usdcAsset?.decimals);
-
-		const signingProvider = createConfiguredSigningProvider(config, chain);
-		const execution = await getExecutionPreview(config, chainConfig, signingProvider);
-		const gasEstimate = await estimateTransferGasAndFees({
-			chainConfig,
-			asset,
-			amount,
-			toAddress,
-			executionAddress: execution.executionAddress,
-			erc20ContractAddress: usdcAsset?.address,
-			erc20Decimals: usdcAsset?.decimals,
-		});
-		const warnings = [...execution.warnings, ...(gasEstimate.warning ? [gasEstimate.warning] : [])];
+		assertAmountIsParsable(asset, amount);
 
 		if (cmdOpts.dryRun) {
 			success(
@@ -80,12 +51,6 @@ export async function transferCommand(
 					chain,
 					chain_name: chainConfig.name,
 					to_address: toAddress,
-					execution_mode: execution.mode,
-					execution_address: execution.executionAddress,
-					funding_address: execution.fundingAddress,
-					paymaster_provider: execution.paymasterProvider,
-					...serializeGasEstimate(gasEstimate),
-					warnings: warnings.length > 0 ? warnings : undefined,
 				},
 				opts,
 				startTime,
@@ -96,16 +61,16 @@ export async function transferCommand(
 		const approved = cmdOpts.yes
 			? true
 			: await promptYesNo(
-					buildTransferConfirmationPrompt({
-						asset,
-						amount,
-						toAddress,
-						chain,
-						chainName: chainConfig.name,
-						execution,
-						gasEstimate,
-					}),
+					[
+						"Transfer confirmation:",
+						`- Asset: ${asset === "native" ? "ETH (native)" : "USDC"}`,
+						`- Amount: ${amount}`,
+						`- Recipient: ${toAddress}`,
+						`- Chain: ${chain} (${chainConfig.name})`,
+						"Proceed? [y/N] ",
+					].join("\n"),
 				);
+
 		if (!approved) {
 			success(
 				{
@@ -123,16 +88,16 @@ export async function transferCommand(
 			return;
 		}
 
-		const transfer = await executeOnchainTransfer(config, signingProvider, {
-			type: "transfer/request",
-			actionId: `local-${randomUUID()}`,
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const result = await client.transfer({
 			asset,
 			amount,
 			chain,
 			toAddress,
 		});
+
 		const txUrl = chainConfig.blockExplorerUrl
-			? `${chainConfig.blockExplorerUrl.replace(/\/$/, "")}/tx/${transfer.txHash}`
+			? `${chainConfig.blockExplorerUrl.replace(/\/$/, "")}/tx/${result.txHash}`
 			: undefined;
 
 		success(
@@ -143,14 +108,8 @@ export async function transferCommand(
 				chain,
 				chain_name: chainConfig.name,
 				to_address: toAddress,
-				tx_hash: transfer.txHash,
+				tx_hash: result.txHash,
 				tx_url: txUrl,
-				execution_mode: execution.mode,
-				execution_address: execution.executionAddress,
-				funding_address: execution.fundingAddress,
-				paymaster_provider: execution.paymasterProvider,
-				...serializeGasEstimate(gasEstimate),
-				warnings: warnings.length > 0 ? warnings : undefined,
 			},
 			opts,
 			startTime,
@@ -176,122 +135,15 @@ function normalizeAmount(amount: string): string {
 	return trimmed;
 }
 
-function assertAmountIsParsable(
-	asset: "native" | "usdc",
-	amount: string,
-	erc20Decimals?: number,
-): void {
+function assertAmountIsParsable(asset: "native" | "usdc", amount: string): void {
 	try {
 		if (asset === "native") {
 			parseEther(amount);
 			return;
 		}
-		parseUnits(amount, erc20Decimals ?? 6);
+		parseUnits(amount, 6);
 	} catch {
 		const label = asset === "native" ? "ETH" : "USDC";
 		throw new ValidationError(`Invalid ${label} amount: ${amount}`);
 	}
-}
-
-async function estimateTransferGasAndFees(input: {
-	chainConfig: ChainConfig;
-	asset: "native" | "usdc";
-	amount: string;
-	toAddress: `0x${string}`;
-	executionAddress: `0x${string}`;
-	erc20ContractAddress?: `0x${string}`;
-	erc20Decimals?: number;
-}): Promise<TransferGasEstimate> {
-	try {
-		const publicClient = buildChainPublicClient(input.chainConfig);
-		const [fees, gasUnits] = await Promise.all([
-			publicClient.estimateFeesPerGas(),
-			input.asset === "native"
-				? publicClient.estimateGas({
-						account: input.executionAddress,
-						to: input.toAddress,
-						value: parseEther(input.amount),
-						data: "0x",
-					})
-				: publicClient.estimateGas({
-						account: input.executionAddress,
-						to: input.erc20ContractAddress!,
-						value: 0n,
-						data: encodeFunctionData({
-							abi: ERC20_TRANSFER_ABI,
-							functionName: "transfer",
-							args: [input.toAddress, parseUnits(input.amount, input.erc20Decimals ?? 6)],
-						}),
-					}),
-		]);
-
-		return {
-			gasUnits,
-			maxFeePerGasWei: fees.maxFeePerGas,
-			maxPriorityFeePerGasWei: fees.maxPriorityFeePerGas,
-			gasPriceWei: fees.gasPrice,
-		};
-	} catch (error) {
-		return {
-			warning: `Gas estimate unavailable: ${toErrorMessage(error)}`,
-		};
-	}
-}
-
-function buildTransferConfirmationPrompt(input: {
-	asset: "native" | "usdc";
-	amount: string;
-	toAddress: `0x${string}`;
-	chain: string;
-	chainName: string;
-	execution: ExecutionPreview;
-	gasEstimate: TransferGasEstimate;
-}): string {
-	const assetLabel = input.asset === "native" ? "ETH (native)" : "USDC";
-	const feeQuote =
-		input.gasEstimate.maxFeePerGasWei !== undefined
-			? `maxFeePerGas=${input.gasEstimate.maxFeePerGasWei} wei${
-					input.gasEstimate.maxPriorityFeePerGasWei !== undefined
-						? `, maxPriorityFeePerGas=${input.gasEstimate.maxPriorityFeePerGasWei} wei`
-						: ""
-				}`
-			: input.gasEstimate.gasPriceWei !== undefined
-				? `gasPrice=${input.gasEstimate.gasPriceWei} wei`
-				: "unavailable";
-	const gasUnits =
-		input.gasEstimate.gasUnits !== undefined
-			? input.gasEstimate.gasUnits.toString()
-			: "unavailable";
-
-	return [
-		"Transfer confirmation:",
-		`- Asset: ${assetLabel}`,
-		`- Amount: ${input.amount}`,
-		`- Recipient: ${input.toAddress}`,
-		`- Chain: ${input.chain} (${input.chainName})`,
-		`- Execution mode: ${input.execution.mode}`,
-		`- Paymaster: ${input.execution.paymasterProvider ?? "none"}`,
-		`- Estimated gas units: ${gasUnits}`,
-		`- Estimated fee quote: ${feeQuote}`,
-		...(input.gasEstimate.warning ? [`- Gas estimation note: ${input.gasEstimate.warning}`] : []),
-		...(input.execution.warnings.map((warning) => `- Execution note: ${warning}`) ?? []),
-		"Proceed? [y/N] ",
-	].join("\n");
-}
-
-function serializeGasEstimate(gasEstimate: TransferGasEstimate) {
-	return {
-		estimated_gas_units:
-			gasEstimate.gasUnits !== undefined ? gasEstimate.gasUnits.toString() : undefined,
-		max_fee_per_gas_wei:
-			gasEstimate.maxFeePerGasWei !== undefined
-				? gasEstimate.maxFeePerGasWei.toString()
-				: undefined,
-		max_priority_fee_per_gas_wei:
-			gasEstimate.maxPriorityFeePerGasWei !== undefined
-				? gasEstimate.maxPriorityFeePerGasWei.toString()
-				: undefined,
-		gas_price_wei:
-			gasEstimate.gasPriceWei !== undefined ? gasEstimate.gasPriceWei.toString() : undefined,
-	};
 }
