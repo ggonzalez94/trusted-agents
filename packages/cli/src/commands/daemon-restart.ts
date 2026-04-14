@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { TAPD_PID_FILE } from "trusted-agents-tapd";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { info, success } from "../lib/output.js";
@@ -11,7 +12,7 @@ export async function daemonRestartCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const dataDir = resolveDataDir(opts);
-		const pidFile = join(dataDir, ".tapd.pid");
+		const pidFile = join(dataDir, TAPD_PID_FILE);
 		let stoppedPid: number | undefined;
 
 		if (existsSync(pidFile)) {

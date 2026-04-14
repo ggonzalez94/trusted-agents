@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { TapEvent } from "trusted-agents-core";
 import type { EventBus } from "../event-bus.js";
+import { getQueryParam } from "./auth.js";
 
 const HEARTBEAT_MS = 30_000;
 
@@ -72,12 +73,5 @@ function extractLastEventId(req: IncomingMessage): string | undefined {
 	const headerValue = req.headers["last-event-id"];
 	const fromHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue;
 	if (fromHeader) return fromHeader;
-
-	const url = req.url;
-	if (!url) return undefined;
-	const queryStart = url.indexOf("?");
-	if (queryStart === -1) return undefined;
-	const params = new URLSearchParams(url.slice(queryStart + 1));
-	const fromQuery = params.get("lastEventId");
-	return fromQuery && fromQuery.length > 0 ? fromQuery : undefined;
+	return getQueryParam(req, "lastEventId") ?? undefined;
 }

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { TAPD_PORT_FILE } from "trusted-agents-tapd";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
@@ -11,7 +12,7 @@ export async function daemonStartCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const dataDir = resolveDataDir(opts);
-		const portFile = join(dataDir, ".tapd.port");
+		const portFile = join(dataDir, TAPD_PORT_FILE);
 		if (existsSync(portFile)) {
 			error(
 				"ALREADY_RUNNING",

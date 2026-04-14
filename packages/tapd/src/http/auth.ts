@@ -36,13 +36,17 @@ function extractBearerHeader(req: IncomingMessage): string | null {
 }
 
 function extractTokenQuery(req: IncomingMessage): string | null {
+	return getQueryParam(req, "token");
+}
+
+export function getQueryParam(req: IncomingMessage, key: string): string | null {
 	const url = req.url;
 	if (!url) return null;
 	const queryStart = url.indexOf("?");
 	if (queryStart === -1) return null;
 	const params = new URLSearchParams(url.slice(queryStart + 1));
-	const token = params.get("token");
-	return token && token.length > 0 ? token : null;
+	const value = params.get(key);
+	return value && value.length > 0 ? value : null;
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
