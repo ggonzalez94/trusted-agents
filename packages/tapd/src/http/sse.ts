@@ -26,8 +26,7 @@ export function handleSseConnection(
 	});
 	res.write(": tapd sse stream ready\n\n");
 
-	const lastEventIdHeader = req.headers["last-event-id"];
-	const lastEventId = Array.isArray(lastEventIdHeader) ? lastEventIdHeader[0] : lastEventIdHeader;
+	const lastEventId = extractLastEventId(req);
 	if (lastEventId) {
 		for (const event of bus.replayAfter(lastEventId)) {
 			writeEvent(res, event);
@@ -60,4 +59,25 @@ function writeEvent(res: ServerResponse, event: TapEvent): void {
 	res.write(`id: ${event.id}\n`);
 	res.write(`event: ${event.type}\n`);
 	res.write(`data: ${payload}\n\n`);
+}
+
+/**
+ * Resolve the resume cursor for SSE replay. Native browser `EventSource`
+ * automatically sends the `Last-Event-ID` header on reconnect, but the same
+ * client cannot set custom headers on the *first* connect — so we also accept
+ * `?lastEventId=...` as a query fallback so callers can resume from a known
+ * cursor without depending on the browser's reconnect behavior.
+ */
+function extractLastEventId(req: IncomingMessage): string | undefined {
+	const headerValue = req.headers["last-event-id"];
+	const fromHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+	if (fromHeader) return fromHeader;
+
+	const url = req.url;
+	if (!url) return undefined;
+	const queryStart = url.indexOf("?");
+	if (queryStart === -1) return undefined;
+	const params = new URLSearchParams(url.slice(queryStart + 1));
+	const fromQuery = params.get("lastEventId");
+	return fromQuery && fromQuery.length > 0 ? fromQuery : undefined;
 }

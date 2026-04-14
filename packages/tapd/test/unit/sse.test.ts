@@ -57,9 +57,10 @@ function makeRes(): ServerResponse & {
 	return res as never;
 }
 
-function makeReq(lastEventId?: string): IncomingMessage {
+function makeReq(lastEventId?: string, url?: string): IncomingMessage {
 	const handlers: Record<string, () => void> = {};
 	return {
+		url: url ?? "/api/events/stream",
 		headers: lastEventId ? { "last-event-id": lastEventId } : {},
 		on(event: string, handler: () => void) {
 			handlers[event] = handler;
@@ -112,6 +113,23 @@ describe("handleSseConnection", () => {
 		bus.publish(makeEvent(3));
 
 		const req = makeReq("evt-1");
+		const res = makeRes();
+		const cleanup = handleSseConnection(req, res, bus);
+
+		const written = res.writes.join("");
+		expect(written).toContain("id: evt-2");
+		expect(written).toContain("id: evt-3");
+		expect(written).not.toContain("id: evt-1");
+		cleanup();
+	});
+
+	it("accepts ?lastEventId= as a fallback for the Last-Event-ID header", async () => {
+		const bus = new EventBus({ ringBufferSize: 10 });
+		bus.publish(makeEvent(1));
+		bus.publish(makeEvent(2));
+		bus.publish(makeEvent(3));
+
+		const req = makeReq(undefined, "/api/events/stream?lastEventId=evt-1");
 		const res = makeRes();
 		const cleanup = handleSseConnection(req, res, bus);
 
