@@ -1,4 +1,4 @@
-import type { TapEvent, TapEventType } from "./types.js";
+import type { TapEvent, TapEventType } from "./types";
 
 /**
  * SSE wrapper around native browser `EventSource`.

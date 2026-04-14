@@ -1,10 +1,5 @@
-import { getToken } from "./token.js";
-import type {
-	Contact,
-	ConversationLog,
-	Identity,
-	PendingItem,
-} from "./types.js";
+import { getToken } from "./token";
+import type { Contact, ConversationLog, Identity, PendingItem } from "./types";
 
 /**
  * Typed REST client for the tapd HTTP API. Reads the bearer token from
