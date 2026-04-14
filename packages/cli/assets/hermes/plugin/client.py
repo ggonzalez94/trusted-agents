@@ -26,6 +26,7 @@ import shutil
 import socket
 import subprocess
 import time
+from datetime import datetime, timezone
 from http.client import HTTPConnection
 from pathlib import Path
 from typing import Any
@@ -383,8 +384,107 @@ def send_request(action: str, params: dict | None = None) -> Any:
     return _dispatch(action, dispatch_params, socket_path)
 
 
+def _drain_one(socket_path: Path) -> tuple[list[dict], str | None]:
+    """Drain notifications from a single tapd socket.
+
+    Returns ``(notifications, error)``. On success, ``error`` is None. On
+    failure (socket missing, HTTP error, malformed response), returns an
+    empty list plus an error string for the caller to surface as a
+    meta-notification.
+    """
+    result = _http_request("GET", "/api/notifications/drain", socket_path)
+    if isinstance(result, dict) and "error" in result and "notifications" not in result:
+        return [], str(result.get("error") or "unknown error")
+    if not isinstance(result, dict):
+        return [], "tapd returned a non-object drain response"
+    notifications = result.get("notifications")
+    if not isinstance(notifications, list):
+        return [], "tapd drain response missing `notifications` array"
+    normalized: list[dict] = [n for n in notifications if isinstance(n, dict)]
+    return normalized, None
+
+
+def _meta_error_notification(identity_name: str, reason: str) -> dict[str, Any]:
+    """Build a meta escalation surfaced when an identity drain fails.
+
+    Operators need to see that a specific tapd is unreachable — silently
+    dropping the error would hide approval backlogs accumulating in a
+    quiet daemon.
+    """
+    return {
+        "type": "escalation",
+        "oneLiner": f"Hermes: unable to reach tapd for identity {identity_name}: {reason}",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "identity": identity_name,
+    }
+
+
+def drain_all_identities() -> list[dict]:
+    """Drain notifications from every configured Hermes identity.
+
+    Each identity has its own tapd and its own per-identity notification
+    queue, so the Hermes ``pre_llm_call`` hook must drain each one and
+    merge the results. Notifications are tagged with the source identity
+    so the injection layer can label them when more than one identity
+    contributed.
+
+    Fallback rules:
+      - Zero entries (legacy single-agent setup or missing config): drain
+        once from the default socket (``TAP_DATA_DIR`` / ``~/.trustedagents``).
+        The returned notifications carry no identity tag.
+      - One entry: drain that identity once and tag its notifications.
+      - Two or more entries: drain each identity in config order and tag
+        every notification with its ``name``. Per-identity failures are
+        surfaced as an escalation meta-notification rather than silently
+        swallowed.
+
+    This function never raises; a configuration error is returned as a
+    single meta-notification so the operator sees the issue instead of
+    an empty injection block.
+    """
+    try:
+        identities = _load_hermes_identities()
+    except RuntimeError as exc:
+        return [
+            {
+                "type": "escalation",
+                "oneLiner": f"Hermes: TAP plugin config error: {exc}",
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+
+    if len(identities) == 0:
+        data_dir = _legacy_data_dir()
+        socket_path = data_dir / SOCKET_NAME
+        drained, err = _drain_one(socket_path)
+        if err is not None:
+            return [_meta_error_notification("default", err)]
+        return drained
+
+    merged: list[dict] = []
+    for entry in identities:
+        name = entry["name"]
+        socket_path = Path(entry["dataDir"]) / SOCKET_NAME
+        drained, err = _drain_one(socket_path)
+        if err is not None:
+            merged.append(_meta_error_notification(name, err))
+            continue
+        for notification in drained:
+            tagged = dict(notification)
+            tagged.setdefault("identity", name)
+            merged.append(tagged)
+    return merged
+
+
 def format_notification_context(notifications: list[dict]) -> dict[str, str] | None:
-    """Format drained notifications into a Hermes pre_llm_call context payload."""
+    """Format drained notifications into a Hermes pre_llm_call context payload.
+
+    When notifications come from more than one identity (multi-identity
+    Hermes setups), each line is prefixed with ``[identity]`` so the
+    operator knows which agent raised it. Legacy single-identity output
+    is unchanged: no identity tag on the notifications means no prefix
+    in the rendered block.
+    """
     if not notifications:
         return None
 
@@ -395,6 +495,13 @@ def format_notification_context(notifications: list[dict]) -> dict[str, str] | N
         "info": "INFO",
     }
 
+    distinct_identities: set[str] = set()
+    for notification in notifications:
+        identity = notification.get("identity")
+        if isinstance(identity, str) and identity.strip():
+            distinct_identities.add(identity.strip())
+    show_identity_prefix = len(distinct_identities) >= 2
+
     lines = ["[TAP Notifications]"]
     rendered = 0
     for notification in notifications[:20]:
@@ -402,7 +509,15 @@ def format_notification_context(notifications: list[dict]) -> dict[str, str] | N
         one_liner = str(notification.get("oneLiner") or "").strip()
         if not one_liner:
             continue
-        lines.append(f"- {label}: {one_liner}")
+        identity = notification.get("identity")
+        if (
+            show_identity_prefix
+            and isinstance(identity, str)
+            and identity.strip()
+        ):
+            lines.append(f"- {label} [{identity.strip()}]: {one_liner}")
+        else:
+            lines.append(f"- {label}: {one_liner}")
         rendered += 1
 
     if rendered == 0:

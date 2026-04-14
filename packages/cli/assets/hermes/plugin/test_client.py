@@ -174,6 +174,167 @@ class HermesIdentityResolutionTests(unittest.TestCase):
         self.assertEqual(body["text"], "hi")
 
 
+class HermesDrainAllIdentitiesTests(unittest.TestCase):
+    """Tests for multi-identity notification drain (residual 1).
+
+    ``drain_all_identities`` drains every configured Hermes identity,
+    tags notifications with their source identity, and surfaces
+    per-identity reachability errors as meta escalations so they are
+    never silently lost.
+    """
+
+    def setUp(self) -> None:
+        self._hermes_home = tempfile.mkdtemp(prefix="hermes-home-")
+        self._legacy_dir = tempfile.mkdtemp(prefix="hermes-legacy-")
+        self._primary_dir = tempfile.mkdtemp(prefix="hermes-primary-")
+        self._secondary_dir = tempfile.mkdtemp(prefix="hermes-secondary-")
+        config_dir = Path(self._hermes_home) / "plugins" / "trusted-agents-tap"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        self._config_path = config_dir / "config.json"
+
+        self._env_patch = mock.patch.dict(
+            os.environ,
+            {"HERMES_HOME": self._hermes_home, "TAP_DATA_DIR": self._legacy_dir},
+            clear=False,
+        )
+        self._env_patch.start()
+
+        self._responses: dict[str, Any] = {}
+
+        def fake_http_request(
+            method: str, path: str, socket_path: Path, body: dict | None = None
+        ) -> Any:
+            key = str(socket_path)
+            if key in self._responses:
+                response = self._responses[key]
+                if isinstance(response, Exception):
+                    return {"error": str(response)}
+                return response
+            return {"error": f"no fake response for {key}"}
+
+        self._http_patch = mock.patch.object(client, "_http_request", side_effect=fake_http_request)
+        self._http_patch.start()
+
+    def tearDown(self) -> None:
+        self._http_patch.stop()
+        self._env_patch.stop()
+        import shutil
+
+        for path in (self._hermes_home, self._legacy_dir, self._primary_dir, self._secondary_dir):
+            shutil.rmtree(path, ignore_errors=True)
+
+    def _write_config(self, identities: list[dict[str, str]]) -> None:
+        self._config_path.write_text(json.dumps({"identities": identities}), encoding="utf-8")
+
+    def _socket_for(self, data_dir: str) -> str:
+        return str(Path(data_dir) / client.SOCKET_NAME)
+
+    def test_zero_identity_config_drains_default_socket(self) -> None:
+        # No config file at all (legacy single-agent mode) — drain from
+        # TAP_DATA_DIR's default socket. Notifications carry no identity
+        # tag, so format_notification_context renders them without a
+        # prefix.
+        self._responses[self._socket_for(self._legacy_dir)] = {
+            "notifications": [{"type": "info", "oneLiner": "only message"}]
+        }
+        result = client.drain_all_identities()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["oneLiner"], "only message")
+        self.assertNotIn("identity", result[0])
+
+    def test_single_identity_config_drains_that_identity_socket(self) -> None:
+        self._write_config([{"name": "only", "dataDir": self._primary_dir}])
+        self._responses[self._socket_for(self._primary_dir)] = {
+            "notifications": [{"type": "info", "oneLiner": "hello"}]
+        }
+        result = client.drain_all_identities()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["oneLiner"], "hello")
+        # Tagged with the identity so the formatter can decide whether
+        # to show a prefix.
+        self.assertEqual(result[0]["identity"], "only")
+
+    def test_two_identity_config_drains_both_and_merges(self) -> None:
+        self._write_config(
+            [
+                {"name": "primary", "dataDir": self._primary_dir},
+                {"name": "secondary", "dataDir": self._secondary_dir},
+            ]
+        )
+        self._responses[self._socket_for(self._primary_dir)] = {
+            "notifications": [{"type": "escalation", "oneLiner": "primary alert"}]
+        }
+        self._responses[self._socket_for(self._secondary_dir)] = {
+            "notifications": [{"type": "info", "oneLiner": "secondary info"}]
+        }
+        result = client.drain_all_identities()
+        self.assertEqual(len(result), 2)
+        # Config order is preserved.
+        self.assertEqual(result[0]["identity"], "primary")
+        self.assertEqual(result[0]["oneLiner"], "primary alert")
+        self.assertEqual(result[1]["identity"], "secondary")
+        self.assertEqual(result[1]["oneLiner"], "secondary info")
+
+    def test_per_identity_failure_surfaces_meta_escalation(self) -> None:
+        self._write_config(
+            [
+                {"name": "primary", "dataDir": self._primary_dir},
+                {"name": "secondary", "dataDir": self._secondary_dir},
+            ]
+        )
+        # primary is unreachable, secondary is healthy.
+        self._responses[self._socket_for(self._primary_dir)] = {
+            "error": "tapd is not running: socket missing"
+        }
+        self._responses[self._socket_for(self._secondary_dir)] = {
+            "notifications": [{"type": "info", "oneLiner": "hi from secondary"}]
+        }
+        result = client.drain_all_identities()
+        self.assertEqual(len(result), 2)
+        # First entry: meta escalation for the failed identity.
+        self.assertEqual(result[0]["type"], "escalation")
+        self.assertEqual(result[0]["identity"], "primary")
+        self.assertIn("unable to reach tapd", result[0]["oneLiner"])
+        self.assertIn("primary", result[0]["oneLiner"])
+        # Second entry: the healthy identity's notification still arrived.
+        self.assertEqual(result[1]["identity"], "secondary")
+        self.assertEqual(result[1]["oneLiner"], "hi from secondary")
+
+    def test_format_context_omits_identity_prefix_for_single_identity(self) -> None:
+        notifications = [
+            {"type": "info", "oneLiner": "one", "identity": "only"},
+            {"type": "escalation", "oneLiner": "two", "identity": "only"},
+        ]
+        result = client.format_notification_context(notifications)
+        self.assertIsNotNone(result)
+        context = result["context"]
+        # Single identity → no [only] prefix anywhere in the rendered body.
+        self.assertNotIn("[only]", context)
+        self.assertIn("- INFO: one", context)
+        self.assertIn("- ESCALATION: two", context)
+
+    def test_format_context_adds_identity_prefix_for_multiple_identities(self) -> None:
+        notifications = [
+            {"type": "info", "oneLiner": "one", "identity": "primary"},
+            {"type": "escalation", "oneLiner": "two", "identity": "secondary"},
+        ]
+        result = client.format_notification_context(notifications)
+        self.assertIsNotNone(result)
+        context = result["context"]
+        self.assertIn("- INFO [primary]: one", context)
+        self.assertIn("- ESCALATION [secondary]: two", context)
+
+    def test_format_context_untagged_notification_still_renders_without_prefix(
+        self,
+    ) -> None:
+        # Legacy code path (single-identity, no tag) is unchanged.
+        notifications = [{"type": "info", "oneLiner": "no tag"}]
+        result = client.format_notification_context(notifications)
+        self.assertIsNotNone(result)
+        self.assertIn("- INFO: no tag", result["context"])
+        self.assertNotIn("[", result["context"].split("[TAP Notifications]")[1])
+
+
 class HermesLegacyDataDirTests(unittest.TestCase):
     def test_legacy_data_dir_prefers_tap_data_dir_env(self) -> None:
         with mock.patch.dict(os.environ, {"TAP_DATA_DIR": "/tmp/agent-x"}, clear=False):

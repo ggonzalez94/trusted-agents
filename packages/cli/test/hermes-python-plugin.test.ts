@@ -283,6 +283,89 @@ describe("Hermes Python TAP bridge (HTTP-over-Unix-socket)", () => {
 			expect(parsed.error).toContain("unknown identity");
 		});
 
+		// ── Residual 1: multi-identity notification drain ─────────────
+		// F4.1 made send_request per-request identity-resolved but
+		// ``inject_tap_notifications`` was still a single drain call
+		// with no identity param. In multi-identity mode it would error
+		// with "multiple TAP Hermes identities configured" and silently
+		// inject nothing, losing approvals and escalations. The fix
+		// drains every configured identity and merges the results.
+
+		it("drain_all_identities merges notifications from every configured identity", async () => {
+			const primaryDir = join(tempRoot, "primary");
+			const secondaryDir = join(tempRoot, "secondary");
+			await mkdir(primaryDir, { recursive: true });
+			await mkdir(secondaryDir, { recursive: true });
+			await writeHermesIdentities([
+				{ name: "primary", dataDir: primaryDir },
+				{ name: "secondary", dataDir: secondaryDir },
+			]);
+
+			const primaryServer = await startFakeTapdServer(join(primaryDir, ".tapd.sock"), {
+				"GET /api/notifications/drain": {
+					notifications: [{ type: "escalation", oneLiner: "primary escalation" }],
+				},
+			});
+			const secondaryServer = await startFakeTapdServer(join(secondaryDir, ".tapd.sock"), {
+				"GET /api/notifications/drain": {
+					notifications: [{ type: "info", oneLiner: "secondary info" }],
+				},
+			});
+			try {
+				const output = await runPluginExpression(
+					"print(json.dumps(module.inject_tap_notifications()))",
+				);
+				const result = JSON.parse(output) as { context?: string };
+				expect(result.context).toContain("[TAP Notifications]");
+				// Both identities surface through the merged drain.
+				expect(result.context).toContain("primary escalation");
+				expect(result.context).toContain("secondary info");
+				// With two identities the formatter prefixes each line
+				// with the source identity so operators can tell which
+				// agent raised the event.
+				expect(result.context).toContain("[primary]");
+				expect(result.context).toContain("[secondary]");
+			} finally {
+				await primaryServer.stop();
+				await secondaryServer.stop();
+			}
+		});
+
+		it("drain_all_identities surfaces a meta escalation when one identity is unreachable", async () => {
+			const primaryDir = join(tempRoot, "primary");
+			const secondaryDir = join(tempRoot, "secondary");
+			await mkdir(primaryDir, { recursive: true });
+			await mkdir(secondaryDir, { recursive: true });
+			await writeHermesIdentities([
+				{ name: "primary", dataDir: primaryDir },
+				{ name: "secondary", dataDir: secondaryDir },
+			]);
+
+			// Only secondary has a fake socket. Primary's drain call
+			// will fail because the socket does not exist AND tap isn't
+			// on PATH (see runPluginExpression).
+			const secondaryServer = await startFakeTapdServer(join(secondaryDir, ".tapd.sock"), {
+				"GET /api/notifications/drain": {
+					notifications: [{ type: "info", oneLiner: "secondary ok" }],
+				},
+			});
+			try {
+				const output = await runPluginExpression(
+					"print(json.dumps(module.inject_tap_notifications()))",
+				);
+				const result = JSON.parse(output) as { context?: string };
+				expect(result.context).toContain("[TAP Notifications]");
+				// Meta escalation surfaces the failing identity so the
+				// operator sees the outage instead of silent data loss.
+				expect(result.context).toContain("unable to reach tapd");
+				expect(result.context).toContain("primary");
+				// Secondary's actual notification still landed.
+				expect(result.context).toContain("secondary ok");
+			} finally {
+				await secondaryServer.stop();
+			}
+		});
+
 		it("does not forward the `identity` field to tapd in request bodies", async () => {
 			const onlyDir = join(tempRoot, "only-agent");
 			await mkdir(onlyDir, { recursive: true });
