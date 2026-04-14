@@ -1,311 +1,260 @@
-"""Local IPC client for the TAP Hermes daemon."""
+"""HTTP client over Unix socket for the local tapd daemon."""
 
 from __future__ import annotations
 
-import os
 import json
-import socket
+import os
 import shutil
+import socket
 import subprocess
 import time
+from http.client import HTTPConnection
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-PLUGIN_DIR = Path(__file__).resolve().parent
-STATE_DIR = PLUGIN_DIR / "state"
-DAEMON_STATE_PATH = STATE_DIR / "daemon.json"
-DAEMON_LOG_PATH = STATE_DIR / "daemon.log"
-RESPAWN_STATE_PATH = STATE_DIR / "respawn.json"
-RESPAWN_LOCK_PATH = STATE_DIR / "respawn.lock"
-DEFAULT_SOCKET_PATH = STATE_DIR / "tap-hermes.sock"
+DEFAULT_DATA_DIR = Path(os.environ.get("TAP_DATA_DIR", Path.home() / ".trustedagents"))
+SOCKET_NAME = ".tapd.sock"
 DEFAULT_TIMEOUT_SECONDS = 10.0
-STARTUP_GRACE_SECONDS = 1.0
-STARTUP_IN_PROGRESS_GRACE_SECONDS = 15.0
-STARTUP_LOG_FRESH_SECONDS = 15.0
-RESPAWN_WAIT_SECONDS = 3.0
-RESPAWN_POLL_SECONDS = 0.05
-RESPAWN_COOLDOWN_SECONDS = 10.0
-DEFAULT_RECOVERY_GUIDANCE = (
-    "Start or restart `hermes gateway` after running `tap hermes configure`."
-)
+DAEMON_START_TIMEOUT_SECONDS = 5.0
+DAEMON_START_POLL_SECONDS = 0.1
+DEFAULT_RECOVERY_GUIDANCE = "Run `tap daemon start` to launch tapd."
 
 
-def _read_json(path: Path, default: Any) -> Any:
+class _UnixHTTPConnection(HTTPConnection):
+    """HTTPConnection subclass that connects via a Unix domain socket."""
+
+    def __init__(self, socket_path: str, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+        super().__init__("localhost", timeout=timeout)
+        self._socket_path = socket_path
+
+    def connect(self) -> None:  # type: ignore[override]
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
+
+
+def _resolve_socket_path() -> Path:
+    return DEFAULT_DATA_DIR / SOCKET_NAME
+
+
+def _ensure_tapd_running() -> tuple[bool, str | None]:
+    socket_path = _resolve_socket_path()
+    if socket_path.exists():
+        return True, None
+    tap_bin = shutil.which("tap")
+    if not tap_bin:
+        return False, "`tap` binary not found on PATH; cannot start tapd"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value), encoding="utf-8")
-
-
-def _read_daemon_state() -> dict[str, Any]:
-    state = _read_json(DAEMON_STATE_PATH, {})
-    return state if isinstance(state, dict) else {}
-
-
-def _resolve_socket_path() -> str:
-    state = _read_daemon_state()
-    socket_path = state.get("socketPath")
-    if isinstance(socket_path, str) and socket_path.strip():
-        return socket_path
-    return str(DEFAULT_SOCKET_PATH)
-
-
-def send_request(method: str, params: dict | None = None) -> Any:
-    if not method or not isinstance(method, str):
-        return {"error": "Hermes TAP request is missing a valid method"}
-
-    payload = {"method": method, "params": params or {}}
-    recovery_attempted = False
-
-    for _ in range(2):
-        socket_path = _resolve_socket_path()
-        try:
-            return _send_request_once(socket_path, payload)
-        except OSError as exc:
-            if not recovery_attempted and _is_recoverable_socket_error(exc):
-                restarted, note = _ensure_daemon_running()
-                if restarted:
-                    recovery_attempted = True
-                    continue
-                return {"error": _format_socket_error(socket_path, exc, note)}
-            note = (
-                "Automatic Hermes TAP daemon recovery was attempted but the daemon is still unavailable."
-                if recovery_attempted
-                else None
-            )
-            return {"error": _format_socket_error(socket_path, exc, note)}
-        except RuntimeError as exc:
-            return {"error": str(exc)}
-
-    return {
-        "error": (
-            "Hermes TAP daemon recovery exhausted without a response. "
-            f"{DEFAULT_RECOVERY_GUIDANCE}"
-        )
-    }
-
-
-def _send_request_once(socket_path: str, payload: dict[str, Any]) -> Any:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(DEFAULT_TIMEOUT_SECONDS)
-        client.connect(socket_path)
-        client.sendall((json.dumps(payload) + "\n").encode("utf-8"))
-
-        chunks: list[bytes] = []
-        while True:
-            chunk = client.recv(4096)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if b"\n" in chunk:
-                break
-
-    raw = b"".join(chunks).decode("utf-8").strip()
-    if not raw:
-        raise RuntimeError("Hermes TAP daemon closed the connection without a response")
-
-    try:
-        response = json.loads(raw.splitlines()[0])
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Hermes TAP daemon returned invalid JSON: {exc}") from exc
-
-    if not response.get("ok"):
-        error = response.get("error") or {}
-        message = error.get("message") if isinstance(error, dict) else None
-        raise RuntimeError(message or "Hermes TAP daemon request failed")
-
-    return response.get("result")
-
-
-def _is_recoverable_socket_error(exc: OSError) -> bool:
-    return isinstance(exc, (FileNotFoundError, ConnectionRefusedError)) or exc.errno in {
-        2,
-        61,
-        111,
-    }
-
-
-def _ensure_daemon_running() -> tuple[bool, str | None]:
-    state = _read_daemon_state()
-    current_gateway_pid = os.getpid()
-    daemon_pid = state.get("pid")
-    daemon_gateway_pid = state.get("gatewayPid")
-
-    if (
-        isinstance(daemon_pid, int)
-        and daemon_pid > 0
-        and _is_process_alive(daemon_pid)
-        and daemon_gateway_pid == current_gateway_pid
-    ):
-        if _wait_for_socket(RESPAWN_WAIT_SECONDS):
-            return True, None
-        return (
-            False,
-            "A TAP daemon is already registered for this Hermes gateway but is not reachable. "
-            f"{DEFAULT_RECOVERY_GUIDANCE}",
-        )
-
-    if not _should_attempt_respawn(current_gateway_pid):
-        return (
-            False,
-            "A recent Hermes TAP daemon recovery attempt already ran. "
-            f"{DEFAULT_RECOVERY_GUIDANCE}",
-        )
-
-    lock_fd = _acquire_respawn_lock()
-    if lock_fd is None:
-        if _wait_for_socket(RESPAWN_WAIT_SECONDS):
-            return True, None
-        return (
-            False,
-            "Hermes TAP daemon recovery is already in progress, but the daemon is still unavailable. "
-            f"{DEFAULT_RECOVERY_GUIDANCE}",
-        )
-
-    try:
-        grace = (
-            STARTUP_IN_PROGRESS_GRACE_SECONDS
-            if _startup_in_progress()
-            else STARTUP_GRACE_SECONDS
-        )
-        if _wait_for_socket(grace):
-            return True, None
-
-        _record_respawn_attempt(current_gateway_pid)
-        tap_bin = shutil.which("tap")
-        if not tap_bin:
-            return False, "`tap` was not found on PATH, so Hermes TAP daemon recovery cannot start."
-
-        _spawn_daemon(tap_bin, current_gateway_pid)
-        if _wait_for_socket(RESPAWN_WAIT_SECONDS):
-            return True, None
-        return False, f"Automatic Hermes TAP daemon recovery timed out. {DEFAULT_RECOVERY_GUIDANCE}"
-    finally:
-        _release_respawn_lock(lock_fd)
-
-
-def _should_attempt_respawn(gateway_pid: int) -> bool:
-    state = _read_json(RESPAWN_STATE_PATH, {})
-    if not isinstance(state, dict):
-        return True
-    if state.get("gatewayPid") != gateway_pid:
-        return True
-    last_attempt_at = state.get("lastAttemptAt")
-    if not isinstance(last_attempt_at, (int, float)):
-        return True
-    return (time.time() - float(last_attempt_at)) >= RESPAWN_COOLDOWN_SECONDS
-
-
-def _record_respawn_attempt(gateway_pid: int) -> None:
-    _write_json(
-        RESPAWN_STATE_PATH,
-        {
-            "gatewayPid": gateway_pid,
-            "lastAttemptAt": time.time(),
-        },
-    )
-
-
-def _acquire_respawn_lock() -> int | None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-    if RESPAWN_LOCK_PATH.exists():
-        try:
-            if (time.time() - RESPAWN_LOCK_PATH.stat().st_mtime) > (
-                RESPAWN_WAIT_SECONDS + RESPAWN_COOLDOWN_SECONDS
-            ):
-                RESPAWN_LOCK_PATH.unlink()
-        except FileNotFoundError:
-            pass
-
-    try:
-        fd = os.open(RESPAWN_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        return None
-
-    os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
-    return fd
-
-
-def _release_respawn_lock(fd: int) -> None:
-    try:
-        os.close(fd)
-    finally:
-        try:
-            RESPAWN_LOCK_PATH.unlink()
-        except FileNotFoundError:
-            pass
-
-
-def _spawn_daemon(tap_bin: str, gateway_pid: int) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with DAEMON_LOG_PATH.open("a", encoding="utf-8") as log_file:
         subprocess.Popen(
-            [
-                tap_bin,
-                "hermes",
-                "daemon",
-                "run",
-                "--gateway-pid",
-                str(gateway_pid),
-                "--hermes-home",
-                str(Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))),
-                "--plain",
-            ],
+            [tap_bin, "daemon", "start"],
             stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=log_file,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             close_fds=True,
         )
-
-
-def _wait_for_socket(timeout_seconds: float) -> bool:
-    deadline = time.monotonic() + timeout_seconds
+    except OSError as exc:
+        return False, f"failed to spawn `tap daemon start`: {exc}"
+    deadline = time.monotonic() + DAEMON_START_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        socket_path = Path(_resolve_socket_path())
-        daemon_state = _read_daemon_state()
-        daemon_pid = daemon_state.get("pid")
-        if (
-            socket_path.exists()
-            and isinstance(daemon_pid, int)
-            and daemon_pid >= 1
-            and _is_process_alive(daemon_pid)
-        ):
-            return True
-        time.sleep(RESPAWN_POLL_SECONDS)
-    return False
+        if socket_path.exists():
+            return True, None
+        time.sleep(DAEMON_START_POLL_SECONDS)
+    return False, "tapd did not start within timeout"
 
 
-def _startup_in_progress() -> bool:
+def _http_request(method: str, path: str, body: dict | None = None) -> Any:
+    socket_path = _resolve_socket_path()
+    if not socket_path.exists():
+        running, note = _ensure_tapd_running()
+        if not running:
+            return {"error": f"tapd is not running: {note}. {DEFAULT_RECOVERY_GUIDANCE}"}
+
+    conn = _UnixHTTPConnection(str(socket_path))
     try:
-        age = time.time() - DAEMON_LOG_PATH.stat().st_mtime
-    except OSError:
-        return False
-    return 0 <= age < STARTUP_LOG_FRESH_SECONDS
+        headers = {"Content-Type": "application/json"} if body is not None else {}
+        body_json = json.dumps(body) if body is not None else None
+        conn.request(method, path, body=body_json, headers=headers)
+        response = conn.getresponse()
+        raw = response.read().decode("utf-8")
+        payload: Any
+        try:
+            payload = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            return {"error": f"tapd returned invalid JSON: {raw[:200]}"}
+        if response.status >= 400:
+            error = (payload or {}).get("error") if isinstance(payload, dict) else None
+            message = error.get("message") if isinstance(error, dict) else None
+            return {"error": message or f"tapd returned HTTP {response.status}"}
+        return payload
+    except OSError as exc:
+        return {"error": f"failed to reach tapd at {socket_path}: {exc}. {DEFAULT_RECOVERY_GUIDANCE}"}
+    finally:
+        conn.close()
 
 
-def _is_process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+def _filtered(params: dict, keys: tuple[str, ...]) -> dict:
+    """Return a copy of params filtered to keys, dropping None values."""
+    return {k: params[k] for k in keys if params.get(k) is not None}
 
 
-def _format_socket_error(socket_path: str, exc: OSError, note: str | None = None) -> str:
-    if isinstance(exc, FileNotFoundError) or exc.errno == 2:
-        base = f"Hermes TAP daemon socket not found at {socket_path}."
-    else:
-        base = f"Failed to reach the Hermes TAP daemon at {socket_path}: {exc}."
-    return f"{base} {note or DEFAULT_RECOVERY_GUIDANCE}"
+def send_request(action: str, params: dict | None = None) -> Any:
+    """Dispatch a Hermes tap_gateway action to the tapd HTTP API."""
+    params = params or {}
+    if not isinstance(action, str) or not action.strip():
+        return {"error": "action is required"}
+
+    if action == "status":
+        return _http_request("GET", "/daemon/health")
+
+    if action == "sync":
+        return _http_request("POST", "/daemon/sync")
+
+    if action == "restart":
+        # Restart = shutdown, then auto-start on next request.
+        result = _http_request("POST", "/daemon/shutdown")
+        return {"ok": True, "previous": result}
+
+    if action == "create_invite":
+        body = {}
+        if params.get("expires_in_seconds") is not None:
+            body["expiresInSeconds"] = params["expires_in_seconds"]
+        return _http_request("POST", "/api/invites", body=body)
+
+    if action == "connect":
+        body = {}
+        if params.get("invite_url") is not None:
+            body["inviteUrl"] = params["invite_url"]
+        if params.get("wait_ms") is not None:
+            body["waitMs"] = params["wait_ms"]
+        return _http_request("POST", "/api/connect", body=body)
+
+    if action == "send_message":
+        body: dict[str, Any] = {}
+        if params.get("peer") is not None:
+            body["peer"] = params["peer"]
+        if params.get("text") is not None:
+            body["text"] = params["text"]
+        if params.get("scope") is not None:
+            body["scope"] = params["scope"]
+        if params.get("auto_generated") is not None:
+            body["autoGenerated"] = params["auto_generated"]
+        return _http_request("POST", "/api/messages", body=body)
+
+    if action == "publish_grants":
+        body = {}
+        if params.get("peer") is not None:
+            body["peer"] = params["peer"]
+        if params.get("grant_set") is not None:
+            body["grantSet"] = params["grant_set"]
+        if params.get("note") is not None:
+            body["note"] = params["note"]
+        return _http_request("POST", "/api/grants/publish", body=body)
+
+    if action == "request_grants":
+        body = {}
+        if params.get("peer") is not None:
+            body["peer"] = params["peer"]
+        if params.get("grant_set") is not None:
+            body["grantSet"] = params["grant_set"]
+        if params.get("note") is not None:
+            body["note"] = params["note"]
+        return _http_request("POST", "/api/grants/request", body=body)
+
+    if action == "request_funds":
+        body = {}
+        if params.get("peer") is not None:
+            body["peer"] = params["peer"]
+        if params.get("asset") is not None:
+            body["asset"] = params["asset"]
+        if params.get("amount") is not None:
+            body["amount"] = params["amount"]
+        if params.get("chain") is not None:
+            body["chain"] = params["chain"]
+        if params.get("to_address") is not None:
+            body["toAddress"] = params["to_address"]
+        if params.get("note") is not None:
+            body["note"] = params["note"]
+        return _http_request("POST", "/api/funds-requests", body=body)
+
+    if action == "transfer":
+        body = {}
+        if params.get("asset") is not None:
+            body["asset"] = params["asset"]
+        if params.get("amount") is not None:
+            body["amount"] = params["amount"]
+        if params.get("chain") is not None:
+            body["chain"] = params["chain"]
+        if params.get("to_address") is not None:
+            body["toAddress"] = params["to_address"]
+        return _http_request("POST", "/api/transfers", body=body)
+
+    if action == "request_meeting":
+        body = {}
+        if params.get("peer") is not None:
+            body["peer"] = params["peer"]
+        proposal: dict[str, Any] = {}
+        if params.get("title") is not None:
+            proposal["title"] = params["title"]
+        if params.get("duration") is not None:
+            proposal["duration"] = params["duration"]
+        if params.get("preferred") is not None:
+            proposal["preferred"] = params["preferred"]
+        if params.get("location") is not None:
+            proposal["location"] = params["location"]
+        if proposal:
+            body["proposal"] = proposal
+        return _http_request("POST", "/api/meetings", body=body)
+
+    if action == "respond_meeting":
+        scheduling_id = params.get("scheduling_id")
+        if not scheduling_id:
+            return {"error": "scheduling_id is required"}
+        body = {}
+        meeting_action = params.get("meeting_action")
+        if meeting_action is not None:
+            body["approve"] = meeting_action == "accept"
+        if params.get("reason") is not None:
+            body["reason"] = params["reason"]
+        path = f"/api/meetings/{quote(str(scheduling_id), safe='')}/respond"
+        return _http_request("POST", path, body=body)
+
+    if action == "cancel_meeting":
+        scheduling_id = params.get("scheduling_id")
+        if not scheduling_id:
+            return {"error": "scheduling_id is required"}
+        body = {}
+        if params.get("reason") is not None:
+            body["reason"] = params["reason"]
+        path = f"/api/meetings/{quote(str(scheduling_id), safe='')}/cancel"
+        return _http_request("POST", path, body=body)
+
+    if action == "list_pending":
+        return _http_request("GET", "/api/pending")
+
+    if action == "resolve_pending":
+        request_id = params.get("request_id")
+        if not request_id:
+            return {"error": "request_id is required"}
+        approve = bool(params.get("approve"))
+        verb = "approve" if approve else "deny"
+        path = f"/api/pending/{quote(str(request_id), safe='')}/{verb}"
+        body = {}
+        if params.get("note") is not None:
+            body["note"] = params["note"]
+        if params.get("reason") is not None:
+            body["reason"] = params["reason"]
+        return _http_request("POST", path, body=body)
+
+    if action == "drain_notifications":
+        return _http_request("GET", "/api/notifications/drain")
+
+    return {"error": f"unknown action: {action}"}
 
 
 def format_notification_context(notifications: list[dict]) -> dict[str, str] | None:
+    """Format drained notifications into a Hermes pre_llm_call context payload."""
     if not notifications:
         return None
 
