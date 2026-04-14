@@ -1,79 +1,70 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+/**
+ * Tests for `tap message respond-meeting` and `tap message cancel-meeting`
+ * after the Phase 3 refactor — both are tapd HTTP clients now.
+ */
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-	loadConfigMock,
-	buildContextMock,
-	createCliRuntimeMock,
-	successMock,
-	errorMock,
-	verboseMock,
-} = vi.hoisted(() => ({
-	loadConfigMock: vi.fn(async () => ({})),
-	buildContextMock: vi.fn(() => ({
-		requestJournal: {
-			list: vi.fn(async () => []),
-		},
-	})),
-	createCliRuntimeMock: vi.fn(),
+const { loadConfigMock, successMock, errorMock, verboseMock } = vi.hoisted(() => ({
+	loadConfigMock: vi.fn(),
 	successMock: vi.fn(),
 	errorMock: vi.fn(),
 	verboseMock: vi.fn(),
 }));
 
-vi.mock("../src/lib/config-loader.js", () => ({
-	loadConfig: loadConfigMock,
-}));
+vi.mock("../src/lib/config-loader.js", async () => {
+	const actual =
+		await vi.importActual<typeof import("../src/lib/config-loader.js")>(
+			"../src/lib/config-loader.js",
+		);
+	return { ...actual, loadConfig: loadConfigMock };
+});
 
-vi.mock("../src/lib/context.js", () => ({
-	buildContext: buildContextMock,
-}));
-
-vi.mock("../src/lib/cli-runtime.js", () => ({
-	createCliRuntime: createCliRuntimeMock,
-}));
-
-vi.mock("../src/lib/output.js", () => ({
-	success: successMock,
-	error: errorMock,
-	verbose: verboseMock,
-}));
+vi.mock("../src/lib/output.js", async () => {
+	const actual = await vi.importActual<typeof import("../src/lib/output.js")>("../src/lib/output.js");
+	return { ...actual, success: successMock, error: errorMock, verbose: verboseMock };
+});
 
 import { messageCancelMeetingCommand } from "../src/commands/message-cancel-meeting.js";
 import { messageRespondMeetingCommand } from "../src/commands/message-respond-meeting.js";
 
-describe("meeting CLI commands", () => {
-	afterEach(() => {
+function jsonResponse(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { "Content-Type": "application/json" },
+	});
+}
+
+describe("meeting CLI commands (tapd client refactor)", () => {
+	let dataDir: string;
+
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "tap-meet-"));
+		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
+		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
+		loadConfigMock.mockResolvedValue({ dataDir });
+	});
+
+	afterEach(async () => {
 		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+		await rm(dataDir, { recursive: true, force: true }).catch(() => {});
 		process.exitCode = 0;
 	});
 
-	it("respond-meeting resolves inbound scheduling requests and forwards reason", async () => {
-		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
-		createCliRuntimeMock.mockResolvedValue({
-			service: {
-				listPendingRequests: vi.fn(async () => [
-					{
-						requestId: "outbound-should-ignore",
-						peerAgentId: 10,
-						direction: "outbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-1" },
-					},
-					{
-						requestId: "inbound-target",
-						peerAgentId: 10,
-						direction: "inbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-1" },
-					},
-				]),
-				resolvePending,
-			},
-		});
+	it("respond-meeting POSTs to /api/meetings/:id/respond and forwards reason", async () => {
+		const fetchMock = vi.fn(async () =>
+			jsonResponse({
+				resolved: true,
+				schedulingId: "sch-1",
+				requestId: "inbound-target",
+				approve: false,
+				report: { synced: true, processed: 0, pendingRequests: [], pendingDeliveries: [] },
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
 
 		await messageRespondMeetingCommand(
 			"sch-1",
@@ -81,53 +72,46 @@ describe("meeting CLI commands", () => {
 			{ plain: true },
 		);
 
-		expect(resolvePending).toHaveBeenCalledTimes(1);
-		expect(resolvePending).toHaveBeenCalledWith("inbound-target", false, "Need to decline");
+		expect(fetchMock).toHaveBeenCalledOnce();
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(url).toBe("http://127.0.0.1:4321/api/meetings/sch-1/respond");
+		expect(JSON.parse(init.body as string)).toEqual({
+			approve: false,
+			reason: "Need to decline",
+		});
 		expect(errorMock).not.toHaveBeenCalled();
 	});
 
-	it("cancel-meeting cancels meetings by scheduling id and forwards reason", async () => {
-		const cancelMeeting = vi.fn(async () => ({
-			requestId: "matched-request",
-			peerAgentId: 10,
-			schedulingId: "sch-2",
-			report: { pendingRequests: [] },
-		}));
-		createCliRuntimeMock.mockResolvedValue({
-			service: {
-				cancelMeeting,
-			},
-		});
+	it("cancel-meeting POSTs to /api/meetings/:id/cancel and forwards reason", async () => {
+		const fetchMock = vi.fn(async () =>
+			jsonResponse({
+				requestId: "matched-request",
+				peerAgentId: 10,
+				schedulingId: "sch-2",
+				report: { synced: true, processed: 1, pendingRequests: [], pendingDeliveries: [] },
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
 
 		await messageCancelMeetingCommand("sch-2", { reason: "Conflict" }, { plain: true });
 
-		expect(cancelMeeting).toHaveBeenCalledTimes(1);
-		expect(cancelMeeting).toHaveBeenCalledWith("sch-2", "Conflict");
+		expect(fetchMock).toHaveBeenCalledOnce();
+		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		expect(JSON.parse(init.body as string)).toEqual({ reason: "Conflict" });
 		expect(errorMock).not.toHaveBeenCalled();
 	});
 
-	it("respond-meeting supports dry-run previews without resolving the request", async () => {
-		const resolvePending = vi.fn(async () => ({ pendingRequests: [] }));
-		createCliRuntimeMock.mockResolvedValue({
-			service: {
-				listPendingRequests: vi.fn(async () => [
-					{
-						requestId: "inbound-target",
-						peerAgentId: 10,
-						direction: "inbound",
-						kind: "request",
-						method: "action/request",
-						status: "pending",
-						details: { type: "scheduling", schedulingId: "sch-3" },
-					},
-				]),
-				resolvePending,
-			},
-		});
+	it("respond-meeting dry-run skips the network call", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
 
-		await messageRespondMeetingCommand("sch-3", { accept: true, dryRun: true }, { plain: true });
+		await messageRespondMeetingCommand(
+			"sch-3",
+			{ accept: true, dryRun: true },
+			{ plain: true },
+		);
 
-		expect(resolvePending).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 		expect(successMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				dry_run: true,
@@ -141,34 +125,9 @@ describe("meeting CLI commands", () => {
 		);
 	});
 
-	it("cancel-meeting supports dry-run previews without cancelling the request", async () => {
-		const cancelMeeting = vi.fn(async () => ({
-			requestId: "matched-request",
-			peerAgentId: 10,
-			schedulingId: "sch-4",
-			report: { pendingRequests: [] },
-		}));
-		createCliRuntimeMock.mockResolvedValue({
-			service: {
-				cancelMeeting,
-			},
-		});
-		buildContextMock.mockReturnValue({
-			requestJournal: {
-				list: vi.fn(async () => [
-					{
-						requestId: "req-4",
-						peerAgentId: 10,
-						metadata: {
-							request: {
-								type: "scheduling-request",
-								payload: { schedulingId: "sch-4" },
-							},
-						},
-					},
-				]),
-			},
-		});
+	it("cancel-meeting dry-run skips the network call", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
 
 		await messageCancelMeetingCommand(
 			"sch-4",
@@ -176,35 +135,17 @@ describe("meeting CLI commands", () => {
 			{ plain: true },
 		);
 
-		expect(cancelMeeting).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 		expect(successMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				dry_run: true,
 				scope: "scheduling/cancel",
 				scheduling_id: "sch-4",
-				request_id: "req-4",
-				peer_agent_id: 10,
 				reason: "Conflict",
 				status: "preview",
 			}),
 			expect.anything(),
 			expect.any(Number),
-		);
-	});
-
-	it("cancel-meeting dry-run errors when no matching scheduling request is found", async () => {
-		buildContextMock.mockReturnValue({
-			requestJournal: {
-				list: vi.fn(async () => []),
-			},
-		});
-
-		await messageCancelMeetingCommand("sch-missing", { dryRun: true }, { plain: true });
-
-		expect(errorMock).toHaveBeenCalledWith(
-			"NOT_FOUND",
-			expect.stringContaining("sch-missing"),
-			expect.anything(),
 		);
 	});
 });
