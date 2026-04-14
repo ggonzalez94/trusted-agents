@@ -58,15 +58,26 @@ export function Dashboard() {
 		[mutate],
 	);
 
-	// Any SWR fetch that comes back 401 means the stored token is stale.
-	// Clear it exactly once and transition to the re-auth screen. This is
-	// used as the `onError` for every SWR hook below.
-	const handleSwrError = useCallback((error: unknown) => {
-		if (error instanceof TapdUnauthorizedError) {
-			clearToken();
-			setTokenState("expired");
-		}
+	// Shared entry point for every 401 we observe — SWR fetches, SSE
+	// probe, and the imperative write handlers (markRead, approve, deny).
+	// Clearing state here is idempotent so re-entering the "expired"
+	// state is a no-op (residual 3).
+	const handleUnauthorized = useCallback(() => {
+		clearToken();
+		setTokenState("expired");
 	}, []);
+
+	// Any SWR fetch that comes back 401 means the stored token is stale.
+	// Route through the shared handler so every 401 source funnels to
+	// the same recovery path.
+	const handleSwrError = useCallback(
+		(error: unknown) => {
+			if (error instanceof TapdUnauthorizedError) {
+				handleUnauthorized();
+			}
+		},
+		[handleUnauthorized],
+	);
 
 	const retryAuth = useCallback(() => {
 		captureToken();
@@ -124,34 +135,42 @@ export function Dashboard() {
 		if (tokenState !== "present") return;
 		const token = getToken();
 		if (!token) return;
-		const stream = new EventStream(baseUrl, token, (event: TapEvent) => {
-			switch (event.type) {
-				case "message.received":
-				case "message.sent":
-					refresh(SWR_KEYS.conversations);
-					break;
-				case "action.requested":
-				case "action.completed":
-				case "action.failed":
-				case "action.pending":
-				case "pending.resolved":
-					refresh(SWR_KEYS.conversations);
-					refresh(SWR_KEYS.pending);
-					break;
-				case "connection.requested":
-				case "connection.established":
-				case "connection.failed":
-				case "contact.updated":
-					refresh(SWR_KEYS.contacts);
-					refresh(SWR_KEYS.conversations);
-					break;
-				default:
-					break;
-			}
-		});
+		const stream = new EventStream(
+			baseUrl,
+			token,
+			(event: TapEvent) => {
+				switch (event.type) {
+					case "message.received":
+					case "message.sent":
+						refresh(SWR_KEYS.conversations);
+						break;
+					case "action.requested":
+					case "action.completed":
+					case "action.failed":
+					case "action.pending":
+					case "pending.resolved":
+						refresh(SWR_KEYS.conversations);
+						refresh(SWR_KEYS.pending);
+						break;
+					case "connection.requested":
+					case "connection.established":
+					case "connection.failed":
+					case "contact.updated":
+						refresh(SWR_KEYS.contacts);
+						refresh(SWR_KEYS.conversations);
+						break;
+					default:
+						break;
+				}
+			},
+			// Idle SSE errors funnel through the same re-auth path as
+			// SWR 401s (residual 3). The EventStream probes /api/identity
+			// to distinguish a stale token from a transient network blip.
+			{ onUnauthorized: handleUnauthorized },
+		);
 		stream.start();
 		return () => stream.stop();
-	}, [baseUrl, refresh, tokenState]);
+	}, [baseUrl, refresh, tokenState, handleUnauthorized]);
 
 	const selectedContact = useMemo<Contact | null>(() => {
 		if (!contacts || !selectedConnectionId) return null;
@@ -165,37 +184,83 @@ export function Dashboard() {
 
 	// Mark conversation as read when it becomes selected or when new messages
 	// arrive while it's selected. Cheap idempotent POST against tapd.
+	// Wrapped in a 401-aware handler so a stale token funnels through
+	// the shared re-auth path instead of silently failing (residual 3).
 	useEffect(() => {
+		if (tokenState !== "present") return;
 		const conversation = selectedConversation;
 		if (!conversation) return;
 		const unread = !conversation.lastReadAt || conversation.lastReadAt < conversation.lastMessageAt;
 		if (!unread) return;
-		void client.markConversationRead(conversation.conversationId).then(() => {
-			refresh(SWR_KEYS.conversations);
-		});
-	}, [client, refresh, selectedConversation]);
+		let cancelled = false;
+		void (async () => {
+			try {
+				await client.markConversationRead(conversation.conversationId);
+				if (!cancelled) refresh(SWR_KEYS.conversations);
+			} catch (error) {
+				if (cancelled) return;
+				if (error instanceof TapdUnauthorizedError) {
+					handleUnauthorized();
+				}
+				// Non-auth failures are swallowed intentionally — mark-read
+				// is fire-and-forget and a transient tapd blip shouldn't
+				// disrupt the selection UX.
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [client, refresh, selectedConversation, tokenState, handleUnauthorized]);
 
 	const pendingForThread = useMemo<PendingItem[]>(() => {
 		if (!pending || !selectedContact) return [];
 		return filterPendingForContact(pending, selectedContact);
 	}, [pending, selectedContact]);
 
+	// Approve/deny land on live tapd endpoints, so a stale token there
+	// shows up as a 401 rejection. We short-circuit early when we know
+	// the token is already expired (avoids a pointless 401 round-trip)
+	// and funnel observed 401s through the shared re-auth handler so
+	// the UI transitions cleanly instead of surfacing a raw error
+	// (residual 3). Non-auth errors are logged to the console rather
+	// than thrown so a transient tapd blip doesn't crash the dashboard
+	// via an unhandled rejection inside the PendingActionCards click
+	// handler — the pending card simply stays pending, and the next
+	// SSE refresh reconciles state.
 	const handleApprove = useCallback(
-		(id: string) =>
-			client.approvePending(id).then(() => {
+		async (id: string) => {
+			if (tokenState !== "present") return;
+			try {
+				await client.approvePending(id);
 				refresh(SWR_KEYS.pending);
 				refresh(SWR_KEYS.conversations);
-			}),
-		[client, refresh],
+			} catch (error) {
+				if (error instanceof TapdUnauthorizedError) {
+					handleUnauthorized();
+					return;
+				}
+				console.error("tapd approve failed", error);
+			}
+		},
+		[client, refresh, tokenState, handleUnauthorized],
 	);
 
 	const handleDeny = useCallback(
-		(id: string) =>
-			client.denyPending(id).then(() => {
+		async (id: string) => {
+			if (tokenState !== "present") return;
+			try {
+				await client.denyPending(id);
 				refresh(SWR_KEYS.pending);
 				refresh(SWR_KEYS.conversations);
-			}),
-		[client, refresh],
+			} catch (error) {
+				if (error instanceof TapdUnauthorizedError) {
+					handleUnauthorized();
+					return;
+				}
+				console.error("tapd deny failed", error);
+			}
+		},
+		[client, refresh, tokenState, handleUnauthorized],
 	);
 
 	// F2.2 render priority:
