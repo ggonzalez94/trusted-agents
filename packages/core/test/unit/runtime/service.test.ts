@@ -246,6 +246,7 @@ function createNoopConversationLogger(): IConversationLogger {
 		getConversation: async (_conversationId) => null,
 		listConversations: async (_filter) => [],
 		generateTranscript: async (_conversationId) => "",
+		markRead: async (_conversationId, _readAt) => {},
 	};
 }
 
@@ -3457,6 +3458,7 @@ describe("TapMessagingService", () => {
 				getConversation: async () => null,
 				listConversations: async () => [],
 				generateTranscript: async () => "",
+				markRead: async () => {},
 			};
 
 			// Custom transport that NEVER sends a transport-level ack back —
@@ -3542,6 +3544,7 @@ describe("TapMessagingService", () => {
 				getConversation: async () => null,
 				listConversations: async () => [],
 				generateTranscript: async () => "",
+				markRead: async () => {},
 			};
 
 			const transport = new FakeTransport();
@@ -3586,6 +3589,7 @@ describe("TapMessagingService", () => {
 				getConversation: async () => null,
 				listConversations: async () => [],
 				generateTranscript: async () => "",
+				markRead: async () => {},
 			};
 
 			class PublishFailTransport extends FakeTransport {

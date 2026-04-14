@@ -26,6 +26,7 @@ export interface IConversationLogger {
 	getConversation(conversationId: string): Promise<ConversationLog | null>;
 	listConversations(filter?: { connectionId?: string }): Promise<ConversationLog[]>;
 	generateTranscript(conversationId: string): Promise<string>;
+	markRead(conversationId: string, readAt: string): Promise<void>;
 }
 
 export class FileConversationLogger implements IConversationLogger {
@@ -124,6 +125,15 @@ export class FileConversationLogger implements IConversationLogger {
 			return "";
 		}
 		return generateMarkdownTranscript(log);
+	}
+
+	async markRead(conversationId: string, readAt: string): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const log = await this.loadLog(conversationId);
+			if (!log) return;
+			log.lastReadAt = readAt;
+			await this.saveLog(conversationId, log);
+		});
 	}
 
 	private async loadLog(conversationId: string): Promise<ConversationLog | null> {

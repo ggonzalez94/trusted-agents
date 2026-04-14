@@ -165,6 +165,7 @@ function createRecordingConversationLogger(): IConversationLogger & {
 		async generateTranscript() {
 			return "";
 		},
+		async markRead() {},
 	};
 }
 

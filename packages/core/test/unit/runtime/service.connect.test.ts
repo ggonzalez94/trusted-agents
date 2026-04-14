@@ -127,6 +127,7 @@ function createNoopConversationLogger(): IConversationLogger {
 		getConversation: async () => null,
 		listConversations: async () => [],
 		generateTranscript: async () => "",
+		markRead: async () => {},
 	};
 }
 

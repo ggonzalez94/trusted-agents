@@ -98,6 +98,7 @@ function createNoopConversationLogger(): IConversationLogger {
 		getConversation: async (_conversationId) => null,
 		listConversations: async (_filter) => [],
 		generateTranscript: async (_conversationId) => "",
+		markRead: async (_conversationId, _readAt) => {},
 	};
 }
 
