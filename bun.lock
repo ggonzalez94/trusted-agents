@@ -29,7 +29,7 @@
     },
     "packages/cli": {
       "name": "trusted-agents-cli",
-      "version": "0.2.0-beta.2",
+      "version": "0.2.0-beta.6",
       "bin": {
         "tap": "./dist/bin.js",
       },
@@ -51,7 +51,7 @@
     },
     "packages/core": {
       "name": "trusted-agents-core",
-      "version": "0.2.0-beta.2",
+      "version": "0.2.0-beta.6",
       "dependencies": {
         "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
         "@xmtp/node-sdk": "^5.4.0",
@@ -89,7 +89,7 @@
     },
     "packages/openclaw-plugin": {
       "name": "trusted-agents-tap",
-      "version": "0.2.0-beta.2",
+      "version": "0.2.0-beta.6",
       "dependencies": {
         "@sinclair/typebox": "^0.34.48",
         "trusted-agents-core": "workspace:*",
@@ -110,7 +110,22 @@
     },
     "packages/sdk": {
       "name": "trusted-agents-sdk",
-      "version": "0.2.0-beta.2",
+      "version": "0.2.0-beta.6",
+      "dependencies": {
+        "trusted-agents-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^25.3.3",
+        "typescript": "^5.7.0",
+        "vitest": "^3.0.0",
+      },
+    },
+    "packages/tapd": {
+      "name": "trusted-agents-tapd",
+      "version": "0.2.0-beta.6",
+      "bin": {
+        "tapd": "./dist/bin.js",
+      },
       "dependencies": {
         "trusted-agents-core": "workspace:*",
       },
@@ -1815,6 +1830,8 @@
     "trusted-agents-sdk": ["trusted-agents-sdk@workspace:packages/sdk"],
 
     "trusted-agents-tap": ["trusted-agents-tap@workspace:packages/openclaw-plugin"],
+
+    "trusted-agents-tapd": ["trusted-agents-tapd@workspace:packages/tapd"],
 
     "ts-algebra": ["ts-algebra@2.0.0", "", {}, "sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw=="],
 
