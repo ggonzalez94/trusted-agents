@@ -1,4 +1,5 @@
 import type { RouteHandler } from "../router.js";
+import { asRecord } from "../validation.js";
 
 export interface CreateInviteRequest {
 	expiresInSeconds?: number;
@@ -13,10 +14,8 @@ export type InviteCreator = (request: CreateInviteRequest) => Promise<CreateInvi
 
 function parseInviteBody(value: unknown): CreateInviteRequest {
 	if (value === undefined || value === null) return {};
-	if (typeof value !== "object") {
-		throw new Error("invites POST body must be an object");
-	}
-	const v = value as Record<string, unknown>;
+	const v = asRecord(value);
+	if (!v) throw new Error("invites POST body must be an object");
 	const raw = v.expiresInSeconds;
 	if (raw === undefined || raw === null) return {};
 	if (typeof raw !== "number" || !Number.isFinite(raw)) {

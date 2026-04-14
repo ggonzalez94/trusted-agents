@@ -1,6 +1,6 @@
 import type { TapMessagingService, TapPendingRequest } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { requireParam } from "../validation.js";
+import { asRecord, requireParam } from "../validation.js";
 
 export interface PendingRoutes {
 	list: RouteHandler<unknown, TapPendingRequest[]>;
@@ -9,11 +9,8 @@ export interface PendingRoutes {
 }
 
 function readStringField(body: unknown, key: string): string | undefined {
-	if (body && typeof body === "object" && key in body) {
-		const value = (body as Record<string, unknown>)[key];
-		if (typeof value === "string") return value;
-	}
-	return undefined;
+	const value = asRecord(body)?.[key];
+	return typeof value === "string" ? value : undefined;
 }
 
 export function createPendingRoutes(service: TapMessagingService): PendingRoutes {

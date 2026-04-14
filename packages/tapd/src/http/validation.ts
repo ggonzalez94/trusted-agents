@@ -24,3 +24,14 @@ export function requireBody<T>(
 ): asserts body is T {
 	if (!guard(body)) throw new Error(message);
 }
+
+export interface OptionalReasonBody {
+	reason?: string;
+}
+
+export function isOptionalReasonBody(value: unknown): value is OptionalReasonBody {
+	if (value === undefined || value === null) return true;
+	const v = asRecord(value);
+	if (!v) return false;
+	return isOptionalString(v.reason);
+}

@@ -14,6 +14,7 @@ import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
 	isNonEmptyString,
+	isOptionalReasonBody,
 	isOptionalString,
 	requireBody,
 	requireParam,
@@ -91,18 +92,6 @@ function isRespondBody(value: unknown): value is RespondBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (typeof v.approve !== "boolean") return false;
-	if (!isOptionalString(v.reason)) return false;
-	return true;
-}
-
-interface CancelBody {
-	reason?: string;
-}
-
-function isCancelBody(value: unknown): value is CancelBody {
-	if (value === undefined || value === null) return true;
-	if (typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
 	if (!isOptionalString(v.reason)) return false;
 	return true;
 }
@@ -205,7 +194,7 @@ export function createMeetingsRoutes(
 
 		cancel: async (params, body) => {
 			const schedulingId = requireParam(params, "id");
-			requireBody(body, isCancelBody, "cancel body must be { reason?: string } or empty");
+			requireBody(body, isOptionalReasonBody, "cancel body must be { reason?: string } or empty");
 			return await service.cancelMeeting(schedulingId, body?.reason);
 		},
 	};
