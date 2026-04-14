@@ -1,70 +1,55 @@
-"""Startup hook that launches the TAP Hermes daemon."""
+"""Startup hook that ensures tapd is running for Hermes plugin use."""
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
-HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-PLUGIN_DIR = HERMES_HOME / "plugins" / "trusted-agents-tap"
-STATE_DIR = PLUGIN_DIR / "state"
-DAEMON_STATE_PATH = STATE_DIR / "daemon.json"
-DAEMON_LOG_PATH = STATE_DIR / "daemon.log"
-
-
-def _read_daemon_state() -> dict:
-    try:
-        return json.loads(DAEMON_STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _is_process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+DEFAULT_DATA_DIR = Path(os.environ.get("TAP_DATA_DIR", Path.home() / ".trustedagents"))
+SOCKET_NAME = ".tapd.sock"
+START_TIMEOUT_SECONDS = 5.0
+POLL_SECONDS = 0.1
 
 
 async def handle(event_type: str, context: dict) -> None:
-    gateway_pid = os.getpid()
-    state = _read_daemon_state()
-    running_pid = state.get("pid")
-    running_gateway_pid = state.get("gatewayPid")
-    if (
-        isinstance(running_pid, int)
-        and running_pid > 0
-        and _is_process_alive(running_pid)
-        and running_gateway_pid == gateway_pid
-    ):
+    """Start tapd in the background if it isn't already running.
+
+    Called by the Hermes startup hook. Best-effort: if ``tap`` is missing
+    or the daemon doesn't come up, the plugin's client will surface the
+    error to the user on the first tap_gateway call.
+    """
+    socket_path = DEFAULT_DATA_DIR / SOCKET_NAME
+    if socket_path.exists():
         return
 
     tap_bin = shutil.which("tap")
     if not tap_bin:
-        print("[trusted-agents-tap] `tap` not found on PATH; skipping Hermes TAP daemon startup", flush=True)
+        print(
+            "[trusted-agents-tap] `tap` not found on PATH; skipping tapd startup",
+            flush=True,
+        )
         return
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-    with DAEMON_LOG_PATH.open("a", encoding="utf-8") as log_file:
+    try:
         subprocess.Popen(
-            [
-                tap_bin,
-                "hermes",
-                "daemon",
-                "run",
-                "--gateway-pid",
-                str(gateway_pid),
-                "--hermes-home",
-                str(HERMES_HOME),
-                "--plain",
-            ],
+            [tap_bin, "daemon", "start"],
             stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=log_file,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             close_fds=True,
         )
+    except OSError as exc:
+        print(
+            f"[trusted-agents-tap] failed to spawn `tap daemon start`: {exc}",
+            flush=True,
+        )
+        return
+
+    deadline = time.monotonic() + START_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if socket_path.exists():
+            return
+        time.sleep(POLL_SECONDS)
