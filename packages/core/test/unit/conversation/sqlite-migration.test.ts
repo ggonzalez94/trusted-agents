@@ -874,17 +874,17 @@ describe("sqlite migration", () => {
 
 		// Messages come back sorted by (timestamp ASC, insert_order ASC).
 		// Legacy timestamps are older, runtime is newest.
-		expect(afterRetry.messages.map((m) => m.messageId)).toEqual([
-			"runtime-1", // 2026-04-10 — inserted first chronologically by runtime
-			"legacy-1", // 2026-04-01 — BUT sorted before runtime-1 by timestamp
-			"legacy-2", // 2026-04-01 — same timestamp as legacy-1, sort by insert_order
-		].sort((a, b) => {
-			const tsA =
-				a === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
-			const tsB =
-				b === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
-			return tsA.localeCompare(tsB);
-		}));
+		expect(afterRetry.messages.map((m) => m.messageId)).toEqual(
+			[
+				"runtime-1", // 2026-04-10 — inserted first chronologically by runtime
+				"legacy-1", // 2026-04-01 — BUT sorted before runtime-1 by timestamp
+				"legacy-2", // 2026-04-01 — same timestamp as legacy-1, sort by insert_order
+			].sort((a, b) => {
+				const tsA = a === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
+				const tsB = b === "runtime-1" ? "2026-04-10T12:00:00.000Z" : "2026-04-01T00:00:00.000Z";
+				return tsA.localeCompare(tsB);
+			}),
+		);
 
 		logger.close();
 	});
