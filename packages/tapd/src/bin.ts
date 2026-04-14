@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	ALL_CHAINS,
 	OwsSigningProvider,
 	TapMessagingService,
 	buildDefaultTapRuntimeContext,
@@ -20,22 +21,34 @@ async function main(): Promise<void> {
 		`tapd ${TAPD_VERSION} starting (dataDir=${tapdConfig.dataDir}, port=${tapdConfig.tcpPort})\n`,
 	);
 
-	const trustedAgentsConfig = await loadTrustedAgentConfigFromDataDir(tapdConfig.dataDir);
-	const signingProvider = new OwsSigningProvider(
+	// Pass the full chain map so every tapd-hosted flow has access to the same
+	// set of chains the CLI documents (Base + Taiko today). Without this, a
+	// Base-configured daemon cannot execute a Taiko transfer even though the
+	// CLI advertises support. See the adversarial review's F3.3 finding.
+	const trustedAgentsConfig = await loadTrustedAgentConfigFromDataDir(tapdConfig.dataDir, {
+		extraChains: ALL_CHAINS,
+	});
+
+	// The startup signing provider is scoped to the agent's default chain and
+	// is used for things that don't vary per request (identity resolution,
+	// invite signing, XMTP client identity). Transfers take a different chain
+	// at request time and must create their own signer — see `executeTransfer`
+	// below.
+	const startupSigningProvider = new OwsSigningProvider(
 		trustedAgentsConfig.ows.wallet,
 		trustedAgentsConfig.chain,
 		trustedAgentsConfig.ows.apiKey,
 	);
 
 	const context = await buildDefaultTapRuntimeContext(trustedAgentsConfig, {
-		signingProvider,
+		signingProvider: startupSigningProvider,
 	});
 
 	// Capture the agent's own address once at startup so the identity route can
 	// surface it to clients (e.g. `tap message request-funds` defaulting --to).
 	let agentAddress = "";
 	try {
-		agentAddress = await signingProvider.getAddress();
+		agentAddress = await startupSigningProvider.getAddress();
 	} catch (err) {
 		process.stderr.write(
 			`tapd warning: failed to resolve own address from signing provider: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -72,21 +85,31 @@ async function main(): Promise<void> {
 		buildService,
 		trustStore: context.trustStore,
 		conversationLogger: context.conversationLogger,
-		executeTransfer: async (request) =>
-			await executeOnchainTransfer(trustedAgentsConfig, signingProvider, {
+		executeTransfer: async (request) => {
+			// Create a fresh signer scoped to the request chain so OWS policies
+			// and wallet accounts are evaluated under the correct chain context.
+			// A single startup-time signer bound to `trustedAgentsConfig.chain`
+			// would silently sign cross-chain transfers with the wrong scope.
+			const chainSigner = new OwsSigningProvider(
+				trustedAgentsConfig.ows.wallet,
+				request.chain,
+				trustedAgentsConfig.ows.apiKey,
+			);
+			return await executeOnchainTransfer(trustedAgentsConfig, chainSigner, {
 				type: "transfer/request",
 				actionId: `tapd-${randomUUID()}`,
 				asset: request.asset,
 				amount: request.amount,
 				chain: request.chain,
 				toAddress: request.toAddress,
-			}),
+			});
+		},
 		createInvite: async (request) => {
 			const expirySeconds = request.expiresInSeconds ?? 3600;
 			const result = await generateInvite({
 				agentId: trustedAgentsConfig.agentId,
 				chain: trustedAgentsConfig.chain,
-				signingProvider,
+				signingProvider: startupSigningProvider,
 				expirySeconds,
 			});
 			return { url: result.url, expiresInSeconds: expirySeconds };
