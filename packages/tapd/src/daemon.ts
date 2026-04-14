@@ -121,34 +121,78 @@ export class Daemon {
 		});
 		await this.runtime.start();
 
-		const router = this.buildRouter();
-		this.server = new TapdHttpServer({
-			router,
-			socketPath: this.options.config.socketPath,
-			tcpHost: this.options.config.tcpHost,
-			tcpPort: this.options.config.tcpPort,
-			authToken: this.token,
-			staticAssetsDir: this.options.staticAssetsDir,
-			sseHandler: (req, res, _transport) => {
-				if (req.method !== "GET") return false;
-				const url = req.url ?? "";
-				const path = url.split("?")[0];
-				if (path !== "/api/events/stream") return false;
-				handleSseConnection(req, res, this.bus);
-				return true;
-			},
-		});
-		await this.server.start();
-
-		// Publish the bound TCP port so clients (CLI `tap ui`, the Playwright
-		// fixture) can discover where to reach us without parsing stdout.
-		const boundPort = this.server.boundTcpPort();
-		if (boundPort > 0) {
-			await writeFile(join(this.options.config.dataDir, PORT_FILE), String(boundPort), {
-				encoding: "utf-8",
-				mode: 0o600,
+		// Everything after runtime.start() must be unwound on failure. The
+		// runtime holds the transport owner lock, so if any later step throws
+		// (HTTP bind failure, port-file write failure, etc.) we MUST stop the
+		// runtime before propagating the error. Otherwise the lock stays held,
+		// the transport stays up, there is no reachable control plane, and
+		// every operator retry hits the owner lock (finding F1.1).
+		try {
+			const router = this.buildRouter();
+			this.server = new TapdHttpServer({
+				router,
+				socketPath: this.options.config.socketPath,
+				tcpHost: this.options.config.tcpHost,
+				tcpPort: this.options.config.tcpPort,
+				authToken: this.token,
+				staticAssetsDir: this.options.staticAssetsDir,
+				sseHandler: (req, res, _transport) => {
+					if (req.method !== "GET") return false;
+					const url = req.url ?? "";
+					const path = url.split("?")[0];
+					if (path !== "/api/events/stream") return false;
+					handleSseConnection(req, res, this.bus);
+					return true;
+				},
 			});
+			await this.server.start();
+
+			// Publish the bound TCP port so clients (CLI `tap ui`, the Playwright
+			// fixture) can discover where to reach us without parsing stdout.
+			const boundPort = this.server.boundTcpPort();
+			if (boundPort > 0) {
+				await writeFile(join(this.options.config.dataDir, PORT_FILE), String(boundPort), {
+					encoding: "utf-8",
+					mode: 0o600,
+				});
+			}
+		} catch (error) {
+			await this.unwindFailedStart();
+			throw error;
 		}
+	}
+
+	/**
+	 * Releases resources acquired by `start()` when a post-runtime-start step
+	 * fails. Called from the `start()` try/catch so we never leak the
+	 * transport owner lock or the bus subscription on a partial failure.
+	 */
+	private async unwindFailedStart(): Promise<void> {
+		if (this.server) {
+			try {
+				await this.server.stop();
+			} catch {
+				// Best effort — we're already unwinding.
+			}
+			this.server = null;
+		}
+		if (this.runtime) {
+			try {
+				await this.runtime.stop();
+			} catch {
+				// Best effort — the top-level error is more important.
+			}
+			this.runtime = null;
+		}
+		if (this.notificationUnsubscribe) {
+			this.notificationUnsubscribe();
+			this.notificationUnsubscribe = null;
+		}
+		// Drop the port file if it was written before the failure (defensive —
+		// most failure modes won't have reached the write yet).
+		await rm(join(this.options.config.dataDir, PORT_FILE), {
+			force: true,
+		}).catch(() => {});
 	}
 
 	async stop(): Promise<void> {
@@ -180,6 +224,15 @@ export class Daemon {
 
 	authToken(): string {
 		return this.token;
+	}
+
+	/**
+	 * Internal accessor exposed for lifecycle/unwind tests. Not intended for
+	 * production callers — the event bus is otherwise an internal fan-out
+	 * point between the runtime and the HTTP/SSE layer.
+	 */
+	eventBus(): EventBus {
+		return this.bus;
 	}
 
 	boundTcpPort(): number {

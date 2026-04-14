@@ -52,6 +52,15 @@ export class EventBus {
 		};
 	}
 
+	/**
+	 * Number of currently-active subscribers. Exposed for tests that need to
+	 * verify unsubscribe behavior (e.g. Daemon lifecycle unwind). Not intended
+	 * for production use.
+	 */
+	subscriberCount(): number {
+		return this.handlers.size;
+	}
+
 	snapshot(): TapEvent[] {
 		return [...this.buffer];
 	}
