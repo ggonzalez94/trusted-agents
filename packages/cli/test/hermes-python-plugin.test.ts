@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -178,6 +178,135 @@ describe("Hermes Python TAP bridge (HTTP-over-Unix-socket)", () => {
 			'print(json.dumps(module.format_notification_context([{"type": "summary", "oneLiner": "   "}])))',
 		);
 		expect(JSON.parse(output)).toBeNull();
+	});
+
+	// ── F4.1: per-request identity resolution ────────────────────────
+	// The tests below write a Hermes plugin config.json with one or two
+	// named identities pointing at distinct data dirs, stand up a fake
+	// tapd socket under each data dir, and assert the Python plugin
+	// resolves the target identity correctly before dispatching.
+
+	describe("F4.1 identity resolution", () => {
+		async function writeHermesIdentities(
+			entries: Array<{ name: string; dataDir: string }>,
+		): Promise<void> {
+			const configPath = join(hermesHome, "plugins", "trusted-agents-tap", "config.json");
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					identities: entries.map((e) => ({
+						name: e.name,
+						dataDir: e.dataDir,
+						reconcileIntervalMinutes: 10,
+					})),
+				}),
+				"utf-8",
+			);
+		}
+
+		it("routes the explicit `identity` to its matching dataDir socket", async () => {
+			const primaryDir = join(tempRoot, "primary");
+			const secondaryDir = join(tempRoot, "secondary");
+			await mkdir(primaryDir, { recursive: true });
+			await mkdir(secondaryDir, { recursive: true });
+			await writeHermesIdentities([
+				{ name: "primary", dataDir: primaryDir },
+				{ name: "secondary", dataDir: secondaryDir },
+			]);
+
+			const primaryServer = await startFakeTapdServer(join(primaryDir, ".tapd.sock"), {
+				"GET /daemon/health": { status: "ok", identity: "primary" },
+			});
+			const secondaryServer = await startFakeTapdServer(join(secondaryDir, ".tapd.sock"), {
+				"GET /daemon/health": { status: "ok", identity: "secondary" },
+			});
+			try {
+				const primaryOut = await runPluginExpression(
+					'print(module.handle_tap_gateway({"action": "status", "identity": "primary"}))',
+				);
+				const secondaryOut = await runPluginExpression(
+					'print(module.handle_tap_gateway({"action": "status", "identity": "secondary"}))',
+				);
+				expect(JSON.parse(primaryOut)).toMatchObject({ identity: "primary" });
+				expect(JSON.parse(secondaryOut)).toMatchObject({ identity: "secondary" });
+			} finally {
+				await primaryServer.stop();
+				await secondaryServer.stop();
+			}
+		});
+
+		it("uses the single configured identity implicitly when no identity is passed", async () => {
+			const onlyDir = join(tempRoot, "only-agent");
+			await mkdir(onlyDir, { recursive: true });
+			await writeHermesIdentities([{ name: "only", dataDir: onlyDir }]);
+
+			const server = await startFakeTapdServer(join(onlyDir, ".tapd.sock"), {
+				"GET /daemon/health": { status: "ok", identity: "only" },
+			});
+			try {
+				const out = await runPluginExpression(
+					'print(module.handle_tap_gateway({"action": "status"}))',
+				);
+				expect(JSON.parse(out)).toMatchObject({ identity: "only" });
+			} finally {
+				await server.stop();
+			}
+		});
+
+		it("errors out when multiple identities are configured and none is specified", async () => {
+			const primaryDir = join(tempRoot, "primary");
+			const secondaryDir = join(tempRoot, "secondary");
+			await mkdir(primaryDir, { recursive: true });
+			await mkdir(secondaryDir, { recursive: true });
+			await writeHermesIdentities([
+				{ name: "primary", dataDir: primaryDir },
+				{ name: "secondary", dataDir: secondaryDir },
+			]);
+
+			const out = await runPluginExpression(
+				'print(module.handle_tap_gateway({"action": "status"}))',
+			);
+			const parsed = JSON.parse(out) as { error?: string };
+			expect(parsed.error).toBeDefined();
+			expect(parsed.error).toMatch(/multiple/i);
+		});
+
+		it("errors out with a helpful message for an unknown identity", async () => {
+			const primaryDir = join(tempRoot, "primary");
+			await mkdir(primaryDir, { recursive: true });
+			await writeHermesIdentities([{ name: "primary", dataDir: primaryDir }]);
+
+			const out = await runPluginExpression(
+				'print(module.handle_tap_gateway({"action": "status", "identity": "ghost"}))',
+			);
+			const parsed = JSON.parse(out) as { error?: string };
+			expect(parsed.error).toContain("unknown identity");
+		});
+
+		it("does not forward the `identity` field to tapd in request bodies", async () => {
+			const onlyDir = join(tempRoot, "only-agent");
+			await mkdir(onlyDir, { recursive: true });
+			await writeHermesIdentities([{ name: "only", dataDir: onlyDir }]);
+
+			const spy: { body?: string } = {};
+			const server = await startFakeTapdServer(join(onlyDir, ".tapd.sock"), {
+				"POST /api/messages": (body) => {
+					spy.body = body;
+					return { receipt: { messageId: "m-ident", status: "delivered" } };
+				},
+			});
+			try {
+				await runPluginExpression(
+					'print(module.handle_tap_gateway({"action": "send_message", "peer": "Alice", "text": "hi", "identity": "only"}))',
+				);
+				expect(spy.body).toBeDefined();
+				const body = JSON.parse(spy.body ?? "{}") as Record<string, unknown>;
+				expect(body).toEqual({ peer: "Alice", text: "hi" });
+				expect(body).not.toHaveProperty("identity");
+			} finally {
+				await server.stop();
+			}
+		});
 	});
 });
 

@@ -1,4 +1,22 @@
-"""HTTP client over Unix socket for the local tapd daemon."""
+"""HTTP client over Unix socket for the local tapd daemon.
+
+Identity resolution (F4.1)
+--------------------------
+
+Hermes supports multiple TAP identities registered via ``tap hermes
+configure``, each pinned to its own ``dataDir``. Each ``dataDir`` hosts
+its own ``.tapd.sock`` and talks to a different ``TapMessagingService``.
+This client reads the Hermes plugin config on every request and picks
+the target identity's socket:
+
+  1. Explicit ``identity`` in params: must match a config entry by name.
+  2. No ``identity`` passed, config has exactly one entry: use it.
+  3. No ``identity`` passed, config has zero entries: fall back to
+     ``$TAP_DATA_DIR`` / ``~/.trustedagents`` (legacy single-agent path).
+  4. No ``identity`` passed, config has two or more entries: error out.
+
+The config lives at ``<HERMES_HOME>/plugins/trusted-agents-tap/config.json``.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +31,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-DEFAULT_DATA_DIR = Path(os.environ.get("TAP_DATA_DIR", Path.home() / ".trustedagents"))
 SOCKET_NAME = ".tapd.sock"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DAEMON_START_TIMEOUT_SECONDS = 5.0
@@ -35,17 +52,108 @@ class _UnixHTTPConnection(HTTPConnection):
         self.sock = sock
 
 
-def _resolve_socket_path() -> Path:
-    return DEFAULT_DATA_DIR / SOCKET_NAME
+def _legacy_data_dir() -> Path:
+    """Data dir used when no Hermes plugin config entries are present."""
+    env_dir = os.environ.get("TAP_DATA_DIR")
+    if env_dir and env_dir.strip():
+        return Path(env_dir)
+    return Path.home() / ".trustedagents"
 
 
-def _ensure_tapd_running() -> tuple[bool, str | None]:
-    socket_path = _resolve_socket_path()
+def _hermes_home() -> Path:
+    env_home = os.environ.get("HERMES_HOME")
+    if env_home and env_home.strip():
+        return Path(env_home)
+    return Path.home() / ".hermes"
+
+
+def _hermes_config_path() -> Path:
+    return _hermes_home() / "plugins" / "trusted-agents-tap" / "config.json"
+
+
+def _load_hermes_identities() -> list[dict[str, Any]]:
+    """Read the Hermes plugin config and return the list of identities.
+
+    Returns an empty list if the config file doesn't exist or has no
+    identities. Any parse failure raises; callers handle it as a
+    structured error back to the agent."""
+    config_path = _hermes_config_path()
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise RuntimeError(f"failed to read Hermes plugin config at {config_path}: {exc}") from exc
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Hermes plugin config is not valid JSON: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Hermes plugin config must be an object")
+    identities = parsed.get("identities") or []
+    if not isinstance(identities, list):
+        raise RuntimeError("Hermes plugin config.identities must be a list")
+    normalized: list[dict[str, Any]] = []
+    for entry in identities:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        data_dir = entry.get("dataDir")
+        if isinstance(name, str) and isinstance(data_dir, str) and data_dir.strip():
+            normalized.append({"name": name, "dataDir": data_dir})
+    return normalized
+
+
+def _resolve_target_data_dir(identity: str | None) -> tuple[Path | None, str | None]:
+    """Pick a tapd data dir for this request.
+
+    Returns ``(data_dir, error)``. ``error`` is a user-facing message if
+    the identity couldn't be resolved; ``data_dir`` is ``None`` in that
+    case. On success, ``data_dir`` is a Path and ``error`` is ``None``.
+    """
+    try:
+        identities = _load_hermes_identities()
+    except RuntimeError as exc:
+        return None, str(exc)
+
+    if identity is not None:
+        if not isinstance(identity, str) or not identity.strip():
+            return None, "`identity` must be a non-empty string"
+        match = next((entry for entry in identities if entry["name"] == identity), None)
+        if not match:
+            known = ", ".join(entry["name"] for entry in identities) or "(none configured)"
+            return None, f"unknown identity: {identity} (known: {known})"
+        return Path(match["dataDir"]), None
+
+    if len(identities) == 1:
+        return Path(identities[0]["dataDir"]), None
+
+    if len(identities) == 0:
+        return _legacy_data_dir(), None
+
+    return (
+        None,
+        "multiple TAP Hermes identities configured — pass `identity` to select one",
+    )
+
+
+def _ensure_tapd_running(socket_path: Path, data_dir: Path) -> tuple[bool, str | None]:
+    """Auto-start tapd for the chosen identity if the socket is missing.
+
+    The child is spawned with ``TAP_DATA_DIR=<data_dir>`` so the right
+    per-identity daemon comes up instead of the default one. Preserves
+    the auto-start behavior from before F4.1 but targets the resolved
+    identity rather than a global default.
+    """
     if socket_path.exists():
         return True, None
     tap_bin = shutil.which("tap")
     if not tap_bin:
         return False, "`tap` binary not found on PATH; cannot start tapd"
+    child_env = os.environ.copy()
+    child_env["TAP_DATA_DIR"] = str(data_dir)
     try:
         subprocess.Popen(
             [tap_bin, "daemon", "start"],
@@ -53,6 +161,7 @@ def _ensure_tapd_running() -> tuple[bool, str | None]:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
+            env=child_env,
         )
     except OSError as exc:
         return False, f"failed to spawn `tap daemon start`: {exc}"
@@ -64,10 +173,9 @@ def _ensure_tapd_running() -> tuple[bool, str | None]:
     return False, "tapd did not start within timeout"
 
 
-def _http_request(method: str, path: str, body: dict | None = None) -> Any:
-    socket_path = _resolve_socket_path()
+def _http_request(method: str, path: str, socket_path: Path, body: dict | None = None) -> Any:
     if not socket_path.exists():
-        running, note = _ensure_tapd_running()
+        running, note = _ensure_tapd_running(socket_path, socket_path.parent)
         if not running:
             return {"error": f"tapd is not running: {note}. {DEFAULT_RECOVERY_GUIDANCE}"}
 
@@ -94,33 +202,28 @@ def _http_request(method: str, path: str, body: dict | None = None) -> Any:
         conn.close()
 
 
-def _filtered(params: dict, keys: tuple[str, ...]) -> dict:
-    """Return a copy of params filtered to keys, dropping None values."""
-    return {k: params[k] for k in keys if params.get(k) is not None}
+def _dispatch(action: str, params: dict, socket_path: Path) -> Any:
+    """Route the action to the matching tapd HTTP endpoint.
 
-
-def send_request(action: str, params: dict | None = None) -> Any:
-    """Dispatch a Hermes tap_gateway action to the tapd HTTP API."""
-    params = params or {}
-    if not isinstance(action, str) or not action.strip():
-        return {"error": "action is required"}
-
+    Split out so ``send_request`` can resolve the identity first and
+    then hand off to the dispatcher with a fully-resolved socket path.
+    """
     if action == "status":
-        return _http_request("GET", "/daemon/health")
+        return _http_request("GET", "/daemon/health", socket_path)
 
     if action == "sync":
-        return _http_request("POST", "/daemon/sync")
+        return _http_request("POST", "/daemon/sync", socket_path)
 
     if action == "restart":
         # Restart = shutdown, then auto-start on next request.
-        result = _http_request("POST", "/daemon/shutdown")
+        result = _http_request("POST", "/daemon/shutdown", socket_path)
         return {"ok": True, "previous": result}
 
     if action == "create_invite":
-        body = {}
+        body: dict[str, Any] = {}
         if params.get("expires_in_seconds") is not None:
             body["expiresInSeconds"] = params["expires_in_seconds"]
-        return _http_request("POST", "/api/invites", body=body)
+        return _http_request("POST", "/api/invites", socket_path, body=body)
 
     if action == "connect":
         body = {}
@@ -128,10 +231,10 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["inviteUrl"] = params["invite_url"]
         if params.get("wait_ms") is not None:
             body["waitMs"] = params["wait_ms"]
-        return _http_request("POST", "/api/connect", body=body)
+        return _http_request("POST", "/api/connect", socket_path, body=body)
 
     if action == "send_message":
-        body: dict[str, Any] = {}
+        body = {}
         if params.get("peer") is not None:
             body["peer"] = params["peer"]
         if params.get("text") is not None:
@@ -140,7 +243,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["scope"] = params["scope"]
         if params.get("auto_generated") is not None:
             body["autoGenerated"] = params["auto_generated"]
-        return _http_request("POST", "/api/messages", body=body)
+        return _http_request("POST", "/api/messages", socket_path, body=body)
 
     if action == "publish_grants":
         body = {}
@@ -150,7 +253,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["grantSet"] = params["grant_set"]
         if params.get("note") is not None:
             body["note"] = params["note"]
-        return _http_request("POST", "/api/grants/publish", body=body)
+        return _http_request("POST", "/api/grants/publish", socket_path, body=body)
 
     if action == "request_grants":
         body = {}
@@ -160,7 +263,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["grantSet"] = params["grant_set"]
         if params.get("note") is not None:
             body["note"] = params["note"]
-        return _http_request("POST", "/api/grants/request", body=body)
+        return _http_request("POST", "/api/grants/request", socket_path, body=body)
 
     if action == "request_funds":
         body = {}
@@ -176,7 +279,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["toAddress"] = params["to_address"]
         if params.get("note") is not None:
             body["note"] = params["note"]
-        return _http_request("POST", "/api/funds-requests", body=body)
+        return _http_request("POST", "/api/funds-requests", socket_path, body=body)
 
     if action == "transfer":
         body = {}
@@ -188,14 +291,14 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["chain"] = params["chain"]
         if params.get("to_address") is not None:
             body["toAddress"] = params["to_address"]
-        return _http_request("POST", "/api/transfers", body=body)
+        return _http_request("POST", "/api/transfers", socket_path, body=body)
 
     if action == "request_meeting":
         # tapd's /api/meetings accepts a flat shape and builds the full
         # SchedulingProposal centrally (generating schedulingId, defaulting
         # originTimezone, and turning `preferred` into a slot). The Python
         # client only has to forward the user-facing fields.
-        body: dict[str, Any] = {}
+        body = {}
         if params.get("peer") is not None:
             body["peer"] = params["peer"]
         if params.get("title") is not None:
@@ -210,7 +313,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["note"] = params["note"]
         if params.get("scheduling_id") is not None:
             body["schedulingId"] = params["scheduling_id"]
-        return _http_request("POST", "/api/meetings", body=body)
+        return _http_request("POST", "/api/meetings", socket_path, body=body)
 
     if action == "respond_meeting":
         scheduling_id = params.get("scheduling_id")
@@ -223,7 +326,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
         if params.get("reason") is not None:
             body["reason"] = params["reason"]
         path = f"/api/meetings/{quote(str(scheduling_id), safe='')}/respond"
-        return _http_request("POST", path, body=body)
+        return _http_request("POST", path, socket_path, body=body)
 
     if action == "cancel_meeting":
         scheduling_id = params.get("scheduling_id")
@@ -233,10 +336,10 @@ def send_request(action: str, params: dict | None = None) -> Any:
         if params.get("reason") is not None:
             body["reason"] = params["reason"]
         path = f"/api/meetings/{quote(str(scheduling_id), safe='')}/cancel"
-        return _http_request("POST", path, body=body)
+        return _http_request("POST", path, socket_path, body=body)
 
     if action == "list_pending":
-        return _http_request("GET", "/api/pending")
+        return _http_request("GET", "/api/pending", socket_path)
 
     if action == "resolve_pending":
         request_id = params.get("request_id")
@@ -250,12 +353,34 @@ def send_request(action: str, params: dict | None = None) -> Any:
             body["note"] = params["note"]
         if params.get("reason") is not None:
             body["reason"] = params["reason"]
-        return _http_request("POST", path, body=body)
+        return _http_request("POST", path, socket_path, body=body)
 
     if action == "drain_notifications":
-        return _http_request("GET", "/api/notifications/drain")
+        return _http_request("GET", "/api/notifications/drain", socket_path)
 
     return {"error": f"unknown action: {action}"}
+
+
+def send_request(action: str, params: dict | None = None) -> Any:
+    """Dispatch a Hermes tap_gateway action to the tapd HTTP API.
+
+    Resolves the target identity from the Hermes plugin config on each
+    call, then derives the per-identity socket path. The ``identity``
+    field in ``params`` is consumed here and NOT forwarded to tapd.
+    """
+    params = params or {}
+    if not isinstance(action, str) or not action.strip():
+        return {"error": "action is required"}
+
+    identity_arg = params.get("identity")
+    data_dir, err = _resolve_target_data_dir(identity_arg)
+    if err is not None or data_dir is None:
+        return {"error": err or "failed to resolve tapd data dir"}
+
+    # Strip the identity key so it doesn't leak into tapd request bodies.
+    dispatch_params = {k: v for k, v in params.items() if k != "identity"}
+    socket_path = data_dir / SOCKET_NAME
+    return _dispatch(action, dispatch_params, socket_path)
 
 
 def format_notification_context(notifications: list[dict]) -> dict[str, str] | None:

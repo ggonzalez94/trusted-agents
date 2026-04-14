@@ -57,6 +57,10 @@ async function copyDirectoryContents(sourceDir: string, targetDir: string): Prom
 	await mkdir(targetDir, { recursive: true, mode: 0o700 });
 	const entries = await readdir(sourceDir, { withFileTypes: true });
 	for (const entry of entries) {
+		// Do not ship in-tree unit test files to end-user installs.
+		if (entry.name.startsWith("test_") && entry.name.endsWith(".py")) {
+			continue;
+		}
 		const sourcePath = join(sourceDir, entry.name);
 		const targetPath = join(targetDir, entry.name);
 		if (entry.isDirectory()) {
