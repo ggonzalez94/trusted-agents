@@ -10,6 +10,7 @@ import {
 	executeOnchainTransfer,
 	generateInvite,
 	loadTrustedAgentConfigFromDataDir,
+	toErrorMessage,
 } from "trusted-agents-core";
 import { resolveTapdConfig } from "./config.js";
 import { Daemon, TAPD_VERSION } from "./daemon.js";
@@ -132,8 +133,7 @@ async function main(): Promise<void> {
 		process.stdout.write("tapd shut down cleanly\n");
 		process.exit(0);
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		process.stderr.write(`tapd failed: ${message}\n`);
+		process.stderr.write(`tapd failed: ${toErrorMessage(error)}\n`);
 		process.exit(1);
 	}
 }

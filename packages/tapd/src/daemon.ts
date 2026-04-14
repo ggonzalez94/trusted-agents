@@ -84,8 +84,7 @@ export class Daemon {
 	private shuttingDown = false;
 	private signalHandlersInstalled = false;
 	private shutdownResolve: (() => void) | null = null;
-	private boundSigInt: (() => void) | null = null;
-	private boundSigTerm: (() => void) | null = null;
+	private boundSignalHandler: (() => void) | null = null;
 	private notificationUnsubscribe: (() => void) | null = null;
 
 	constructor(options: DaemonOptions) {
@@ -157,22 +156,30 @@ export class Daemon {
 				});
 			}
 		} catch (error) {
-			await this.unwindFailedStart();
+			await this.releaseResources();
 			throw error;
 		}
 	}
 
-	/**
-	 * Releases resources acquired by `start()` when a post-runtime-start step
-	 * fails. Called from the `start()` try/catch so we never leak the
-	 * transport owner lock or the bus subscription on a partial failure.
-	 */
-	private async unwindFailedStart(): Promise<void> {
+	async stop(): Promise<void> {
+		if (this.shuttingDown) return;
+		this.shuttingDown = true;
+
+		await this.releaseResources();
+		this.removeSignalHandlers();
+		if (this.shutdownResolve) {
+			const resolve = this.shutdownResolve;
+			this.shutdownResolve = null;
+			resolve();
+		}
+	}
+
+	private async releaseResources(): Promise<void> {
 		if (this.server) {
 			try {
 				await this.server.stop();
 			} catch {
-				// Best effort — we're already unwinding.
+				// Best effort — the caller's error (or the shutdown itself) takes priority.
 			}
 			this.server = null;
 		}
@@ -180,7 +187,7 @@ export class Daemon {
 			try {
 				await this.runtime.stop();
 			} catch {
-				// Best effort — the top-level error is more important.
+				// Best effort.
 			}
 			this.runtime = null;
 		}
@@ -188,38 +195,9 @@ export class Daemon {
 			this.notificationUnsubscribe();
 			this.notificationUnsubscribe = null;
 		}
-		// Drop the port file if it was written before the failure (defensive —
-		// most failure modes won't have reached the write yet).
 		await rm(join(this.options.config.dataDir, PORT_FILE), {
 			force: true,
 		}).catch(() => {});
-	}
-
-	async stop(): Promise<void> {
-		if (this.shuttingDown) return;
-		this.shuttingDown = true;
-
-		if (this.server) {
-			await this.server.stop();
-			this.server = null;
-		}
-		if (this.runtime) {
-			await this.runtime.stop();
-			this.runtime = null;
-		}
-		if (this.notificationUnsubscribe) {
-			this.notificationUnsubscribe();
-			this.notificationUnsubscribe = null;
-		}
-		await rm(join(this.options.config.dataDir, PORT_FILE), {
-			force: true,
-		}).catch(() => {});
-		this.removeSignalHandlers();
-		if (this.shutdownResolve) {
-			const resolve = this.shutdownResolve;
-			this.shutdownResolve = null;
-			resolve();
-		}
 	}
 
 	authToken(): string {
@@ -250,25 +228,19 @@ export class Daemon {
 	private installSignalHandlers(): void {
 		if (this.signalHandlersInstalled) return;
 		this.signalHandlersInstalled = true;
-		this.boundSigInt = () => {
+		this.boundSignalHandler = () => {
 			void this.stop();
 		};
-		this.boundSigTerm = () => {
-			void this.stop();
-		};
-		process.on("SIGINT", this.boundSigInt);
-		process.on("SIGTERM", this.boundSigTerm);
+		process.on("SIGINT", this.boundSignalHandler);
+		process.on("SIGTERM", this.boundSignalHandler);
 	}
 
 	private removeSignalHandlers(): void {
 		if (!this.signalHandlersInstalled) return;
-		if (this.boundSigInt) {
-			process.off("SIGINT", this.boundSigInt);
-			this.boundSigInt = null;
-		}
-		if (this.boundSigTerm) {
-			process.off("SIGTERM", this.boundSigTerm);
-			this.boundSigTerm = null;
+		if (this.boundSignalHandler) {
+			process.off("SIGINT", this.boundSignalHandler);
+			process.off("SIGTERM", this.boundSignalHandler);
+			this.boundSignalHandler = null;
 		}
 		this.signalHandlersInstalled = false;
 	}

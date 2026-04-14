@@ -1,6 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import { dirname, extname } from "node:path";
+import { toErrorMessage } from "trusted-agents-core";
 import { authorizeRequest } from "./auth.js";
 import { sendError, sendJson, sendNotFound, sendUnauthorized } from "./response.js";
 import type { Router } from "./router.js";
@@ -108,7 +109,7 @@ export class TapdHttpServer {
 
 	private handle(req: IncomingMessage, res: ServerResponse, transport: "unix" | "tcp"): void {
 		void this.handleAsync(req, res, transport).catch((error) => {
-			sendError(res, 500, "internal_error", error instanceof Error ? error.message : "unknown");
+			sendError(res, 500, "internal_error", toErrorMessage(error));
 		});
 	}
 

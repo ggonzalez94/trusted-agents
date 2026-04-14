@@ -1,4 +1,5 @@
 import { type ClientRequest, type IncomingMessage, request } from "node:http";
+import { toErrorMessage } from "trusted-agents-core";
 
 const ESCALATION_EVENT_TYPES = new Set(["action.pending", "connection.requested"]);
 const RECONNECT_DELAY_MS = 1000;
@@ -125,9 +126,7 @@ export class EscalationWatcher {
 		try {
 			this.options.onEscalation({ type: eventType, payload });
 		} catch (error: unknown) {
-			this.options.logger?.warn(
-				`escalation watcher callback threw: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.options.logger?.warn(`escalation watcher callback threw: ${toErrorMessage(error)}`);
 		}
 	}
 
