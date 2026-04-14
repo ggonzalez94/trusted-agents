@@ -2,7 +2,9 @@ import { join } from "node:path";
 import { TapAppRegistry } from "../app/registry.js";
 import { buildChainPublicClient } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
-import { FileConversationLogger, type IConversationLogger } from "../conversation/logger.js";
+import type { IConversationLogger } from "../conversation/logger.js";
+import { SqliteConversationLogger } from "../conversation/sqlite-logger.js";
+import { migrateFileLogsToSqlite } from "../conversation/sqlite-migration.js";
 import { AgentResolver, type IAgentResolver } from "../identity/resolver.js";
 import type { SigningProvider } from "../signing/provider.js";
 import type { TransportProvider } from "../transport/interface.js";
@@ -42,8 +44,23 @@ export async function buildDefaultTapRuntimeContext(
 		new AgentResolver(config.chains, buildChainPublicClient, {
 			maxCacheEntries: config.resolveCacheMaxEntries,
 		});
-	const conversationLogger =
-		options.conversationLogger ?? new FileConversationLogger(config.dataDir);
+	let conversationLogger: IConversationLogger;
+	if (options.conversationLogger) {
+		conversationLogger = options.conversationLogger;
+	} else {
+		const sqliteLogger = new SqliteConversationLogger(config.dataDir);
+		try {
+			await migrateFileLogsToSqlite(config.dataDir, sqliteLogger);
+		} catch (error: unknown) {
+			// Migration failure is non-fatal — the database is still usable.
+			process.stderr.write(
+				`[trusted-agents] conversation log migration warning: ${
+					error instanceof Error ? error.message : String(error)
+				}\n`,
+			);
+		}
+		conversationLogger = sqliteLogger;
+	}
 	const requestJournal = options.requestJournal ?? new FileRequestJournal(config.dataDir);
 	const transport =
 		options.transport ??
