@@ -17,6 +17,12 @@ function makeFakeService() {
 			pendingRequests: [],
 			pendingDeliveries: [],
 		})),
+		sendMessage: vi.fn(async (peer: string, _text: string, scope?: string) => ({
+			receipt: { messageId: "msg-1", status: "delivered" },
+			peerName: peer,
+			peerAgentId: 99,
+			scope: scope ?? "general-chat",
+		})),
 	};
 }
 
@@ -25,10 +31,11 @@ describe("tapd HTTP end-to-end", () => {
 	let daemon: Daemon | null = null;
 	let port = 0;
 	let token = "";
+	let service: ReturnType<typeof makeFakeService>;
 
 	beforeEach(async () => {
 		dataDir = await mkdtemp(join(tmpdir(), "tapd-e2e-"));
-		const service = makeFakeService();
+		service = makeFakeService();
 		daemon = new Daemon({
 			config: {
 				dataDir,
@@ -130,5 +137,23 @@ describe("tapd HTTP end-to-end", () => {
 	it("returns 404 for unknown routes", async () => {
 		const response = await fetchTapd("/api/nope");
 		expect(response.status).toBe(404);
+	});
+
+	it("POST /api/messages forwards to the service and returns the result", async () => {
+		const response = await fetchTapd("/api/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ peer: "Alice", text: "hello", scope: "general-chat" }),
+		});
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { peerName: string; scope: string };
+		expect(body.peerName).toBe("Alice");
+		expect(body.scope).toBe("general-chat");
+		expect(service.sendMessage).toHaveBeenCalledOnce();
+		expect(service.sendMessage.mock.calls[0]?.slice(0, 3)).toEqual([
+			"Alice",
+			"hello",
+			"general-chat",
+		]);
 	});
 });

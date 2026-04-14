@@ -12,6 +12,7 @@ import {
 	createDaemonControlRoutes,
 } from "./http/routes/daemon-control.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
+import { createMessagesRoute } from "./http/routes/messages.js";
 import { createNotificationsRoute } from "./http/routes/notifications.js";
 import { createPendingRoutes } from "./http/routes/pending.js";
 import { TapdHttpServer } from "./http/server.js";
@@ -202,6 +203,14 @@ export class Daemon {
 		router.add("GET", "/api/pending", pending.list);
 		router.add("POST", "/api/pending/:id/approve", pending.approve);
 		router.add("POST", "/api/pending/:id/deny", pending.deny);
+
+		// Write routes — adapters re-resolve the live runtime on every call so
+		// they remain valid across daemon restarts that swap the service.
+		const writeAdapter = {
+			sendMessage: (peer: string, text: string, scope?: string) =>
+				ensureRuntime().sendMessage(peer, text, scope),
+		} as unknown as TapMessagingService;
+		router.add("POST", "/api/messages", createMessagesRoute(writeAdapter));
 
 		const notifications = createNotificationsRoute(this.notifications);
 		router.add("GET", "/api/notifications/drain", notifications);
