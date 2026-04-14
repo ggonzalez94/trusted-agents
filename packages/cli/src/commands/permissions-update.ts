@@ -7,17 +7,6 @@ import type { GlobalOptions } from "../types.js";
 
 type PermissionsDirection = "grant" | "request";
 
-const directionConfig = {
-	grant: {
-		verb: "Publishing",
-		successFlag: "published" as const,
-	},
-	request: {
-		verb: "Requesting",
-		successFlag: "requested" as const,
-	},
-};
-
 async function permissionsUpdateCommand(
 	direction: PermissionsDirection,
 	peer: string,
@@ -26,7 +15,8 @@ async function permissionsUpdateCommand(
 	cmdOpts?: { note?: string; dryRun?: boolean },
 ): Promise<void> {
 	const startTime = Date.now();
-	const cfg = directionConfig[direction];
+	const verb = direction === "grant" ? "Publishing" : "Requesting";
+	const successFlag = direction === "grant" ? "published" : "requested";
 
 	try {
 		const config = await loadConfig(opts);
@@ -50,7 +40,7 @@ async function permissionsUpdateCommand(
 		}
 
 		verbose(
-			`${cfg.verb} ${grantSet.grants.length} grants ${direction === "grant" ? "to" : "from"} ${peer}...`,
+			`${verb} ${grantSet.grants.length} grants ${direction === "grant" ? "to" : "from"} ${peer}...`,
 			opts,
 		);
 
@@ -62,7 +52,7 @@ async function permissionsUpdateCommand(
 
 		success(
 			{
-				[cfg.successFlag]: true,
+				[successFlag]: true,
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				grant_count: result.grantCount,

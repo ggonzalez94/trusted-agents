@@ -607,9 +607,58 @@ function validateConversationLogForImport(log: ConversationLog): void {
  */
 const STRICT_ISO_OFFSET_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
+/**
+ * Strict timestamp validator. Three layers of defense:
+ *
+ *   1. **Shape**: the regex requires `YYYY-MM-DDTHH:mm:ss[.fff]<Z|±HH:MM>`.
+ *      Rejects no-offset strings (host-local interpretation), RFC 2822
+ *      strings, date-only strings.
+ *   2. **Calendar validity**: the year/month/day fields must point at a
+ *      real day. `Date.parse` silently rolls overflow dates forward (e.g.
+ *      `2026-04-31` → `2026-05-01`, non-leap `2026-02-29` → `2026-03-01`),
+ *      so we extract the components from the regex and validate them
+ *      against the real calendar BEFORE letting `Date.parse` near them.
+ *      Without this, malformed import data would silently get rewritten
+ *      to a different instant on canonicalization.
+ *   3. **Parse success**: `Date.parse` must agree the string represents
+ *      a real instant. After the calendar check this is mostly defensive,
+ *      but it also catches offset-component overflows like `+25:00`.
+ */
 function isStrictIsoTimestamp(value: string): boolean {
 	if (!STRICT_ISO_OFFSET_REGEX.test(value)) return false;
+	const yyyy = Number.parseInt(value.slice(0, 4), 10);
+	const mm = Number.parseInt(value.slice(5, 7), 10);
+	const dd = Number.parseInt(value.slice(8, 10), 10);
+	const hh = Number.parseInt(value.slice(11, 13), 10);
+	const mi = Number.parseInt(value.slice(14, 16), 10);
+	const ss = Number.parseInt(value.slice(17, 19), 10);
+	if (!isValidCalendarDate(yyyy, mm, dd)) return false;
+	if (hh > 23 || mi > 59 || ss > 60) return false; // 60 to allow leap seconds
 	return !Number.isNaN(Date.parse(value));
+}
+
+/** Returns true if `(yyyy, mm, dd)` points at a real Gregorian calendar day. */
+function isValidCalendarDate(yyyy: number, mm: number, dd: number): boolean {
+	if (yyyy < 1 || mm < 1 || mm > 12 || dd < 1) return false;
+	const daysInMonth = [
+		31,
+		isLeapYear(yyyy) ? 29 : 28,
+		31,
+		30,
+		31,
+		30,
+		31,
+		31,
+		30,
+		31,
+		30,
+		31,
+	];
+	return dd <= daysInMonth[mm - 1];
+}
+
+function isLeapYear(year: number): boolean {
+	return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
 
 /**
