@@ -1,6 +1,11 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { IConversationLogger, ITrustStore, TapMessagingService } from "trusted-agents-core";
+import type {
+	ICalendarProvider,
+	IConversationLogger,
+	ITrustStore,
+	TapMessagingService,
+} from "trusted-agents-core";
 import { generateAuthToken, persistAuthToken } from "./auth-token.js";
 import type { TapdConfig } from "./config.js";
 import { EventBus } from "./event-bus.js";
@@ -55,6 +60,15 @@ export interface DaemonOptions {
 	 * serves the UI at `/` and at any non-API GET path.
 	 */
 	staticAssetsDir?: string;
+	/**
+	 * Optional calendar provider used by `/api/meetings` when a client
+	 * posts the flat shape with a `preferred` time but no explicit
+	 * `slots`. Currently unused by `packages/tapd/src/bin.ts` (passes
+	 * null) — the CLI command still resolves its own provider from
+	 * `<dataDir>/config.yaml` via `resolveConfiguredCalendarProvider`. A
+	 * shared calendar resolver in core is a follow-up.
+	 */
+	calendarProvider?: ICalendarProvider | null;
 }
 
 const PORT_FILE = ".tapd.port";
@@ -275,7 +289,9 @@ export class Daemon {
 		router.add("POST", "/api/connect", createConnectRoute(writeAdapter));
 		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(writeAdapter));
 
-		const meetings = createMeetingsRoutes(writeAdapter);
+		const meetings = createMeetingsRoutes(writeAdapter, {
+			calendarProvider: this.options.calendarProvider ?? null,
+		});
 		router.add("POST", "/api/meetings", meetings.request);
 		router.add("POST", "/api/meetings/:id/respond", meetings.respond);
 		router.add("POST", "/api/meetings/:id/cancel", meetings.cancel);

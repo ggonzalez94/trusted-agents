@@ -48,7 +48,7 @@ function makeService() {
 }
 
 describe("meetings routes", () => {
-	describe("request", () => {
+	describe("request (full shape / back-compat)", () => {
 		it("forwards a valid proposal to service.requestMeeting", async () => {
 			const service = makeService();
 			const { request } = createMeetingsRoutes(service as never);
@@ -70,6 +70,130 @@ describe("meetings routes", () => {
 			await expect(
 				request({}, { peer: "Alice", proposal: { ...validProposal, type: "wrong" } }),
 			).rejects.toThrow();
+		});
+	});
+
+	describe("request (flat shape)", () => {
+		it("builds a proposal internally with default slot, generated id, and current tz", async () => {
+			const service = makeService();
+			const { request } = createMeetingsRoutes(service as never);
+
+			await request({}, { peer: "Alice", title: "Standup", duration: 30 });
+
+			expect(service.requestMeeting).toHaveBeenCalledOnce();
+			const arg = service.requestMeeting.mock.calls[0][0];
+			expect(arg.peer).toBe("Alice");
+			expect(arg.proposal.type).toBe("scheduling/propose");
+			expect(typeof arg.proposal.schedulingId).toBe("string");
+			expect(arg.proposal.schedulingId.length).toBeGreaterThan(0);
+			expect(arg.proposal.title).toBe("Standup");
+			expect(arg.proposal.duration).toBe(30);
+			expect(arg.proposal.slots).toHaveLength(1);
+			expect(typeof arg.proposal.slots[0].start).toBe("string");
+			expect(typeof arg.proposal.slots[0].end).toBe("string");
+			// ~24h ahead
+			const startMs = new Date(arg.proposal.slots[0].start).getTime();
+			expect(startMs).toBeGreaterThan(Date.now() + 23 * 60 * 60 * 1000);
+			// originTimezone set from process
+			expect(typeof arg.proposal.originTimezone).toBe("string");
+			expect(arg.proposal.originTimezone.length).toBeGreaterThan(0);
+		});
+
+		it("uses the caller-supplied schedulingId when provided", async () => {
+			const service = makeService();
+			const { request } = createMeetingsRoutes(service as never);
+
+			await request(
+				{},
+				{ peer: "Alice", title: "Standup", duration: 30, schedulingId: "sch_caller" },
+			);
+
+			const arg = service.requestMeeting.mock.calls[0][0];
+			expect(arg.proposal.schedulingId).toBe("sch_caller");
+		});
+
+		it("uses the caller-supplied slots array when provided", async () => {
+			const service = makeService();
+			const { request } = createMeetingsRoutes(service as never);
+
+			const slots = [
+				{ start: "2027-01-01T10:00:00.000Z", end: "2027-01-01T10:30:00.000Z" },
+				{ start: "2027-01-01T14:00:00.000Z", end: "2027-01-01T14:30:00.000Z" },
+			];
+			await request({}, { peer: "Alice", title: "Sync", duration: 30, slots });
+
+			const arg = service.requestMeeting.mock.calls[0][0];
+			expect(arg.proposal.slots).toEqual(slots);
+		});
+
+		it("honors caller-supplied originTimezone", async () => {
+			const service = makeService();
+			const { request } = createMeetingsRoutes(service as never);
+
+			await request(
+				{},
+				{ peer: "Alice", title: "Sync", duration: 30, originTimezone: "America/New_York" },
+			);
+
+			const arg = service.requestMeeting.mock.calls[0][0];
+			expect(arg.proposal.originTimezone).toBe("America/New_York");
+		});
+
+		it("propagates location and note onto the built proposal", async () => {
+			const service = makeService();
+			const { request } = createMeetingsRoutes(service as never);
+
+			await request(
+				{},
+				{
+					peer: "Alice",
+					title: "Sync",
+					duration: 30,
+					location: "Zoom",
+					note: "Bring numbers",
+				},
+			);
+
+			const arg = service.requestMeeting.mock.calls[0][0];
+			expect(arg.proposal.location).toBe("Zoom");
+			expect(arg.proposal.note).toBe("Bring numbers");
+		});
+
+		it("anchors the slot to preferred time when calendar is null", async () => {
+			const service = makeService();
+			const { request } = createMeetingsRoutes(service as never);
+
+			const preferred = "2027-06-15T09:00:00.000Z";
+			await request({}, { peer: "Alice", title: "Sync", duration: 45, preferred });
+
+			const arg = service.requestMeeting.mock.calls[0][0];
+			expect(arg.proposal.slots).toHaveLength(1);
+			expect(arg.proposal.slots[0].start).toBe(preferred);
+		});
+
+		it("rejects missing peer in flat shape", async () => {
+			const { request } = createMeetingsRoutes(makeService() as never);
+			await expect(request({}, { title: "Standup", duration: 30 })).rejects.toThrow();
+		});
+
+		it("rejects missing title in flat shape", async () => {
+			const { request } = createMeetingsRoutes(makeService() as never);
+			await expect(request({}, { peer: "Alice", duration: 30 })).rejects.toThrow();
+		});
+
+		it("rejects missing duration in flat shape", async () => {
+			const { request } = createMeetingsRoutes(makeService() as never);
+			await expect(request({}, { peer: "Alice", title: "Standup" })).rejects.toThrow();
+		});
+
+		it("rejects zero duration", async () => {
+			const { request } = createMeetingsRoutes(makeService() as never);
+			await expect(request({}, { peer: "Alice", title: "Sync", duration: 0 })).rejects.toThrow();
+		});
+
+		it("rejects negative duration", async () => {
+			const { request } = createMeetingsRoutes(makeService() as never);
+			await expect(request({}, { peer: "Alice", title: "Sync", duration: -5 })).rejects.toThrow();
 		});
 	});
 

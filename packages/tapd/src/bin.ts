@@ -72,8 +72,18 @@ async function main(): Promise<void> {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const staticAssetsDir = join(here, "ui");
 
+	// tapd intentionally passes `calendarProvider: null` here. Users running
+	// through `tap ui` or the `tap message request-meeting` CLI command get
+	// real calendar integration because the CLI resolves a Google Calendar
+	// provider from <dataDir>/config.yaml and builds the proposal locally
+	// before POSTing the full-shape body to /api/meetings. The flat-shape
+	// /api/meetings body that Hermes/OpenClaw clients send falls back to a
+	// single placeholder slot ~24h ahead (or the caller-supplied `preferred`
+	// time). A shared calendar resolver in core that tapd can own is a
+	// follow-up — see the Cluster 2 plan for the rationale.
 	const daemon = new Daemon({
 		config: tapdConfig,
+		calendarProvider: null,
 		identityAgentId: trustedAgentsConfig.agentId,
 		identitySource: () => ({
 			agentId: trustedAgentsConfig.agentId,
