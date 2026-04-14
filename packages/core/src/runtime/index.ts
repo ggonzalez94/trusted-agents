@@ -99,3 +99,8 @@ export {
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+export {
+	classifyTapEvent,
+	type TapEmitEventPayload,
+	type TapEventBucket,
+} from "./event-classifier.js";
