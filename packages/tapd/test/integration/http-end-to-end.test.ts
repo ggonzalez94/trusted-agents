@@ -30,8 +30,22 @@ function makeFakeService() {
 			status: params.waitMs === 0 ? "pending" : "active",
 			receipt: { messageId: "msg-1", status: "delivered" },
 		})),
+		requestFunds: vi.fn(async (input: { peer: string; asset: string; amount: string }) => ({
+			receipt: { messageId: "msg-1", status: "delivered" },
+			actionId: "act-1",
+			peerName: input.peer,
+			peerAgentId: 99,
+			asset: input.asset,
+			amount: input.amount,
+			chain: "eip155:8453",
+			toAddress: "0x0000000000000000000000000000000000000000",
+		})),
 	};
 }
+
+const fakeExecuteTransfer = vi.fn(async () => ({
+	txHash: "0xabc" as `0x${string}`,
+}));
 
 describe("tapd HTTP end-to-end", () => {
 	let dataDir: string;
@@ -68,7 +82,9 @@ describe("tapd HTTP end-to-end", () => {
 				generateTranscript: async () => "",
 				markRead: async () => {},
 			} as never,
+			executeTransfer: fakeExecuteTransfer,
 		});
+		fakeExecuteTransfer.mockClear();
 		await daemon.start();
 		port = daemon.boundTcpPort();
 		token = daemon.authToken();
@@ -144,6 +160,42 @@ describe("tapd HTTP end-to-end", () => {
 	it("returns 404 for unknown routes", async () => {
 		const response = await fetchTapd("/api/nope");
 		expect(response.status).toBe(404);
+	});
+
+	it("POST /api/funds-requests forwards to the service and returns the result", async () => {
+		const response = await fetchTapd("/api/funds-requests", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				peer: "Alice",
+				asset: "usdc",
+				amount: "1.50",
+				chain: "eip155:8453",
+				toAddress: "0x0000000000000000000000000000000000000000",
+				note: "lunch",
+			}),
+		});
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { actionId: string; peerName: string };
+		expect(body.actionId).toBe("act-1");
+		expect(body.peerName).toBe("Alice");
+		expect(service.requestFunds).toHaveBeenCalledOnce();
+	});
+
+	it("POST /api/transfers calls the executor and returns txHash", async () => {
+		const response = await fetchTapd("/api/transfers", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				asset: "usdc",
+				amount: "1.50",
+				chain: "eip155:8453",
+				toAddress: "0x0000000000000000000000000000000000000000",
+			}),
+		});
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ txHash: "0xabc" });
+		expect(fakeExecuteTransfer).toHaveBeenCalledOnce();
 	});
 
 	it("POST /api/connect forwards to the service and returns the result", async () => {

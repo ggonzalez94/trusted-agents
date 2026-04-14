@@ -12,8 +12,10 @@ import {
 	createDaemonControlRoutes,
 } from "./http/routes/daemon-control.js";
 import { createConnectRoute } from "./http/routes/connect.js";
+import { createFundsRequestsRoute } from "./http/routes/funds-requests.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
 import { createMessagesRoute } from "./http/routes/messages.js";
+import { type TransferExecutor, createTransfersRoute } from "./http/routes/transfers.js";
 import { createNotificationsRoute } from "./http/routes/notifications.js";
 import { createPendingRoutes } from "./http/routes/pending.js";
 import { TapdHttpServer } from "./http/server.js";
@@ -31,6 +33,12 @@ export interface DaemonOptions {
 	buildService: () => Promise<TapMessagingService>;
 	trustStore: ITrustStore;
 	conversationLogger: IConversationLogger;
+	/**
+	 * On-chain transfer executor invoked by `POST /api/transfers`. The host is
+	 * responsible for wiring this to the OWS signing provider + the chain
+	 * configs the daemon was started with. When omitted the route returns 500.
+	 */
+	executeTransfer?: TransferExecutor;
 	/**
 	 * Directory containing the bundled UI's static export. When set, tapd
 	 * serves the UI at `/` and at any non-API GET path.
@@ -211,9 +219,23 @@ export class Daemon {
 			sendMessage: (peer: string, text: string, scope?: string) =>
 				ensureRuntime().sendMessage(peer, text, scope),
 			connect: (params: { inviteUrl: string; waitMs?: number }) => ensureRuntime().connect(params),
+			requestFunds: (input: Parameters<TapMessagingService["requestFunds"]>[0]) =>
+				ensureRuntime().requestFunds(input),
 		} as unknown as TapMessagingService;
 		router.add("POST", "/api/messages", createMessagesRoute(writeAdapter));
 		router.add("POST", "/api/connect", createConnectRoute(writeAdapter));
+		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(writeAdapter));
+
+		const executeTransfer: TransferExecutor = (request) => {
+			const fn = this.options.executeTransfer;
+			if (!fn) {
+				throw new Error(
+					"transfers route is not wired: pass executeTransfer when constructing the daemon",
+				);
+			}
+			return fn(request);
+		};
+		router.add("POST", "/api/transfers", createTransfersRoute(executeTransfer));
 
 		const notifications = createNotificationsRoute(this.notifications);
 		router.add("GET", "/api/notifications/drain", notifications);

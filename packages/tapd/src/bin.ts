@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import {
 	OwsSigningProvider,
 	TapMessagingService,
 	buildDefaultTapRuntimeContext,
+	executeOnchainTransfer,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
 import { resolveTapdConfig } from "./config.js";
@@ -58,6 +60,15 @@ async function main(): Promise<void> {
 		buildService,
 		trustStore: context.trustStore,
 		conversationLogger: context.conversationLogger,
+		executeTransfer: async (request) =>
+			await executeOnchainTransfer(trustedAgentsConfig, signingProvider, {
+				type: "transfer/request",
+				actionId: `tapd-${randomUUID()}`,
+				asset: request.asset,
+				amount: request.amount,
+				chain: request.chain,
+				toAddress: request.toAddress,
+			}),
 		staticAssetsDir,
 	});
 
