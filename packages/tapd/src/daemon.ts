@@ -11,6 +11,7 @@ import {
 	type DaemonControlOptions,
 	createDaemonControlRoutes,
 } from "./http/routes/daemon-control.js";
+import { createConnectRoute } from "./http/routes/connect.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
 import { createMessagesRoute } from "./http/routes/messages.js";
 import { createNotificationsRoute } from "./http/routes/notifications.js";
@@ -209,8 +210,10 @@ export class Daemon {
 		const writeAdapter = {
 			sendMessage: (peer: string, text: string, scope?: string) =>
 				ensureRuntime().sendMessage(peer, text, scope),
+			connect: (params: { inviteUrl: string; waitMs?: number }) => ensureRuntime().connect(params),
 		} as unknown as TapMessagingService;
 		router.add("POST", "/api/messages", createMessagesRoute(writeAdapter));
+		router.add("POST", "/api/connect", createConnectRoute(writeAdapter));
 
 		const notifications = createNotificationsRoute(this.notifications);
 		router.add("GET", "/api/notifications/drain", notifications);

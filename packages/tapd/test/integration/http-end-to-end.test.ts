@@ -23,6 +23,13 @@ function makeFakeService() {
 			peerAgentId: 99,
 			scope: scope ?? "general-chat",
 		})),
+		connect: vi.fn(async (params: { inviteUrl: string; waitMs?: number }) => ({
+			connectionId: "conn-1",
+			peerName: "Alice",
+			peerAgentId: 99,
+			status: params.waitMs === 0 ? "pending" : "active",
+			receipt: { messageId: "msg-1", status: "delivered" },
+		})),
 	};
 }
 
@@ -137,6 +144,19 @@ describe("tapd HTTP end-to-end", () => {
 	it("returns 404 for unknown routes", async () => {
 		const response = await fetchTapd("/api/nope");
 		expect(response.status).toBe(404);
+	});
+
+	it("POST /api/connect forwards to the service and returns the result", async () => {
+		const response = await fetchTapd("/api/connect", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ inviteUrl: "tap://invite/abc", waitMs: 1000 }),
+		});
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { status: string; peerAgentId: number };
+		expect(body.status).toBe("active");
+		expect(body.peerAgentId).toBe(99);
+		expect(service.connect).toHaveBeenCalledOnce();
 	});
 
 	it("POST /api/messages forwards to the service and returns the result", async () => {
