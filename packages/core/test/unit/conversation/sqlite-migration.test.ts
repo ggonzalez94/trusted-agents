@@ -256,4 +256,144 @@ describe("sqlite migration", () => {
 		expect(report.errors).toEqual([]);
 		logger.close();
 	});
+
+	// Finding Fv2.1: migration must stay incomplete when any file fails so
+	// the next run gets a chance to retry. Before the fix, a single bad file
+	// would still set the flag and rename the directory to a backup,
+	// permanently losing the unimported rows.
+	it("stays incomplete when a single file fails to import", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "valid.json"),
+			JSON.stringify({
+				conversationId: "valid",
+				connectionId: "c",
+				peerAgentId: 1,
+				peerDisplayName: "A",
+				startedAt: "2026-04-01T00:00:00.000Z",
+				lastMessageAt: "2026-04-01T00:00:00.000Z",
+				status: "active",
+				messages: [
+					{
+						timestamp: "2026-04-01T00:00:00.000Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "ok",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+				],
+			}),
+		);
+		await writeFile(join(dataDir, "conversations", "broken.json"), "{not json");
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+
+		expect(report.errors.length).toBe(1);
+		expect(report.errors[0]?.file).toBe("broken.json");
+
+		// The valid file was imported.
+		const valid = await logger.getConversation("valid");
+		expect(valid?.messages).toHaveLength(1);
+
+		// conversations/ is still in place (NOT renamed to conversations.bak).
+		const entries = (await readdir(dataDir)).filter((e) => e.startsWith("conversations"));
+		expect(entries).toContain("conversations");
+		expect(entries).not.toContain("conversations.bak");
+
+		// The migration flag MUST NOT be set.
+		const flag = logger.database
+			.prepare("SELECT value FROM schema_meta WHERE key = 'conversation_logs_migrated_at'")
+			.get() as { value: string } | undefined;
+		expect(flag).toBeUndefined();
+
+		logger.close();
+	});
+
+	it("retries on next run and succeeds after the bad file is removed", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "valid.json"),
+			JSON.stringify({
+				conversationId: "valid",
+				connectionId: "c",
+				peerAgentId: 1,
+				peerDisplayName: "A",
+				startedAt: "2026-04-01T00:00:00.000Z",
+				lastMessageAt: "2026-04-01T00:00:00.000Z",
+				status: "active",
+				messages: [
+					{
+						messageId: "m1",
+						timestamp: "2026-04-01T00:00:00.000Z",
+						direction: "outgoing",
+						scope: "default",
+						content: "ok",
+						humanApprovalRequired: false,
+						humanApprovalGiven: null,
+					},
+				],
+			}),
+		);
+		await writeFile(join(dataDir, "conversations", "broken.json"), "{not json");
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const first = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(first.errors.length).toBe(1);
+
+		// Operator clears the bad file and re-runs.
+		await rm(join(dataDir, "conversations", "broken.json"));
+		const second = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(second.errors).toEqual([]);
+
+		// Directory was renamed to backup this time.
+		const entries = (await readdir(dataDir)).filter((e) => e.startsWith("conversations"));
+		expect(entries).toContain("conversations.bak");
+		expect(entries).not.toContain("conversations");
+
+		// Flag is now set.
+		const flag = logger.database
+			.prepare("SELECT value FROM schema_meta WHERE key = 'conversation_logs_migrated_at'")
+			.get() as { value: string } | undefined;
+		expect(flag).toBeDefined();
+
+		// The single valid row is still present (SQLite dedup on re-import).
+		const valid = await logger.getConversation("valid");
+		expect(valid?.messages).toHaveLength(1);
+
+		logger.close();
+	});
+
+	it("sets the flag and renames to backup when every file is valid", async () => {
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		await writeFile(
+			join(dataDir, "conversations", "conv-1.json"),
+			JSON.stringify({
+				conversationId: "conv-1",
+				connectionId: "conn-1",
+				peerAgentId: 1,
+				peerDisplayName: "A",
+				startedAt: "2026-04-01T00:00:00.000Z",
+				lastMessageAt: "2026-04-01T00:00:00.000Z",
+				status: "active",
+				messages: [],
+			}),
+		);
+
+		const logger = new SqliteConversationLogger(dataDir);
+		const report = await migrateFileLogsToSqlite(dataDir, logger);
+		expect(report.errors).toEqual([]);
+
+		const entries = (await readdir(dataDir)).filter((e) => e.startsWith("conversations"));
+		expect(entries).toContain("conversations.bak");
+		expect(entries).not.toContain("conversations");
+
+		const flag = logger.database
+			.prepare("SELECT value FROM schema_meta WHERE key = 'conversation_logs_migrated_at'")
+			.get() as { value: string } | undefined;
+		expect(flag).toBeDefined();
+
+		logger.close();
+	});
 });

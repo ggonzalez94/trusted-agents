@@ -14,6 +14,22 @@ export interface MigrationReport {
 	errors: { file: string; error: string }[];
 }
 
+/**
+ * Migrates legacy per-conversation JSON files into the SQLite conversation
+ * store. Callers MUST inspect `report.errors` after this returns — partial
+ * failure is the explicit contract:
+ *
+ * - If any file errored, the migration flag is NOT set, the legacy
+ *   `conversations/` directory is left in place, and a subsequent call will
+ *   retry every file (including the already-imported ones, which are
+ *   idempotent at the SQLite level via the message dedup index).
+ * - If every file succeeded, the flag is set and the legacy directory is
+ *   renamed to a unique backup name so the next call is a no-op.
+ *
+ * This is fail-closed by design (finding Fv2.1): marking the migration
+ * complete on partial failure would lose messages from any file that didn't
+ * parse cleanly, and the caller would have no way to recover.
+ */
 export async function migrateFileLogsToSqlite(
 	dataDir: string,
 	logger: SqliteConversationLogger,
@@ -114,21 +130,21 @@ export async function migrateFileLogsToSqlite(
 		}
 	}
 
-	// Move the directory to a backup name so the data survives but the legacy
-	// path is no longer present (subsequent FileConversationLogger constructions
-	// see no files). If a backup already exists, append a numeric suffix.
-	try {
-		await renameToUniqueBackup(conversationsDir, resolved);
-	} catch (error: unknown) {
-		report.errors.push({
-			file: CONVERSATIONS_DIRNAME,
-			error: `rename to backup failed: ${error instanceof Error ? error.message : String(error)}`,
-		});
+	// Fail-closed: only mark complete and move the legacy directory when every
+	// file was imported cleanly. Partial failures leave the legacy state in
+	// place so the next run retries the bad files (finding Fv2.1).
+	if (report.errors.length === 0) {
+		try {
+			await renameToUniqueBackup(conversationsDir, resolved);
+		} catch (error: unknown) {
+			report.errors.push({
+				file: CONVERSATIONS_DIRNAME,
+				error: `rename to backup failed: ${error instanceof Error ? error.message : String(error)}`,
+			});
+			return report;
+		}
+		markMigrationComplete(logger);
 	}
-
-	// Mark migration complete. Per-file errors are recorded but don't block the
-	// flag — we don't want to re-import the same files on the next run.
-	markMigrationComplete(logger);
 
 	return report;
 }

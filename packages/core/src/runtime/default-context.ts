@@ -50,9 +50,23 @@ export async function buildDefaultTapRuntimeContext(
 	} else {
 		const sqliteLogger = new SqliteConversationLogger(config.dataDir);
 		try {
-			await migrateFileLogsToSqlite(config.dataDir, sqliteLogger);
+			const report = await migrateFileLogsToSqlite(config.dataDir, sqliteLogger);
+			// Partial failures are non-fatal by design: the migration is
+			// fail-closed (legacy files are preserved, the flag is not set)
+			// so we surface the per-file errors as a warning and proceed
+			// with the partially-populated DB. The next startup retries.
+			if (report.errors.length > 0) {
+				const summary = report.errors
+					.slice(0, 5)
+					.map((e) => `${e.file}: ${e.error}`)
+					.join("; ");
+				process.stderr.write(
+					`[trusted-agents] conversation log migration left ${report.errors.length} file(s) unimported; will retry next startup. First errors: ${summary}\n`,
+				);
+			}
 		} catch (error: unknown) {
-			// Migration failure is non-fatal — the database is still usable.
+			// Unexpected hard failure (e.g. directory read error). The database
+			// is still usable — log and move on.
 			process.stderr.write(
 				`[trusted-agents] conversation log migration warning: ${
 					error instanceof Error ? error.message : String(error)
