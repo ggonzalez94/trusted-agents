@@ -3,8 +3,16 @@ import type { RouteHandler } from "../router.js";
 
 export interface PendingRoutes {
 	list: RouteHandler<unknown, TapPendingRequest[]>;
-	approve: RouteHandler<{ note?: string }, { resolved: true }>;
-	deny: RouteHandler<{ reason?: string }, { resolved: true }>;
+	approve: RouteHandler<unknown, { resolved: true }>;
+	deny: RouteHandler<unknown, { resolved: true }>;
+}
+
+function readStringField(body: unknown, key: string): string | undefined {
+	if (body && typeof body === "object" && key in body) {
+		const value = (body as Record<string, unknown>)[key];
+		if (typeof value === "string") return value;
+	}
+	return undefined;
 }
 
 export function createPendingRoutes(service: TapMessagingService): PendingRoutes {
@@ -18,7 +26,7 @@ export function createPendingRoutes(service: TapMessagingService): PendingRoutes
 			if (!id) {
 				throw new Error("missing pending id");
 			}
-			await service.resolvePending(id, true, body?.note);
+			await service.resolvePending(id, true, readStringField(body, "note"));
 			return { resolved: true };
 		},
 		deny: async (params, body) => {
@@ -26,7 +34,7 @@ export function createPendingRoutes(service: TapMessagingService): PendingRoutes
 			if (!id) {
 				throw new Error("missing pending id");
 			}
-			await service.resolvePending(id, false, body?.reason);
+			await service.resolvePending(id, false, readStringField(body, "reason"));
 			return { resolved: true };
 		},
 	};
