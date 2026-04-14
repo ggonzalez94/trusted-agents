@@ -5,22 +5,22 @@ import { generateAuthToken, persistAuthToken } from "./auth-token.js";
 import type { TapdConfig } from "./config.js";
 import { EventBus } from "./event-bus.js";
 import { Router } from "./http/router.js";
+import { createConnectRoute } from "./http/routes/connect.js";
+import { createContactsWriteRoutes } from "./http/routes/contacts-write.js";
 import { createContactsRoutes } from "./http/routes/contacts.js";
 import { createConversationsRoutes } from "./http/routes/conversations.js";
 import {
 	type DaemonControlOptions,
 	createDaemonControlRoutes,
 } from "./http/routes/daemon-control.js";
-import { createConnectRoute } from "./http/routes/connect.js";
-import { createContactsWriteRoutes } from "./http/routes/contacts-write.js";
 import { createFundsRequestsRoute } from "./http/routes/funds-requests.js";
 import { createGrantsRoutes } from "./http/routes/grants.js";
 import { type IdentitySource, createIdentityRoute } from "./http/routes/identity.js";
 import { createMeetingsRoutes } from "./http/routes/meetings.js";
 import { createMessagesRoute } from "./http/routes/messages.js";
-import { type TransferExecutor, createTransfersRoute } from "./http/routes/transfers.js";
 import { createNotificationsRoute } from "./http/routes/notifications.js";
 import { createPendingRoutes } from "./http/routes/pending.js";
+import { type TransferExecutor, createTransfersRoute } from "./http/routes/transfers.js";
 import { TapdHttpServer } from "./http/server.js";
 import { handleSseConnection } from "./http/sse.js";
 import { NotificationQueue } from "./notification-queue.js";

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
 import {
 	OwsSigningProvider,
 	TapMessagingService,
