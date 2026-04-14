@@ -299,26 +299,16 @@ export class Daemon {
 		const contactsWrite = createContactsWriteRoutes(serviceAdapter, this.options.trustStore);
 		router.add("POST", "/api/contacts/:connectionId/revoke", contactsWrite.revoke);
 
-		const executeTransfer: TransferExecutor = (request) => {
-			const fn = this.options.executeTransfer;
-			if (!fn) {
-				throw new Error(
-					"transfers route is not wired: pass executeTransfer when constructing the daemon",
-				);
-			}
-			return fn(request);
-		};
+		function notWired(name: string): never {
+			throw new Error(`${name} is not wired: pass ${name} when constructing the daemon`);
+		}
+
+		const executeTransfer: TransferExecutor =
+			this.options.executeTransfer ?? (() => notWired("executeTransfer"));
 		router.add("POST", "/api/transfers", createTransfersRoute(executeTransfer));
 
-		const createInvite: InviteCreator = (request) => {
-			const fn = this.options.createInvite;
-			if (!fn) {
-				throw new Error(
-					"invites route is not wired: pass createInvite when constructing the daemon",
-				);
-			}
-			return fn(request);
-		};
+		const createInvite: InviteCreator =
+			this.options.createInvite ?? (() => notWired("createInvite"));
 		router.add("POST", "/api/invites", createInvitesRoute(createInvite));
 
 		const notifications = createNotificationsRoute(this.notifications);

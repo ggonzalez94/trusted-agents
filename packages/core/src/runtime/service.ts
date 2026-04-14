@@ -3891,8 +3891,8 @@ export class TapMessagingService {
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 			}
 
+			const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
 			if (contact) {
-				const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
 				await this.appendLedger({
 					peer: peerLabel(contact),
 					direction: "local",
@@ -3923,9 +3923,7 @@ export class TapMessagingService {
 					conversationId: schedConversationId,
 					requestId: schedRequestId,
 					kind: "scheduling",
-					error:
-						(schedulingResponse as { reason?: string }).reason ??
-						`scheduling ${schedulingResponse.type.split("/")[1] ?? schedulingResponse.type}`,
+					error: (schedulingResponse as { reason?: string }).reason ?? `scheduling ${eventType}`,
 				});
 			}
 			return contact?.peerDisplayName;
