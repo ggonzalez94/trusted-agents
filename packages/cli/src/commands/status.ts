@@ -139,10 +139,22 @@ export async function statusCommand(flags: StatusFlags, opts: GlobalOptions): Pr
 		const registered =
 			configState.kind === "parsed" && configState.agentId !== null && configState.agentId >= 0;
 
-		const ownerInspector = new TransportOwnerLock(dataDir, "tap:status");
-		const rawOwner = await ownerInspector.inspect();
-		const ownerAlive = rawOwner ? isProcessAlive(rawOwner.pid) : false;
-		const transportOwner = rawOwner ? { ...rawOwner, alive: ownerAlive } : null;
+		// `TransportOwnerLock.inspect()` throws on JSON parse / non-ENOENT I/O
+		// failures (see transport-owner-lock.ts `readOwner`). A corrupt
+		// `.transport.lock` file must not abort the whole status command —
+		// crash-recovery is its main use case and stale/damaged locks are
+		// exactly what it's there to surface.
+		let transportOwner: (TransportOwnerInfo & { alive: boolean }) | null = null;
+		let transportOwnerError: string | undefined;
+		try {
+			const ownerInspector = new TransportOwnerLock(dataDir, "tap:status");
+			const rawOwner = await ownerInspector.inspect();
+			if (rawOwner) {
+				transportOwner = { ...rawOwner, alive: isProcessAlive(rawOwner.pid) };
+			}
+		} catch (err) {
+			transportOwnerError = formatReadError(err);
+		}
 
 		const contactsRead = await readContacts(dataDir);
 		const journalRead = await readJournal(dataDir);
@@ -170,6 +182,7 @@ export async function statusCommand(flags: StatusFlags, opts: GlobalOptions): Pr
 				contacts: contactsRead.error,
 				journal: journalRead.error,
 				conversations: conversationsRead.error,
+				transportOwner: transportOwnerError,
 			},
 		});
 
@@ -299,7 +312,12 @@ async function readConversations(dataDir: string): Promise<ReadResult<Conversati
 		const filePath = join(conversationsDir, entry);
 		try {
 			const raw = await readFile(filePath, "utf-8");
-			value.push(JSON.parse(raw) as ConversationLog);
+			const parsed = JSON.parse(raw) as unknown;
+			if (!isConversationLog(parsed)) {
+				failed.push(entry);
+				continue;
+			}
+			value.push(parsed);
 		} catch {
 			failed.push(entry);
 		}
@@ -319,6 +337,18 @@ async function readConversations(dataDir: string): Promise<ReadResult<Conversati
 
 function formatReadError(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+function isConversationLog(value: unknown): value is ConversationLog {
+	// Minimal shape check — just enough so `summarizeMessages` can iterate
+	// safely. A file like `{}` or `{"messages": null}` is schema-invalid and
+	// must be counted as "unreadable" rather than crashing the whole command.
+	if (typeof value !== "object" || value === null) return false;
+	const record = value as Record<string, unknown>;
+	if (!Array.isArray(record.messages)) return false;
+	if (typeof record.peerAgentId !== "number") return false;
+	if (typeof record.peerDisplayName !== "string") return false;
+	return true;
 }
 
 async function readHermesStatus(
@@ -350,18 +380,14 @@ async function readHermesStatus(
 		configError = formatReadError(err);
 	}
 
-	if (!config && !configError && !daemonState && !daemonStateError) {
-		// No config file, no broken config, no daemon state, no broken daemon
-		// state — genuinely not installed for this user.
-		return null;
-	}
-
 	const daemonRunning = daemonState ? isProcessAlive(daemonState.pid) : false;
 
 	if (!config) {
-		// We got here because configError OR a daemon state signal is present.
-		// Either way, treat Hermes as installed so the error/daemon warning
-		// paths still fire.
+		// `config` is only `null` when `loadTapHermesPluginConfig` threw, which
+		// means `configError` is set. The loader returns `{ identities: [] }`
+		// on ENOENT, never `null`, so there is no "no config at all" branch to
+		// worry about here. Treat this as installed-but-broken so the config
+		// error / daemon warnings still fire.
 		return {
 			installed: true,
 			daemon_running: daemonRunning,
@@ -517,12 +543,18 @@ function buildWarnings(input: {
 		contacts?: string;
 		journal?: string;
 		conversations?: string;
+		transportOwner?: string;
 	};
 }): string[] {
 	const warnings: string[] = [];
 
 	// Surface read failures first — if a store is unreadable, every other
 	// derived metric is silently zero and would mislead the operator.
+	if (input.readErrors.transportOwner) {
+		warnings.push(
+			`Failed to read .transport.lock: ${input.readErrors.transportOwner}. Transport owner state is unknown.`,
+		);
+	}
 	if (input.readErrors.contacts) {
 		warnings.push(
 			`Failed to read contacts.json: ${input.readErrors.contacts}. Contact counts are incomplete.`,

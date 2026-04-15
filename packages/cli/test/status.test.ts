@@ -506,6 +506,54 @@ describe("tap status", () => {
 		).toBe(true);
 	});
 
+	it("surfaces a corrupt .transport.lock instead of aborting the command", async () => {
+		// Prior bug: an unguarded TransportOwnerLock.inspect() call meant a
+		// malformed lock file aborted the whole status command — which is
+		// exactly the crash-recovery scenario tap status exists to diagnose.
+		const dataDir = await makeAgentDir(tempRoot);
+		await writeFile(join(dataDir, ".transport.lock"), "{ not json", "utf-8");
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(output.status).toBe("ok");
+		expect(output.data?.host.transport_owner).toBeNull();
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Failed to read .transport.lock") && w.includes("unknown"),
+			),
+		).toBe(true);
+	});
+
+	it("rejects schema-invalid conversation files instead of crashing summarizeMessages", async () => {
+		// Prior bug: readConversations accepted any parseable JSON as a
+		// ConversationLog, so `{}` or `{"messages": null}` made it to
+		// summarizeMessages which then threw on iteration.
+		const dataDir = await makeAgentDir(tempRoot);
+		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		// Schema-invalid: missing messages array
+		await writeFile(join(dataDir, "conversations", "conv-empty.json"), "{}", "utf-8");
+		// Schema-invalid: messages is not an array
+		await writeFile(
+			join(dataDir, "conversations", "conv-null-messages.json"),
+			JSON.stringify({ messages: null, peerAgentId: 1, peerDisplayName: "X" }),
+			"utf-8",
+		);
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(output.status).toBe("ok");
+		expect(output.data?.messages.inbound_count).toBe(0);
+		expect(
+			output.data?.warnings.some(
+				(w) =>
+					w.includes("conversation file(s) unreadable") &&
+					(w.includes("conv-empty") || w.includes("conv-null-messages")),
+			),
+		).toBe(true);
+	});
+
 	it("surfaces corrupt individual conversation files as a warning", async () => {
 		// Prior bug: FileConversationLogger.listConversations silently skips
 		// files that fail to parse. That hid real corruption behind an
