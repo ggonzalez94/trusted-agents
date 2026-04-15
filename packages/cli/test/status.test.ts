@@ -527,8 +527,9 @@ describe("tap status", () => {
 
 	it("rejects schema-invalid conversation files instead of crashing summarizeMessages", async () => {
 		// Prior bug: readConversations accepted any parseable JSON as a
-		// ConversationLog, so `{}` or `{"messages": null}` made it to
-		// summarizeMessages which then threw on iteration.
+		// ConversationLog, so `{}`, `{"messages": null}`, or
+		// `{"messages": [null]}` made it to summarizeMessages which then threw
+		// on iteration.
 		const dataDir = await makeAgentDir(tempRoot);
 		await mkdir(join(dataDir, "conversations"), { recursive: true });
 		// Schema-invalid: missing messages array
@@ -537,6 +538,22 @@ describe("tap status", () => {
 		await writeFile(
 			join(dataDir, "conversations", "conv-null-messages.json"),
 			JSON.stringify({ messages: null, peerAgentId: 1, peerDisplayName: "X" }),
+			"utf-8",
+		);
+		// Schema-invalid: messages contains non-object entries
+		await writeFile(
+			join(dataDir, "conversations", "conv-null-element.json"),
+			JSON.stringify({ messages: [null], peerAgentId: 1, peerDisplayName: "X" }),
+			"utf-8",
+		);
+		// Schema-invalid: message entry is missing direction
+		await writeFile(
+			join(dataDir, "conversations", "conv-bad-direction.json"),
+			JSON.stringify({
+				messages: [{ timestamp: "2026-01-01T00:00:00Z" }],
+				peerAgentId: 1,
+				peerDisplayName: "X",
+			}),
 			"utf-8",
 		);
 
@@ -549,9 +566,44 @@ describe("tap status", () => {
 			output.data?.warnings.some(
 				(w) =>
 					w.includes("conversation file(s) unreadable") &&
-					(w.includes("conv-empty") || w.includes("conv-null-messages")),
+					(w.includes("conv-empty") ||
+						w.includes("conv-null-messages") ||
+						w.includes("conv-null-element") ||
+						w.includes("conv-bad-direction")),
 			),
 		).toBe(true);
+	});
+
+	it("suppresses the queued-commands warning when the lock is unreadable", async () => {
+		// Prior bug: when .transport.lock was corrupt, transportOwner was null
+		// and transportIdle therefore true — so the queued-commands warning
+		// fired even though ownership was actually unknown. A live host might
+		// still be draining the queue.
+		const dataDir = await makeAgentDir(tempRoot);
+		await writeFile(join(dataDir, ".transport.lock"), "{ not json", "utf-8");
+		const journal = new FileRequestJournal(dataDir);
+		await journal.putOutbound({
+			requestId: "cmd-unknown",
+			requestKey: "outbound:command:cmd-unknown",
+			direction: "outbound",
+			kind: "request",
+			method: "command/connect",
+			peerAgentId: 0,
+			status: "queued",
+			metadata: { commandType: "connect", commandPayload: { inviteUrl: "tap://demo" } },
+		});
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		// The lock-read error warning MUST fire
+		expect(output.data?.warnings.some((w) => w.includes("Failed to read .transport.lock"))).toBe(
+			true,
+		);
+		// The queued-commands-idle warning MUST NOT fire — ownership is unknown
+		expect(
+			output.data?.warnings.some((w) => w.includes("queued command") && w.includes("draining")),
+		).toBe(false);
 	});
 
 	it("surfaces corrupt individual conversation files as a warning", async () => {

@@ -340,14 +340,22 @@ function formatReadError(err: unknown): string {
 }
 
 function isConversationLog(value: unknown): value is ConversationLog {
-	// Minimal shape check — just enough so `summarizeMessages` can iterate
-	// safely. A file like `{}` or `{"messages": null}` is schema-invalid and
-	// must be counted as "unreadable" rather than crashing the whole command.
+	// Shape check must be strict enough that every field summarizeMessages
+	// dereferences (`messages[i].direction`, `messages[i].timestamp`) is safe.
+	// A file like `{}`, `{"messages": null}`, or even
+	// `{"messages": [null]}` must be counted as "unreadable" rather than
+	// crashing the whole command during iteration.
 	if (typeof value !== "object" || value === null) return false;
 	const record = value as Record<string, unknown>;
 	if (!Array.isArray(record.messages)) return false;
 	if (typeof record.peerAgentId !== "number") return false;
 	if (typeof record.peerDisplayName !== "string") return false;
+	for (const message of record.messages) {
+		if (typeof message !== "object" || message === null) return false;
+		const entry = message as Record<string, unknown>;
+		if (entry.direction !== "incoming" && entry.direction !== "outgoing") return false;
+		if (typeof entry.timestamp !== "string") return false;
+	}
 	return true;
 }
 
@@ -608,8 +616,16 @@ function buildWarnings(input: {
 	// belongs to a dead process. A truthy-but-`alive: false` owner must NOT
 	// swallow this warning — the operator needs to see both the stale-lock
 	// note and the "nothing is draining your queue" note.
+	//
+	// BUT: when the lock file itself is unreadable, ownership is *unknown*
+	// rather than idle. A live host may well be draining the queue through a
+	// process we just can't inspect. In that case the broken-lock warning is
+	// already telling the operator what's wrong; we must not additionally
+	// claim "nothing is draining your queue" because that can be a false
+	// diagnosis.
+	const transportOwnershipKnown = input.readErrors.transportOwner === undefined;
 	const transportIdle = !input.transportOwner || !input.transportOwner.alive;
-	if (input.journalSummary.queued_commands > 0 && transportIdle) {
+	if (input.journalSummary.queued_commands > 0 && transportIdle && transportOwnershipKnown) {
 		warnings.push(
 			`${input.journalSummary.queued_commands} queued command(s) in journal but no live transport owner is draining them. Start \`tap message listen\` or restart the host that owns this data dir.`,
 		);
