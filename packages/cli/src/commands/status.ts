@@ -643,13 +643,28 @@ function buildWarnings(input: {
 		);
 	}
 
-	if (input.hermes?.daemon_running && !input.hermes.manages_this_data_dir) {
+	// The identity-mismatch and daemon-not-running warnings rely on `config`
+	// and `daemon_state` being readable. When either is broken, we already
+	// emit a dedicated warning pointing at the real problem — adding a
+	// contradictory downstream diagnosis ("daemon is not running" when we
+	// can't actually tell, or "not in configured identities" when we just
+	// couldn't parse the identities list) just confuses the operator. Gate
+	// on the same "is ownership actually known?" pattern the transport-lock
+	// queued-commands warning uses.
+	const hermesConfigReadable = input.hermes?.config_error === undefined;
+	const hermesDaemonStateReadable = input.hermes?.daemon_state_error === undefined;
+
+	if (input.hermes?.daemon_running && !input.hermes.manages_this_data_dir && hermesConfigReadable) {
 		warnings.push(
 			"Hermes TAP daemon is running but this data-dir is not in its configured identities. If you expected Hermes to own this agent's transport, run `tap hermes configure --name <name>` from this data dir.",
 		);
 	}
 
-	if (input.hermes?.manages_this_data_dir && !input.hermes.daemon_running) {
+	if (
+		input.hermes?.manages_this_data_dir &&
+		!input.hermes.daemon_running &&
+		hermesDaemonStateReadable
+	) {
 		warnings.push(
 			"Hermes is configured to manage this data-dir but the TAP daemon is not running. Start or restart `hermes gateway`.",
 		);

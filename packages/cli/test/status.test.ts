@@ -643,6 +643,77 @@ describe("tap status", () => {
 		).toBe(true);
 	});
 
+	it("suppresses identity-mismatch warning when hermes config is unreadable", async () => {
+		// Prior bug: when config.json is malformed, readHermesStatus forces
+		// manages_this_data_dir=false (can't read identities), then downstream
+		// the "daemon is running but this data-dir is not in configured
+		// identities" warning fires — even though the actual problem is the
+		// unreadable config, not a missing identity.
+		const dataDir = await makeAgentDir(tempRoot);
+		const hermesPluginDir = join(hermesHome, "plugins", "trusted-agents-tap");
+		await mkdir(hermesPluginDir, { recursive: true });
+		await writeFile(join(hermesPluginDir, "config.json"), "{ not: json", "utf-8");
+
+		// And a live daemon state pointing at our pid so daemon_running is true.
+		const stateDir = join(hermesPluginDir, "state");
+		await mkdir(stateDir, { recursive: true });
+		await writeFile(
+			join(stateDir, "daemon.json"),
+			JSON.stringify({
+				pid: process.pid,
+				gatewayPid: process.pid,
+				socketPath: join(hermesHome, "tap-hermes.sock"),
+				startedAt: new Date().toISOString(),
+				identities: [],
+			}),
+		);
+
+		await statusCommand({ hermesHome }, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		// Config-error warning MUST fire (the real problem)
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Hermes TAP plugin config") && w.includes("cannot be parsed"),
+			),
+		).toBe(true);
+		// Contradictory "not in configured identities" warning MUST NOT fire
+		expect(output.data?.warnings.some((w) => w.includes("not in its configured identities"))).toBe(
+			false,
+		);
+	});
+
+	it("suppresses daemon-not-running warning when daemon.json is unreadable", async () => {
+		// Prior bug: when daemon.json is malformed, daemon_running defaults to
+		// false; the "TAP daemon is not running" warning then fires even though
+		// the daemon may actually be running — contradicting the
+		// daemon-state-error warning that correctly says "running state is
+		// unknown".
+		const dataDir = await makeAgentDir(tempRoot);
+		await saveTapHermesPluginConfig(hermesHome, {
+			identities: [{ name: "default", dataDir, reconcileIntervalMinutes: 10 }],
+		});
+		const stateDir = join(hermesHome, "plugins", "trusted-agents-tap", "state");
+		await mkdir(stateDir, { recursive: true });
+		await writeFile(join(stateDir, "daemon.json"), "{ not json", "utf-8");
+
+		await statusCommand({ hermesHome }, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		// Daemon-state-error warning MUST fire
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Hermes TAP daemon state file") && w.includes("cannot be parsed"),
+			),
+		).toBe(true);
+		// Contradictory "daemon is not running" warning MUST NOT fire
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("TAP daemon is not running") || w.includes("Start or restart"),
+			),
+		).toBe(false);
+	});
+
 	it("surfaces a corrupt Hermes daemon.json as a warning", async () => {
 		// Prior bug: readHermesStatus's unconditional catch around
 		// readHermesTapDaemonState coerced parse errors to null, so a broken
