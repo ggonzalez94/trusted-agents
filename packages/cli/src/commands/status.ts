@@ -1,15 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { join, resolve as resolvePath } from "node:path";
 import {
 	type Contact,
 	type ConversationLog,
-	FileConversationLogger,
 	FileRequestJournal,
 	FileTrustStore,
 	type RequestJournalEntry,
 	type TransportOwnerInfo,
 	TransportOwnerLock,
+	fsErrorCode,
 	isProcessAlive,
+	resolveDataDir as resolveDataDirPath,
 } from "trusted-agents-core";
 import YAML from "yaml";
 import { readHermesTapDaemonState } from "../hermes/client.js";
@@ -104,6 +106,8 @@ interface HermesStatus {
 	configured_identities: string[];
 	/** Populated when the plugin config exists but cannot be parsed. */
 	config_error?: string;
+	/** Populated when daemon.json exists but cannot be parsed. */
+	daemon_state_error?: string;
 }
 
 interface MessageSummary {
@@ -271,11 +275,46 @@ async function readJournal(dataDir: string): Promise<ReadResult<RequestJournalEn
 }
 
 async function readConversations(dataDir: string): Promise<ReadResult<ConversationLog[]>> {
+	// `FileConversationLogger.listConversations()` silently swallows per-file
+	// JSON parse errors and skips them (see logger.ts `// Skip corrupted files`
+	// branch). For a diagnostic command that's a footgun — one corrupt file
+	// silently undercounts messages without any warning. So we do our own scan
+	// here, track the per-file failures, and surface them as a readable error
+	// if any file couldn't be parsed.
+	const conversationsDir = join(resolveDataDirPath(dataDir), "conversations");
+	let entries: string[];
 	try {
-		return { value: await new FileConversationLogger(dataDir).listConversations() };
+		entries = await readdir(conversationsDir);
 	} catch (err) {
+		if (fsErrorCode(err) === "ENOENT") {
+			return { value: [] };
+		}
 		return { value: [], error: formatReadError(err) };
 	}
+
+	const value: ConversationLog[] = [];
+	const failed: string[] = [];
+	for (const entry of entries) {
+		if (!entry.endsWith(".json")) continue;
+		const filePath = join(conversationsDir, entry);
+		try {
+			const raw = await readFile(filePath, "utf-8");
+			value.push(JSON.parse(raw) as ConversationLog);
+		} catch {
+			failed.push(entry);
+		}
+	}
+
+	if (failed.length === 0) {
+		return { value };
+	}
+
+	const sample = failed.slice(0, 3).join(", ");
+	const suffix = failed.length > 3 ? `, +${failed.length - 3} more` : "";
+	return {
+		value,
+		error: `${failed.length} conversation file(s) unreadable: ${sample}${suffix}`,
+	};
 }
 
 function formatReadError(err: unknown): string {
@@ -288,11 +327,16 @@ async function readHermesStatus(
 ): Promise<HermesStatus | null> {
 	const hermesHome = resolveHermesHome(hermesHomeOverride);
 
+	// `loadTapHermesDaemonState` treats ENOENT as "no daemon running" but throws
+	// on JSON-parse / non-ENOENT I/O failures. We must distinguish those so a
+	// malformed daemon.json shows up as a warning instead of looking exactly
+	// like "Hermes is not running".
 	let daemonState: TapHermesDaemonState | null = null;
+	let daemonStateError: string | undefined;
 	try {
 		daemonState = await readHermesTapDaemonState(hermesHome);
-	} catch {
-		daemonState = null;
+	} catch (err) {
+		daemonStateError = formatReadError(err);
 	}
 
 	let config: TapHermesPluginConfig | null = null;
@@ -306,33 +350,36 @@ async function readHermesStatus(
 		configError = formatReadError(err);
 	}
 
-	if (!config && !configError && !daemonState) {
-		// No config file, no broken config, no daemon state — genuinely not
-		// installed for this user.
+	if (!config && !configError && !daemonState && !daemonStateError) {
+		// No config file, no broken config, no daemon state, no broken daemon
+		// state — genuinely not installed for this user.
 		return null;
 	}
 
+	const daemonRunning = daemonState ? isProcessAlive(daemonState.pid) : false;
+
 	if (!config) {
-		// We got here because configError is set OR a daemon state file exists.
-		// In either case treat Hermes as installed so the error/daemon warning
+		// We got here because configError OR a daemon state signal is present.
+		// Either way, treat Hermes as installed so the error/daemon warning
 		// paths still fire.
 		return {
 			installed: true,
-			daemon_running: daemonState ? isProcessAlive(daemonState.pid) : false,
+			daemon_running: daemonRunning,
 			daemon_pid: daemonState?.pid ?? null,
 			gateway_pid: daemonState?.gatewayPid ?? null,
 			manages_this_data_dir: false,
 			configured_identities: [],
 			...(configError ? { config_error: configError } : {}),
+			...(daemonStateError ? { daemon_state_error: daemonStateError } : {}),
 		};
 	}
 
-	const daemonRunning = daemonState ? isProcessAlive(daemonState.pid) : false;
 	const normalizedDataDir = resolvePath(dataDir);
 	const managesThisDataDir = config.identities.some(
 		(identity) => resolvePath(identity.dataDir) === normalizedDataDir,
 	);
-	const installed = config.identities.length > 0 || daemonState !== null;
+	const installed =
+		config.identities.length > 0 || daemonState !== null || daemonStateError !== undefined;
 
 	if (!installed) {
 		return null;
@@ -345,6 +392,7 @@ async function readHermesStatus(
 		gateway_pid: daemonState?.gatewayPid ?? null,
 		manages_this_data_dir: managesThisDataDir,
 		configured_identities: config.identities.map((identity) => identity.name),
+		...(daemonStateError ? { daemon_state_error: daemonStateError } : {}),
 	};
 }
 
@@ -538,6 +586,12 @@ function buildWarnings(input: {
 	if (input.hermes?.config_error) {
 		warnings.push(
 			`Hermes TAP plugin config exists but cannot be parsed: ${input.hermes.config_error}. Fix it or re-run \`tap hermes configure\`.`,
+		);
+	}
+
+	if (input.hermes?.daemon_state_error) {
+		warnings.push(
+			`Hermes TAP daemon state file exists but cannot be parsed: ${input.hermes.daemon_state_error}. The daemon running state is unknown until this is resolved.`,
 		);
 	}
 

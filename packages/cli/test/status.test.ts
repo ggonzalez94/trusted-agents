@@ -506,6 +506,67 @@ describe("tap status", () => {
 		).toBe(true);
 	});
 
+	it("surfaces corrupt individual conversation files as a warning", async () => {
+		// Prior bug: FileConversationLogger.listConversations silently skips
+		// files that fail to parse. That hid real corruption behind an
+		// undercount with no warning.
+		const dataDir = await makeAgentDir(tempRoot);
+
+		// Seed one valid conversation via the logger.
+		const logger = new FileConversationLogger(dataDir);
+		await logger.logMessage(
+			"conv-alice",
+			{
+				messageId: "in-1",
+				timestamp: "2026-04-14T10:00:00.000Z",
+				direction: "incoming",
+				scope: "general-chat",
+				content: "hi",
+				humanApprovalRequired: false,
+				humanApprovalGiven: null,
+			},
+			{ connectionId: "conn-1", peerAgentId: 100, peerDisplayName: "Alice" },
+		);
+		// Seed a corrupt file next to it.
+		await writeFile(join(dataDir, "conversations", "conv-broken.json"), "{ not json", "utf-8");
+
+		await statusCommand({}, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		// Good file still counted
+		expect(output.data?.messages.inbound_count).toBe(1);
+		// Bad file reported as warning
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("conversation file(s) unreadable") && w.includes("conv-broken"),
+			),
+		).toBe(true);
+	});
+
+	it("surfaces a corrupt Hermes daemon.json as a warning", async () => {
+		// Prior bug: readHermesStatus's unconditional catch around
+		// readHermesTapDaemonState coerced parse errors to null, so a broken
+		// daemon.json looked exactly like "daemon is not running".
+		const dataDir = await makeAgentDir(tempRoot);
+		// Install a valid hermes config so this data-dir is recognized as
+		// Hermes-managed, then write garbage in daemon.json.
+		await saveTapHermesPluginConfig(hermesHome, {
+			identities: [{ name: "default", dataDir, reconcileIntervalMinutes: 10 }],
+		});
+		const stateDir = join(hermesHome, "plugins", "trusted-agents-tap", "state");
+		await mkdir(stateDir, { recursive: true });
+		await writeFile(join(stateDir, "daemon.json"), "{ not json", "utf-8");
+
+		await statusCommand({ hermesHome }, { json: true, dataDir });
+
+		const output = readResponse(stdoutWrites);
+		expect(
+			output.data?.warnings.some(
+				(w) => w.includes("Hermes TAP daemon state file") && w.includes("cannot be parsed"),
+			),
+		).toBe(true);
+	});
+
 	it("surfaces a broken Hermes plugin config instead of reporting not-installed", async () => {
 		// Prior bug: readHermesStatus caught all errors from
 		// loadTapHermesPluginConfig and returned null, making "installed but
