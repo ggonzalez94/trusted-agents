@@ -106,7 +106,11 @@ describe("tap status", () => {
 
 	afterEach(async () => {
 		if (originalHermesHome === undefined) {
-			process.env.HERMES_HOME = undefined;
+			// `process.env.FOO = undefined` coerces to the string "undefined"
+			// in Node; we must `delete` the key to actually unset it and not
+			// leak a bogus HERMES_HOME into later suites.
+			// biome-ignore lint/performance/noDelete: process.env requires delete to unset
+			delete process.env.HERMES_HOME;
 		} else {
 			process.env.HERMES_HOME = originalHermesHome;
 		}
@@ -518,6 +522,10 @@ describe("tap status", () => {
 		const output = readResponse(stdoutWrites);
 		expect(output.status).toBe("ok");
 		expect(output.data?.host.transport_owner).toBeNull();
+		// Mode must be `transport-unknown`, not `idle` — ownership is explicitly
+		// unknown when the lock is unreadable, and JSON consumers that key off
+		// `mode` alone must not be misled into thinking the data dir is idle.
+		expect(output.data?.host.mode).toBe("transport-unknown");
 		expect(
 			output.data?.warnings.some(
 				(w) => w.includes("Failed to read .transport.lock") && w.includes("unknown"),

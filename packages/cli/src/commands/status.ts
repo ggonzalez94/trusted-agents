@@ -37,6 +37,7 @@ type HostMode =
 	| "config-invalid"
 	| "not-registered"
 	| "idle"
+	| "transport-unknown"
 	| "cli-listener"
 	| "cli-transient"
 	| "hermes-managed"
@@ -165,6 +166,7 @@ export async function statusCommand(flags: StatusFlags, opts: GlobalOptions): Pr
 			configState,
 			registered,
 			transportOwner,
+			transportOwnerError,
 		});
 
 		const contactsSummary = summarizeContacts(contactsRead.value);
@@ -434,10 +436,16 @@ function detectMode(input: {
 	configState: ConfigState;
 	registered: boolean;
 	transportOwner: (TransportOwnerInfo & { alive: boolean }) | null;
+	transportOwnerError: string | undefined;
 }): HostMode {
 	if (input.configState.kind === "missing") return "not-initialized";
 	if (input.configState.kind === "invalid") return "config-invalid";
 	if (!input.registered) return "not-registered";
+
+	// A read failure on `.transport.lock` means ownership is unknown, NOT
+	// idle. Automation / JSON consumers that key off `mode` must not be told
+	// "idle" when we explicitly couldn't read the lock file.
+	if (input.transportOwnerError !== undefined) return "transport-unknown";
 
 	const owner = input.transportOwner;
 	if (!owner || !owner.alive) return "idle";
