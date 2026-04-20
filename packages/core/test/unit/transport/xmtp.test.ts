@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Client } from "@xmtp/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionError } from "../../../src/common/errors.js";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
@@ -365,6 +366,34 @@ describe("XmtpTransport", () => {
 
 		it("should return false for isReachable before start", async () => {
 			expect(await transport.isReachable(42)).toBe(false);
+		});
+
+		it("clears the client creation timeout after start succeeds", async () => {
+			vi.useFakeTimers();
+			const createSpy = vi
+				.spyOn(Client, "create")
+				.mockResolvedValue(
+					mockSetup.client as unknown as Awaited<ReturnType<typeof Client.create>>,
+				);
+			const startedTransport = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					dbPath: join(dir.path, "xmtp-start"),
+					dbEncryptionKey: "0x0000000000000000000000000000000000000000000000000000000000000000",
+				},
+				trustStore,
+			);
+
+			try {
+				await startedTransport.start();
+
+				expect(createSpy).toHaveBeenCalledTimes(1);
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				await startedTransport.stop();
+				createSpy.mockRestore();
+				vi.useRealTimers();
+			}
 		});
 	});
 
@@ -1332,6 +1361,35 @@ describe("XmtpTransport", () => {
 			await listenPromise;
 
 			expect(mockSetup.streamOptions).toEqual([{ disableSync: true }]);
+		});
+
+		it("closes the DM stream if stop occurs while the stream is opening", async () => {
+			const streamReady = createDeferred<{
+				[Symbol.asyncIterator](): AsyncIterator<MockMessage>;
+				next(): Promise<IteratorResult<MockMessage>>;
+				return(): Promise<IteratorResult<MockMessage>>;
+			}>();
+			const streamReturn = vi.fn(async () => ({ value: undefined, done: true as const }));
+			const streamNext = vi.fn(() => new Promise<IteratorResult<MockMessage>>(() => {}));
+			const stream = {
+				[Symbol.asyncIterator]() {
+					return this;
+				},
+				next: streamNext,
+				return: streamReturn,
+			};
+			mockSetup.client.conversations.streamAllDmMessages.mockImplementationOnce(
+				async () => await streamReady.promise,
+			);
+			injectMockClient();
+
+			internals(transport).listenWithReconnect();
+			await sleep(10);
+			await transport.stop();
+			streamReady.resolve(stream);
+
+			await vi.waitFor(() => expect(streamReturn).toHaveBeenCalledTimes(1));
+			expect(streamNext).not.toHaveBeenCalled();
 		});
 
 		it("processes streamed messages sequentially before advancing to the next one", async () => {

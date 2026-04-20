@@ -70,7 +70,7 @@ export class XmtpTransport implements TransportProvider {
 	private readonly pendingRequests = new Map<string, PendingRequest>();
 	private readonly processedIncomingRequests = new Map<string, number>();
 	private running = false;
-	private streamCloser?: { return?: (value?: unknown) => Promise<unknown> };
+	private streamCloser?: { return?: () => Promise<unknown> };
 	private readonly inboxIdToAddress = new Map<string, `0x${string}`>();
 	private readonly agentResolver?: IAgentResolver;
 	private readonly resolveCacheTtlMs: number;
@@ -117,16 +117,24 @@ export class XmtpTransport implements TransportProvider {
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
 		};
-		const createClient = () =>
-			Promise.race([
-				Client.create(signer, clientOptions),
-				new Promise<never>((_, reject) => {
-					setTimeout(
-						() => reject(new TransportError("XMTP Client.create() timed out")),
-						CLIENT_CREATE_TIMEOUT_MS,
-					);
-				}),
-			]);
+		const createClient = async () => {
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			try {
+				return await Promise.race([
+					Client.create(signer, clientOptions),
+					new Promise<never>((_, reject) => {
+						timeout = setTimeout(
+							() => reject(new TransportError("XMTP Client.create() timed out")),
+							CLIENT_CREATE_TIMEOUT_MS,
+						);
+					}),
+				]);
+			} finally {
+				if (timeout) {
+					clearTimeout(timeout);
+				}
+			}
+		};
 
 		try {
 			this.client = await createClient();
@@ -318,9 +326,11 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		this.running = false;
+		const stream = this.streamCloser;
+		this.streamCloser = undefined;
 
 		try {
-			await this.streamCloser?.return?.(undefined);
+			await stream?.return?.();
 		} catch {
 			// Ignore stream close errors
 		}
@@ -378,14 +388,27 @@ export class XmtpTransport implements TransportProvider {
 			disableSync: true,
 		});
 		this.streamCloser = stream;
+		if (!this.running) {
+			if (this.streamCloser === stream) {
+				this.streamCloser = undefined;
+			}
+			await stream.return?.();
+			return;
+		}
 
-		for await (const message of stream) {
-			if (!this.running) break;
-			try {
-				await this.processMessage(this.toIncomingMessage(message));
-				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
-			} catch {
-				// Leave the checkpoint unchanged so transient failures can be retried.
+		try {
+			for await (const message of stream) {
+				if (!this.running) break;
+				try {
+					await this.processMessage(this.toIncomingMessage(message));
+					await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
+				} catch {
+					// Leave the checkpoint unchanged so transient failures can be retried.
+				}
+			}
+		} finally {
+			if (this.streamCloser === stream) {
+				this.streamCloser = undefined;
 			}
 		}
 	}
