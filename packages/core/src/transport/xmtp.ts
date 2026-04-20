@@ -71,6 +71,11 @@ export class XmtpTransport implements TransportProvider {
 	private readonly processedIncomingRequests = new Map<string, number>();
 	private running = false;
 	private streamCloser?: { return?: () => Promise<unknown> };
+	private listenerPromise?: Promise<void>;
+	private reconnectCanceler?: {
+		timer: ReturnType<typeof setTimeout>;
+		resolve: () => void;
+	};
 	private readonly inboxIdToAddress = new Map<string, `0x${string}`>();
 	private readonly agentResolver?: IAgentResolver;
 	private readonly resolveCacheTtlMs: number;
@@ -329,10 +334,26 @@ export class XmtpTransport implements TransportProvider {
 		const stream = this.streamCloser;
 		this.streamCloser = undefined;
 
+		if (this.reconnectCanceler) {
+			clearTimeout(this.reconnectCanceler.timer);
+			this.reconnectCanceler.resolve();
+			this.reconnectCanceler = undefined;
+		}
+
 		try {
 			await stream?.return?.();
 		} catch {
 			// Ignore stream close errors
+		}
+
+		const listener = this.listenerPromise;
+		this.listenerPromise = undefined;
+		if (listener) {
+			try {
+				await listener;
+			} catch {
+				// Listener errors are already swallowed inside the reconnect loop
+			}
 		}
 
 		for (const pending of this.pendingRequests.values()) {
@@ -357,7 +378,7 @@ export class XmtpTransport implements TransportProvider {
 	}
 
 	private listenWithReconnect(): void {
-		(async () => {
+		this.listenerPromise = (async () => {
 			while (this.running) {
 				try {
 					await this.listenForMessages();
@@ -365,7 +386,13 @@ export class XmtpTransport implements TransportProvider {
 					// Stream failed — will retry after delay
 				}
 				if (this.running) {
-					await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(() => {
+							this.reconnectCanceler = undefined;
+							resolve();
+						}, RECONNECT_DELAY_MS);
+						this.reconnectCanceler = { timer, resolve };
+					});
 				}
 			}
 		})();

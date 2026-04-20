@@ -395,6 +395,31 @@ describe("XmtpTransport", () => {
 				vi.useRealTimers();
 			}
 		});
+
+		it("clears the client creation timeout when Client.create rejects", async () => {
+			vi.useFakeTimers();
+			const createSpy = vi
+				.spyOn(Client, "create")
+				.mockRejectedValue(new Error("client create failure"));
+			const failingTransport = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					dbPath: join(dir.path, "xmtp-start-fail"),
+					dbEncryptionKey: "0x0000000000000000000000000000000000000000000000000000000000000000",
+				},
+				trustStore,
+			);
+
+			try {
+				await expect(failingTransport.start()).rejects.toThrow("client create failure");
+
+				expect(createSpy).toHaveBeenCalledTimes(1);
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				createSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
 	});
 
 	describe("send", () => {
@@ -1385,11 +1410,34 @@ describe("XmtpTransport", () => {
 
 			internals(transport).listenWithReconnect();
 			await sleep(10);
-			await transport.stop();
+			const stopPromise = transport.stop();
 			streamReady.resolve(stream);
+			await stopPromise;
 
-			await vi.waitFor(() => expect(streamReturn).toHaveBeenCalledTimes(1));
+			expect(streamReturn).toHaveBeenCalledTimes(1);
 			expect(streamNext).not.toHaveBeenCalled();
+		});
+
+		it("cancels the reconnect sleep when stop runs during the retry delay", async () => {
+			mockSetup.client.conversations.streamAllDmMessages.mockRejectedValueOnce(
+				new Error("transient stream failure"),
+			);
+			injectMockClient();
+
+			internals(transport).listenWithReconnect();
+
+			await vi.waitFor(() => {
+				expect(internals(transport).reconnectCanceler).toBeDefined();
+			});
+
+			const stopStart = Date.now();
+			await transport.stop();
+			const stopElapsedMs = Date.now() - stopStart;
+
+			// Without a cancellable sleep this would block for RECONNECT_DELAY_MS (5_000ms).
+			expect(stopElapsedMs).toBeLessThan(1_000);
+			expect(internals(transport).reconnectCanceler).toBeUndefined();
+			expect(internals(transport).listenerPromise).toBeUndefined();
 		});
 
 		it("processes streamed messages sequentially before advancing to the next one", async () => {
