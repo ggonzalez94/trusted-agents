@@ -72,6 +72,7 @@ export class XmtpTransport implements TransportProvider {
 	private running = false;
 	private streamCloser?: { return?: () => Promise<unknown> };
 	private listenerPromise?: Promise<void>;
+	private streamOpenAbort?: () => void;
 	private reconnectCanceler?: {
 		timer: ReturnType<typeof setTimeout>;
 		resolve: () => void;
@@ -340,6 +341,11 @@ export class XmtpTransport implements TransportProvider {
 			this.reconnectCanceler = undefined;
 		}
 
+		if (this.streamOpenAbort) {
+			this.streamOpenAbort();
+			this.streamOpenAbort = undefined;
+		}
+
 		try {
 			await stream?.return?.();
 		} catch {
@@ -411,9 +417,26 @@ export class XmtpTransport implements TransportProvider {
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
-		const stream = await this.client.conversations.streamAllDmMessages({
+		// The SDK call can stall (network/handshake), so race it against a
+		// stop-initiated abort signal. Without this race, `await transport.stop()`
+		// would block on `listenerPromise` indefinitely when the stream never
+		// opens — exactly the one-shot CLI flow this change is meant to unblock.
+		const streamPromise = this.client.conversations.streamAllDmMessages({
 			disableSync: true,
 		});
+		const aborted: Promise<null> = new Promise((resolve) => {
+			this.streamOpenAbort = () => resolve(null);
+		});
+		const stream = await Promise.race([streamPromise, aborted]);
+		this.streamOpenAbort = undefined;
+
+		if (stream === null) {
+			// Stop was signaled before the stream opened. Close any stream that
+			// lands later so we don't leak an open handle.
+			streamPromise.then((s) => s.return?.()).catch(() => {});
+			return;
+		}
+
 		this.streamCloser = stream;
 		if (!this.running) {
 			if (this.streamCloser === stream) {

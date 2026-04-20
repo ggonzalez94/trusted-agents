@@ -1418,6 +1418,35 @@ describe("XmtpTransport", () => {
 			expect(streamNext).not.toHaveBeenCalled();
 		});
 
+		it("does not block stop when streamAllDmMessages never resolves", async () => {
+			const hangingStreamOpen = createDeferred<never>();
+			const streamOpenSpy = vi.fn(async () => {
+				await hangingStreamOpen.promise;
+				throw new Error("unreachable");
+			});
+			mockSetup.client.conversations.streamAllDmMessages.mockImplementationOnce(
+				streamOpenSpy as unknown as typeof mockSetup.client.conversations.streamAllDmMessages,
+			);
+			injectMockClient();
+
+			internals(transport).listenWithReconnect();
+
+			await vi.waitFor(() => {
+				expect(streamOpenSpy).toHaveBeenCalled();
+				expect(internals(transport).streamOpenAbort).toBeDefined();
+			});
+
+			const stopStart = Date.now();
+			await transport.stop();
+			const stopElapsedMs = Date.now() - stopStart;
+
+			// Without the abort race, stop() would hang on the pending listener promise.
+			expect(stopElapsedMs).toBeLessThan(500);
+			expect(internals(transport).streamOpenAbort).toBeUndefined();
+			expect(internals(transport).listenerPromise).toBeUndefined();
+			expect(internals(transport).client).toBeNull();
+		});
+
 		it("cancels the reconnect sleep when stop runs during the retry delay", async () => {
 			mockSetup.client.conversations.streamAllDmMessages.mockRejectedValueOnce(
 				new Error("transient stream failure"),
