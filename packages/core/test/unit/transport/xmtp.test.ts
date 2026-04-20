@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Client } from "@xmtp/node-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionError } from "../../../src/common/errors.js";
 import { createEmptyPermissionState } from "../../../src/permissions/types.js";
@@ -365,6 +366,59 @@ describe("XmtpTransport", () => {
 
 		it("should return false for isReachable before start", async () => {
 			expect(await transport.isReachable(42)).toBe(false);
+		});
+
+		it("clears the client creation timeout after start succeeds", async () => {
+			vi.useFakeTimers();
+			const createSpy = vi
+				.spyOn(Client, "create")
+				.mockResolvedValue(
+					mockSetup.client as unknown as Awaited<ReturnType<typeof Client.create>>,
+				);
+			const startedTransport = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					dbPath: join(dir.path, "xmtp-start"),
+					dbEncryptionKey: "0x0000000000000000000000000000000000000000000000000000000000000000",
+				},
+				trustStore,
+			);
+
+			try {
+				await startedTransport.start();
+
+				expect(createSpy).toHaveBeenCalledTimes(1);
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				await startedTransport.stop();
+				createSpy.mockRestore();
+				vi.useRealTimers();
+			}
+		});
+
+		it("clears the client creation timeout when Client.create rejects", async () => {
+			vi.useFakeTimers();
+			const createSpy = vi
+				.spyOn(Client, "create")
+				.mockRejectedValue(new Error("client create failure"));
+			const failingTransport = new XmtpTransport(
+				{
+					...TEST_CONFIG,
+					dbPath: join(dir.path, "xmtp-start-fail"),
+					dbEncryptionKey: "0x0000000000000000000000000000000000000000000000000000000000000000",
+				},
+				trustStore,
+			);
+
+			try {
+				await expect(failingTransport.start()).rejects.toThrow("client create failure");
+
+				expect(createSpy).toHaveBeenCalledTimes(1);
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				createSpy.mockRestore();
+				vi.useRealTimers();
+			}
 		});
 	});
 
@@ -1332,6 +1386,87 @@ describe("XmtpTransport", () => {
 			await listenPromise;
 
 			expect(mockSetup.streamOptions).toEqual([{ disableSync: true }]);
+		});
+
+		it("closes the DM stream if stop occurs while the stream is opening", async () => {
+			const streamReady = createDeferred<{
+				[Symbol.asyncIterator](): AsyncIterator<MockMessage>;
+				next(): Promise<IteratorResult<MockMessage>>;
+				return(): Promise<IteratorResult<MockMessage>>;
+			}>();
+			const streamReturn = vi.fn(async () => ({ value: undefined, done: true as const }));
+			const streamNext = vi.fn(() => new Promise<IteratorResult<MockMessage>>(() => {}));
+			const stream = {
+				[Symbol.asyncIterator]() {
+					return this;
+				},
+				next: streamNext,
+				return: streamReturn,
+			};
+			mockSetup.client.conversations.streamAllDmMessages.mockImplementationOnce(
+				async () => await streamReady.promise,
+			);
+			injectMockClient();
+
+			internals(transport).listenWithReconnect();
+			await sleep(10);
+			const stopPromise = transport.stop();
+			streamReady.resolve(stream);
+			await stopPromise;
+
+			expect(streamReturn).toHaveBeenCalledTimes(1);
+			expect(streamNext).not.toHaveBeenCalled();
+		});
+
+		it("does not block stop when streamAllDmMessages never resolves", async () => {
+			const hangingStreamOpen = createDeferred<never>();
+			const streamOpenSpy = vi.fn(async () => {
+				await hangingStreamOpen.promise;
+				throw new Error("unreachable");
+			});
+			mockSetup.client.conversations.streamAllDmMessages.mockImplementationOnce(
+				streamOpenSpy as unknown as typeof mockSetup.client.conversations.streamAllDmMessages,
+			);
+			injectMockClient();
+
+			internals(transport).listenWithReconnect();
+
+			await vi.waitFor(() => {
+				expect(streamOpenSpy).toHaveBeenCalled();
+				expect(internals(transport).streamOpenAbort).toBeDefined();
+			});
+
+			const stopStart = Date.now();
+			await transport.stop();
+			const stopElapsedMs = Date.now() - stopStart;
+
+			// Without the abort race, stop() would hang on the pending listener promise.
+			expect(stopElapsedMs).toBeLessThan(500);
+			expect(internals(transport).streamOpenAbort).toBeUndefined();
+			expect(internals(transport).listenerPromise).toBeUndefined();
+			expect(internals(transport).client).toBeNull();
+		});
+
+		it("cancels the reconnect sleep when stop runs during the retry delay", async () => {
+			mockSetup.client.conversations.streamAllDmMessages.mockRejectedValueOnce(
+				new Error("transient stream failure"),
+			);
+			injectMockClient();
+
+			internals(transport).listenWithReconnect();
+
+			await vi.waitFor(() => {
+				expect(internals(transport).reconnectCanceler).toBeDefined();
+			});
+
+			const stopStart = Date.now();
+			await transport.stop();
+			const stopElapsedMs = Date.now() - stopStart;
+
+			// Without a cancellable sleep this would block for RECONNECT_DELAY_MS (5_000ms).
+			expect(stopElapsedMs).toBeLessThan(1_000);
+			expect(internals(transport).reconnectCanceler).toBeUndefined();
+			expect(internals(transport).listenerPromise).toBeUndefined();
 		});
 
 		it("processes streamed messages sequentially before advancing to the next one", async () => {
