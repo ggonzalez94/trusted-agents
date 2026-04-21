@@ -1,18 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMeetingsRoutes } from "../../../src/http/routes/meetings.js";
 
-const validProposal = {
-	type: "scheduling/propose" as const,
-	schedulingId: "sched-1",
-	title: "Sync",
-	duration: 30,
-	slots: [{ start: "2026-04-14T10:00:00Z", end: "2026-04-14T10:30:00Z" }],
-	originTimezone: "UTC",
-};
+interface BuiltProposal {
+	type: "scheduling/propose";
+	schedulingId: string;
+	title: string;
+	duration: number;
+	slots: Array<{ start: string; end: string }>;
+	originTimezone: string;
+}
 
 function makeService() {
 	return {
-		requestMeeting: vi.fn(async (input: { peer: string; proposal: typeof validProposal }) => ({
+		requestMeeting: vi.fn(async (input: { peer: string; proposal: BuiltProposal }) => ({
 			receipt: { messageId: "m-1", status: "delivered" as const },
 			schedulingId: input.proposal.schedulingId,
 			peerName: input.peer,
@@ -48,32 +48,7 @@ function makeService() {
 }
 
 describe("meetings routes", () => {
-	describe("request (full shape / back-compat)", () => {
-		it("forwards a valid proposal to service.requestMeeting", async () => {
-			const service = makeService();
-			const { request } = createMeetingsRoutes(service as never);
-
-			const result = await request({}, { peer: "Alice", proposal: validProposal });
-
-			expect(service.requestMeeting).toHaveBeenCalledOnce();
-			expect(result.schedulingId).toBe("sched-1");
-			expect(result.peerName).toBe("Alice");
-		});
-
-		it("rejects bodies missing peer", async () => {
-			const { request } = createMeetingsRoutes(makeService() as never);
-			await expect(request({}, { proposal: validProposal })).rejects.toThrow();
-		});
-
-		it("rejects malformed proposals", async () => {
-			const { request } = createMeetingsRoutes(makeService() as never);
-			await expect(
-				request({}, { peer: "Alice", proposal: { ...validProposal, type: "wrong" } }),
-			).rejects.toThrow();
-		});
-	});
-
-	describe("request (flat shape)", () => {
+	describe("request", () => {
 		it("builds a proposal internally with default slot, generated id, and current tz", async () => {
 			const service = makeService();
 			const { request } = createMeetingsRoutes(service as never);

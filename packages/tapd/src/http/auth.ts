@@ -1,16 +1,18 @@
 import type { IncomingMessage } from "node:http";
 
 export interface AuthContext {
-	/** The transport the client connected through: "unix" requires no token, "tcp" does. */
+	/** The transport the client connected through. Both require the bearer token. */
 	transport: "unix" | "tcp";
 	expectedToken: string;
 }
 
 export function authorizeRequest(req: IncomingMessage, ctx: AuthContext): boolean {
-	if (ctx.transport === "unix") {
-		return true;
-	}
-
+	// The unix socket previously bypassed the bearer token on the theory that
+	// filesystem permissions alone are sufficient. They aren't: a same-uid
+	// process (a compromised npm dep, a sandboxed renderer, etc.) can reach
+	// the socket regardless of permission bits. Requiring the token forces a
+	// client to prove filesystem read access to `.tapd-token` (mode 0600),
+	// which a restricted same-uid attacker may not have.
 	const headerToken = extractBearerHeader(req);
 	if (headerToken !== null) {
 		return constantTimeEqual(headerToken, ctx.expectedToken);

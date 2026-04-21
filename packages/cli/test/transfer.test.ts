@@ -7,33 +7,22 @@
  * - POST /api/transfers with the expected body
  * - format the response with the legacy success shape
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { transferCommand } from "../src/commands/transfer.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import * as promptLib from "../src/lib/prompt.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { TEST_BASE_CHAIN, buildTestConfig } from "./helpers/config-fixtures.js";
-
-function jsonResponse(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { "Content-Type": "application/json" },
-	});
-}
+import { type FakeTapdHandle, startFakeTapd } from "./helpers/fake-tapd-socket.ts";
 
 describe("tap transfer (tapd client refactor)", () => {
 	const { stdout: stdoutWrites } = useCapturedOutput();
-	let dataDir: string;
+	let fake: FakeTapdHandle | null;
+	let testConfig: ReturnType<typeof buildTestConfig>;
 
 	beforeEach(async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "tap-transfer-"));
-		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
-		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
-
-		const config = buildTestConfig({
+		fake = null;
+		testConfig = buildTestConfig({
 			agentId: 42,
 			chains: {
 				"eip155:1": {
@@ -46,19 +35,34 @@ describe("tap transfer (tapd client refactor)", () => {
 				"eip155:8453": TEST_BASE_CHAIN,
 			},
 		});
-		// useCapturedOutput shares stdout across tests and uses captureOutput,
-		// so we override loadConfig to return our test config with the temp dataDir.
-		vi.spyOn(configLoader, "loadConfig").mockResolvedValue({ ...config, dataDir });
+		// Tests that don't call tapd (validation, dry-run, cancel) just need
+		// loadConfig wired to *some* dataDir; tests that do call tapd use
+		// `withFakeTapd` to spin up a server and re-mock loadConfig with the
+		// fake's dataDir.
+		vi.spyOn(configLoader, "loadConfig").mockResolvedValue({
+			...testConfig,
+			dataDir: "/tmp/tap-transfer-validation-stub",
+		});
 		vi.spyOn(promptLib, "promptYesNo").mockResolvedValue(true);
 		process.exitCode = undefined;
 	});
 
 	afterEach(async () => {
 		vi.clearAllMocks();
-		vi.unstubAllGlobals();
-		await rm(dataDir, { recursive: true, force: true }).catch(() => {});
+		await fake?.stop();
 		process.exitCode = undefined;
 	});
+
+	/** Spin up a fake tapd socket and wire loadConfig to its dataDir. */
+	async function withFakeTapd(
+		routes: Parameters<typeof startFakeTapd>[0]["routes"],
+	): Promise<void> {
+		fake = await startFakeTapd({ routes });
+		vi.spyOn(configLoader, "loadConfig").mockResolvedValue({
+			...testConfig,
+			dataDir: fake.dataDir,
+		});
+	}
 
 	it.each([
 		[
@@ -99,12 +103,15 @@ describe("tap transfer (tapd client refactor)", () => {
 	});
 
 	it("POSTs to /api/transfers and surfaces the legacy submitted payload", async () => {
-		const fetchMock = vi.fn(async () =>
-			jsonResponse({
-				txHash: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
-			}),
-		);
-		vi.stubGlobal("fetch", fetchMock);
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/transfers",
+				handler: () => ({
+					txHash: "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed627f5f14abf84df9f6a0d908",
+				}),
+			},
+		]);
 
 		await transferCommand(
 			{
@@ -118,9 +125,8 @@ describe("tap transfer (tapd client refactor)", () => {
 		);
 
 		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
-		expect(fetchMock).toHaveBeenCalledOnce();
-		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-		expect(JSON.parse(init.body as string)).toEqual({
+		expect(fake?.calls).toHaveLength(1);
+		expect(fake?.calls[0]?.body).toEqual({
 			asset: "usdc",
 			amount: "5",
 			chain: "eip155:8453",
@@ -140,9 +146,6 @@ describe("tap transfer (tapd client refactor)", () => {
 	});
 
 	it("returns a preview and skips execution in dry-run mode", async () => {
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
-
 		await transferCommand(
 			{
 				to: "0x1111111111111111111111111111111111111111",
@@ -155,7 +158,7 @@ describe("tap transfer (tapd client refactor)", () => {
 		);
 
 		expect(promptLib.promptYesNo).not.toHaveBeenCalled();
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(fake).toBeNull();
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			data?: Record<string, unknown>;
@@ -168,8 +171,6 @@ describe("tap transfer (tapd client refactor)", () => {
 
 	it("cancels cleanly when confirmation is declined", async () => {
 		vi.mocked(promptLib.promptYesNo).mockResolvedValueOnce(false);
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
 
 		await transferCommand(
 			{
@@ -180,7 +181,7 @@ describe("tap transfer (tapd client refactor)", () => {
 			{ json: true },
 		);
 
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(fake).toBeNull();
 		const output = JSON.parse(stdoutWrites.join("")) as {
 			status: string;
 			data?: Record<string, unknown>;

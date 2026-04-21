@@ -1,45 +1,33 @@
-import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { TAPD_PID_FILE, TAPD_PORT_FILE } from "trusted-agents-tapd";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
-import { TapdClient, TapdClientError, TapdNotRunningError } from "../lib/tapd-client.js";
-import { isProcessAlive } from "../lib/tapd-spawn.js";
+import {
+	TapdClient,
+	TapdClientError,
+	TapdNotRunningError,
+	discoverTapdUiUrl,
+} from "../lib/tapd-client.js";
+import { cleanupTapdStateFiles, inspectTapdProcess } from "../lib/tapd-spawn.js";
 import type { GlobalOptions } from "../types.js";
-
-async function checkStalePidfile(dataDir: string): Promise<string | null> {
-	const pidPath = join(dataDir, TAPD_PID_FILE);
-	if (!existsSync(pidPath)) return null;
-	let pid: number;
-	try {
-		pid = Number.parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
-	} catch {
-		return null;
-	}
-	if (!Number.isInteger(pid) || pid <= 0) return null;
-	if (isProcessAlive(pid)) return null;
-	// The pidfile points at a dead process. Clean up both files so the next
-	// `tap daemon start` gets a fresh slate, and surface a clear error rather
-	// than letting the operator think tapd is healthy.
-	await rm(pidPath, { force: true }).catch(() => {});
-	await rm(join(dataDir, TAPD_PORT_FILE), { force: true }).catch(() => {});
-	return `tapd exited (pidfile was stale for pid ${pid})`;
-}
 
 export async function daemonStatusCommand(opts: GlobalOptions): Promise<void> {
 	const startTime = Date.now();
 
 	try {
 		const dataDir = resolveDataDir(opts);
-		// Guard against stale pidfiles before touching the network. If the
-		// pidfile points at a dead process, cleaning up here prevents the
-		// split-brain path where a stale port file still exists for a dead
-		// daemon (finding F3.2).
-		const staleMessage = await checkStalePidfile(dataDir);
-		if (staleMessage) {
-			error("DAEMON_ERROR", staleMessage, opts);
+		// Guard against stale or mismatched pidfiles before touching the
+		// network. If the pidfile points at a dead process or a recycled PID,
+		// cleaning up here prevents status from reporting a healthy daemon
+		// against stale local state.
+		const inspection = await inspectTapdProcess(dataDir);
+		if (inspection.status === "dead" || inspection.status === "mismatch") {
+			await cleanupTapdStateFiles(dataDir);
+			error("DAEMON_ERROR", inspection.message ?? "tapd pidfile was stale", opts);
+			process.exitCode = 2;
+			return;
+		}
+		if (inspection.status === "unknown") {
+			error("DAEMON_ERROR", inspection.message ?? "Could not verify existing tapd owner", opts);
 			process.exitCode = 2;
 			return;
 		}
@@ -57,11 +45,21 @@ export async function daemonStatusCommand(opts: GlobalOptions): Promise<void> {
 
 		try {
 			const health = await client.health();
+			// `base_url` is the loopback URL the bundled web UI binds on. CLI
+			// requests go over the Unix socket, but `tap daemon status` shows
+			// the URL so operators can paste it into a browser.
+			let baseUrl: string | undefined;
+			try {
+				baseUrl = (await discoverTapdUiUrl(dataDir)).baseUrl;
+			} catch {
+				baseUrl = undefined;
+			}
 			success(
 				{
 					running: true,
 					data_dir: dataDir,
-					base_url: client.baseUrl,
+					socket_path: client.socketPath,
+					base_url: baseUrl,
 					version: health.version,
 					uptime_ms: health.uptime,
 					transport_connected: health.transportConnected,

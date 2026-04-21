@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { request } from "node:http";
 import { join } from "node:path";
 import type {
 	Contact,
 	ConversationLog,
 	PermissionGrantSet,
-	SchedulingProposal,
 	TapCancelMeetingResult,
 	TapConnectResult,
 	TapPendingRequest,
@@ -15,13 +15,22 @@ import type {
 	TapRequestMeetingResult,
 	TapSendMessageResult,
 	TapSyncReport,
+	TimeSlot,
 } from "trusted-agents-core";
 import { TAPD_PORT_FILE, TAPD_TOKEN_FILE } from "trusted-agents-tapd";
 
+// The Unix socket lives next to the token file. tapd binds it on every start
+// at `<dataDir>/.tapd.sock`. The CLI talks to tapd over this socket so it
+// shares the same auth/transport boundary as the OpenClaw and Hermes
+// clients — only the bundled web UI uses the TCP port, and only because
+// browsers can't speak Unix sockets.
+const SOCKET_FILE = ".tapd.sock";
+
 /**
- * Thrown when the tapd port file or token file is missing/empty. Callers can
- * recover by either prompting the user to run `tap daemon start` or falling
- * back to a local-only path.
+ * Thrown when the tapd token file is missing/empty, i.e. tapd hasn't started
+ * (or has already cleaned up after itself). Callers can recover by either
+ * prompting the user to run `tap daemon start` or falling back to a
+ * local-only path.
  */
 export class TapdNotRunningError extends Error {
 	constructor() {
@@ -47,26 +56,17 @@ export class TapdClientError extends Error {
 }
 
 export interface TapdConnectionInfo {
-	baseUrl: string;
+	socketPath: string;
 	token: string;
 }
 
 /**
- * Read the bound port and bearer token tapd writes into the data dir at start.
- * Throws `TapdNotRunningError` if either file is missing or empty.
+ * Read the bearer token tapd writes into the data dir at start, and return
+ * it alongside the per-data-dir Unix socket path. Throws
+ * `TapdNotRunningError` when the token file is missing or empty — that
+ * signals tapd is not running for this data dir.
  */
 export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo> {
-	let portRaw: string;
-	try {
-		portRaw = await readFile(join(dataDir, TAPD_PORT_FILE), "utf-8");
-	} catch {
-		throw new TapdNotRunningError();
-	}
-	const port = Number.parseInt(portRaw.trim(), 10);
-	if (!Number.isInteger(port) || port <= 0) {
-		throw new TapdNotRunningError();
-	}
-
 	let token: string;
 	try {
 		token = (await readFile(join(dataDir, TAPD_TOKEN_FILE), "utf-8")).trim();
@@ -76,8 +76,7 @@ export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo>
 	if (!token) {
 		throw new TapdNotRunningError();
 	}
-
-	return { baseUrl: `http://127.0.0.1:${port}`, token };
+	return { socketPath: join(dataDir, SOCKET_FILE), token };
 }
 
 /**
@@ -92,6 +91,32 @@ export async function tryDiscoverTapd(dataDir: string): Promise<TapdConnectionIn
 		if (err instanceof TapdNotRunningError) return null;
 		throw err;
 	}
+}
+
+export interface TapdUiInfo {
+	baseUrl: string;
+	token: string;
+}
+
+/**
+ * Returns the loopback HTTP URL the bundled web UI listens on, plus the
+ * bearer token. CLI commands that open a browser (`tap ui`) or display the
+ * UI URL (`tap daemon status`) call this. Normal CLI requests still go over
+ * the Unix socket via `discoverTapd` / `TapdClient`.
+ */
+export async function discoverTapdUiUrl(dataDir: string): Promise<TapdUiInfo> {
+	let portRaw: string;
+	try {
+		portRaw = await readFile(join(dataDir, TAPD_PORT_FILE), "utf-8");
+	} catch {
+		throw new TapdNotRunningError();
+	}
+	const port = Number.parseInt(portRaw.trim(), 10);
+	if (!Number.isInteger(port) || port <= 0) {
+		throw new TapdNotRunningError();
+	}
+	const { token } = await discoverTapd(dataDir);
+	return { baseUrl: `http://127.0.0.1:${port}`, token };
 }
 
 export interface TransferRequestBody {
@@ -131,9 +156,26 @@ export interface IdentityResponse {
 }
 
 /**
- * Typed HTTP client for the tapd local API. Methods mirror the route surface
- * created in `packages/tapd/src/http/routes/`. Construct with
- * `TapdClient.forDataDir(dataDir)` so the bearer token is picked up
+ * Flat-shape body the meetings route accepts. CLI builds the slot list
+ * locally (with the configured calendar provider) and posts the result; tapd
+ * fills in the schedulingId default and validates the proposal.
+ */
+export interface RequestMeetingBody {
+	peer: string;
+	title: string;
+	duration: number;
+	slots?: TimeSlot[];
+	preferred?: string;
+	location?: string;
+	note?: string;
+	schedulingId?: string;
+	originTimezone?: string;
+}
+
+/**
+ * Typed HTTP-over-Unix-socket client for the tapd local API. Methods mirror
+ * the route surface created in `packages/tapd/src/http/routes/`. Construct
+ * with `TapdClient.forDataDir(dataDir)` so the bearer token is picked up
  * automatically.
  */
 export class TapdClient {
@@ -143,8 +185,8 @@ export class TapdClient {
 		return new TapdClient(await discoverTapd(dataDir));
 	}
 
-	get baseUrl(): string {
-		return this.info.baseUrl;
+	get socketPath(): string {
+		return this.info.socketPath;
 	}
 
 	get token(): string {
@@ -221,10 +263,7 @@ export class TapdClient {
 		return this.post<TapRequestFundsResult>("/api/funds-requests", input);
 	}
 
-	requestMeeting(input: {
-		peer: string;
-		proposal: SchedulingProposal;
-	}): Promise<TapRequestMeetingResult> {
+	requestMeeting(input: RequestMeetingBody): Promise<TapRequestMeetingResult> {
 		return this.post<TapRequestMeetingResult>("/api/meetings", input);
 	}
 
@@ -290,48 +329,85 @@ export class TapdClient {
 
 	// ── Internals ───────────────────────────────────────────────────────────
 
-	private async get<T>(path: string): Promise<T> {
-		const response = await fetch(`${this.info.baseUrl}${path}`, {
-			method: "GET",
-			headers: this.headers(),
-		});
-		return await this.parse<T>(response);
+	private get<T>(path: string): Promise<T> {
+		return this.requestOnce<T>("GET", path);
 	}
 
-	private async post<T>(path: string, body: unknown): Promise<T> {
-		const response = await fetch(`${this.info.baseUrl}${path}`, {
-			method: "POST",
-			headers: { ...this.headers(), "Content-Type": "application/json" },
-			body: JSON.stringify(body ?? {}),
-		});
-		return await this.parse<T>(response);
+	private post<T>(path: string, body: unknown): Promise<T> {
+		return this.requestOnce<T>("POST", path, body);
 	}
 
-	private headers(): Record<string, string> {
-		return { Authorization: `Bearer ${this.info.token}` };
+	private requestOnce<T>(method: string, path: string, body?: unknown): Promise<T> {
+		return tapdHttpRequest<T>(this.info, method, path, body);
 	}
+}
 
-	private async parse<T>(response: Response): Promise<T> {
-		const text = await response.text();
-		let body: unknown;
-		try {
-			body = text ? JSON.parse(text) : undefined;
-		} catch {
-			body = undefined;
+function tapdHttpRequest<T>(
+	info: TapdConnectionInfo,
+	method: string,
+	path: string,
+	body?: unknown,
+): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const payload = body !== undefined ? JSON.stringify(body) : undefined;
+		const headers: Record<string, string> = {
+			Authorization: `Bearer ${info.token}`,
+			Accept: "application/json",
+		};
+		if (payload !== undefined) {
+			headers["Content-Type"] = "application/json";
+			headers["Content-Length"] = String(Buffer.byteLength(payload));
 		}
-		if (!response.ok) {
-			const errPayload = (
-				body as
-					| { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
-					| undefined
-			)?.error;
-			throw new TapdClientError(
-				errPayload?.code ?? "unknown_error",
-				errPayload?.message ?? response.statusText,
-				response.status,
-				errPayload?.details,
-			);
+		const req = request({ socketPath: info.socketPath, method, path, headers }, (res) => {
+			const chunks: Buffer[] = [];
+			res.on("data", (chunk) => chunks.push(chunk as Buffer));
+			res.on("end", () => {
+				const text = Buffer.concat(chunks).toString("utf-8");
+				const status = res.statusCode ?? 0;
+				if (status >= 400) {
+					reject(buildErrorFromBody(text, status));
+					return;
+				}
+				let parsed: unknown;
+				try {
+					parsed = text ? JSON.parse(text) : undefined;
+				} catch {
+					parsed = undefined;
+				}
+				resolve(parsed as T);
+			});
+			res.on("error", reject);
+		});
+		req.on("error", (err: NodeJS.ErrnoException) => {
+			if (err.code === "ENOENT" || err.code === "ECONNREFUSED") {
+				reject(new TapdNotRunningError());
+			} else {
+				reject(err);
+			}
+		});
+		if (payload !== undefined) {
+			req.write(payload);
 		}
-		return body as T;
+		req.end();
+	});
+}
+
+function buildErrorFromBody(text: string, status: number): TapdClientError {
+	let body: unknown;
+	try {
+		body = text ? JSON.parse(text) : undefined;
+	} catch {
+		body = undefined;
 	}
+	const errPayload = (
+		body as
+			| { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
+			| undefined
+	)?.error;
+	return new TapdClientError(
+		errPayload?.code ?? "unknown_error",
+		errPayload?.message ?? `tapd returned HTTP ${status}`,
+		status,
+		errPayload?.details,
+	);
 }

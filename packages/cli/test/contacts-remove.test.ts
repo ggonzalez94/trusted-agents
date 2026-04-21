@@ -1,15 +1,17 @@
 /**
- * Tests for `tap contacts remove` (F3.1 fail-closed fix).
+ * Tests for `tap contacts remove` (F3.1 fail-closed fix), updated for the
+ * Unix-socket migration.
  *
  * The command MUST route through tapd so `connection/revoke` is delivered
  * before local state is deleted — this preserves the revoke-before-delete
  * trust-graph invariant. When tapd is not running, the command fails closed
  * with exit code 2 and does NOT mutate the local trust store.
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeError, type FakeTapdHandle, startFakeTapd } from "./helpers/fake-tapd-socket.ts";
 
 const { loadConfigMock, successMock, errorMock, infoMock, removeContactMock, getContactsMock } =
 	vi.hoisted(() => ({
@@ -47,44 +49,48 @@ vi.mock("trusted-agents-core", async () => {
 
 import { contactsRemoveCommand } from "../src/commands/contacts-remove.js";
 
-function jsonResponse(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { "Content-Type": "application/json" },
-	});
-}
-
 describe("tap contacts remove (F3.1 fail-closed)", () => {
-	let dataDir: string;
+	let fake: FakeTapdHandle | null;
+	let coldDir: string;
 
 	beforeEach(async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "tap-contacts-rm-"));
-		loadConfigMock.mockResolvedValue({ dataDir });
+		fake = null;
+		// "Cold" data dir is used for the fail-closed path: no `.tapd-token`
+		// file means `TapdClient.forDataDir` throws `TapdNotRunningError`
+		// before any HTTP work happens.
+		coldDir = await mkdtemp(join(tmpdir(), "tap-contacts-rm-cold-"));
+		loadConfigMock.mockResolvedValue({ dataDir: coldDir });
 		removeContactMock.mockResolvedValue(undefined);
 		getContactsMock.mockResolvedValue([]);
 	});
 
 	afterEach(async () => {
 		vi.clearAllMocks();
-		vi.unstubAllGlobals();
+		await fake?.stop();
+		await rm(coldDir, { recursive: true, force: true }).catch(() => {});
 		process.exitCode = undefined;
-		await rm(dataDir, { recursive: true, force: true }).catch(() => {});
 	});
 
-	it("routes through tapd's POST /api/contacts/:id/revoke when tapd is running", async () => {
-		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
-		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
+	async function withFakeTapd(
+		routes: Parameters<typeof startFakeTapd>[0]["routes"],
+	): Promise<void> {
+		fake = await startFakeTapd({ routes });
+		loadConfigMock.mockResolvedValue({ dataDir: fake.dataDir });
+	}
 
-		const fetchMock = vi.fn(async () =>
-			jsonResponse({ revoked: true, connectionId: "conn-abc-123", peer: "Bob" }),
-		);
-		vi.stubGlobal("fetch", fetchMock);
+	it("routes through tapd's POST /api/contacts/:id/revoke when tapd is running", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/contacts/:id/revoke",
+				handler: () => ({ revoked: true, connectionId: "conn-abc-123", peer: "Bob" }),
+			},
+		]);
 
 		await contactsRemoveCommand("conn-abc-123", { json: true });
 
-		expect(fetchMock).toHaveBeenCalledOnce();
-		const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
-		expect(url).toBe("http://127.0.0.1:4321/api/contacts/conn-abc-123/revoke");
+		expect(fake?.calls).toHaveLength(1);
+		expect(fake?.calls[0]?.path).toBe("/api/contacts/conn-abc-123/revoke");
 
 		expect(successMock).toHaveBeenCalledOnce();
 		const payload = successMock.mock.calls[0]?.[0] as { removed: string; peer: string };
@@ -96,13 +102,11 @@ describe("tap contacts remove (F3.1 fail-closed)", () => {
 	});
 
 	it("fails closed with exit code 2 and does NOT touch the trust store when tapd is not running", async () => {
-		// No .tapd.port/.tapd-token files → TapdClient.forDataDir throws TapdNotRunningError.
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
-
+		// No `.tapd-token` file in `coldDir` → `TapdClient.forDataDir` throws
+		// `TapdNotRunningError` and the command bails before mutating state.
 		await contactsRemoveCommand("conn-abc-123", { json: true });
 
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(fake).toBeNull();
 		expect(removeContactMock).not.toHaveBeenCalled();
 		expect(successMock).not.toHaveBeenCalled();
 		expect(errorMock).toHaveBeenCalledOnce();
@@ -112,17 +116,17 @@ describe("tap contacts remove (F3.1 fail-closed)", () => {
 	});
 
 	it("surfaces tapd errors (e.g. NOT_FOUND) when the daemon rejects the request", async () => {
-		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
-		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
-
-		const fetchMock = vi.fn(async () =>
-			jsonResponse({ error: { code: "NOT_FOUND", message: "unknown connection" } }, 404),
-		);
-		vi.stubGlobal("fetch", fetchMock);
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/contacts/:id/revoke",
+				handler: () => new FakeError(404, "NOT_FOUND", "unknown connection"),
+			},
+		]);
 
 		await contactsRemoveCommand("conn-missing", { json: true });
 
-		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(fake?.calls).toHaveLength(1);
 		expect(removeContactMock).not.toHaveBeenCalled();
 		expect(successMock).not.toHaveBeenCalled();
 	});

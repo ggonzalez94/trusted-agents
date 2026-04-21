@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	type IConversationLogger,
@@ -7,7 +6,7 @@ import {
 	type TapTransferApprovalContext,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
-import { Daemon, TAPD_PORT_FILE, TAPD_TOKEN_FILE } from "trusted-agents-tapd";
+import { Daemon } from "trusted-agents-tapd";
 import { ALL_CHAINS } from "../../src/lib/chains.js";
 import { createCliRuntime } from "../../src/lib/cli-runtime.js";
 
@@ -99,13 +98,12 @@ export async function startInProcessTapd(options: InProcessTapdOptions): Promise
 		},
 	});
 
+	// `daemon.start()` writes both `.tapd.port` and `.tapd-token` into
+	// `dataDir`, and `daemon.stop()` cleans both up — the helper does not
+	// need to manage them itself.
 	await daemon.start();
 	const port = daemon.boundTcpPort();
 	const token = daemon.authToken();
-
-	// Persist port + token into the data dir so `discoverTapd(dataDir)` works.
-	const { writeFile } = await import("node:fs/promises");
-	await writeFile(join(dataDir, TAPD_TOKEN_FILE), token, { encoding: "utf-8", mode: 0o600 });
 
 	return {
 		port,
@@ -113,8 +111,6 @@ export async function startInProcessTapd(options: InProcessTapdOptions): Promise
 		stop: async () => {
 			await daemon.stop().catch(() => {});
 			await runtime.stop().catch(() => {});
-			await rm(join(dataDir, TAPD_TOKEN_FILE), { force: true }).catch(() => {});
-			await rm(join(dataDir, TAPD_PORT_FILE), { force: true }).catch(() => {});
 		},
 	};
 }

@@ -10,6 +10,7 @@ import {
 	generateSchedulingId,
 	validateSchedulingProposal,
 } from "trusted-agents-core";
+import { HttpError } from "../errors.js";
 import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
@@ -21,22 +22,14 @@ import {
 } from "../validation.js";
 
 /**
- * Full-shape body. Back-compat for the CLI `tap message request-meeting`
- * command, which still builds the proposal client-side and posts it here.
+ * Flat body shared by every meetings client (CLI, Hermes Python plugin,
+ * OpenClaw TS plugin). Tapd generates the schedulingId default when the
+ * caller omits one and either honors a caller-supplied `slots` array or
+ * builds slots from `preferred` (or a placeholder ~24h ahead when neither
+ * is present). Standardising on this single shape eliminates the per-host
+ * drift the dual-shape route used to invite.
  */
-interface RequestMeetingFullBody {
-	peer: string;
-	proposal: SchedulingProposal;
-}
-
-/**
- * Flat-shape body. Used by Hermes Python plugin and OpenClaw TS plugin —
- * they don't have direct access to `generateSchedulingId` or a calendar
- * provider, so tapd builds the full `SchedulingProposal` centrally. Either
- * a caller-supplied `slots` array OR a `preferred` ISO timestamp can be
- * used; if neither is present we default to a placeholder slot ~24h ahead.
- */
-interface RequestMeetingFlatBody {
+interface RequestMeetingBody {
 	peer: string;
 	title: string;
 	duration: number;
@@ -48,25 +41,7 @@ interface RequestMeetingFlatBody {
 	originTimezone?: string;
 }
 
-function isFullShape(value: Record<string, unknown>): boolean {
-	return typeof value.proposal === "object" && value.proposal !== null;
-}
-
-function isRequestMeetingFullBody(value: unknown): value is RequestMeetingFullBody {
-	const v = asRecord(value);
-	if (!v) return false;
-	if (!isNonEmptyString(v.peer)) return false;
-	if (!v.proposal || typeof v.proposal !== "object") return false;
-	const p = v.proposal as Record<string, unknown>;
-	if (p.type !== "scheduling/propose") return false;
-	if (typeof p.schedulingId !== "string") return false;
-	if (typeof p.title !== "string") return false;
-	if (typeof p.duration !== "number") return false;
-	if (!Array.isArray(p.slots)) return false;
-	return true;
-}
-
-function isRequestMeetingFlatBody(value: unknown): value is RequestMeetingFlatBody {
+function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (!isNonEmptyString(v.peer)) return false;
@@ -124,16 +99,15 @@ export interface MeetingsRoutesOptions {
 /**
  * Routes that wrap the scheduling/meeting flows on `TapMessagingService`.
  *
- * The `request` handler accepts two body shapes:
+ * The `request` handler accepts a single flat body shape:
  *
- *   1. `{ peer, proposal: SchedulingProposal }` — the full shape the CLI
- *      already uses. Back-compat, unchanged.
- *   2. `{ peer, title, duration, preferred?, slots?, location?, note?,
- *         schedulingId?, originTimezone? }` — a flat shape that lets host
- *      plugins (Hermes Python, OpenClaw TS) post a meeting without having
- *      to generate a schedulingId, build slots, or know about
- *      `type: "scheduling/propose"`. tapd constructs the full proposal,
- *      validates it, and forwards to `service.requestMeeting`.
+ *   `{ peer, title, duration, preferred?, slots?, location?, note?,
+ *      schedulingId?, originTimezone? }`
+ *
+ * Tapd generates the schedulingId default when omitted, builds slots from
+ * `preferred` (or a placeholder ~24h ahead when neither `slots` nor
+ * `preferred` is present), validates the resulting proposal, and forwards
+ * to `service.requestMeeting`. CLI and host plugins all send this shape.
  */
 export function createMeetingsRoutes(
 	service: TapMessagingService,
@@ -143,26 +117,10 @@ export function createMeetingsRoutes(
 
 	return {
 		request: async (_params, body) => {
-			const raw = asRecord(body);
-			if (!raw) {
-				throw new Error(
-					"meetings POST requires { peer, proposal } or { peer, title, duration, ... }",
-				);
-			}
-
-			if (isFullShape(raw)) {
-				requireBody(
-					body,
-					isRequestMeetingFullBody,
-					"meetings POST with a full body requires { peer: string, proposal: SchedulingProposal }",
-				);
-				return await service.requestMeeting(body);
-			}
-
 			requireBody(
 				body,
-				isRequestMeetingFlatBody,
-				"meetings POST flat body requires { peer: string, title: string, duration: number, ... }",
+				isRequestMeetingBody,
+				"meetings POST requires { peer: string, title: string, duration: number, ... }",
 			);
 
 			const proposal = await buildProposalFromFlat(body, calendarProvider);
@@ -180,7 +138,11 @@ export function createMeetingsRoutes(
 				return details?.type === "scheduling" && details.schedulingId === schedulingId;
 			});
 			if (!match) {
-				throw new Error(`No pending scheduling request found with schedulingId: ${schedulingId}`);
+				throw new HttpError(
+					404,
+					"scheduling_not_found",
+					`No pending scheduling request found with schedulingId: ${schedulingId}`,
+				);
 			}
 			const report = await service.resolvePending(match.requestId, body.approve, body.reason);
 			return {
@@ -201,7 +163,7 @@ export function createMeetingsRoutes(
 }
 
 async function buildProposalFromFlat(
-	body: RequestMeetingFlatBody,
+	body: RequestMeetingBody,
 	calendarProvider: ICalendarProvider | null,
 ): Promise<SchedulingProposal> {
 	const schedulingId = body.schedulingId ?? generateSchedulingId();

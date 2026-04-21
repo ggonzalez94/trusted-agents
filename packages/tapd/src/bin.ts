@@ -18,9 +18,7 @@ import { Daemon, TAPD_VERSION } from "./daemon.js";
 async function main(): Promise<void> {
 	const tapdConfig = resolveTapdConfig(process.env, {});
 
-	process.stdout.write(
-		`tapd ${TAPD_VERSION} starting (dataDir=${tapdConfig.dataDir}, port=${tapdConfig.tcpPort})\n`,
-	);
+	process.stdout.write(`tapd ${TAPD_VERSION} starting (dataDir=${tapdConfig.dataDir})\n`);
 
 	// Pass the full chain map so every tapd-hosted flow has access to the same
 	// set of chains the CLI documents (Base + Taiko today). Without this, a
@@ -73,15 +71,14 @@ async function main(): Promise<void> {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const staticAssetsDir = join(here, "ui");
 
-	// tapd intentionally passes `calendarProvider: null` here. Users running
-	// through `tap ui` or the `tap message request-meeting` CLI command get
-	// real calendar integration because the CLI resolves a Google Calendar
-	// provider from <dataDir>/config.yaml and builds the proposal locally
-	// before POSTing the full-shape body to /api/meetings. The flat-shape
-	// /api/meetings body that Hermes/OpenClaw clients send falls back to a
-	// single placeholder slot ~24h ahead (or the caller-supplied `preferred`
-	// time). A shared calendar resolver in core that tapd can own is a
-	// follow-up — see the Cluster 2 plan for the rationale.
+	// tapd intentionally passes `calendarProvider: null` here. The CLI's
+	// `tap message request-meeting` command resolves a Google Calendar
+	// provider from <dataDir>/config.yaml and pre-builds the slot list
+	// before POSTing /api/meetings, so it never needs the daemon's
+	// provider. Hermes/OpenClaw clients omit `slots` and let tapd fall
+	// back to a single placeholder slot ~24h ahead (or the caller-supplied
+	// `preferred` time). A shared calendar resolver in core that tapd can
+	// own is a follow-up.
 	const daemon = new Daemon({
 		config: tapdConfig,
 		calendarProvider: null,

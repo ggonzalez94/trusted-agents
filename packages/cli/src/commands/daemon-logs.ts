@@ -37,6 +37,10 @@ export async function daemonLogsCommand(
 		let position = statSync(logPath).size;
 		const watcher = watch(logPath, () => {
 			const size = statSync(logPath).size;
+			// spawnTapdDetached truncates .tapd.log on every daemon start, so
+			// after `tap daemon restart` the file shrinks. Reset the cursor to
+			// resume tailing from the beginning of the new run.
+			if (size < position) position = 0;
 			if (size <= position) return;
 			const stream = createReadStream(logPath, {
 				encoding: "utf-8",

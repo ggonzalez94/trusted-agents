@@ -1,10 +1,12 @@
+import { readFile } from "node:fs/promises";
 import { request } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { TapNotification, TapNotificationType } from "trusted-agents-tapd";
 
 export type { TapNotification, TapNotificationType };
 
 const DEFAULT_SOCKET_NAME = ".tapd.sock";
+const TOKEN_FILE_NAME = ".tapd-token";
 const DEFAULT_DATA_DIR = ".trustedagents";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -70,16 +72,20 @@ export function resolveSocketPath(options: OpenClawTapdClientOptions): string {
 /**
  * Thin HTTP-over-Unix-socket client for tapd. Mirrors the methods on the CLI's
  * `TapdClient` but uses Node's `http.request` with a `socketPath`, so the
- * OpenClaw plugin can talk to tapd from inside the Gateway process without
- * binding to a TCP port or shipping a bearer token (Unix socket is
- * authenticated by filesystem permissions).
+ * OpenClaw plugin can talk to tapd from inside the Gateway process. Loads the
+ * bearer token from `<dataDir>/.tapd-token` on each request — filesystem
+ * permissions (0o600 on the token, 0o700 on the parent dir) are the first
+ * line of defense, and the bearer token blocks a same-uid process that can
+ * reach the socket but not read the token file.
  */
 export class OpenClawTapdClient {
 	private readonly socketPath: string;
+	private readonly tokenPath: string;
 	private readonly timeoutMs: number;
 
 	constructor(options: OpenClawTapdClientOptions = {}) {
 		this.socketPath = resolveSocketPath(options);
+		this.tokenPath = join(dirname(this.socketPath), TOKEN_FILE_NAME);
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	}
 
@@ -191,10 +197,28 @@ export class OpenClawTapdClient {
 		return this.request<T>("POST", path, body);
 	}
 
-	private request<T>(method: string, path: string, body: unknown): Promise<T> {
+	private async loadToken(): Promise<string> {
+		try {
+			const token = (await readFile(this.tokenPath, "utf-8")).trim();
+			if (!token) throw new Error(`tapd token file ${this.tokenPath} is empty`);
+			return token;
+		} catch (err: unknown) {
+			const code = (err as NodeJS.ErrnoException | undefined)?.code;
+			if (code === "ENOENT") {
+				throw new TapdNotRunningError(this.socketPath);
+			}
+			throw err;
+		}
+	}
+
+	private async request<T>(method: string, path: string, body: unknown): Promise<T> {
+		const token = await this.loadToken();
 		return new Promise<T>((resolve, reject) => {
 			const payload = body !== undefined ? JSON.stringify(body) : undefined;
-			const headers: Record<string, string> = { Accept: "application/json" };
+			const headers: Record<string, string> = {
+				Accept: "application/json",
+				Authorization: `Bearer ${token}`,
+			};
 			if (payload !== undefined) {
 				headers["Content-Type"] = "application/json";
 				headers["Content-Length"] = String(Buffer.byteLength(payload));

@@ -9,6 +9,7 @@ export interface FakeRequest {
 	method: string;
 	path: string;
 	body: unknown;
+	authHeader: string | undefined;
 }
 
 export type FakeHandler = (req: FakeRequest) => unknown | Promise<unknown>;
@@ -30,32 +31,40 @@ export interface FakeTapdHandle {
 	dataDir: string;
 	calls: FakeRequest[];
 	publishSse(event: SseEvent): void;
+	closeAllSseClients(): void;
 	stop(): Promise<void>;
 }
 
 export interface FakeTapdOptions {
 	routes: FakeRoute[];
+	/** Persist a `.tapd.port` file so callers exercising `discoverTapdUiUrl`
+	 *  resolve a stable URL. */
+	port?: number;
 	/** When set, GET /api/events/stream returns an SSE stream that emits each
 	 *  event subsequently passed to `publishSse`. */
 	enableSse?: boolean;
 }
 
 /**
- * Spins up an in-memory HTTP server bound to a unique Unix socket inside a
- * fresh temp dir. Serves a tiny set of programmable routes so the tests can
- * exercise the OpenClaw tapd client without booting the real daemon.
+ * Spins up an HTTP server bound to a unique Unix socket inside a fresh temp
+ * dir, and writes the bearer token (and optionally a `.tapd.port` file) the
+ * CLI client expects to discover. Mirrors the production daemon's auth
+ * boundary so tests can exercise `TapdClient` end-to-end without booting
+ * the real `Daemon`.
  */
 export async function startFakeTapd(options: FakeTapdOptions): Promise<FakeTapdHandle> {
-	const dataDir = await mkdtemp(join(tmpdir(), "openclaw-tapd-"));
+	const dataDir = await mkdtemp(join(tmpdir(), "tap-fake-tapd-"));
 	const socketPath = join(dataDir, ".tapd.sock");
-	// Persist a fake bearer token alongside the socket. The real tapd writes
-	// one at start-time; the OpenClaw client now reads it per-request and
-	// sends it as `Authorization: Bearer`. Without this, every client call
-	// would fail at the token-load step before reaching the fake server.
 	await writeFile(join(dataDir, ".tapd-token"), FAKE_TAPD_TOKEN, {
 		encoding: "utf-8",
 		mode: 0o600,
 	});
+	if (options.port !== undefined) {
+		await writeFile(join(dataDir, ".tapd.port"), String(options.port), {
+			encoding: "utf-8",
+			mode: 0o600,
+		});
+	}
 	const calls: FakeRequest[] = [];
 	const sseClients = new Set<ServerResponse>();
 
@@ -96,6 +105,12 @@ export async function startFakeTapd(options: FakeTapdOptions): Promise<FakeTapdH
 				client.write(`data: ${JSON.stringify(event.data)}\n\n`);
 			}
 		},
+		closeAllSseClients(): void {
+			for (const client of sseClients) {
+				client.end();
+			}
+			sseClients.clear();
+		},
 		stop: async () => {
 			for (const client of sseClients) {
 				client.end();
@@ -121,8 +136,11 @@ async function handle(
 	const method = req.method ?? "GET";
 	const rawUrl = req.url ?? "/";
 	const path = rawUrl.split("?")[0];
+	const authHeader =
+		typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
 
 	if (enableSse && method === "GET" && path === "/api/events/stream") {
+		calls.push({ method, path, body: undefined, authHeader });
 		res.writeHead(200, {
 			"Content-Type": "text/event-stream",
 			"Cache-Control": "no-cache, no-store",
@@ -137,7 +155,7 @@ async function handle(
 	}
 
 	const body = method === "GET" || method === "HEAD" ? undefined : await readJsonBody(req);
-	calls.push({ method, path, body });
+	calls.push({ method, path, body, authHeader });
 
 	const route = routes.find((r) => r.method === method && matchPath(r.path, path));
 	if (!route) {
@@ -149,7 +167,7 @@ async function handle(
 	}
 
 	try {
-		const result = await route.handler({ method, path, body });
+		const result = await route.handler({ method, path, body, authHeader });
 		if (result instanceof FakeError) {
 			res.writeHead(result.status, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ error: { code: result.code, message: result.message } }));

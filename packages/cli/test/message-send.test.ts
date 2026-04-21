@@ -1,13 +1,17 @@
 /**
- * Unit tests for `tap message send` after the Phase 3 refactor.
- * The command is now a thin tapd HTTP client — these tests mock fetch and
- * verify the client posts the right body and the success payload preserves
- * the historical JSON shape.
+ * Unit tests for `tap message send` after the Phase 3 refactor and the
+ * Unix-socket migration. The command is now a thin tapd HTTP client over
+ * `<dataDir>/.tapd.sock` — these tests stand up a fake tapd-shaped socket
+ * server and verify the client posts the right body and the success
+ * payload preserves the historical JSON shape.
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	FAKE_TAPD_TOKEN,
+	FakeError,
+	type FakeTapdHandle,
+	startFakeTapd,
+} from "./helpers/fake-tapd-socket.ts";
 
 const { loadConfigMock, successMock, errorMock } = vi.hoisted(() => ({
 	loadConfigMock: vi.fn(),
@@ -31,47 +35,44 @@ vi.mock("../src/lib/output.js", async () => {
 import { messageSendCommand } from "../src/commands/message-send.js";
 
 describe("tap message send (tapd client refactor)", () => {
-	let dataDir: string;
+	let fake: FakeTapdHandle;
 
 	beforeEach(async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "tap-msg-send-"));
-		await writeFile(join(dataDir, ".tapd.port"), "4321", "utf-8");
-		await writeFile(join(dataDir, ".tapd-token"), "token-xyz", "utf-8");
-		loadConfigMock.mockResolvedValue({ dataDir });
+		// Each test sets `fake` to a fresh server in `makeFake`.
 	});
 
 	afterEach(async () => {
 		vi.clearAllMocks();
-		vi.unstubAllGlobals();
-		await rm(dataDir, { recursive: true, force: true }).catch(() => {});
+		await fake?.stop();
 	});
 
+	async function makeFake(routes: Parameters<typeof startFakeTapd>[0]["routes"]): Promise<void> {
+		fake = await startFakeTapd({ routes });
+		loadConfigMock.mockResolvedValue({ dataDir: fake.dataDir });
+	}
+
 	it("POSTs to /api/messages and emits the legacy success payload", async () => {
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(
-					JSON.stringify({
-						receipt: { messageId: "m-1", status: "delivered" },
-						peerName: "Alice",
-						peerAgentId: 99,
-						scope: "general-chat",
-					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } },
-				),
-		);
-		vi.stubGlobal("fetch", fetchMock);
+		await makeFake([
+			{
+				method: "POST",
+				path: "/api/messages",
+				handler: () => ({
+					receipt: { messageId: "m-1", status: "delivered" },
+					peerName: "Alice",
+					peerAgentId: 99,
+					scope: "general-chat",
+				}),
+			},
+		]);
 
 		await messageSendCommand("Alice", "hello", { json: true });
 
-		expect(fetchMock).toHaveBeenCalledOnce();
-		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-		expect(url).toBe("http://127.0.0.1:4321/api/messages");
-		expect(init.method).toBe("POST");
-		expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token-xyz");
-		expect(JSON.parse(init.body as string)).toEqual({
-			peer: "Alice",
-			text: "hello",
-			scope: "general-chat",
+		expect(fake.calls).toHaveLength(1);
+		expect(fake.calls[0]).toMatchObject({
+			method: "POST",
+			path: "/api/messages",
+			authHeader: `Bearer ${FAKE_TAPD_TOKEN}`,
+			body: { peer: "Alice", text: "hello", scope: "general-chat" },
 		});
 
 		expect(successMock).toHaveBeenCalledOnce();
@@ -86,35 +87,33 @@ describe("tap message send (tapd client refactor)", () => {
 	});
 
 	it("forwards an explicit --scope to the tapd POST body", async () => {
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(
-					JSON.stringify({
-						receipt: { messageId: "m-1", status: "delivered" },
-						peerName: "Alice",
-						peerAgentId: 99,
-						scope: "design-review",
-					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } },
-				),
-		);
-		vi.stubGlobal("fetch", fetchMock);
+		await makeFake([
+			{
+				method: "POST",
+				path: "/api/messages",
+				handler: () => ({
+					receipt: { messageId: "m-1", status: "delivered" },
+					peerName: "Alice",
+					peerAgentId: 99,
+					scope: "design-review",
+				}),
+			},
+		]);
 
 		await messageSendCommand("Alice", "looks good", { json: true }, { scope: "design-review" });
 
-		const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-		expect(JSON.parse(init.body as string).scope).toBe("design-review");
+		const body = fake.calls[0]?.body as { scope: string };
+		expect(body.scope).toBe("design-review");
 	});
 
 	it("surfaces errors via handleCommandError when tapd returns 4xx", async () => {
-		const fetchMock = vi.fn(
-			async () =>
-				new Response(
-					JSON.stringify({ error: { code: "validation_error", message: "missing peer" } }),
-					{ status: 400, headers: { "Content-Type": "application/json" } },
-				),
-		);
-		vi.stubGlobal("fetch", fetchMock);
+		await makeFake([
+			{
+				method: "POST",
+				path: "/api/messages",
+				handler: () => new FakeError(400, "validation_error", "missing peer"),
+			},
+		]);
 
 		await messageSendCommand("Alice", "hello", { json: true });
 		expect(errorMock).toHaveBeenCalledOnce();

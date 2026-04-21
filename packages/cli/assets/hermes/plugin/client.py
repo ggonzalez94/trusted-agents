@@ -33,6 +33,7 @@ from typing import Any
 from urllib.parse import quote
 
 SOCKET_NAME = ".tapd.sock"
+TOKEN_FILE_NAME = ".tapd-token"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DAEMON_START_TIMEOUT_SECONDS = 5.0
 DAEMON_START_POLL_SECONDS = 0.1
@@ -174,6 +175,26 @@ def _ensure_tapd_running(socket_path: Path, data_dir: Path) -> tuple[bool, str |
     return False, "tapd did not start within timeout"
 
 
+def _load_auth_token(socket_path: Path) -> tuple[str | None, str | None]:
+    """Read the bearer token tapd persists next to its socket.
+
+    Returns ``(token, error)``. On success, ``error`` is None. On failure,
+    ``token`` is None and ``error`` is a user-facing string. The token file
+    is mode 0o600, so a same-uid process that cannot read it cannot call
+    the daemon — this is the security boundary the unix-socket auth relies
+    on. Parent dir of the socket is the tapd dataDir."""
+    token_path = socket_path.parent / TOKEN_FILE_NAME
+    try:
+        raw = token_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None, f"tapd token missing at {token_path}. {DEFAULT_RECOVERY_GUIDANCE}"
+    except OSError as exc:
+        return None, f"failed to read tapd token at {token_path}: {exc}"
+    if not raw:
+        return None, f"tapd token file {token_path} is empty. {DEFAULT_RECOVERY_GUIDANCE}"
+    return raw, None
+
+
 def _http_request(
     method: str,
     path: str,
@@ -200,9 +221,15 @@ def _http_request(
         if not running:
             return {"error": f"tapd is not running: {note}. {DEFAULT_RECOVERY_GUIDANCE}"}
 
+    token, token_err = _load_auth_token(socket_path)
+    if token is None:
+        return {"error": token_err}
+
     conn = _UnixHTTPConnection(str(socket_path))
     try:
-        headers = {"Content-Type": "application/json"} if body is not None else {}
+        headers: dict[str, str] = {"Authorization": f"Bearer {token}"}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         body_json = json.dumps(body) if body is not None else None
         conn.request(method, path, body=body_json, headers=headers)
         response = conn.getresponse()

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { info, success } from "../lib/output.js";
-import { type TapdConnectionInfo, TapdNotRunningError, discoverTapd } from "../lib/tapd-client.js";
+import { TapdNotRunningError, type TapdUiInfo, discoverTapdUiUrl } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 function openInBrowser(url: string): boolean {
@@ -49,9 +49,9 @@ export async function uiCommand(opts: GlobalOptions): Promise<void> {
 
 	try {
 		const dataDir = resolveDataDir(opts);
-		let connection: TapdConnectionInfo;
+		let connection: TapdUiInfo;
 		try {
-			connection = await discoverTapd(dataDir);
+			connection = await discoverTapdUiUrl(dataDir);
 		} catch (err) {
 			if (err instanceof TapdNotRunningError) {
 				throw new Error(

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnTapdDetached, stopTapdDetached } from "../../src/lib/tapd-spawn.js";
 
 /**
@@ -179,5 +179,57 @@ setInterval(() => {}, 60_000);
 			alive = false;
 		}
 		expect(alive).toBe(false);
+	});
+
+	it("stopTapdDetached refuses to signal a pid that no longer matches tapd ownership", async () => {
+		await writeFile(
+			join(dataDir, ".tapd.pid"),
+			JSON.stringify({
+				pid: process.pid,
+				ownerToken: "tapd-owner-token-that-does-not-match",
+				binPath: stubBin,
+			}),
+			{ encoding: "utf-8", mode: 0o600 },
+		);
+
+		const killSpy = vi.spyOn(process, "kill").mockImplementation(((
+			pid: number,
+			signal?: NodeJS.Signals | 0,
+		) => {
+			if (pid !== process.pid) {
+				throw new Error(`unexpected pid in test: ${pid}`);
+			}
+			if (signal === 0) return true as never;
+			throw new Error(`stopTapdDetached should not send ${String(signal)} to a mismatched pid`);
+		}) as typeof process.kill);
+
+		await expect(stopTapdDetached(dataDir, 100)).rejects.toThrow(/not tapd|ownership|refus/i);
+		expect(killSpy).toHaveBeenCalledWith(process.pid, 0);
+	});
+
+	// Regression: two concurrent tap daemon start invocations must not both
+	// succeed. The pidfile is created with O_CREAT|O_EXCL so exactly one
+	// spawn wins; the loser must detect the race and kill its orphan child.
+	it("spawnTapdDetached refuses to clobber an existing pidfile and kills its child", async () => {
+		// Seed a pidfile as if a racing process just won the create. Use our
+		// own pid so isProcessAlive() is true but ownership won't match —
+		// what matters for this test is that the exclusive write fails.
+		await writeFile(
+			join(dataDir, ".tapd.pid"),
+			JSON.stringify({ pid: process.pid, ownerToken: "racer", binPath: stubBin }),
+			{ encoding: "utf-8", mode: 0o600 },
+		);
+
+		await expect(
+			spawnTapdDetached({
+				dataDir,
+				binPath: stubBin,
+				startupTimeoutMs: 2_000,
+			}),
+		).rejects.toThrow(/already.*progress|pidfile.*exists/i);
+
+		// The pidfile we seeded must remain intact (we didn't clobber it).
+		const raw = await readFile(join(dataDir, ".tapd.pid"), "utf-8");
+		expect(JSON.parse(raw)).toMatchObject({ ownerToken: "racer" });
 	});
 });

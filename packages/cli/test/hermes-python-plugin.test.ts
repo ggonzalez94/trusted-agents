@@ -2,7 +2,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installTapHermesAssets } from "../src/hermes/install.js";
@@ -399,6 +399,15 @@ async function startFakeTapdServer(
 	socketPath: string,
 	routes: Record<string, FakeResponse>,
 ): Promise<{ stop: () => Promise<void> }> {
+	// The Python client now loads the bearer token from `<dataDir>/.tapd-token`
+	// on every request. Without persisting one here the very first call fails
+	// with "tapd token missing" before reaching the fake server.
+	const tokenPath = join(dirname(socketPath), ".tapd-token");
+	await writeFile(tokenPath, "fake-hermes-token-padding-padding", {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
+
 	const server = net.createServer((socket) => {
 		let buf = "";
 		socket.on("data", (chunk) => {

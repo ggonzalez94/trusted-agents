@@ -7,7 +7,7 @@ import type {
 	TapMessagingService,
 } from "trusted-agents-core";
 import { generateAuthToken, persistAuthToken } from "./auth-token.js";
-import { TAPD_PORT_FILE, type TapdConfig } from "./config.js";
+import { TAPD_PORT_FILE, TAPD_TOKEN_FILE, type TapdConfig } from "./config.js";
 import { EventBus } from "./event-bus.js";
 import { Router } from "./http/router.js";
 import { createConnectRoute } from "./http/routes/connect.js";
@@ -125,7 +125,7 @@ export class Daemon {
 		// the transport stays up, there is no reachable control plane, and
 		// every operator retry hits the owner lock (finding F1.1).
 		try {
-			const router = this.buildRouter();
+			const router = this.buildRouter(service);
 			this.server = new TapdHttpServer({
 				router,
 				socketPath: this.options.config.socketPath,
@@ -193,9 +193,10 @@ export class Daemon {
 			this.notificationUnsubscribe();
 			this.notificationUnsubscribe = null;
 		}
-		await rm(join(this.options.config.dataDir, TAPD_PORT_FILE), {
-			force: true,
-		}).catch(() => {});
+		await Promise.all([
+			rm(join(this.options.config.dataDir, TAPD_PORT_FILE), { force: true }).catch(() => {}),
+			rm(join(this.options.config.dataDir, TAPD_TOKEN_FILE), { force: true }).catch(() => {}),
+		]);
 	}
 
 	authToken(): string {
@@ -243,7 +244,13 @@ export class Daemon {
 		this.signalHandlersInstalled = false;
 	}
 
-	private buildRouter(): Router {
+	// `service` is the live TapMessagingService just started by the runtime.
+	// Passing it directly (rather than going through a Proxy) keeps route
+	// handlers strongly typed against `TapMessagingService` and lets `tsc`
+	// catch renames at compile time. The daemon never restarts the runtime
+	// in-place — `releaseResources` tears both runtime and server down
+	// together — so there is no need for lazy resolution here.
+	private buildRouter(service: TapMessagingService): Router {
 		const router = new Router();
 
 		const identityRoute = createIdentityRoute(this.options.identitySource);
@@ -258,43 +265,27 @@ export class Daemon {
 		router.add("GET", "/api/conversations/:id", conversations.get);
 		router.add("POST", "/api/conversations/:id/mark-read", conversations.markRead);
 
-		const ensureRuntime = (): TapMessagingService => {
-			if (!this.runtime) {
-				throw new Error("daemon runtime is not running");
-			}
-			return this.runtime.tapMessagingService;
-		};
-
-		// Lazily resolves the runtime on each call so routes survive daemon restarts.
-		const serviceAdapter = new Proxy({} as unknown as TapMessagingService, {
-			get: (_, prop) => {
-				const svc = ensureRuntime();
-				const val = Reflect.get(svc, prop, svc);
-				return typeof val === "function" ? val.bind(svc) : val;
-			},
-		});
-
-		const pending = createPendingRoutes(serviceAdapter);
+		const pending = createPendingRoutes(service);
 		router.add("GET", "/api/pending", pending.list);
 		router.add("POST", "/api/pending/:id/approve", pending.approve);
 		router.add("POST", "/api/pending/:id/deny", pending.deny);
 
-		router.add("POST", "/api/messages", createMessagesRoute(serviceAdapter));
-		router.add("POST", "/api/connect", createConnectRoute(serviceAdapter));
-		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(serviceAdapter));
+		router.add("POST", "/api/messages", createMessagesRoute(service));
+		router.add("POST", "/api/connect", createConnectRoute(service));
+		router.add("POST", "/api/funds-requests", createFundsRequestsRoute(service));
 
-		const meetings = createMeetingsRoutes(serviceAdapter, {
+		const meetings = createMeetingsRoutes(service, {
 			calendarProvider: this.options.calendarProvider ?? null,
 		});
 		router.add("POST", "/api/meetings", meetings.request);
 		router.add("POST", "/api/meetings/:id/respond", meetings.respond);
 		router.add("POST", "/api/meetings/:id/cancel", meetings.cancel);
 
-		const grants = createGrantsRoutes(serviceAdapter);
+		const grants = createGrantsRoutes(service);
 		router.add("POST", "/api/grants/publish", grants.publish);
 		router.add("POST", "/api/grants/request", grants.request);
 
-		const contactsWrite = createContactsWriteRoutes(serviceAdapter, this.options.trustStore);
+		const contactsWrite = createContactsWriteRoutes(service, this.options.trustStore);
 		router.add("POST", "/api/contacts/:connectionId/revoke", contactsWrite.revoke);
 
 		function notWired(name: string): never {
@@ -317,10 +308,7 @@ export class Daemon {
 			startedAt: this.startedAt,
 			isTransportConnected: () => this.runtime !== null,
 			lastSyncAt: () => undefined,
-			triggerSync: async () => {
-				const service = ensureRuntime();
-				return await service.syncOnce();
-			},
+			triggerSync: async () => await service.syncOnce(),
 			requestShutdown: () => {
 				void this.stop();
 			},

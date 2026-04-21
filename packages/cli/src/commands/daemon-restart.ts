@@ -4,7 +4,12 @@ import { TAPD_PID_FILE } from "trusted-agents-tapd";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { info, success } from "../lib/output.js";
-import { spawnTapdDetached, stopTapdDetached } from "../lib/tapd-spawn.js";
+import {
+	cleanupTapdStateFiles,
+	inspectTapdProcess,
+	spawnTapdDetached,
+	stopTapdDetached,
+} from "../lib/tapd-spawn.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function daemonRestartCommand(opts: GlobalOptions): Promise<void> {
@@ -16,8 +21,15 @@ export async function daemonRestartCommand(opts: GlobalOptions): Promise<void> {
 		let stoppedPid: number | undefined;
 
 		if (existsSync(pidFile)) {
-			info(`Stopping existing tapd in ${dataDir}...`, opts);
-			stoppedPid = await stopTapdDetached(dataDir);
+			const inspection = await inspectTapdProcess(dataDir);
+			if (inspection.status === "running" || inspection.status === "dead") {
+				info(`Stopping existing tapd in ${dataDir}...`, opts);
+				stoppedPid = await stopTapdDetached(dataDir);
+			} else if (inspection.status === "mismatch") {
+				await cleanupTapdStateFiles(dataDir);
+			} else if (inspection.status === "unknown") {
+				throw new Error(inspection.message ?? "Could not verify existing tapd owner");
+			}
 		}
 
 		info(`Starting tapd in ${dataDir}...`, opts);

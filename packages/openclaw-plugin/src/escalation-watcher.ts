@@ -1,8 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { type ClientRequest, type IncomingMessage, request } from "node:http";
+import { dirname, join } from "node:path";
 import { toErrorMessage } from "trusted-agents-core";
 
 const ESCALATION_EVENT_TYPES = new Set(["action.pending", "connection.requested"]);
 const RECONNECT_DELAY_MS = 1000;
+const TOKEN_FILE_NAME = ".tapd-token";
 
 export interface EscalationEvent {
 	type: string;
@@ -52,7 +55,7 @@ export class EscalationWatcher {
 		// stop+start (Gateway reload without process replacement), we want
 		// the SSE stream to come back up instead of silently staying dark.
 		this.stopped = false;
-		this.connect();
+		void this.connect();
 	}
 
 	stop(): void {
@@ -71,13 +74,30 @@ export class EscalationWatcher {
 		}
 	}
 
-	private connect(): void {
+	private async connect(): Promise<void> {
+		let token: string;
+		try {
+			const tokenPath = join(dirname(this.options.socketPath), TOKEN_FILE_NAME);
+			token = (await readFile(tokenPath, "utf-8")).trim();
+			if (!token) throw new Error(`tapd token file ${tokenPath} is empty`);
+		} catch (err) {
+			this.options.logger?.warn(
+				`escalation watcher cannot read tapd token: ${toErrorMessage(err)}`,
+			);
+			this.handleEnd();
+			return;
+		}
+		if (this.stopped) return;
+
 		const req = request(
 			{
 				socketPath: this.options.socketPath,
 				method: "GET",
 				path: "/api/events/stream",
-				headers: { Accept: "text/event-stream" },
+				headers: {
+					Accept: "text/event-stream",
+					Authorization: `Bearer ${token}`,
+				},
 			},
 			(res) => {
 				if (this.stopped) {
@@ -146,7 +166,7 @@ export class EscalationWatcher {
 		// retry rather than spamming reconnect attempts.
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = null;
-			if (!this.stopped) this.connect();
+			if (!this.stopped) void this.connect();
 		}, this.reconnectDelayMs);
 	}
 }

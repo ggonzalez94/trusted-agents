@@ -1,3 +1,4 @@
+import { request } from "node:http";
 import type { CliTapServiceHooks } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
@@ -45,50 +46,61 @@ export async function createMessageListenerSession(
 export async function messageListenCommand(opts: GlobalOptions): Promise<void> {
 	try {
 		const config = await loadConfig(opts);
-		const { baseUrl, token } = await discoverTapd(config.dataDir);
+		const { socketPath, token } = await discoverTapd(config.dataDir);
 
-		const url = new URL(`${baseUrl}/api/events/stream`);
-		url.searchParams.set("token", token);
+		info(`Listening for incoming messages from ${socketPath}... (Ctrl+C to stop)`, opts);
 
-		const response = await fetch(url.toString());
-		if (!response.body) {
-			error("STREAM_ERROR", "no stream body returned by tapd", opts);
-			process.exitCode = 2;
-			return;
-		}
-		if (!response.ok) {
-			error("STREAM_ERROR", `tapd SSE stream failed with status ${response.status}`, opts);
-			process.exitCode = 2;
-			return;
-		}
+		await new Promise<void>((resolve, reject) => {
+			const req = request(
+				{
+					socketPath,
+					method: "GET",
+					path: "/api/events/stream",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						Accept: "text/event-stream",
+					},
+				},
+				(res) => {
+					const status = res.statusCode ?? 0;
+					if (status !== 200) {
+						error("STREAM_ERROR", `tapd SSE stream failed with status ${status}`, opts);
+						process.exitCode = 2;
+						res.resume();
+						resolve();
+						return;
+					}
 
-		info(`Listening for incoming messages from ${baseUrl}... (Ctrl+C to stop)`, opts);
+					res.setEncoding("utf-8");
+					let buffer = "";
 
-		const reader = response.body.getReader();
-		const decoder = new TextDecoder();
-		let buffer = "";
+					const cleanup = () => {
+						res.destroy();
+						resolve();
+						process.exit(0);
+					};
+					process.on("SIGINT", cleanup);
+					process.on("SIGTERM", cleanup);
 
-		const cleanup = () => {
-			void reader.cancel().catch(() => {});
-			process.exit(0);
-		};
-		process.on("SIGINT", cleanup);
-		process.on("SIGTERM", cleanup);
-
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done) break;
-			buffer += decoder.decode(value, { stream: true });
-			while (buffer.includes("\n\n")) {
-				const idx = buffer.indexOf("\n\n");
-				const block = buffer.slice(0, idx);
-				buffer = buffer.slice(idx + 2);
-				const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
-				if (dataLine) {
-					process.stdout.write(`${dataLine.slice("data: ".length)}\n`);
-				}
-			}
-		}
+					res.on("data", (chunk: string) => {
+						buffer += chunk;
+						while (buffer.includes("\n\n")) {
+							const idx = buffer.indexOf("\n\n");
+							const block = buffer.slice(0, idx);
+							buffer = buffer.slice(idx + 2);
+							const dataLine = block.split("\n").find((line) => line.startsWith("data: "));
+							if (dataLine) {
+								process.stdout.write(`${dataLine.slice("data: ".length)}\n`);
+							}
+						}
+					});
+					res.on("end", () => resolve());
+					res.on("error", reject);
+				},
+			);
+			req.on("error", reject);
+			req.end();
+		});
 	} catch (err) {
 		handleCommandError(err, opts);
 	}

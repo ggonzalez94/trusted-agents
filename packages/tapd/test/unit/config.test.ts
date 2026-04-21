@@ -5,7 +5,11 @@ describe("resolveTapdConfig", () => {
 	it("uses defaults when no env or options provided", () => {
 		const config = resolveTapdConfig({}, {});
 		expect(config.dataDir).toMatch(/\.trustedagents$/);
-		expect(config.tcpPort).toBe(6810);
+		// 0 = OS-assigned ephemeral port. The bound port is written to
+		// `.tapd.port` for the UI launcher to discover. A fixed default would
+		// collide whenever a second identity (multi-identity Hermes) starts
+		// its own tapd.
+		expect(config.tcpPort).toBe(0);
 		expect(config.tcpHost).toBe("127.0.0.1");
 		expect(config.socketPath.endsWith("/.tapd.sock")).toBe(true);
 		expect(config.ringBufferSize).toBe(1000);
