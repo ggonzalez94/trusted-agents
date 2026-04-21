@@ -78,27 +78,6 @@ async function retryResolve(
 	);
 }
 
-async function configureLiveE2eExecutionMode(dataDir: string, agentName: string): Promise<void> {
-	if (CHAIN_KEY !== "taiko") {
-		return;
-	}
-
-	// The Taiko Servo paymaster can intermittently fail its post-op USDC
-	// charge even when the account is funded. The live release gate still
-	// exercises Taiko on-chain registration and transfers, but pins native
-	// EOA execution until that external paymaster path is stable again.
-	const result = await runCli([
-		"--plain",
-		"--data-dir",
-		dataDir,
-		"config",
-		"set",
-		"execution.mode",
-		"eoa",
-	]);
-	expect(result.exitCode, `${agentName} execution mode config failed:\n${result.stderr}`).toBe(0);
-}
-
 // ── Shared state (mutated across test phases) ─────────────────────────────────
 
 let tempRoot: string;
@@ -214,7 +193,6 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			]);
 
 			expect(result.exitCode, `Agent A init failed:\n${result.stdout}\n${result.stderr}`).toBe(0);
-			await configureLiveE2eExecutionMode(agentADir, "Agent A");
 		});
 
 		it(SCENARIOS.INIT_AGENT_B.name, { timeout: 120_000 }, async () => {
@@ -233,7 +211,6 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			]);
 
 			expect(result.exitCode, `Agent B init failed:\n${result.stdout}\n${result.stderr}`).toBe(0);
-			await configureLiveE2eExecutionMode(agentBDir, "Agent B");
 		});
 
 		it(SCENARIOS.BALANCE_CHECK_A.name, { timeout: 15_000 }, async () => {

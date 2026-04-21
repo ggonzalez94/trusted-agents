@@ -10,7 +10,7 @@ This repository publishes packages from the `Release` GitHub Actions workflow in
 - `trusted-agents-tapd`
 - `trusted-agents-tap`
 
-The workflow validates that all five package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base and Taiko, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
+The workflow validates that all five package versions exactly match the pushed tag, runs lint/typecheck/build/test, runs the live E2E suite on Base, verifies package metadata, publishes to npm in dependency order, and then creates a GitHub Release.
 
 ## Prepare the release PR
 
@@ -96,6 +96,7 @@ git push origin v0.2.0-beta.1
 - `NPM_TOKEN` must be configured in GitHub Actions secrets.
 - The repository must allow the workflow to create releases and publish with provenance.
 - The tag must match the package versions exactly, without a leading `v` in the manifest version fields.
-- The fixed live E2E wallets must have spendable USDC on the workflow's actual funding account for each chain.
+- The fixed live E2E wallets must have spendable USDC on the workflow's actual funding account for Base.
   On Base, the funding account is the messaging wallet used for x402 uploads.
-  On Taiko, the funding account is the derived Servo execution address reported by `tap balance`, not the public messaging address.
+- Taiko live E2E is currently excluded from the blocking release gate for beta publishing while the Taiko provider path is unstable in CI.
+  Re-enable it after the Servo paymaster post-op `TransferFromFailed` path and Taiko native raw transaction submission path are stable.
