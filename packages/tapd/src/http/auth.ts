@@ -4,7 +4,26 @@ export interface AuthContext {
 	/** The transport the client connected through. Both require the bearer token. */
 	transport: "unix" | "tcp";
 	expectedToken: string;
+	/** Normalized request method (e.g. "GET"). */
+	method: string;
+	/** Request path with the query string stripped. */
+	requestPath: string;
 }
+
+/**
+ * Paths + methods that may authenticate via a `?token=...` query string.
+ *
+ * Native browser `EventSource` cannot set custom headers, so the SSE route is
+ * the one place we have to accept the token in the URL. Allowing the query
+ * fallback everywhere would widen the blast radius of any token exposure
+ * (shell history, referrer leak, log capture) to state-changing endpoints
+ * like `/daemon/shutdown` — a cross-site form POST could hit them without
+ * CORS preflight. Limiting the fallback to GET /api/events/stream keeps the
+ * browser path working while requiring header auth everywhere else.
+ */
+const QUERY_TOKEN_ALLOWED: ReadonlyArray<{ method: string; path: string }> = [
+	{ method: "GET", path: "/api/events/stream" },
+];
 
 export function authorizeRequest(req: IncomingMessage, ctx: AuthContext): boolean {
 	// The unix socket previously bypassed the bearer token on the theory that
@@ -18,14 +37,18 @@ export function authorizeRequest(req: IncomingMessage, ctx: AuthContext): boolea
 		return constantTimeEqual(headerToken, ctx.expectedToken);
 	}
 
-	// Fallback: native browser EventSource cannot set custom headers, so for
-	// SSE-style endpoints we accept the token via `?token=...` query string.
-	// Same constant-time comparison applies — no security regression.
 	const queryToken = extractTokenQuery(req);
-	if (queryToken !== null) {
+	if (queryToken !== null && isQueryTokenAllowed(ctx.method, ctx.requestPath)) {
 		return constantTimeEqual(queryToken, ctx.expectedToken);
 	}
 
+	return false;
+}
+
+function isQueryTokenAllowed(method: string, requestPath: string): boolean {
+	for (const allowed of QUERY_TOKEN_ALLOWED) {
+		if (allowed.method === method && allowed.path === requestPath) return true;
+	}
 	return false;
 }
 

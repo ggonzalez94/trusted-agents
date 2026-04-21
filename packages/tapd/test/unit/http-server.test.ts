@@ -98,30 +98,34 @@ describe("TapdHttpServer", () => {
 		expect(response.status).toBe(404);
 	});
 
-	it("accepts ?token=... query fallback when no Authorization header is set", async () => {
+	it("accepts ?token=... query fallback for the SSE stream route", async () => {
 		const router = new Router();
-		router.add("GET", "/api/identity", async () => ({ agentId: 42 }));
-
 		server = new TapdHttpServer({
 			router,
 			socketPath: join(dataDir, ".tapd.sock"),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
+			sseHandler: (_req, res) => {
+				res.writeHead(200, { "Content-Type": "text/event-stream" });
+				res.end("data: ok\n\n");
+				return true;
+			},
 		});
 		await server.start();
 
 		const port = server.boundTcpPort();
 		const response = await fetch(
-			`http://127.0.0.1:${port}/api/identity?token=test-token-test-token-test-token`,
+			`http://127.0.0.1:${port}/api/events/stream?token=test-token-test-token-test-token`,
 		);
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ agentId: 42 });
+		expect(await response.text()).toContain("data: ok");
 	});
 
-	it("rejects requests with the wrong token in the query", async () => {
+	it("rejects ?token=... on non-SSE routes (query fallback is scoped to /api/events/stream)", async () => {
 		const router = new Router();
 		router.add("GET", "/api/identity", async () => ({ agentId: 42 }));
+		router.add("POST", "/daemon/shutdown", async () => ({ ok: true }));
 
 		server = new TapdHttpServer({
 			router,
@@ -133,7 +137,36 @@ describe("TapdHttpServer", () => {
 		await server.start();
 
 		const port = server.boundTcpPort();
-		const response = await fetch(`http://127.0.0.1:${port}/api/identity?token=wrong-token`);
+		const getResponse = await fetch(
+			`http://127.0.0.1:${port}/api/identity?token=test-token-test-token-test-token`,
+		);
+		expect(getResponse.status).toBe(401);
+
+		const postResponse = await fetch(
+			`http://127.0.0.1:${port}/daemon/shutdown?token=test-token-test-token-test-token`,
+			{ method: "POST" },
+		);
+		expect(postResponse.status).toBe(401);
+	});
+
+	it("rejects ?token=... with the wrong value even on the SSE route", async () => {
+		const router = new Router();
+		server = new TapdHttpServer({
+			router,
+			socketPath: join(dataDir, ".tapd.sock"),
+			tcpHost: "127.0.0.1",
+			tcpPort: 0,
+			authToken: "test-token-test-token-test-token",
+			sseHandler: (_req, res) => {
+				res.writeHead(200, { "Content-Type": "text/event-stream" });
+				res.end("data: ok\n\n");
+				return true;
+			},
+		});
+		await server.start();
+
+		const port = server.boundTcpPort();
+		const response = await fetch(`http://127.0.0.1:${port}/api/events/stream?token=wrong-token`);
 		expect(response.status).toBe(401);
 	});
 

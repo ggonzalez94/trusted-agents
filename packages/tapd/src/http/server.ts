@@ -146,7 +146,14 @@ export class TapdHttpServer {
 			return;
 		}
 
-		if (!authorizeRequest(req, { transport, expectedToken: this.authToken })) {
+		if (
+			!authorizeRequest(req, {
+				transport,
+				expectedToken: this.authToken,
+				method,
+				requestPath,
+			})
+		) {
 			sendUnauthorized(res);
 			return;
 		}
