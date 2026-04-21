@@ -1,6 +1,8 @@
 import {
 	type Address,
 	type Hex,
+	encodeAbiParameters,
+	encodeErrorResult,
 	encodeFunctionData,
 	erc20Abi,
 	maxUint256,
@@ -21,6 +23,22 @@ const TEST_PRIVATE_KEY =
 	"0x59c6995e998f97a5a0044966f094538b292b1cf3e3d7e1e6df3f2b9e6c7d3f11" as const;
 const OWNER_ADDRESS = privateKeyToAccount(TEST_PRIVATE_KEY).address;
 const OWNER_ACCOUNT = privateKeyToAccount(TEST_PRIVATE_KEY);
+const POST_OP_REVERT_REASON_TOPIC =
+	"0xf62676f440ff169a3a9afdbf812e89e7f95975ee8e5c31214ffdef631c5f4792";
+const POST_OP_REVERTED_ERROR_ABI = [
+	{
+		type: "error",
+		name: "PostOpReverted",
+		inputs: [{ name: "reason", type: "bytes" }],
+	},
+] as const;
+const TRANSFER_FROM_FAILED_ERROR_ABI = [
+	{
+		type: "error",
+		name: "TransferFromFailed",
+		inputs: [],
+	},
+] as const;
 
 const toSimple7702SmartAccount = vi.fn();
 const createBundlerClient = vi.fn();
@@ -826,6 +844,114 @@ describe("execution", () => {
 		expect(sentUserOperation).not.toHaveProperty("paymasterData");
 		expect(sentUserOperation).not.toHaveProperty("paymasterVerificationGasLimit");
 		expect(sentUserOperation).not.toHaveProperty("paymasterPostOpGasLimit");
+	});
+
+	it("retries Servo user operations when the paymaster post-op USDC charge fails", async () => {
+		const requests: Array<{ method: string; params: unknown[] }> = [];
+		let nextNonce = 0n;
+		const readContract = vi.fn(
+			async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+				if (functionName === "getAddress") return EXECUTION_ADDRESS;
+				if (functionName === "getNonce") return nextNonce++;
+				if (functionName === "nonces") {
+					if (args?.[0] !== EXECUTION_ADDRESS) {
+						throw new Error("permit nonce must be loaded for smart account");
+					}
+					return 7n;
+				}
+				if (functionName === "name") return "USD Coin";
+				if (functionName === "version") return "2";
+				if (functionName === "balanceOf") return 1_000_000_000n;
+				throw new Error(`unexpected function ${functionName}`);
+			},
+		);
+		buildChainPublicClient.mockReturnValue({
+			readContract,
+			verifyTypedData: vi.fn().mockResolvedValue(true),
+			waitForTransactionReceipt: vi.fn(),
+			estimateFeesPerGas: vi.fn().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n }),
+			getGasPrice: vi.fn().mockResolvedValue(2n),
+			getCode: vi.fn().mockResolvedValue("0x"),
+		});
+		buildChainWalletClient.mockReturnValue({
+			chain: { id: 167000 },
+			sendTransaction: vi.fn(),
+		});
+		mockRpcFetch(({ method, params }) => {
+			requests.push({ method, params });
+			if (method === "eth_supportedEntryPoints") {
+				return rpcOk([ENTRY_POINT_07]);
+			}
+			if (method === "pm_getCapabilities") {
+				return rpcOk({
+					accountFactoryAddress: SERVO_FACTORY_ADDRESS,
+					supportedChains: [{ chainId: 167000 }],
+					gasPriceGuidance: {
+						suggestedMaxFeePerGas: "0x11a5536",
+						suggestedMaxPriorityFeePerGas: "0xf4240",
+					},
+				});
+			}
+			if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
+				return rpcOk(STANDARD_PAYMASTER_RESULT);
+			}
+			if (method === "eth_sendUserOperation") {
+				const sendCount = requests.filter((request) => request.method === method).length;
+				return rpcOk(sendCount === 1 ? "0xservohash1" : "0xservohash2");
+			}
+			return rpcFail(method);
+		});
+
+		const transferFromFailed = encodeErrorResult({
+			abi: TRANSFER_FROM_FAILED_ERROR_ABI,
+			errorName: "TransferFromFailed",
+		});
+		const postOpReverted = encodeErrorResult({
+			abi: POST_OP_REVERTED_ERROR_ABI,
+			errorName: "PostOpReverted",
+			args: [transferFromFailed],
+		});
+		const postOpRevertData = encodeAbiParameters(
+			[{ type: "uint256" }, { type: "bytes" }],
+			[0n, postOpReverted],
+		);
+		const waitForUserOperationReceipt = vi
+			.fn()
+			.mockResolvedValueOnce({
+				receipt: {
+					status: "reverted",
+					transactionHash: "0xservotx1",
+					logs: [{ topics: [POST_OP_REVERT_REASON_TOPIC], data: postOpRevertData }],
+				},
+			})
+			.mockResolvedValueOnce({
+				receipt: {
+					transactionHash: "0xservotx2",
+					logs: [],
+				},
+			});
+		createBundlerClient.mockReturnValue({ waitForUserOperationReceipt });
+
+		const { executeContractCalls } = await import("../../../src/runtime/execution.js");
+		const config = buildConfig("eip155:167000", {
+			mode: "eip4337",
+			paymasterProvider: "servo",
+		});
+		const result = await executeContractCalls(config, config.chains[config.chain]!, TEST_PROVIDER, [
+			{
+				to: "0x3000000000000000000000000000000000000003",
+				data: "0x1234",
+			},
+		]);
+
+		expect(result.userOperationHash).toBe("0xservohash2");
+		expect(result.transactionHash).toBe("0xservotx2");
+		expect(waitForUserOperationReceipt).toHaveBeenCalledTimes(2);
+		expect(requests.filter((request) => request.method === "eth_sendUserOperation")).toHaveLength(
+			2,
+		);
+		expect(requests.filter((request) => request.method === "pm_getPaymasterData")).toHaveLength(2);
+		expect(getUserOperationHash).toHaveBeenCalledTimes(2);
 	});
 
 	it("rejects Servo USDC transfers that would consume the paymaster fee reserve", async () => {

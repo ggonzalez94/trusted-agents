@@ -1,6 +1,8 @@
-import type { Address, Hex } from "viem";
+import type { Address, Hex, TransactionReceipt } from "viem";
 import {
 	http,
+	decodeAbiParameters,
+	decodeErrorResult,
 	decodeFunctionData,
 	encodeFunctionData,
 	erc20Abi,
@@ -34,6 +36,17 @@ import type {
 } from "./types.js";
 
 const ERC20_TRANSFER_SELECTOR = "0xa9059cbb";
+const SERVO_PAYMASTER_MAX_ATTEMPTS = 2;
+const POST_OP_REVERT_REASON_TOPIC =
+	"0xf62676f440ff169a3a9afdbf812e89e7f95975ee8e5c31214ffdef631c5f4792";
+const TRANSFER_FROM_FAILED_SELECTOR = "0x7939f424";
+const POST_OP_REVERTED_ERROR_ABI = [
+	{
+		type: "error",
+		name: "PostOpReverted",
+		inputs: [{ name: "reason", type: "bytes" }],
+	},
+] as const;
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
 	if (typeof value !== "object" || value === null) {
@@ -404,182 +417,221 @@ export async function executeServoEip4337Calls(
 	});
 	const paymasterEndpoint = providerConfig.paymasterUrl ?? providerConfig.bundlerUrl;
 
-	const nonce = (await context.publicClient.readContract({
-		address: context.entryPoint.address,
-		abi: ENTRY_POINT_NONCE_ABI,
-		functionName: "getNonce",
-		args: [context.executionAddress, 0n],
-	})) as bigint;
-
-	const { maxFeePerGas, maxPriorityFeePerGas } = await resolveServoEip1559Fees(
-		context.publicClient,
-		paymasterEndpoint,
-	);
-	const accountCode = await context.publicClient.getCode({
-		address: context.executionAddress,
-	});
-	const deploymentFields =
-		accountCode && accountCode !== "0x"
-			? {}
-			: {
-					factory: providerConfig.accountFactoryAddress,
-					factoryData: buildServoFactoryData(context.owner.address),
-				};
-	const callData = buildServoCallData(calls);
-
-	const draftUserOperation = {
-		sender: context.executionAddress,
-		nonce: toHex(nonce),
-		...deploymentFields,
-		callData,
-		maxFeePerGas: toHex(maxFeePerGas),
-		maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
-		signature: SERVO_DUMMY_SIGNATURE,
-	};
 	const chainIdHex = toHex(chainConfig.chainId);
 
-	const stubQuote = parseServoQuote(
-		await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterStubData", [
-			draftUserOperation,
-			context.entryPoint.address,
-			chainIdHex,
-			{},
-		]),
-	);
-	await assertServoTokenSpendFitsBalance(context, chainConfig, calls, stubQuote);
+	for (let attempt = 1; attempt <= SERVO_PAYMASTER_MAX_ATTEMPTS; attempt++) {
+		const nonce = (await context.publicClient.readContract({
+			address: context.entryPoint.address,
+			abi: ENTRY_POINT_NONCE_ABI,
+			functionName: "getNonce",
+			args: [context.executionAddress, 0n],
+		})) as bigint;
 
-	const quotedUserOperation = {
-		...draftUserOperation,
-		callGasLimit: stubQuote.callGasLimit,
-		verificationGasLimit: stubQuote.verificationGasLimit,
-		preVerificationGas: stubQuote.preVerificationGas,
-	};
+		const { maxFeePerGas, maxPriorityFeePerGas } = await resolveServoEip1559Fees(
+			context.publicClient,
+			paymasterEndpoint,
+		);
+		const accountCode = await context.publicClient.getCode({
+			address: context.executionAddress,
+		});
+		const deploymentFields =
+			accountCode && accountCode !== "0x"
+				? {}
+				: {
+						factory: providerConfig.accountFactoryAddress,
+						factoryData: buildServoFactoryData(context.owner.address),
+					};
+		const callData = buildServoCallData(calls);
 
-	const [permitNonce, tokenName, tokenVersion] = await Promise.all([
-		context.publicClient.readContract({
-			address: stubQuote.tokenAddress,
-			abi: ERC20_NONCES_ABI,
-			functionName: "nonces",
-			args: [context.executionAddress],
-		}) as Promise<bigint>,
-		context.publicClient
-			.readContract({ address: stubQuote.tokenAddress, abi: ERC20_NAME_ABI, functionName: "name" })
-			.catch(() => "USD Coin" as string),
-		context.publicClient
-			.readContract({
-				address: stubQuote.tokenAddress,
-				abi: ERC20_VERSION_ABI,
-				functionName: "version",
-			})
-			.catch(() => "2" as string),
-	]);
-
-	const permitValue = BigInt(stubQuote.maxTokenCostMicros);
-	const permitDeadline = BigInt(stubQuote.validUntil);
-	const permitSignature = await context.owner.signTypedData({
-		domain: {
-			name: tokenName,
-			version: tokenVersion,
-			chainId: BigInt(chainConfig.chainId),
-			verifyingContract: stubQuote.tokenAddress,
-		},
-		types: USDC_PERMIT_TYPES,
-		primaryType: "Permit",
-		message: {
-			owner: context.executionAddress,
-			spender: stubQuote.paymaster,
-			value: permitValue,
-			nonce: permitNonce,
-			deadline: permitDeadline,
-		},
-	});
-
-	const finalQuote = parseServoQuote(
-		await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterData", [
-			quotedUserOperation,
-			context.entryPoint.address,
-			chainIdHex,
-			{
-				permit: {
-					value: permitValue.toString(),
-					deadline: permitDeadline.toString(),
-					signature: permitSignature,
-				},
-			},
-		]),
-	);
-
-	const userOperationHashForSignature = getUserOperationHash({
-		userOperation: {
+		const draftUserOperation = {
 			sender: context.executionAddress,
-			nonce,
+			nonce: toHex(nonce),
 			...deploymentFields,
 			callData,
-			callGasLimit: BigInt(finalQuote.callGasLimit),
-			verificationGasLimit: BigInt(finalQuote.verificationGasLimit),
-			preVerificationGas: BigInt(finalQuote.preVerificationGas),
-			maxFeePerGas,
-			maxPriorityFeePerGas,
-			paymaster: finalQuote.paymaster,
-			paymasterData: finalQuote.paymasterData,
-			paymasterVerificationGasLimit: BigInt(finalQuote.paymasterVerificationGasLimit),
-			paymasterPostOpGasLimit: BigInt(finalQuote.paymasterPostOpGasLimit),
+			maxFeePerGas: toHex(maxFeePerGas),
+			maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
 			signature: SERVO_DUMMY_SIGNATURE,
-		},
-		entryPointAddress: context.entryPoint.address,
-		entryPointVersion: context.entryPoint.version,
-		chainId: chainConfig.chainId,
-	});
-	const userOperationSignature = await context.owner.signMessage({
-		message: { raw: userOperationHashForSignature },
-	});
+		};
 
-	const sentUserOperationHash = await rpcRequest<Hex>(
-		providerConfig.bundlerUrl,
-		"eth_sendUserOperation",
-		[
-			buildServoSendUserOperation({
+		const stubQuote = parseServoQuote(
+			await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterStubData", [
+				draftUserOperation,
+				context.entryPoint.address,
+				chainIdHex,
+				{},
+			]),
+		);
+		await assertServoTokenSpendFitsBalance(context, chainConfig, calls, stubQuote);
+
+		const quotedUserOperation = {
+			...draftUserOperation,
+			callGasLimit: stubQuote.callGasLimit,
+			verificationGasLimit: stubQuote.verificationGasLimit,
+			preVerificationGas: stubQuote.preVerificationGas,
+		};
+
+		const [permitNonce, tokenName, tokenVersion] = await Promise.all([
+			context.publicClient.readContract({
+				address: stubQuote.tokenAddress,
+				abi: ERC20_NONCES_ABI,
+				functionName: "nonces",
+				args: [context.executionAddress],
+			}) as Promise<bigint>,
+			context.publicClient
+				.readContract({
+					address: stubQuote.tokenAddress,
+					abi: ERC20_NAME_ABI,
+					functionName: "name",
+				})
+				.catch(() => "USD Coin" as string),
+			context.publicClient
+				.readContract({
+					address: stubQuote.tokenAddress,
+					abi: ERC20_VERSION_ABI,
+					functionName: "version",
+				})
+				.catch(() => "2" as string),
+		]);
+
+		const permitValue = BigInt(stubQuote.maxTokenCostMicros);
+		const permitDeadline = BigInt(stubQuote.validUntil);
+		const permitSignature = await context.owner.signTypedData({
+			domain: {
+				name: tokenName,
+				version: tokenVersion,
+				chainId: BigInt(chainConfig.chainId),
+				verifyingContract: stubQuote.tokenAddress,
+			},
+			types: USDC_PERMIT_TYPES,
+			primaryType: "Permit",
+			message: {
+				owner: context.executionAddress,
+				spender: stubQuote.paymaster,
+				value: permitValue,
+				nonce: permitNonce,
+				deadline: permitDeadline,
+			},
+		});
+
+		const finalQuote = parseServoQuote(
+			await rpcRequest<unknown>(paymasterEndpoint, "pm_getPaymasterData", [
+				quotedUserOperation,
+				context.entryPoint.address,
+				chainIdHex,
+				{
+					permit: {
+						value: permitValue.toString(),
+						deadline: permitDeadline.toString(),
+						signature: permitSignature,
+					},
+				},
+			]),
+		);
+
+		const userOperationHashForSignature = getUserOperationHash({
+			userOperation: {
 				sender: context.executionAddress,
 				nonce,
 				...deploymentFields,
 				callData,
-				callGasLimit: finalQuote.callGasLimit,
-				verificationGasLimit: finalQuote.verificationGasLimit,
-				preVerificationGas: finalQuote.preVerificationGas,
+				callGasLimit: BigInt(finalQuote.callGasLimit),
+				verificationGasLimit: BigInt(finalQuote.verificationGasLimit),
+				preVerificationGas: BigInt(finalQuote.preVerificationGas),
 				maxFeePerGas,
 				maxPriorityFeePerGas,
-				paymasterAndData: finalQuote.paymasterAndData,
-				signature: userOperationSignature,
-			}),
-			context.entryPoint.address,
-		],
-	);
+				paymaster: finalQuote.paymaster,
+				paymasterData: finalQuote.paymasterData,
+				paymasterVerificationGasLimit: BigInt(finalQuote.paymasterVerificationGasLimit),
+				paymasterPostOpGasLimit: BigInt(finalQuote.paymasterPostOpGasLimit),
+				signature: SERVO_DUMMY_SIGNATURE,
+			},
+			entryPointAddress: context.entryPoint.address,
+			entryPointVersion: context.entryPoint.version,
+			chainId: chainConfig.chainId,
+		});
+		const userOperationSignature = await context.owner.signMessage({
+			message: { raw: userOperationHashForSignature },
+		});
 
-	const userOperationReceipt = await bundlerClient.waitForUserOperationReceipt({
-		hash: sentUserOperationHash,
-	});
-	if (userOperationReceipt.receipt.status === "reverted") {
-		throw new Error(
-			`User operation ${sentUserOperationHash} reverted in transaction ${userOperationReceipt.receipt.transactionHash}`,
+		const sentUserOperationHash = await rpcRequest<Hex>(
+			providerConfig.bundlerUrl,
+			"eth_sendUserOperation",
+			[
+				buildServoSendUserOperation({
+					sender: context.executionAddress,
+					nonce,
+					...deploymentFields,
+					callData,
+					callGasLimit: finalQuote.callGasLimit,
+					verificationGasLimit: finalQuote.verificationGasLimit,
+					preVerificationGas: finalQuote.preVerificationGas,
+					maxFeePerGas,
+					maxPriorityFeePerGas,
+					paymasterAndData: finalQuote.paymasterAndData,
+					signature: userOperationSignature,
+				}),
+				context.entryPoint.address,
+			],
 		);
+
+		const userOperationReceipt = await bundlerClient.waitForUserOperationReceipt({
+			hash: sentUserOperationHash,
+		});
+		if (userOperationReceipt.receipt.status === "reverted") {
+			const retryPaymasterCharge =
+				attempt < SERVO_PAYMASTER_MAX_ATTEMPTS &&
+				isServoPostOpTransferFromFailure(userOperationReceipt.receipt);
+			if (retryPaymasterCharge) {
+				await new Promise((resolve) => setTimeout(resolve, 1_000));
+				continue;
+			}
+			throw new Error(
+				`User operation ${sentUserOperationHash} reverted in transaction ${userOperationReceipt.receipt.transactionHash}`,
+			);
+		}
+
+		return {
+			requestedMode: context.requestedMode,
+			mode: context.mode,
+			messagingAddress: context.messagingAddress,
+			executionAddress: context.executionAddress,
+			fundingAddress: context.fundingAddress,
+			paymasterProvider: context.paymasterProvider,
+			warnings: context.warnings,
+			entryPointAddress: context.entryPoint.address,
+			entryPointVersion: context.entryPoint.version,
+			gasPaymentMode: "erc20-usdc",
+			paymasterAddress: finalQuote.paymaster,
+			transactionReceipt: userOperationReceipt.receipt,
+			transactionHash: userOperationReceipt.receipt.transactionHash,
+			userOperationHash: sentUserOperationHash,
+		};
 	}
 
-	return {
-		requestedMode: context.requestedMode,
-		mode: context.mode,
-		messagingAddress: context.messagingAddress,
-		executionAddress: context.executionAddress,
-		fundingAddress: context.fundingAddress,
-		paymasterProvider: context.paymasterProvider,
-		warnings: context.warnings,
-		entryPointAddress: context.entryPoint.address,
-		entryPointVersion: context.entryPoint.version,
-		gasPaymentMode: "erc20-usdc",
-		paymasterAddress: finalQuote.paymaster,
-		transactionReceipt: userOperationReceipt.receipt,
-		transactionHash: userOperationReceipt.receipt.transactionHash,
-		userOperationHash: sentUserOperationHash,
-	};
+	throw new Error("Servo user operation failed before returning a receipt");
+}
+
+function isServoPostOpTransferFromFailure(receipt: TransactionReceipt): boolean {
+	for (const log of receipt.logs) {
+		if (log.topics[0]?.toLowerCase() !== POST_OP_REVERT_REASON_TOPIC) {
+			continue;
+		}
+
+		try {
+			const [, revertReason] = decodeAbiParameters(
+				[{ type: "uint256" }, { type: "bytes" }],
+				log.data,
+			) as readonly [bigint, Hex];
+			const decoded = decodeErrorResult({
+				abi: POST_OP_REVERTED_ERROR_ABI,
+				data: revertReason,
+			});
+			const innerReason = decoded.args[0];
+			return innerReason.slice(0, 10).toLowerCase() === TRANSFER_FROM_FAILED_SELECTOR;
+		} catch {}
+	}
+
+	return false;
 }
 
 export async function deployServoExecutionAccountIfNeeded(

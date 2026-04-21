@@ -310,6 +310,104 @@ export async function waitForSync(opts: {
 	);
 }
 
+export async function waitForConversationMessage(opts: {
+	dataDir: string;
+	peerName: string;
+	contentIncludes: string;
+	description: string;
+	direction?: "incoming" | "outgoing";
+	timeoutMs?: number;
+	intervalMs?: number;
+	/** When provided, use runtime.syncOnce() instead of spawning a CLI process. */
+	runtime?: TapRuntime;
+}): Promise<void> {
+	const {
+		dataDir,
+		peerName,
+		contentIncludes,
+		description,
+		direction,
+		timeoutMs = 30_000,
+		intervalMs = 2_000,
+		runtime,
+	} = opts;
+	const deadline = Date.now() + timeoutMs;
+	let lastListStdout = "";
+	let lastListStderr = "";
+	let lastShowStdout = "";
+	let lastShowStderr = "";
+
+	while (Date.now() < deadline) {
+		if (runtime) {
+			await runtime.syncOnce();
+		} else {
+			await runCli(["--json", "--data-dir", dataDir, "message", "sync"]);
+		}
+
+		const listResult = await runCli([
+			"--json",
+			"--data-dir",
+			dataDir,
+			"conversations",
+			"list",
+			"--with",
+			peerName,
+		]);
+		lastListStdout = listResult.stdout;
+		lastListStderr = listResult.stderr;
+
+		if (listResult.exitCode === 0) {
+			try {
+				const parsed = parseJsonOutput(listResult.stdout);
+				const data = parsed.data as {
+					conversations: Array<{ id: string; messages: number }>;
+				};
+				for (const conversation of data.conversations) {
+					if (conversation.messages <= 0) continue;
+
+					const showResult = await runCli([
+						"--json",
+						"--data-dir",
+						dataDir,
+						"conversations",
+						"show",
+						conversation.id,
+					]);
+					lastShowStdout = showResult.stdout;
+					lastShowStderr = showResult.stderr;
+
+					if (showResult.exitCode !== 0) continue;
+
+					const showParsed = parseJsonOutput(showResult.stdout);
+					const showData = showParsed.data as {
+						messages: Array<{ direction: "incoming" | "outgoing"; content: string }>;
+					};
+					const found = showData.messages.some(
+						(message) =>
+							message.content.includes(contentIncludes) &&
+							(direction === undefined || message.direction === direction),
+					);
+					if (found) return;
+				}
+			} catch {
+				// Parse or shape mismatch; keep polling until timeout.
+			}
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, intervalMs));
+	}
+
+	throw new Error(
+		`Timed out waiting for conversation message (${description}).\n` +
+			`Peer: ${peerName}. Expected content containing: ${contentIncludes}. ` +
+			`Expected direction: ${direction ?? "any"}.\n` +
+			`Last list stdout: ${lastListStdout}\n` +
+			`Last list stderr: ${lastListStderr}\n` +
+			`Last show stdout: ${lastShowStdout}\n` +
+			`Last show stderr: ${lastShowStderr}`,
+	);
+}
+
 /**
  * Poll sync + contacts until a peer appears as an active contact.
  * Combines message sync (to process pending XMTP messages) with contact checks.

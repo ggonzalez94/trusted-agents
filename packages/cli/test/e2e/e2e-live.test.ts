@@ -20,9 +20,9 @@ import {
 	requireEnv,
 	waitForBalanceChange,
 	waitForContact,
+	waitForConversationMessage,
 	waitForPermissions,
 	waitForStableBaseline,
-	waitForSync,
 	writeGrantFile,
 } from "./helpers.js";
 import { SCENARIOS } from "./scenarios.js";
@@ -495,8 +495,11 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.SYNC_MESSAGE_B.name, { timeout: 60_000 }, async () => {
-			await waitForSync({
+			await waitForConversationMessage({
 				dataDir: agentBDir,
+				peerName: AGENT_A_NAME,
+				contentIncludes: "ping from agent A",
+				direction: "incoming",
 				description: "Agent B receiving message from Agent A",
 				timeoutMs: 60_000,
 				runtime: sessionB?.runtime,
@@ -531,8 +534,11 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		});
 
 		it(SCENARIOS.SYNC_MESSAGE_A.name, { timeout: 60_000 }, async () => {
-			await waitForSync({
+			await waitForConversationMessage({
 				dataDir: agentADir,
+				peerName: AGENT_B_NAME,
+				contentIncludes: "pong from agent B",
+				direction: "incoming",
 				description: "Agent A receiving message from Agent B",
 				timeoutMs: 60_000,
 				runtime: sessionA?.runtime,
@@ -561,6 +567,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 				aConvos.length,
 				"Agent A should have at least one conversation with Agent B",
 			).toBeGreaterThan(0);
+			expect(
+				aConvos[0]!.messages,
+				"Agent A conversation should contain at least one message",
+			).toBeGreaterThan(0);
 
 			const bResult = await runCli([
 				"--json",
@@ -582,6 +592,10 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			expect(
 				bConvos.length,
 				"Agent B should have at least one conversation with Agent A",
+			).toBeGreaterThan(0);
+			expect(
+				bConvos[0]!.messages,
+				"Agent B conversation should contain at least one message",
 			).toBeGreaterThan(0);
 		});
 	});
@@ -654,9 +668,13 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 
 		it(SCENARIOS.SYNC_TRANSFER_RESULT_B.name, { timeout: 60_000 }, async () => {
 			// Agent A's listener auto-approves and executes the transfer.
-			// Agent B syncs to receive the action/result.
-			await waitForSync({
+			// Agent B must receive the action/result; tapd may process it before
+			// a manual reconcile reports any new processed messages.
+			await waitForConversationMessage({
 				dataDir: agentBDir,
+				peerName: AGENT_A_NAME,
+				contentIncludes: `Transferred ${TRANSFER_AMOUNT} USDC`,
+				direction: "incoming",
 				description: "Agent B receiving transfer action/result",
 				timeoutMs: 60_000,
 				runtime: sessionB?.runtime,
@@ -765,8 +783,11 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 
 		it(SCENARIOS.SYNC_REJECTION_A.name, { timeout: 60_000 }, async () => {
 			// Agent A syncs: no matching grant, auto-rejects
-			await waitForSync({
+			await waitForConversationMessage({
 				dataDir: agentADir,
+				peerName: AGENT_B_NAME,
+				contentIncludes: `Transfer request rejected for ${TRANSFER_AMOUNT} USDC`,
+				direction: "outgoing",
 				description: "Agent A processing and auto-rejecting ungrantable transfer request",
 				timeoutMs: 60_000,
 				runtime: sessionA?.runtime,
@@ -775,8 +796,11 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 
 		it(SCENARIOS.SYNC_REJECTION_RESULT_B.name, { timeout: 60_000 }, async () => {
 			// Agent B syncs to pick up the rejection result
-			await waitForSync({
+			await waitForConversationMessage({
 				dataDir: agentBDir,
+				peerName: AGENT_A_NAME,
+				contentIncludes: `Transfer request rejected for ${TRANSFER_AMOUNT} USDC`,
+				direction: "incoming",
 				description: "Agent B receiving transfer rejection action/result",
 				timeoutMs: 60_000,
 				runtime: sessionB?.runtime,

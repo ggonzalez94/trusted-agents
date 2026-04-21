@@ -233,6 +233,37 @@ async function submitConnectionRequest(
 	return request;
 }
 
+async function waitForCondition(description: string, predicate: () => Promise<boolean> | boolean) {
+	const deadline = Date.now() + 1_000;
+	while (Date.now() < deadline) {
+		if (await predicate()) return;
+		await sleep(20);
+	}
+	throw new Error(`Timed out waiting for ${description}`);
+}
+
+async function waitForActiveContact(trustStore: ITrustStore): Promise<Contact> {
+	let contact: Contact | null = null;
+	await waitForCondition("active auto-accepted contact", async () => {
+		contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		return contact?.status === "active";
+	});
+	return contact!;
+}
+
+async function waitForJournalStatus(
+	requestJournal: FileRequestJournal,
+	requestId: string,
+	status: "completed" | "pending" | "queued",
+) {
+	let entry = await requestJournal.getByRequestId(requestId);
+	await waitForCondition(`journal entry ${requestId} to be ${status}`, async () => {
+		entry = await requestJournal.getByRequestId(requestId);
+		return entry?.status === status;
+	});
+	return entry;
+}
+
 // ──────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────
@@ -243,34 +274,35 @@ describe("connection request auto-accept (spec §1.5)", () => {
 		const transport = new FakeTransport();
 		const { service, requestJournal } = await createService({ trustStore, transport });
 
-		await service.start();
-		const request = await submitConnectionRequest(transport, "peer-inbox-auto-accept-1");
-		await sleep(50);
+		try {
+			await service.start();
+			const request = await submitConnectionRequest(transport, "peer-inbox-auto-accept-1");
 
-		// 1. Trust store now has Bob as an active contact.
-		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
-		expect(contact).toEqual(
-			expect.objectContaining({
-				peerAgentId: PEER_AGENT.agentId,
-				peerChain: PEER_AGENT.chain,
-				status: "active",
-			}),
-		);
+			// 1. Trust store now has Bob as an active contact.
+			const contact = await waitForActiveContact(trustStore);
+			expect(contact).toEqual(
+				expect.objectContaining({
+					peerAgentId: PEER_AGENT.agentId,
+					peerChain: PEER_AGENT.chain,
+					status: "active",
+				}),
+			);
 
-		// 2. Transport received an outbound connection/result with status "accepted".
-		const connectionResults = transport.sentMessages.filter(
-			(entry) => entry.message.method === "connection/result",
-		);
-		expect(connectionResults).toHaveLength(1);
-		const resultParams = connectionResults[0]?.message.params as { status?: string };
-		expect(resultParams?.status).toBe("accepted");
+			// 2. Transport received an outbound connection/result with status "accepted".
+			const connectionResults = transport.sentMessages.filter(
+				(entry) => entry.message.method === "connection/result",
+			);
+			expect(connectionResults).toHaveLength(1);
+			const resultParams = connectionResults[0]?.message.params as { status?: string };
+			expect(resultParams?.status).toBe("accepted");
 
-		// 3. The inbound journal entry is "completed".
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
-			expect.objectContaining({ status: "completed" }),
-		);
-
-		await service.stop();
+			// 3. The inbound journal entry is "completed".
+			expect(await waitForJournalStatus(requestJournal, String(request.id), "completed")).toEqual(
+				expect.objectContaining({ status: "completed" }),
+			);
+		} finally {
+			await service.stop();
+		}
 	});
 
 	it("rejects a connection/request with an invalid invite signature", async () => {
@@ -278,53 +310,55 @@ describe("connection request auto-accept (spec §1.5)", () => {
 		const transport = new FakeTransport();
 		const { service, requestJournal } = await createService({ trustStore, transport });
 
-		await service.start();
+		try {
+			await service.start();
 
-		// Build an invite signed by BOB_SIGNING_PROVIDER (not ALICE who owns agent 1)
-		// so the signature verification fails.
-		const { invite } = await generateInvite({
-			agentId: 1,
-			chain: "eip155:8453",
-			signingProvider: BOB_SIGNING_PROVIDER, // wrong signer — Alice owns agent 1
-			expirySeconds: 3600,
-		});
+			// Build an invite signed by BOB_SIGNING_PROVIDER (not ALICE who owns agent 1)
+			// so the signature verification fails.
+			const { invite } = await generateInvite({
+				agentId: 1,
+				chain: "eip155:8453",
+				signingProvider: BOB_SIGNING_PROVIDER, // wrong signer — Alice owns agent 1
+				expirySeconds: 3600,
+			});
 
-		const request = buildConnectionRequest({
-			from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
-			invite,
-			timestamp: "2026-03-08T00:00:00.000Z",
-		});
+			const request = buildConnectionRequest({
+				from: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
+				invite,
+				timestamp: "2026-03-08T00:00:00.000Z",
+			});
 
-		await expect(
-			transport.handlers.onRequest?.({
-				from: PEER_AGENT.agentId,
-				senderInboxId: "peer-inbox-bad-sig",
-				message: request,
-			}),
-		).resolves.toEqual({ status: "queued" });
+			await expect(
+				transport.handlers.onRequest?.({
+					from: PEER_AGENT.agentId,
+					senderInboxId: "peer-inbox-bad-sig",
+					message: request,
+				}),
+			).resolves.toEqual({ status: "queued" });
 
-		await sleep(50);
+			await waitForJournalStatus(requestJournal, String(request.id), "completed");
 
-		// Outbound connection/result should be "rejected".
-		const connectionResults = transport.sentMessages.filter(
-			(entry) => entry.message.method === "connection/result",
-		);
-		expect(connectionResults).toHaveLength(1);
-		const resultParams = connectionResults[0]?.message.params as {
-			status?: string;
-			reason?: string;
-		};
-		expect(resultParams?.status).toBe("rejected");
+			// Outbound connection/result should be "rejected".
+			const connectionResults = transport.sentMessages.filter(
+				(entry) => entry.message.method === "connection/result",
+			);
+			expect(connectionResults).toHaveLength(1);
+			const resultParams = connectionResults[0]?.message.params as {
+				status?: string;
+				reason?: string;
+			};
+			expect(resultParams?.status).toBe("rejected");
 
-		// No contact should have been created.
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
+			// No contact should have been created.
+			expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toBeNull();
 
-		// Journal entry should be completed (the rejection response was sent).
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
-			expect.objectContaining({ status: "completed" }),
-		);
-
-		await service.stop();
+			// Journal entry should be completed (the rejection response was sent).
+			expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+				expect.objectContaining({ status: "completed" }),
+			);
+		} finally {
+			await service.stop();
+		}
 	});
 
 	it("calls onConnectionEstablished hook after successful auto-accept", async () => {
@@ -339,7 +373,10 @@ describe("connection request auto-accept (spec §1.5)", () => {
 
 		await service.start();
 		await submitConnectionRequest(transport, "peer-inbox-hook-test");
-		await sleep(50);
+		await waitForCondition(
+			"onConnectionEstablished hook",
+			() => onConnectionEstablished.mock.calls.length > 0,
+		);
 
 		expect(onConnectionEstablished).toHaveBeenCalledOnce();
 		expect(onConnectionEstablished).toHaveBeenCalledWith({
@@ -400,10 +437,9 @@ describe("connection request auto-accept (spec §1.5)", () => {
 
 		await service.start();
 		const request = await submitConnectionRequest(transport, "peer-inbox-hook-error");
-		await sleep(50);
 
 		// Contact should still be created despite the hook error.
-		const contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+		const contact = await waitForActiveContact(trustStore);
 		expect(contact?.status).toBe("active");
 
 		// Journal entry should be completed.

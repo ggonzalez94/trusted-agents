@@ -643,13 +643,13 @@ export class TapMessagingService {
 
 		try {
 			this.clearOutboxPoller();
+			this.rejectAllConnectWaiters(new Error("TapMessagingService stopped"));
 			await this.outboxPollInFlight?.catch((error: unknown) =>
 				this.log(
 					"warn",
 					`Queued TAP command polling failed during stop(): ${toErrorMessage(error)}`,
 				),
 			);
-			this.rejectAllConnectWaiters(new Error("TapMessagingService stopped"));
 			await this.drain();
 			await this.context.transport.stop?.();
 		} finally {
