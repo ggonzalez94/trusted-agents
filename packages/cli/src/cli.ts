@@ -192,6 +192,31 @@ export function createCli(): Command {
 		});
 
 	program
+		.command("status")
+		.description("Show host-aware runtime state for the current TAP data dir")
+		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration probe")
+		.addHelpText(
+			"after",
+			`
+First-step debug command. Reports which host is managing the data dir
+(CLI listener, Hermes daemon, OpenClaw plugin, or idle), who currently
+owns the transport lock, contact state (handshake), message/send state
+(actual peer communication), and journal pending work. All reads are
+filesystem-only: no transport is started.
+
+Examples:
+  tap status
+  tap status --data-dir /path/to/agent
+  tap status --json
+`,
+		)
+		.action(async (cmdOpts: { hermesHome?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { statusCommand } = await import("./commands/status.js");
+			await statusCommand(cmdOpts, opts);
+		});
+
+	program
 		.command("remove")
 		.description("Remove local TAP agent data")
 		.option("--dry-run", "Show the local TAP files and directories that would be removed")

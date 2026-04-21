@@ -70,7 +70,13 @@ export class XmtpTransport implements TransportProvider {
 	private readonly pendingRequests = new Map<string, PendingRequest>();
 	private readonly processedIncomingRequests = new Map<string, number>();
 	private running = false;
-	private streamCloser?: { return?: (value?: unknown) => Promise<unknown> };
+	private streamCloser?: { return?: () => Promise<unknown> };
+	private listenerPromise?: Promise<void>;
+	private streamOpenAbort?: () => void;
+	private reconnectCanceler?: {
+		timer: ReturnType<typeof setTimeout>;
+		resolve: () => void;
+	};
 	private readonly inboxIdToAddress = new Map<string, `0x${string}`>();
 	private readonly agentResolver?: IAgentResolver;
 	private readonly resolveCacheTtlMs: number;
@@ -117,16 +123,24 @@ export class XmtpTransport implements TransportProvider {
 				? { dbPath: (inboxId: string) => `${this.config.dbPath}/${inboxId}.db3` }
 				: {}),
 		};
-		const createClient = () =>
-			Promise.race([
-				Client.create(signer, clientOptions),
-				new Promise<never>((_, reject) => {
-					setTimeout(
-						() => reject(new TransportError("XMTP Client.create() timed out")),
-						CLIENT_CREATE_TIMEOUT_MS,
-					);
-				}),
-			]);
+		const createClient = async () => {
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			try {
+				return await Promise.race([
+					Client.create(signer, clientOptions),
+					new Promise<never>((_, reject) => {
+						timeout = setTimeout(
+							() => reject(new TransportError("XMTP Client.create() timed out")),
+							CLIENT_CREATE_TIMEOUT_MS,
+						);
+					}),
+				]);
+			} finally {
+				if (timeout) {
+					clearTimeout(timeout);
+				}
+			}
+		};
 
 		try {
 			this.client = await createClient();
@@ -318,11 +332,34 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		this.running = false;
+		const stream = this.streamCloser;
+		this.streamCloser = undefined;
+
+		if (this.reconnectCanceler) {
+			clearTimeout(this.reconnectCanceler.timer);
+			this.reconnectCanceler.resolve();
+			this.reconnectCanceler = undefined;
+		}
+
+		if (this.streamOpenAbort) {
+			this.streamOpenAbort();
+			this.streamOpenAbort = undefined;
+		}
 
 		try {
-			await this.streamCloser?.return?.(undefined);
+			await stream?.return?.();
 		} catch {
 			// Ignore stream close errors
+		}
+
+		const listener = this.listenerPromise;
+		this.listenerPromise = undefined;
+		if (listener) {
+			try {
+				await listener;
+			} catch {
+				// Listener errors are already swallowed inside the reconnect loop
+			}
 		}
 
 		for (const pending of this.pendingRequests.values()) {
@@ -347,7 +384,7 @@ export class XmtpTransport implements TransportProvider {
 	}
 
 	private listenWithReconnect(): void {
-		(async () => {
+		this.listenerPromise = (async () => {
 			while (this.running) {
 				try {
 					await this.listenForMessages();
@@ -355,7 +392,13 @@ export class XmtpTransport implements TransportProvider {
 					// Stream failed — will retry after delay
 				}
 				if (this.running) {
-					await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(() => {
+							this.reconnectCanceler = undefined;
+							resolve();
+						}, RECONNECT_DELAY_MS);
+						this.reconnectCanceler = { timer, resolve };
+					});
 				}
 			}
 		})();
@@ -374,18 +417,48 @@ export class XmtpTransport implements TransportProvider {
 	private async listenForMessages(): Promise<void> {
 		if (!this.client) return;
 
-		const stream = await this.client.conversations.streamAllDmMessages({
+		// The SDK call can stall (network/handshake), so race it against a
+		// stop-initiated abort signal. Without this race, `await transport.stop()`
+		// would block on `listenerPromise` indefinitely when the stream never
+		// opens — exactly the one-shot CLI flow this change is meant to unblock.
+		const streamPromise = this.client.conversations.streamAllDmMessages({
 			disableSync: true,
 		});
-		this.streamCloser = stream;
+		const aborted: Promise<null> = new Promise((resolve) => {
+			this.streamOpenAbort = () => resolve(null);
+		});
+		const stream = await Promise.race([streamPromise, aborted]);
+		this.streamOpenAbort = undefined;
 
-		for await (const message of stream) {
-			if (!this.running) break;
-			try {
-				await this.processMessage(this.toIncomingMessage(message));
-				await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
-			} catch {
-				// Leave the checkpoint unchanged so transient failures can be retried.
+		if (stream === null) {
+			// Stop was signaled before the stream opened. Close any stream that
+			// lands later so we don't leak an open handle.
+			streamPromise.then((s) => s.return?.()).catch(() => {});
+			return;
+		}
+
+		this.streamCloser = stream;
+		if (!this.running) {
+			if (this.streamCloser === stream) {
+				this.streamCloser = undefined;
+			}
+			await stream.return?.();
+			return;
+		}
+
+		try {
+			for await (const message of stream) {
+				if (!this.running) break;
+				try {
+					await this.processMessage(this.toIncomingMessage(message));
+					await this.advanceCheckpoint(message.conversationId, message.sentAtNs, message.id);
+				} catch {
+					// Leave the checkpoint unchanged so transient failures can be retried.
+				}
+			}
+		} finally {
+			if (this.streamCloser === stream) {
+				this.streamCloser = undefined;
 			}
 		}
 	}

@@ -28,7 +28,17 @@ JSON envelope shape: `{ "status": "ok"|"error", "data": ..., "metadata": { "form
 
 ## Status Check
 
-Run these to figure out where things stand (piped output is JSON by default, `--output json` is optional):
+Start with `tap status` — it is the host-aware first-step debug command and answers most questions without running any other command:
+
+```
+tap status   → Reports mode (idle / cli-listener / hermes-managed / openclaw-managed),
+               transport owner, contact counts (handshake state), message/send
+               counts (actual peer communication), journal pending work, warnings.
+```
+
+`tap status` distinguishes "contact is active" (handshake complete) from "a real message has arrived" (message/send counted in journal). Use it first when a connection looked successful but you're unsure whether any actual messages flowed.
+
+Drill-down commands if `tap status` points to a specific problem:
 
 ```
 which tap                                          → Not found? See Install
@@ -37,6 +47,8 @@ tap config show --select agent_id,chain            → Errors? Start at Onboard 
 tap identity show --select agent_id,chain          → agent_id < 0? Resume Onboard (fund + register)
 tap balance                                        → Check funding
 tap contacts list --select name,status             → Empty? See Connect
+tap journal list --status pending                  → Stuck pending? See Recovery
+tap conversations list                             → Inspect per-peer transcripts
 ```
 
 If you're inside **OpenClaw Gateway** or **Hermes** and `tap_gateway` is available, also check:
@@ -628,6 +640,8 @@ tap app remove @trustedagents/app-scheduling
 Transfer, scheduling, and permission-request handling are built into the TAP runtime today. `tap app install` is for additional third-party TAP apps published to npm.
 
 ## Debugging
+
+Start with `tap status` for a host-aware overview (runtime mode, transport owner, contacts vs messages, journal pending work). It answers "is my host even running?" and "did any real message/send ever arrive?" without starting any transport.
 
 The request journal is the single source of truth for in-flight and recently completed protocol operations. Use these read-only commands to inspect it when a connection or message seems stuck:
 
