@@ -14,10 +14,10 @@ import {
 	resolveDataDir as resolveDataDirPath,
 } from "trusted-agents-core";
 import YAML from "yaml";
-import { readHermesTapDaemonState } from "../hermes/client.js";
 import {
 	type TapHermesDaemonState,
 	type TapHermesPluginConfig,
+	loadTapHermesDaemonState,
 	loadTapHermesPluginConfig,
 	resolveHermesHome,
 } from "../hermes/config.js";
@@ -374,7 +374,7 @@ async function readHermesStatus(
 	let daemonState: TapHermesDaemonState | null = null;
 	let daemonStateError: string | undefined;
 	try {
-		daemonState = await readHermesTapDaemonState(hermesHome);
+		daemonState = await loadTapHermesDaemonState(hermesHome);
 	} catch (err) {
 		daemonStateError = formatReadError(err);
 	}
