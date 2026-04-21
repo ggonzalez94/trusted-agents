@@ -5,7 +5,19 @@ import { info, success } from "../lib/output.js";
 import { TapdNotRunningError, type TapdUiInfo, discoverTapdUiUrl } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
-function openInBrowser(url: string): boolean {
+/**
+ * Milliseconds to wait after `spawn` for the child's async `error` event
+ * before assuming the launch succeeded. `child_process.spawn` resolves
+ * command lookup asynchronously on POSIX, so on a system without
+ * `open`/`xdg-open` the missing-binary error only arrives a few ticks
+ * later. 250ms is long enough to catch `ENOENT` in practice while keeping
+ * the `tap ui` command from feeling laggy. Any failure that takes longer
+ * than this (e.g. the browser itself refuses to render) is out of scope —
+ * we only care about "did the opener process launch at all?".
+ */
+const BROWSER_OPEN_ERROR_WINDOW_MS = 250;
+
+function openInBrowser(url: string): Promise<boolean> {
 	const platform = process.platform;
 	let command: string;
 	let args: string[];
@@ -20,28 +32,35 @@ function openInBrowser(url: string): boolean {
 		args = [url];
 	}
 
-	try {
-		const child = spawn(command, args, {
-			stdio: "ignore",
-			detached: true,
-		});
-		// spawn() resolves command lookup asynchronously. On systems without
-		// `open`/`xdg-open`, the child emits `"error"` after we return here.
-		// Without a handler, node treats that as an unhandled exception and
-		// crashes the process — attach a no-op handler so we stay crash-safe.
-		// We can't synchronously know whether the open actually succeeded, so
-		// the return value stays optimistic; the caller's fallback still
-		// prints the full URL only when spawn itself throws synchronously
-		// (permission denied etc).
-		child.on("error", () => {
-			// Silently ignored — the caller's messaging already tells the
-			// user how to reach the URL manually if auto-open didn't work.
-		});
-		child.unref();
-		return true;
-	} catch {
-		return false;
-	}
+	return new Promise<boolean>((resolve) => {
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(command, args, { stdio: "ignore", detached: true });
+		} catch {
+			resolve(false);
+			return;
+		}
+
+		let settled = false;
+		const settle = (ok: boolean) => {
+			if (settled) return;
+			settled = true;
+			resolve(ok);
+		};
+
+		// Async `ENOENT` / permission errors on POSIX arrive on the child as
+		// an `error` event. Treat them as launch failures so the caller falls
+		// back to printing the full token-bearing URL. Without this the
+		// command optimistically reports success and the user gets no URL
+		// they can copy manually (the token URL is intentionally suppressed
+		// from stdout/--json on the happy path — see comment on the call
+		// site below).
+		child.once("error", () => settle(false));
+		setTimeout(() => {
+			child.unref();
+			settle(true);
+		}, BROWSER_OPEN_ERROR_WINDOW_MS);
+	});
 }
 
 export async function uiCommand(opts: GlobalOptions): Promise<void> {
@@ -71,7 +90,7 @@ export async function uiCommand(opts: GlobalOptions): Promise<void> {
 		// when auto-open fails do we print the full URL (the user has no
 		// other way to reach it).
 		const tokenBearingUrl = `${connection.baseUrl}/#token=${connection.token}`;
-		const opened = openInBrowser(tokenBearingUrl);
+		const opened = await openInBrowser(tokenBearingUrl);
 
 		if (opened) {
 			info(`Opened tapd UI in your browser: ${connection.baseUrl}/`, opts);
