@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUnits } from "viem";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed } from "vitest";
-import { createMessageListenerSession } from "../../src/commands/message-listen.js";
 import { type InProcessTapd, startInProcessTapd } from "../helpers/in-process-tapd.ts";
 import { runCli } from "../helpers/run-cli.js";
 import {
@@ -611,29 +610,6 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 			balanceBeforeTransfer = await getUsdcBalance(agentBAddress, CHAIN_KEY);
 		});
 
-		// Start Agent A's listener with auto-approve hook.
-		// In non-TTY mode, `message sync` defers transfer approval (returns null).
-		// A listener with an explicit approveTransfer hook is needed to auto-approve
-		// when grants match — this mirrors the production plugin/listener pattern.
-		it("Start Agent A listener for transfer approval", { timeout: 60_000 }, async () => {
-			// Stop sessionA to release the transport lock before starting listener
-			await sessionA?.stop();
-			sessionA = undefined;
-
-			agentAListener = await createMessageListenerSession(
-				{ plain: true, dataDir: agentADir },
-				{
-					approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
-				},
-			);
-
-			// Allow XMTP stream subscription to fully establish before sending
-			// messages. Without this, messages sent immediately after start() may
-			// land in the XMTP mailbox before the stream listener is ready,
-			// requiring a manual reconcile that this test flow does not perform.
-			await new Promise((r) => setTimeout(r, 3_000));
-		});
-
 		it(SCENARIOS.REQUEST_FUNDS_APPROVED.name, { timeout: 60_000 }, async () => {
 			// Stop sessionB to release the transport lock before request-funds
 			await sessionB?.stop();
@@ -698,13 +674,6 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 					`Before: ${formatUsdc(balanceBeforeTransfer, CHAIN_KEY)}, After: ${formatUsdc(balanceAfterTransfer, CHAIN_KEY)}, ` +
 					`Delta: ${formatUsdc(delta, CHAIN_KEY)}`,
 			).toBe(true);
-		});
-
-		// Stop Agent A's listener to release the transport lock before revoke.
-		// The rejection test uses sync (no approval hook needed — no-grant = auto-reject).
-		it("Stop Agent A listener", { timeout: 15_000 }, async () => {
-			await agentAListener?.stop();
-			agentAListener = undefined;
 		});
 
 		it(SCENARIOS.REVOKE_GRANT.name, { timeout: 60_000 }, async () => {

@@ -950,7 +950,14 @@ describe("execution", () => {
 		expect(requests.filter((request) => request.method === "eth_sendUserOperation")).toHaveLength(
 			2,
 		);
-		expect(requests.filter((request) => request.method === "pm_getPaymasterData")).toHaveLength(2);
+		const paymasterDataRequests = requests.filter(
+			(request) => request.method === "pm_getPaymasterData",
+		);
+		expect(paymasterDataRequests).toHaveLength(2);
+		for (const request of paymasterDataRequests) {
+			const context = request.params[3] as { permit?: { value?: string } };
+			expect(context.permit?.value).toBe("3250000");
+		}
 		expect(getUserOperationHash).toHaveBeenCalledTimes(2);
 	});
 

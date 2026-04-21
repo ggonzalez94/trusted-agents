@@ -37,6 +37,8 @@ import type {
 
 const ERC20_TRANSFER_SELECTOR = "0xa9059cbb";
 const SERVO_PAYMASTER_MAX_ATTEMPTS = 2;
+const SERVO_PAYMASTER_PERMIT_MULTIPLIER = 3n;
+const SERVO_PAYMASTER_PERMIT_BUFFER_MICROS = 250_000n;
 const POST_OP_REVERT_REASON_TOPIC =
 	"0xf62676f440ff169a3a9afdbf812e89e7f95975ee8e5c31214ffdef631c5f4792";
 const TRANSFER_FROM_FAILED_SELECTOR = "0x7939f424";
@@ -329,6 +331,42 @@ async function resolveServoEip1559Fees(
 	return resolveEip1559Fees(context);
 }
 
+async function resolveServoPermitValue(
+	context: Eip4337ExecutionContext,
+	chainConfig: ChainConfig,
+	calls: ExecutionCall[],
+	stubQuote: ServoQuoteResponse,
+): Promise<bigint> {
+	const estimatedFee = BigInt(stubQuote.maxTokenCostMicros);
+	if (estimatedFee === 0n) {
+		return 0n;
+	}
+
+	const bufferedFee =
+		estimatedFee * SERVO_PAYMASTER_PERMIT_MULTIPLIER + SERVO_PAYMASTER_PERMIT_BUFFER_MICROS;
+	const usdc = getUsdcAsset(chainConfig.caip2);
+	if (!usdc || usdc.address.toLowerCase() !== stubQuote.tokenAddress.toLowerCase()) {
+		return bufferedFee;
+	}
+
+	try {
+		const outgoingAmount = sumOutgoingErc20TransferAmount(calls, stubQuote.tokenAddress);
+		const balance = (await context.publicClient.readContract({
+			address: stubQuote.tokenAddress,
+			abi: erc20Abi,
+			functionName: "balanceOf",
+			args: [context.executionAddress],
+		})) as bigint;
+		const maxPermitValue = balance > outgoingAmount ? balance - outgoingAmount : 0n;
+		if (maxPermitValue <= estimatedFee) {
+			return estimatedFee;
+		}
+		return bufferedFee <= maxPermitValue ? bufferedFee : maxPermitValue;
+	} catch {
+		return bufferedFee;
+	}
+}
+
 function buildServoSendUserOperation(parameters: {
 	sender: Address;
 	nonce: bigint;
@@ -493,7 +531,7 @@ export async function executeServoEip4337Calls(
 				.catch(() => "2" as string),
 		]);
 
-		const permitValue = BigInt(stubQuote.maxTokenCostMicros);
+		const permitValue = await resolveServoPermitValue(context, chainConfig, calls, stubQuote);
 		const permitDeadline = BigInt(stubQuote.validUntil);
 		const permitSignature = await context.owner.signTypedData({
 			domain: {
