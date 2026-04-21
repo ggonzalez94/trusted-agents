@@ -343,7 +343,7 @@ describe("SqliteConversationLogger", () => {
 			// no-offset form.
 			await expect(
 				logger.logMessage(
-					"conv-noo",
+					"conv-no-offset",
 					{
 						timestamp: "2026-04-10T12:00:00",
 						direction: "outgoing",
@@ -352,7 +352,7 @@ describe("SqliteConversationLogger", () => {
 						humanApprovalRequired: false,
 						humanApprovalGiven: null,
 					},
-					{ connectionId: "conn-noo", peerAgentId: 1, peerDisplayName: "X" },
+					{ connectionId: "conn-no-offset", peerAgentId: 1, peerDisplayName: "X" },
 				),
 			).rejects.toThrow(/strict ISO 8601/);
 		});

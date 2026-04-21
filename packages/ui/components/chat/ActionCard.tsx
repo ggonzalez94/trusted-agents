@@ -49,7 +49,7 @@ const KIND_META: Record<ActionKind, KindMeta> = {
 /**
  * Fallback chip rendered when an `ActionCard` is asked to render a kind
  * outside the `ActionKind` union. Prevents the component from crashing on
- * forward-compatible or mis-shaped pending payloads (see F2.1).
+ * forward-compatible or malformed pending payloads (see F2.1).
  */
 const UNKNOWN_KIND_META: KindMeta = {
 	icon: <CircleHelp className="w-3.5 h-3.5" strokeWidth={2.4} />,

@@ -697,7 +697,7 @@ function pickLaterInstant(a: string, b: string): string {
  * Returns negative if `a` is earlier, positive if `a` is later, zero if
  * equal. Uses `Date.parse` so mixed precision (`...00Z` vs `...00.500Z`)
  * and mixed timezones (`+00:00` vs `Z`, or `Z` vs `-01:00`) compare
- * correctly. The migration validator rejects unparseable timestamps before
+ * correctly. The migration validator rejects unparsable timestamps before
  * the merge runs, so a NaN result here can only come from a runtime row
  * we did not validate; in that case fall back to lexical order to remain
  * deterministic.

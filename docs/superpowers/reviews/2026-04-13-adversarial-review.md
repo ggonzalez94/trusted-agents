@@ -26,7 +26,7 @@
 ### 1. tapd's event / notification pipeline is half-wired (F1.3 + F4.2 + F5.2)
 
 This is the biggest issue and it cuts across Phases 1, 4, and 5. The event bus works, but:
-- `TapdRuntime.translate()` invents fields that `TapMessagingService.emitEvent` never emits (`actionKind`, `conversationId`, `txHash` on inbound results, `connectionId` on connection results). Any SSE consumer gets mis-shaped events for scheduling requests, action results, and connection results.
+- `TapdRuntime.translate()` invents fields that `TapMessagingService.emitEvent` never emits (`actionKind`, `conversationId`, `txHash` on inbound results, `connectionId` on connection results). Any SSE consumer gets malformed events for scheduling requests, action results, and connection results.
 - `/api/notifications/drain` returns from a `NotificationQueue` that nothing ever enqueues. The Hermes Python plugin and the OpenClaw `before_prompt_build` hook both call this endpoint and always get an empty list in production.
 - The OpenClaw escalation watcher only listens for `action.pending` and `connection.requested`, but `TapdRuntime` never emits those types. Even if the queue worked, the watcher would never fire.
 
@@ -64,7 +64,7 @@ Several places assume the happy path and strand state on failure:
 - **`packages/tapd/src/bin.ts`** binds the `OwsSigningProvider` to the startup `trustedAgentsConfig.chain`, so cross-chain transfers (Taiko, the only other documented chain) regress.
 - **SQLite migration** marks itself complete even when individual files fail to import, and rebuilds non-empty conversations through the logMessage path which loses `startedAt` / `status` / original chronological ordering.
 
-**Impact:** a single bad startup, stale file, or malformed legacy JSON can permanently strand state, silently break a chain, or leave a conversation mis-ordered forever.
+**Impact:** a single bad startup, stale file, or malformed legacy JSON can permanently strand state, silently break a chain, or leave a conversation out-of-order forever.
 
 **Fix shape:** make `Daemon.start()` transactional (unwind on failure). Verify the spawned PID is bound before reporting start success; verify the pidfile process is gone before reporting stop success. Load chain config per-request or at least honor the full CLI chain map. Make the migration fail-closed: archive/flag only when every file imported cleanly.
 
@@ -150,7 +150,7 @@ This re-export replaces Hermes' classifier with the core one, but Hermes still h
 **[high] F1.3 — tapd's event bridge fabricates action metadata the core runtime never emits**
 `packages/tapd/src/runtime.ts:102-141`
 
-`TapdRuntime.translate()` assumes raw `emitEvent` payloads contain `actionKind`, `conversationId`, `connectionId`, `txHash`, and that `payload.id` is the request being completed. The core service does not emit that shape on the normal action paths: scheduling requests are exposed via `scope: "scheduling/request"` only (`packages/core/src/runtime/service.ts:2474-2477`), and inbound `action/result` events are wrapped by `emitIncomingAndReturn()` with only method/id/fromName (`service.ts:2568-2570`). In this translator, queued scheduling requests are therefore published as `kind: "transfer"`, results lose their original `requestId`/conversation context, and `connection/result` events usually get an empty `connectionId`. Any SSE/UI consumer will mis-render action cards and cannot reliably correlate a completion back to the pending request it is supposed to update.
+`TapdRuntime.translate()` assumes raw `emitEvent` payloads contain `actionKind`, `conversationId`, `connectionId`, `txHash`, and that `payload.id` is the request being completed. The core service does not emit that shape on the normal action paths: scheduling requests are exposed via `scope: "scheduling/request"` only (`packages/core/src/runtime/service.ts:2474-2477`), and inbound `action/result` events are wrapped by `emitIncomingAndReturn()` with only method/id/fromName (`service.ts:2568-2570`). In this translator, queued scheduling requests are therefore published as `kind: "transfer"`, results lose their original `requestId`/conversation context, and `connection/result` events usually get an empty `connectionId`. Any SSE/UI consumer will render action cards incorrectly and cannot reliably correlate a completion back to the pending request it is supposed to update.
 
 **Recommendation:** Stop defaulting missing fields into a typed event. Either enrich `TapMessagingService.emitEvent` at the source with structured action metadata, or translate from actual emitted fields (`scope`, parsed protocol payloads, request-journal metadata) before publishing to the bus. Add SSE tests for scheduling requests/results and connection results, not just plain messages.
 
