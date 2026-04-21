@@ -1,3 +1,4 @@
+import { HttpError } from "../errors.js";
 import type { RouteHandler } from "../router.js";
 import { asRecord } from "../validation.js";
 
@@ -15,14 +16,14 @@ export type InviteCreator = (request: CreateInviteRequest) => Promise<CreateInvi
 function parseInviteBody(value: unknown): CreateInviteRequest {
 	if (value === undefined || value === null) return {};
 	const v = asRecord(value);
-	if (!v) throw new Error("invites POST body must be an object");
+	if (!v) throw new HttpError(400, "invalid_body", "invites POST body must be an object");
 	const raw = v.expiresInSeconds;
 	if (raw === undefined || raw === null) return {};
 	if (typeof raw !== "number" || !Number.isFinite(raw)) {
-		throw new Error("invites POST expiresInSeconds must be a number");
+		throw new HttpError(400, "invalid_param", "invites POST expiresInSeconds must be a number");
 	}
 	if (raw <= 0) {
-		throw new Error("invites POST expiresInSeconds must be positive");
+		throw new HttpError(400, "invalid_param", "invites POST expiresInSeconds must be positive");
 	}
 	return { expiresInSeconds: raw };
 }

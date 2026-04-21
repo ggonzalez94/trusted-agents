@@ -1,3 +1,5 @@
+import { HttpError } from "./errors.js";
+
 export type RouteHandler<TBody = unknown, TResult = unknown> = (
 	params: Record<string, string>,
 	body: TBody,
@@ -25,9 +27,24 @@ export class Router {
 			const match = route.regex.exec(normalized);
 			if (!match) continue;
 			const params: Record<string, string> = {};
-			route.paramNames.forEach((name, i) => {
-				params[name] = decodeURIComponent(match[i + 1] ?? "");
-			});
+			// Malformed percent-encoding in a path segment (e.g. `%E0%A4%A`)
+			// causes decodeURIComponent to throw URIError. Without this guard
+			// that bubbles to the server's catch-all and the client sees a
+			// 500 internal_error for what is really a client input mistake.
+			for (let i = 0; i < route.paramNames.length; i++) {
+				const name = route.paramNames[i];
+				if (name === undefined) continue;
+				const raw = match[i + 1] ?? "";
+				try {
+					params[name] = decodeURIComponent(raw);
+				} catch {
+					throw new HttpError(
+						400,
+						"malformed_param",
+						`route parameter ${name} has malformed percent-encoding`,
+					);
+				}
+			}
 			return await route.handler(params, body);
 		}
 		return null;

@@ -1,4 +1,5 @@
 import type { Contact, ITrustStore, TapMessagingService } from "trusted-agents-core";
+import { HttpError } from "../errors.js";
 import type { RouteHandler } from "../router.js";
 import { isOptionalReasonBody, requireBody, requireParam } from "../validation.js";
 
@@ -22,7 +23,7 @@ export function createContactsWriteRoutes(
 			const contacts = await trustStore.getContacts();
 			const contact = contacts.find((c: Contact) => c.connectionId === connectionId);
 			if (!contact) {
-				throw new Error(`Contact not found: ${connectionId}`);
+				throw new HttpError(404, "contact_not_found", `Contact not found: ${connectionId}`);
 			}
 			await service.revokeConnection(contact, body?.reason);
 			await trustStore.removeContact(connectionId);
