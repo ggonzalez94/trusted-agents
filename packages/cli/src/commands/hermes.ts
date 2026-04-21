@@ -1,5 +1,10 @@
 import { existsSync } from "node:fs";
-import { getTapHermesPaths, resolveHermesHome, upsertTapHermesIdentity } from "../hermes/config.js";
+import {
+	getTapHermesPaths,
+	loadTapHermesPluginConfig,
+	resolveHermesHome,
+	upsertTapHermesIdentity,
+} from "../hermes/config.js";
 import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { errorCode, exitCodeForError, toErrorMessage } from "../lib/errors.js";
@@ -72,6 +77,26 @@ export async function hermesConfigureCommand(
 }
 
 /**
+ * Resolve `--identity` (and `--hermes-home`) to a concrete data dir so
+ * `tap hermes <alias>` targets the selected identity's daemon rather than
+ * falling back to whichever data dir happens to be the default.
+ */
+async function resolveHermesScopedOpts(
+	cmdOpts: HermesBaseOptions,
+	opts: GlobalOptions,
+): Promise<GlobalOptions> {
+	if (!cmdOpts.identity) return opts;
+	const config = await loadTapHermesPluginConfig(cmdOpts.hermesHome);
+	const identity = config.identities.find((i) => i.name === cmdOpts.identity);
+	if (!identity) {
+		throw new Error(
+			`Hermes identity '${cmdOpts.identity}' is not configured. Run 'tap hermes configure --name ${cmdOpts.identity}' from that data dir first.`,
+		);
+	}
+	return { ...opts, dataDir: identity.dataDir };
+}
+
+/**
  * Thin wrapper that forwards to `tap daemon status`. The Hermes wrapper
  * exists so operators who learned the `tap hermes` command surface keep
  * a working muscle memory after the Phase 4 daemon consolidation.
@@ -83,7 +108,8 @@ export async function hermesStatusCommand(
 	// Ensure paths are valid — resolves HERMES_HOME side effect but otherwise
 	// doesn't alter tapd's status. Kept as a lightweight sanity check.
 	getTapHermesPaths(cmdOpts.hermesHome);
-	await daemonStatusCommand(opts);
+	const scopedOpts = await resolveHermesScopedOpts(cmdOpts, opts);
+	await daemonStatusCommand(scopedOpts);
 }
 
 /**
@@ -91,10 +117,11 @@ export async function hermesStatusCommand(
  * routes through tapd when the daemon is running.
  */
 export async function hermesSyncCommand(
-	_cmdOpts: HermesBaseOptions,
+	cmdOpts: HermesBaseOptions,
 	opts: GlobalOptions,
 ): Promise<void> {
-	await messageSyncCommand(opts);
+	const scopedOpts = await resolveHermesScopedOpts(cmdOpts, opts);
+	await messageSyncCommand(scopedOpts);
 }
 
 /**
@@ -102,10 +129,11 @@ export async function hermesSyncCommand(
  * memory; there is only one daemon to restart after Phase 4.
  */
 export async function hermesRestartCommand(
-	_cmdOpts: HermesBaseOptions,
+	cmdOpts: HermesBaseOptions,
 	opts: GlobalOptions,
 ): Promise<void> {
-	await daemonRestartCommand(opts);
+	const scopedOpts = await resolveHermesScopedOpts(cmdOpts, opts);
+	await daemonRestartCommand(scopedOpts);
 }
 
 function parseOptionalPositiveInt(value: string | undefined, label: string): number | undefined {

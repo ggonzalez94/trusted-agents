@@ -45,9 +45,15 @@ const plugin = {
 		api.registerService({
 			id: "trusted-agents-tap-runtime",
 			start: async () => {
+				// Start the watcher unconditionally. Its built-in reconnect loop
+				// (see escalation-watcher.ts handleEnd) will attach once tapd
+				// comes up, so the agent can still wake on escalations even if
+				// Gateway boots before tapd. Gating on the one-shot health
+				// check here leaves the agent blind to escalations until the
+				// plugin service is restarted.
+				escalationWatcher.start();
 				try {
 					await client.health();
-					escalationWatcher.start();
 				} catch (error: unknown) {
 					api.logger.error(
 						`[trusted-agents-tap] tapd is not reachable: ${toErrorMessage(error)}. Run 'tap daemon start' to launch it. The TAP gateway tool will return errors until then.`,
