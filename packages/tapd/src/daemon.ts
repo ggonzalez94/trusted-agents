@@ -33,7 +33,7 @@ import { classifyEventToNotification } from "./notification-classifier.js";
 import { NotificationQueue } from "./notification-queue.js";
 import { TapdRuntime } from "./runtime.js";
 
-export const TAPD_VERSION = "0.2.0-beta.6";
+export const TAPD_VERSION = "0.2.0-beta.7";
 
 export interface DaemonOptions {
 	config: TapdConfig;

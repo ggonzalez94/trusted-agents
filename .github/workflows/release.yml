@@ -50,7 +50,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in packages/core/package.json packages/sdk/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
+          for pkg in packages/core/package.json packages/tapd/package.json packages/sdk/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
             PKG_VERSION=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('$pkg','utf8')).version)")
             if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
               echo "::error::Version mismatch: $pkg has $PKG_VERSION but tag is v$TAG_VERSION"
@@ -170,7 +170,7 @@ jobs:
       - name: Resolve workspace dependencies
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in packages/sdk/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
+          for pkg in packages/tapd/package.json packages/sdk/package.json packages/cli/package.json packages/openclaw-plugin/package.json; do
             node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
@@ -193,18 +193,31 @@ jobs:
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           cd packages/core && bun pm pack --dry-run && cd ../..
-          for pkg_dir in packages/sdk packages/cli packages/openclaw-plugin; do
+          for pkg_dir in packages/tapd packages/sdk packages/cli packages/openclaw-plugin; do
             cd "$pkg_dir"
             bun pm pack --dry-run
             TARBALL=$(bun pm pack 2>&1 | grep '\.tgz$')
             tar -xzf "$TARBALL"
-            CORE_DEP=$(node -e "console.log(JSON.parse(require('fs').readFileSync('package/package.json','utf8')).dependencies['trusted-agents-core'] || 'MISSING')")
+            node -e "
+              const fs = require('fs');
+              const manifest = JSON.parse(fs.readFileSync('package/package.json', 'utf8'));
+              const internal = ['trusted-agents-core', 'trusted-agents-tapd', 'trusted-agents-sdk'];
+              for (const name of internal) {
+                const actual = manifest.dependencies?.[name];
+                if (actual !== undefined && actual !== '$TAG_VERSION') {
+                  console.error('::error::' + '$pkg_dir' + ' has ' + name + '@' + actual + ' but expected $TAG_VERSION');
+                  process.exit(1);
+                }
+              }
+              for (const [name, actual] of Object.entries(manifest.dependencies || {})) {
+                if (typeof actual === 'string' && actual.startsWith('workspace:')) {
+                  console.error('::error::' + '$pkg_dir' + ' still has workspace dependency ' + name + '@' + actual);
+                  process.exit(1);
+                }
+              }
+              console.log('$pkg_dir: internal dependencies resolved to $TAG_VERSION');
+            "
             rm -rf package "$TARBALL"
-            if [[ "$CORE_DEP" != "$TAG_VERSION" ]]; then
-              echo "::error::$pkg_dir has trusted-agents-core@$CORE_DEP but expected $TAG_VERSION"
-              exit 1
-            fi
-            echo "$pkg_dir: trusted-agents-core@$CORE_DEP ✓"
             cd ../..
           done
 
@@ -223,7 +236,7 @@ jobs:
           echo "IS_PRERELEASE=$IS_PRERELEASE" >> "$GITHUB_ENV"
           echo "Resolved release channel: prerelease=$IS_PRERELEASE npm_dist_tag=${NPM_DIST_TAG:-latest}"
 
-      # Publish in dependency order: core first, then cli and tap
+      # Publish in dependency order: core first, then tapd/sdk, then cli and tap
       # --provenance requires id-token: write permission (set above)
       # Each step checks if version exists before publishing to handle re-runs
       - name: Publish trusted-agents-core
@@ -232,6 +245,22 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           if npm view "trusted-agents-core@$TAG_VERSION" version 2>/dev/null; then
             echo "trusted-agents-core@$TAG_VERSION already published, skipping"
+          else
+            if [[ -n "${NPM_DIST_TAG:-}" ]]; then
+              bun publish --access public --no-git-checks --provenance --tag "$NPM_DIST_TAG"
+            else
+              bun publish --access public --no-git-checks --provenance
+            fi
+          fi
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish trusted-agents-tapd
+        working-directory: packages/tapd
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "trusted-agents-tapd@$TAG_VERSION" version 2>/dev/null; then
+            echo "trusted-agents-tapd@$TAG_VERSION already published, skipping"
           else
             if [[ -n "${NPM_DIST_TAG:-}" ]]; then
               bun publish --access public --no-git-checks --provenance --tag "$NPM_DIST_TAG"

@@ -16,7 +16,6 @@
 | v2 — SQLite conversation store | `f775449` | `71f441a` | 17 files, 2732+/10− |
 
 ---
-
 ## Executive summary
 
 **Verdict across all six phases: needs-attention.** Every phase returned at least one high-severity finding. Codex found **16 distinct findings total** (1 critical, 13 high, 2 medium), with clear clustering around four structural problems rather than scattered defects.
@@ -347,4 +346,3 @@ For non-empty logs, the importer rebuilds the conversation by replaying messages
 - Preserve canonical conversation metadata during import and add regression coverage for out-of-order legacy histories.
 
 ---
-

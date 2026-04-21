@@ -15,6 +15,7 @@ import { runCli } from "./helpers/run-cli.js";
 // Well-known Hardhat test key — never use in production
 const TEST_PRIVATE_KEY = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const TEST_ADDRESS = privateKeyToAccount(`0x${TEST_PRIVATE_KEY}`).address;
+const DETERMINISTIC_TEST_WALLETS = ["tap-agent-7", "tap-agent-10", "tap-agent-42", "tap-agent-99"];
 
 describe("tap migrate-wallet", () => {
 	let tmpDir: string;
@@ -32,7 +33,7 @@ describe("tap migrate-wallet", () => {
 
 		// Clean up stale OWS wallets from previous test runs that may have
 		// failed before afterEach cleanup (wallet names are deterministic)
-		for (const name of ["tap-agent-42", "tap-agent-99"]) {
+		for (const name of DETERMINISTIC_TEST_WALLETS) {
 			try {
 				deleteWallet(name);
 			} catch (_) {

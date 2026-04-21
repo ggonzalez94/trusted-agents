@@ -8,6 +8,7 @@ const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const packages = [
 	{ dir: "packages/core", name: "trusted-agents-core" },
+	{ dir: "packages/tapd", name: "trusted-agents-tapd" },
 	{ dir: "packages/sdk", name: "trusted-agents-sdk" },
 	{ dir: "packages/cli", name: "trusted-agents-cli" },
 	{ dir: "packages/openclaw-plugin", name: "trusted-agents-tap" },
@@ -48,6 +49,7 @@ for (const pkg of packages) {
 		}
 	}
 
+	assertNoWorkspaceDependencies(pkg.name, packedPackageDir);
 	assertOpenClawExtensions(pkg.name, packedPackageDir);
 }
 
@@ -96,6 +98,27 @@ function assertPath(packageDir, label, relativePath) {
 		errors.push(
 			`${label} could not be read at ${relativePath}: ${error instanceof Error ? error.message : String(error)}`,
 		);
+	}
+}
+
+function assertNoWorkspaceDependencies(packageName, packedPackageDir) {
+	const packageJsonPath = join(packedPackageDir, "package.json");
+	if (!existsSync(packageJsonPath)) {
+		return;
+	}
+
+	const packedManifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+	for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+		const dependencies = packedManifest[field];
+		if (!dependencies || typeof dependencies !== "object") {
+			continue;
+		}
+
+		for (const [dependency, version] of Object.entries(dependencies)) {
+			if (typeof version === "string" && version.startsWith("workspace:")) {
+				errors.push(`${packageName} packed ${field}.${dependency} must not use workspace protocol`);
+			}
+		}
 	}
 }
 

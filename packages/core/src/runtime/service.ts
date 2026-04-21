@@ -496,7 +496,7 @@ export class TapMessagingService {
 	private running = false;
 	private lastSyncAt: string | undefined;
 	private outboxPoller: ReturnType<typeof setInterval> | null = null;
-	private outboxPollInFlight = false;
+	private outboxPollInFlight: Promise<void> | null = null;
 	private transportSessionReentryDepth = 0;
 	private legacyStateMigrationsComplete = false;
 	private manifestLoaded = false;
@@ -643,6 +643,12 @@ export class TapMessagingService {
 
 		try {
 			this.clearOutboxPoller();
+			await this.outboxPollInFlight?.catch((error: unknown) =>
+				this.log(
+					"warn",
+					`Queued TAP command polling failed during stop(): ${toErrorMessage(error)}`,
+				),
+			);
 			this.rejectAllConnectWaiters(new Error("TapMessagingService stopped"));
 			await this.drain();
 			await this.context.transport.stop?.();
@@ -1905,13 +1911,19 @@ export class TapMessagingService {
 		if (!this.running || this.outboxPollInFlight) {
 			return;
 		}
-		this.outboxPollInFlight = true;
-		try {
+
+		const poll = (async () => {
 			await this.executionMutex.runExclusive(async () => await this.processOutboxInternal());
+		})();
+		this.outboxPollInFlight = poll;
+		try {
+			await poll;
 		} catch (error: unknown) {
 			this.log("warn", `Queued TAP command polling failed: ${toErrorMessage(error)}`);
 		} finally {
-			this.outboxPollInFlight = false;
+			if (this.outboxPollInFlight === poll) {
+				this.outboxPollInFlight = null;
+			}
 		}
 	}
 

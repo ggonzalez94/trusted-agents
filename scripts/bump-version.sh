@@ -16,6 +16,7 @@ fi
 
 PACKAGES=(
   "packages/core/package.json"
+  "packages/tapd/package.json"
   "packages/sdk/package.json"
   "packages/cli/package.json"
   "packages/openclaw-plugin/package.json"
@@ -36,6 +37,22 @@ for pkg in "${PACKAGES[@]}"; do
   "
   echo "Updated $pkg to $VERSION"
 done
+
+node -e "
+  const fs = require('fs');
+  const path = 'packages/tapd/src/daemon.ts';
+  const source = fs.readFileSync(path, 'utf8');
+  const updated = source.replace(
+    /export const TAPD_VERSION = \"[^\"]+\";/,
+    'export const TAPD_VERSION = \"$VERSION\";',
+  );
+  if (updated === source) {
+    console.error('Error: failed to update TAPD_VERSION in ' + path);
+    process.exit(1);
+  }
+  fs.writeFileSync(path, updated);
+"
+echo "Updated packages/tapd/src/daemon.ts to $VERSION"
 
 echo ""
 echo "All packages bumped to $VERSION. Next steps:"
