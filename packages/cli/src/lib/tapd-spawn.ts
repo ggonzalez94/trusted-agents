@@ -95,9 +95,18 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 		const port = await waitForPortFileAndLiveness(portPath, childPid, timeoutMs);
 		return { pid: childPid, port, logPath, pidPath };
 	} catch (error) {
-		// Remove the pidfile we just wrote — the child is dead or never bound,
-		// so leaving the pidfile around would make the status/stop commands
-		// think a real daemon is running.
+		// On slow boot, waitForPortFileAndLiveness can time out with the
+		// child still alive. Removing the pidfile without killing the child
+		// leaves a detached daemon orphaned: `tap daemon stop`/`restart`
+		// lose control of it, and the next start may unlink its port file
+		// mid-flight while it still holds the port. Kill first, then clean.
+		if (isProcessAlive(childPid)) {
+			try {
+				process.kill(childPid, "SIGKILL");
+			} catch {
+				// already gone — ignore
+			}
+		}
 		await rm(pidPath, { force: true }).catch(() => {});
 		if (error instanceof TapdStartupError) {
 			throw new Error(`${error.message} See ${logPath} for details.`);
