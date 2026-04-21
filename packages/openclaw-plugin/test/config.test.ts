@@ -2,46 +2,30 @@ import { describe, expect, it } from "vitest";
 import { parseTapOpenClawPluginConfig } from "../src/config.js";
 
 describe("parseTapOpenClawPluginConfig", () => {
-	it("defaults unnamed identities and reconcile intervals", () => {
+	it("returns an empty config when nothing is passed", () => {
+		expect(parseTapOpenClawPluginConfig(undefined)).toEqual({});
+		expect(parseTapOpenClawPluginConfig(null)).toEqual({});
+		expect(parseTapOpenClawPluginConfig({})).toEqual({});
+	});
+
+	it("trims dataDir and tapdSocketPath", () => {
 		expect(
 			parseTapOpenClawPluginConfig({
-				identities: [{ dataDir: "/tmp/a" }, { dataDir: "/tmp/b" }],
+				dataDir: " /tmp/agent ",
+				tapdSocketPath: " /tmp/agent/.tapd.sock ",
 			}),
-		).toEqual({
-			identities: [
-				{
-					name: "default",
-					dataDir: "/tmp/a",
-					reconcileIntervalMinutes: 10,
-				},
-				{
-					name: "identity-2",
-					dataDir: "/tmp/b",
-					reconcileIntervalMinutes: 10,
-				},
-			],
-		});
+		).toEqual({ dataDir: "/tmp/agent", tapdSocketPath: "/tmp/agent/.tapd.sock" });
 	});
 
-	it("rejects duplicate identity names", () => {
-		expect(() =>
-			parseTapOpenClawPluginConfig({
-				identities: [
-					{ name: "same", dataDir: "/tmp/a" },
-					{ name: "same", dataDir: "/tmp/b" },
-				],
-			}),
-		).toThrow("Duplicate TAP plugin identity name");
+	it("rejects non-object configs", () => {
+		expect(() => parseTapOpenClawPluginConfig([])).toThrow("TAP plugin config must be an object");
+		expect(() => parseTapOpenClawPluginConfig("oops")).toThrow(
+			"TAP plugin config must be an object",
+		);
 	});
 
-	it("rejects duplicate identity data dirs after path normalization", () => {
-		expect(() =>
-			parseTapOpenClawPluginConfig({
-				identities: [
-					{ name: "alpha", dataDir: "/tmp/tap/agent-a" },
-					{ name: "beta", dataDir: "/tmp/tap/../tap/agent-a" },
-				],
-			}),
-		).toThrow("Duplicate TAP plugin identity dataDir");
+	it("rejects empty string fields", () => {
+		expect(() => parseTapOpenClawPluginConfig({ dataDir: "" })).toThrow("dataDir");
+		expect(() => parseTapOpenClawPluginConfig({ tapdSocketPath: "   " })).toThrow("tapdSocketPath");
 	});
 });

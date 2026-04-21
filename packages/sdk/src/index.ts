@@ -89,11 +89,14 @@ export type {
 // ── Conversation (from core) ──
 export {
 	FileConversationLogger,
+	SqliteConversationLogger,
 	generateMarkdownTranscript,
+	migrateFileLogsToSqlite,
 } from "trusted-agents-core";
 export type {
 	ConversationMessage,
 	ConversationLog,
+	MigrationReport,
 } from "trusted-agents-core";
 
 // ── Request journal (from core) ──

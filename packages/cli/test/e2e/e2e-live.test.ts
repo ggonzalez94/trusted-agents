@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUnits } from "viem";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed } from "vitest";
-import {
-	type MessageListenerSession,
-	createMessageListenerSession,
-} from "../../src/commands/message-listen.js";
+import { createMessageListenerSession } from "../../src/commands/message-listen.js";
+import { type InProcessTapd, startInProcessTapd } from "../helpers/in-process-tapd.ts";
 import { runCli } from "../helpers/run-cli.js";
 import {
 	type AgentSession,
@@ -90,7 +88,8 @@ let agentBAddress: `0x${string}`;
 let inviteUrl: string;
 let balanceBeforeTransfer: bigint;
 let balanceAfterTransfer: bigint;
-let agentAListener: MessageListenerSession | undefined;
+let agentATapd: InProcessTapd | undefined;
+let agentBTapd: InProcessTapd | undefined;
 let sessionA: AgentSession | undefined;
 let sessionB: AgentSession | undefined;
 
@@ -121,7 +120,8 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 	});
 
 	afterAll(async () => {
-		await agentAListener?.stop();
+		await agentBTapd?.stop();
+		await agentATapd?.stop();
 		await sessionA?.stop();
 		await sessionB?.stop();
 		if (tempRoot) {
@@ -293,9 +293,19 @@ describe.skipIf(SKIP)("TAP live E2E — real XMTP + OWS + on-chain", { timeout: 
 		beforeAll(timer.start);
 		afterAll(timer.stop);
 
-		it("Start XMTP sessions", { timeout: 60_000 }, async () => {
-			sessionA = await createAgentSession({ dataDir: agentADir });
-			sessionB = await createAgentSession({ dataDir: agentBDir });
+		it("Start in-process tapd for both agents", { timeout: 60_000 }, async () => {
+			// Phase 3: every CLI command goes through tapd's HTTP API. We spin
+			// up an in-process Daemon per agent against the real OWS-backed
+			// runtime so the production code path is exercised end to end.
+			// The transfer auto-approve hook is wired here too so the test
+			// no longer needs a separate listener pass.
+			agentATapd = await startInProcessTapd({
+				dataDir: agentADir,
+				approveTransfer: async ({ activeTransferGrants }) => activeTransferGrants.length > 0,
+			});
+			agentBTapd = await startInProcessTapd({
+				dataDir: agentBDir,
+			});
 		});
 
 		// XMTP baselines existing DM history on the first sync.

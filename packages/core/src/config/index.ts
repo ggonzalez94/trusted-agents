@@ -8,7 +8,7 @@ export type {
 	OwsConfig,
 	TrustedAgentsConfig,
 } from "./types.js";
-export { BASE_MAINNET, DEFAULT_CONFIG } from "./defaults.js";
+export { ALL_CHAINS, BASE_MAINNET, DEFAULT_CONFIG, TAIKO_MAINNET } from "./defaults.js";
 export { validateConfig } from "./schema.js";
 export {
 	getDefaultExecutionModeForChain,

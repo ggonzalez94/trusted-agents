@@ -1,8 +1,8 @@
 import { ValidationError } from "trusted-agents-core";
-import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { success, verbose } from "../lib/output.js";
+import { TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RespondMeetingOptions {
@@ -12,6 +12,10 @@ export interface RespondMeetingOptions {
 	dryRun?: boolean;
 }
 
+/**
+ * `tap message respond-meeting` — accept or reject a pending scheduling
+ * request. The lookup-by-schedulingId happens in tapd's meetings route.
+ */
 export async function messageRespondMeetingCommand(
 	schedulingId: string,
 	cmdOpts: RespondMeetingOptions,
@@ -28,30 +32,7 @@ export async function messageRespondMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const { service } = await createCliRuntime({
-			config,
-			opts,
-			ownerLabel: "tap:respond-meeting",
-		});
-
 		const approve = !!cmdOpts.accept;
-
-		verbose(`${approve ? "Accepting" : "Rejecting"} scheduling request ${schedulingId}...`, opts);
-
-		// Find the pending request matching this schedulingId
-		const pendingRequests = await service.listPendingRequests();
-		const matching = pendingRequests.find(
-			(r) =>
-				r.direction === "inbound" &&
-				r.details?.type === "scheduling" &&
-				(r.details as { schedulingId?: string }).schedulingId === schedulingId,
-		);
-
-		if (!matching) {
-			throw new ValidationError(
-				`No pending scheduling request found with schedulingId: ${schedulingId}`,
-			);
-		}
 
 		if (cmdOpts.dryRun) {
 			success(
@@ -61,8 +42,6 @@ export async function messageRespondMeetingCommand(
 					scope: "scheduling/respond",
 					scheduling_id: schedulingId,
 					action: approve ? "accept" : "reject",
-					request_id: matching.requestId,
-					peer_agent_id: matching.peerAgentId,
 					...(cmdOpts.reason ? { reason: cmdOpts.reason } : {}),
 				},
 				opts,
@@ -71,17 +50,22 @@ export async function messageRespondMeetingCommand(
 			return;
 		}
 
-		const report = await service.resolvePending(matching.requestId, approve, cmdOpts.reason);
+		verbose(`${approve ? "Accepting" : "Rejecting"} scheduling request ${schedulingId}...`, opts);
+
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const result = await client.respondMeeting(schedulingId, {
+			approve,
+			reason: cmdOpts.reason,
+		});
 
 		success(
 			{
 				resolved: true,
 				scheduling_id: schedulingId,
 				action: approve ? "accepted" : "rejected",
-				request_id: matching.requestId,
-				peer_agent_id: matching.peerAgentId,
+				request_id: result.requestId,
 				...(cmdOpts.reason ? { reason: cmdOpts.reason } : {}),
-				pending_requests: report.pendingRequests.length,
+				pending_requests: result.report.pendingRequests.length,
 			},
 			opts,
 			startTime,

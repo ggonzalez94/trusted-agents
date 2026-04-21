@@ -1,16 +1,10 @@
-import { ValidationError, isEthereumAddress, requireActiveContact } from "trusted-agents-core";
+import { ValidationError, isEthereumAddress } from "trusted-agents-core";
 import { normalizeAsset } from "../lib/assets.js";
 import { resolveChainAlias } from "../lib/chains.js";
-import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { success, verbose } from "../lib/output.js";
-import {
-	isQueuedTapCommandPending,
-	queuedTapCommandPendingFields,
-	queuedTapCommandResultFields,
-	runOrQueueTapCommand,
-} from "../lib/queued-commands.js";
+import { TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RequestFundsOptions {
@@ -22,6 +16,11 @@ export interface RequestFundsOptions {
 	dryRun?: boolean;
 }
 
+/**
+ * `tap message request-funds` — ask a connected peer to transfer assets to a
+ * specified address. After the Phase 3 refactor this command is a thin tapd
+ * HTTP client; the daemon owns the action request flow.
+ */
 export async function messageRequestFundsCommand(
 	peer: string,
 	cmdOpts: RequestFundsOptions,
@@ -31,20 +30,17 @@ export async function messageRequestFundsCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:request-funds" });
 		const asset = normalizeAsset(cmdOpts.asset);
 		const chain = resolveChainAlias(cmdOpts.chain ?? config.chain);
-		const ownAddress = await runtime.signingProvider.getAddress();
-		const toAddress = resolveRecipientAddress(cmdOpts.to, ownAddress);
-		const contact = requireActiveContact(await runtime.trustStore.getContacts(), peer);
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const toAddress = await resolveRecipientAddress(cmdOpts.to, client);
 
 		if (cmdOpts.dryRun) {
 			success(
 				{
 					status: "preview",
 					dry_run: true,
-					peer: contact.peerDisplayName,
-					agent_id: contact.peerAgentId,
+					peer,
 					asset,
 					amount: cmdOpts.amount,
 					chain,
@@ -60,51 +56,18 @@ export async function messageRequestFundsCommand(
 
 		verbose(`Requesting ${cmdOpts.amount} ${asset.toUpperCase()} from ${peer}...`, opts);
 
-		const requestInput = {
+		const result = await client.requestFunds({
 			peer,
 			asset,
 			amount: cmdOpts.amount,
 			chain,
 			toAddress,
 			note: cmdOpts.note,
-		};
-		const outcome = await runOrQueueTapCommand(
-			config.dataDir,
-			{
-				type: "request-funds",
-				payload: {
-					input: requestInput,
-				},
-			},
-			async () => await runtime.service.requestFunds(requestInput),
-			{
-				requestedBy: "tap:request-funds",
-			},
-		);
-
-		if (isQueuedTapCommandPending(outcome)) {
-			success(
-				{
-					...queuedTapCommandPendingFields(outcome),
-					peer,
-					asset,
-					amount: cmdOpts.amount,
-					chain,
-					scope: "transfer/request",
-					to_address: toAddress,
-				},
-				opts,
-				startTime,
-			);
-			return;
-		}
-
-		const result = outcome.result;
+		});
 
 		success(
 			{
 				requested: true,
-				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				asset: result.asset,
@@ -126,15 +89,21 @@ export async function messageRequestFundsCommand(
 	}
 }
 
-function resolveRecipientAddress(
+async function resolveRecipientAddress(
 	value: string | undefined,
-	fallback: `0x${string}`,
-): `0x${string}` {
-	if (!value) {
-		return fallback;
+	client: TapdClient,
+): Promise<`0x${string}`> {
+	if (value) {
+		if (!isEthereumAddress(value)) {
+			throw new ValidationError(`Invalid recipient address: ${value}`);
+		}
+		return value;
 	}
-	if (!isEthereumAddress(value)) {
-		throw new ValidationError(`Invalid recipient address: ${value}`);
+	const identity = await client.getIdentity();
+	if (!identity.address || !isEthereumAddress(identity.address)) {
+		throw new ValidationError(
+			"Could not resolve own address from tapd; pass --to <address> explicitly.",
+		);
 	}
-	return value;
+	return identity.address as `0x${string}`;
 }

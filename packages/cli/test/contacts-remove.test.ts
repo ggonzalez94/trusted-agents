@@ -1,172 +1,133 @@
-import { TransportOwnershipError } from "trusted-agents-core";
 /**
- * Tests for `tap contacts remove` — verifies that the command:
- * - Sends a connection/revoke via the service before removing locally
- * - Removes the local contact regardless of revoke delivery success
- * - Returns NOT_FOUND when the connectionId does not exist
+ * Tests for `tap contacts remove` (F3.1 fail-closed fix), updated for the
+ * Unix-socket migration.
+ *
+ * The command MUST route through tapd so `connection/revoke` is delivered
+ * before local state is deleted — this preserves the revoke-before-delete
+ * trust-graph invariant. When tapd is not running, the command fails closed
+ * with exit code 2 and does NOT mutate the local trust store.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeError, type FakeTapdHandle, startFakeTapd } from "./helpers/fake-tapd-socket.ts";
 
-const { loadConfigMock, createCliRuntimeMock, successMock, errorMock, infoMock } = vi.hoisted(
-	() => ({
-		loadConfigMock: vi.fn(async () => ({})),
-		createCliRuntimeMock: vi.fn(),
+const { loadConfigMock, successMock, errorMock, infoMock, removeContactMock, getContactsMock } =
+	vi.hoisted(() => ({
+		loadConfigMock: vi.fn(),
 		successMock: vi.fn(),
 		errorMock: vi.fn(),
 		infoMock: vi.fn(),
-	}),
-);
+		removeContactMock: vi.fn(),
+		getContactsMock: vi.fn(),
+	}));
 
-vi.mock("../src/lib/config-loader.js", () => ({
-	loadConfig: loadConfigMock,
-}));
+vi.mock("../src/lib/config-loader.js", async () => {
+	const actual = await vi.importActual<typeof import("../src/lib/config-loader.js")>(
+		"../src/lib/config-loader.js",
+	);
+	return { ...actual, loadConfig: loadConfigMock };
+});
 
-vi.mock("../src/lib/cli-runtime.js", () => ({
-	createCliRuntime: createCliRuntimeMock,
-}));
+vi.mock("../src/lib/output.js", async () => {
+	const actual =
+		await vi.importActual<typeof import("../src/lib/output.js")>("../src/lib/output.js");
+	return { ...actual, success: successMock, error: errorMock, info: infoMock };
+});
 
-vi.mock("../src/lib/output.js", () => ({
-	success: successMock,
-	error: errorMock,
-	info: infoMock,
-}));
+vi.mock("trusted-agents-core", async () => {
+	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
+	return {
+		...actual,
+		FileTrustStore: vi.fn(() => ({
+			getContacts: getContactsMock,
+			removeContact: removeContactMock,
+		})),
+	};
+});
 
 import { contactsRemoveCommand } from "../src/commands/contacts-remove.js";
 
-const ACTIVE_CONTACT = {
-	connectionId: "conn-abc-123",
-	peerAgentId: 42,
-	peerChain: "eip155:8453",
-	peerDisplayName: "Bob",
-	peerAgentAddress: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-	peerOwnerAddress: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-	status: "active",
-	establishedAt: "2026-04-10T00:00:00.000Z",
-	lastContactAt: "2026-04-10T00:00:00.000Z",
-	permissions: {},
-};
+describe("tap contacts remove (F3.1 fail-closed)", () => {
+	let fake: FakeTapdHandle | null;
+	let coldDir: string;
 
-const OPTS = { json: true };
+	beforeEach(async () => {
+		fake = null;
+		// "Cold" data dir is used for the fail-closed path: no `.tapd-token`
+		// file means `TapdClient.forDataDir` throws `TapdNotRunningError`
+		// before any HTTP work happens.
+		coldDir = await mkdtemp(join(tmpdir(), "tap-contacts-rm-cold-"));
+		loadConfigMock.mockResolvedValue({ dataDir: coldDir });
+		removeContactMock.mockResolvedValue(undefined);
+		getContactsMock.mockResolvedValue([]);
+	});
 
-describe("tap contacts remove", () => {
-	afterEach(() => {
+	afterEach(async () => {
 		vi.clearAllMocks();
-		// Clear rather than set to 0: `undefined` means "not set" while 0 means
-		// "explicitly succeeded". The sibling connect.test.ts uses this pattern.
+		await fake?.stop();
+		await rm(coldDir, { recursive: true, force: true }).catch(() => {});
 		process.exitCode = undefined;
 	});
 
-	it("sends connection/revoke and removes the local contact on success", async () => {
-		const revokeConnection = vi.fn(async () => {});
-		const removeContact = vi.fn(async () => {});
+	async function withFakeTapd(
+		routes: Parameters<typeof startFakeTapd>[0]["routes"],
+	): Promise<void> {
+		fake = await startFakeTapd({ routes });
+		loadConfigMock.mockResolvedValue({ dataDir: fake.dataDir });
+	}
 
-		const stop = vi.fn(async () => {});
-		createCliRuntimeMock.mockResolvedValue({
-			trustStore: {
-				getContacts: vi.fn(async () => [ACTIVE_CONTACT]),
-				removeContact,
+	it("routes through tapd's POST /api/contacts/:id/revoke when tapd is running", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/contacts/:id/revoke",
+				handler: () => ({ revoked: true, connectionId: "conn-abc-123", peer: "Bob" }),
 			},
-			service: {
-				revokeConnection,
-			},
-			stop,
-		});
+		]);
 
-		await contactsRemoveCommand("conn-abc-123", OPTS);
+		await contactsRemoveCommand("conn-abc-123", { json: true });
 
-		expect(revokeConnection).toHaveBeenCalledOnce();
-		expect(revokeConnection).toHaveBeenCalledWith(ACTIVE_CONTACT);
-		expect(removeContact).toHaveBeenCalledOnce();
-		expect(removeContact).toHaveBeenCalledWith("conn-abc-123");
+		expect(fake?.calls).toHaveLength(1);
+		expect(fake?.calls[0]?.path).toBe("/api/contacts/conn-abc-123/revoke");
+
 		expect(successMock).toHaveBeenCalledOnce();
-		const successArgs = successMock.mock.calls[0]?.[0] as { removed: string; peer: string };
-		expect(successArgs.removed).toBe("conn-abc-123");
-		expect(successArgs.peer).toBe("Bob");
-		expect(stop).toHaveBeenCalledOnce();
+		const payload = successMock.mock.calls[0]?.[0] as { removed: string; peer: string };
+		expect(payload).toEqual({ removed: "conn-abc-123", peer: "Bob" });
+
+		// Local trust store NOT touched on the tapd path — the daemon already
+		// removed it.
+		expect(removeContactMock).not.toHaveBeenCalled();
 	});
 
-	it("still removes locally when revokeConnection throws a non-ownership error", async () => {
-		const revokeConnection = vi.fn(async () => {
-			throw new Error("transport unavailable");
-		});
-		let removedConnectionId: string | undefined;
-		const removeContact = vi.fn(async (id: string) => {
-			removedConnectionId = id;
-		});
+	it("fails closed with exit code 2 and does NOT touch the trust store when tapd is not running", async () => {
+		// No `.tapd-token` file in `coldDir` → `TapdClient.forDataDir` throws
+		// `TapdNotRunningError` and the command bails before mutating state.
+		await contactsRemoveCommand("conn-abc-123", { json: true });
 
-		const stop = vi.fn(async () => {});
-		createCliRuntimeMock.mockResolvedValue({
-			trustStore: {
-				getContacts: vi.fn(async () => [ACTIVE_CONTACT]),
-				removeContact,
-			},
-			service: {
-				revokeConnection,
-			},
-			stop,
-		});
-
-		await contactsRemoveCommand("conn-abc-123", OPTS);
-
-		// revokeConnection was attempted
-		expect(revokeConnection).toHaveBeenCalledOnce();
-		// Local contact was still removed
-		expect(removedConnectionId).toBe("conn-abc-123");
-		// Command still succeeded
-		expect(successMock).toHaveBeenCalledOnce();
-		// No error output
-		expect(process.exitCode).not.toBe(4);
-		// Runtime was cleaned up
-		expect(stop).toHaveBeenCalledOnce();
-	});
-
-	it("does not remove locally when another TAP process owns transport", async () => {
-		const revokeConnection = vi.fn(async () => {
-			throw new TransportOwnershipError("owned");
-		});
-		const removeContact = vi.fn(async () => {});
-
-		const stop = vi.fn(async () => {});
-		createCliRuntimeMock.mockResolvedValue({
-			trustStore: {
-				getContacts: vi.fn(async () => [ACTIVE_CONTACT]),
-				removeContact,
-			},
-			service: {
-				revokeConnection,
-			},
-			stop,
-		});
-
-		await contactsRemoveCommand("conn-abc-123", OPTS);
-
-		expect(process.exitCode).toBe(2);
-		expect(removeContact).not.toHaveBeenCalled();
-		expect(errorMock).toHaveBeenCalledWith(
-			"TRANSPORT_ERROR",
-			expect.stringContaining("active TAP owner"),
-			OPTS,
-		);
-	});
-
-	it("returns NOT_FOUND when the connectionId does not exist", async () => {
-		const stop = vi.fn(async () => {});
-		createCliRuntimeMock.mockResolvedValue({
-			trustStore: {
-				getContacts: vi.fn(async () => []),
-			},
-			service: {
-				revokeConnection: vi.fn(),
-			},
-			stop,
-		});
-
-		await contactsRemoveCommand("conn-nonexistent", OPTS);
-
-		expect(process.exitCode).toBe(4);
+		expect(fake).toBeNull();
+		expect(removeContactMock).not.toHaveBeenCalled();
+		expect(successMock).not.toHaveBeenCalled();
 		expect(errorMock).toHaveBeenCalledOnce();
-		const errorArgs = errorMock.mock.calls[0] as [string, string, unknown];
-		expect(errorArgs[0]).toBe("NOT_FOUND");
+		expect(errorMock.mock.calls[0]?.[0]).toBe("TAPD_NOT_RUNNING");
+		expect(errorMock.mock.calls[0]?.[1]).toContain("tap daemon start");
+		expect(process.exitCode).toBe(2);
+	});
+
+	it("surfaces tapd errors (e.g. NOT_FOUND) when the daemon rejects the request", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/contacts/:id/revoke",
+				handler: () => new FakeError(404, "NOT_FOUND", "unknown connection"),
+			},
+		]);
+
+		await contactsRemoveCommand("conn-missing", { json: true });
+
+		expect(fake?.calls).toHaveLength(1);
+		expect(removeContactMock).not.toHaveBeenCalled();
 		expect(successMock).not.toHaveBeenCalled();
 	});
 });

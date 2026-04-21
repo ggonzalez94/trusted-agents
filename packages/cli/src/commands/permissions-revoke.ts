@@ -1,14 +1,14 @@
-import { nowISO, requireActiveContact } from "trusted-agents-core";
-import { createCliRuntime } from "../lib/cli-runtime.js";
+import {
+	type Contact,
+	FileTrustStore,
+	type PermissionGrantSet,
+	nowISO,
+	requireActiveContact,
+} from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, success, verbose } from "../lib/output.js";
-import {
-	isQueuedTapCommandPending,
-	queuedTapCommandPendingFields,
-	queuedTapCommandResultFields,
-	runOrQueueTapCommand,
-} from "../lib/queued-commands.js";
+import { TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 export async function permissionsRevokeCommand(
@@ -21,10 +21,9 @@ export async function permissionsRevokeCommand(
 
 	try {
 		const config = await loadConfig(opts);
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:permissions-revoke" });
-		const contact = requireActiveContact(await runtime.trustStore.getContacts(), peer);
+		const contact = await loadActiveContact(config.dataDir, peer);
 
-		const grantSet = {
+		const grantSet: PermissionGrantSet = {
 			...contact.permissions.grantedByMe,
 			updatedAt: nowISO(),
 			grants: contact.permissions.grantedByMe.grants.map((grant) =>
@@ -61,41 +60,17 @@ export async function permissionsRevokeCommand(
 
 		verbose(`Revoking grant ${grantId} for ${contact.peerDisplayName}...`, opts);
 		const note = cmdOpts?.note ?? `Revoked ${grantId}`;
-		const outcome = await runOrQueueTapCommand(
-			config.dataDir,
-			{
-				type: "publish-grant-set",
-				payload: {
-					peer,
-					grantSet,
-					note,
-				},
-			},
-			async () => await runtime.service.publishGrantSet(peer, grantSet, note),
-			{
-				requestedBy: "tap:permissions-revoke",
-			},
-		);
 
-		if (isQueuedTapCommandPending(outcome)) {
-			success(
-				{
-					...queuedTapCommandPendingFields(outcome),
-					peer: contact.peerDisplayName,
-					grant: match,
-				},
-				opts,
-				startTime,
-			);
-			return;
-		}
-
-		const result = outcome.result;
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const result = await client.publishGrants({
+			peer,
+			grantSet,
+			note,
+		});
 
 		success(
 			{
 				revoked: true,
-				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				grant: match,
@@ -107,4 +82,15 @@ export async function permissionsRevokeCommand(
 	} catch (err) {
 		handleCommandError(err, opts);
 	}
+}
+
+/**
+ * Read the active contact directly from the local trust store. We don't go
+ * through tapd because the contact list is local data — doing the read
+ * locally avoids two HTTP round-trips and works even when tapd just started.
+ */
+async function loadActiveContact(dataDir: string, peer: string): Promise<Contact> {
+	const trustStore = new FileTrustStore(dataDir);
+	const contacts = await trustStore.getContacts();
+	return requireActiveContact(contacts, peer);
 }

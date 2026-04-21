@@ -1,24 +1,9 @@
 import type { ChainConfig, TrustedAgentsConfig } from "trusted-agents-core";
-import { BASE_MAINNET, ValidationError } from "trusted-agents-core";
+import { ALL_CHAINS, ValidationError } from "trusted-agents-core";
 
-/**
- * Additional chain configs beyond what core provides.
- * Core has Base; we add Taiko here.
- */
-const TAIKO_MAINNET: ChainConfig = {
-	chainId: 167000,
-	caip2: "eip155:167000",
-	name: "Taiko",
-	rpcUrl: "https://rpc.mainnet.taiko.xyz",
-	registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
-	blockExplorerUrl: "https://taikoscan.io",
-};
-
-/** All known chain configs, keyed by CAIP-2 ID. */
-export const ALL_CHAINS: Record<string, ChainConfig> = {
-	"eip155:8453": BASE_MAINNET,
-	"eip155:167000": TAIKO_MAINNET,
-};
+// Chain definitions live in core (see `packages/core/src/config/defaults.ts`)
+// so tapd, the SDK, and the CLI all use the same source of truth.
+export { ALL_CHAINS };
 
 export const DEFAULT_CHAIN_ALIAS = "base" as const;
 

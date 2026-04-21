@@ -1,12 +1,18 @@
 import { existsSync } from "node:fs";
-import { readHermesTapDaemonState, sendHermesTapDaemonRequest } from "../hermes/client.js";
-import { getTapHermesPaths, resolveHermesHome, upsertTapHermesIdentity } from "../hermes/config.js";
-import { TapHermesDaemon } from "../hermes/daemon.js";
+import {
+	getTapHermesPaths,
+	loadTapHermesPluginConfig,
+	resolveHermesHome,
+	upsertTapHermesIdentity,
+} from "../hermes/config.js";
 import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
-import { errorCode, exitCodeForError } from "../lib/errors.js";
+import { errorCode, exitCodeForError, toErrorMessage } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import type { GlobalOptions } from "../types.js";
+import { daemonRestartCommand } from "./daemon-restart.js";
+import { daemonStatusCommand } from "./daemon-status.js";
+import { messageSyncCommand } from "./message-sync.js";
 
 interface HermesBaseOptions {
 	hermesHome?: string;
@@ -17,11 +23,6 @@ interface HermesConfigureOptions {
 	hermesHome?: string;
 	name?: string;
 	reconcileIntervalMinutes?: string;
-}
-
-interface HermesDaemonRunOptions {
-	hermesHome?: string;
-	gatewayPid: string;
 }
 
 export async function hermesConfigureCommand(
@@ -62,145 +63,77 @@ export async function hermesConfigureCommand(
 				hook_dir: paths.hookDir,
 				skill_dir: paths.skillDir,
 				next_steps: [
-					"Start or restart `hermes gateway` so the TAP Hermes daemon is launched from the startup hook.",
-					"Use `tap hermes status` to verify the background TAP runtime is healthy.",
+					"Start or restart `hermes gateway` so the Hermes startup hook launches tapd.",
+					"Use `tap hermes status` (or `tap daemon status`) to verify tapd is healthy.",
 				],
 			},
 			opts,
 			startTime,
 		);
 	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
+		error(errorCode(err), toErrorMessage(err), opts);
 		process.exitCode = exitCodeForError(err);
 	}
 }
 
+/**
+ * Resolve `--identity` (and `--hermes-home`) to a concrete data dir so
+ * `tap hermes <alias>` targets the selected identity's daemon rather than
+ * falling back to whichever data dir happens to be the default.
+ */
+async function resolveHermesScopedOpts(
+	cmdOpts: HermesBaseOptions,
+	opts: GlobalOptions,
+): Promise<GlobalOptions> {
+	if (!cmdOpts.identity) return opts;
+	const config = await loadTapHermesPluginConfig(cmdOpts.hermesHome);
+	const identity = config.identities.find((i) => i.name === cmdOpts.identity);
+	if (!identity) {
+		throw new Error(
+			`Hermes identity '${cmdOpts.identity}' is not configured. Run 'tap hermes configure --name ${cmdOpts.identity}' from that data dir first.`,
+		);
+	}
+	return { ...opts, dataDir: identity.dataDir };
+}
+
+/**
+ * Thin wrapper that forwards to `tap daemon status`. The Hermes wrapper
+ * exists so operators who learned the `tap hermes` command surface keep
+ * a working muscle memory after the Phase 4 daemon consolidation.
+ */
 export async function hermesStatusCommand(
 	cmdOpts: HermesBaseOptions,
 	opts: GlobalOptions,
 ): Promise<void> {
-	const startTime = Date.now();
-
-	try {
-		const hermesHome = resolveHermesHome(cmdOpts.hermesHome);
-		const daemonState = await readHermesTapDaemonState(hermesHome);
-		const daemonRunning = daemonState ? isProcessAlive(daemonState.pid) : false;
-		let payload: Record<string, unknown>;
-
-		if (daemonRunning) {
-			const live = (await sendHermesTapDaemonRequest(hermesHome, {
-				method: "status",
-				params: cmdOpts.identity ? { identity: cmdOpts.identity } : undefined,
-			})) as Record<string, unknown>;
-			payload = {
-				...live,
-				daemon: {
-					running: true,
-					pid: daemonState?.pid ?? null,
-					gateway_pid: daemonState?.gatewayPid ?? null,
-					socket_path: daemonState?.socketPath ?? getTapHermesPaths(hermesHome).socketPath,
-					started_at: daemonState?.startedAt ?? null,
-				},
-			};
-		} else {
-			const paths = getTapHermesPaths(hermesHome);
-			const config = await import("../hermes/config.js").then((module) =>
-				module.loadTapHermesPluginConfig(hermesHome),
-			);
-			if (cmdOpts.identity && !config.identities.some((entry) => entry.name === cmdOpts.identity)) {
-				throw new Error(`Unknown TAP identity: ${cmdOpts.identity}`);
-			}
-			const names = cmdOpts.identity
-				? [cmdOpts.identity]
-				: config.identities.map((entry) => entry.name);
-			payload = {
-				configured: config.identities.length > 0,
-				configuredIdentities: config.identities.map((entry) => entry.name),
-				warnings: [
-					config.identities.length === 0
-						? "No TAP identities are configured. Run `tap hermes configure --name default`."
-						: "Hermes TAP daemon is not running. Start or restart `hermes gateway`.",
-				],
-				identities: names.map((name) => {
-					const definition = config.identities.find((entry) => entry.name === name);
-					return {
-						identity: name,
-						dataDir: definition?.dataDir ?? "",
-						running: false,
-						lock: null,
-						pendingRequests: [],
-						lastError: "Hermes TAP daemon is not running",
-					};
-				}),
-				daemon: {
-					running: false,
-					pid: daemonState?.pid ?? null,
-					gateway_pid: daemonState?.gatewayPid ?? null,
-					socket_path: daemonState?.socketPath ?? paths.socketPath,
-					started_at: daemonState?.startedAt ?? null,
-				},
-			};
-		}
-
-		success(payload, opts, startTime);
-	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
-	}
+	// Ensure paths are valid — resolves HERMES_HOME side effect but otherwise
+	// doesn't alter tapd's status. Kept as a lightweight sanity check.
+	getTapHermesPaths(cmdOpts.hermesHome);
+	const scopedOpts = await resolveHermesScopedOpts(cmdOpts, opts);
+	await daemonStatusCommand(scopedOpts);
 }
 
+/**
+ * Thin wrapper that forwards to the `tap sync` command semantics, which
+ * routes through tapd when the daemon is running.
+ */
 export async function hermesSyncCommand(
 	cmdOpts: HermesBaseOptions,
 	opts: GlobalOptions,
 ): Promise<void> {
-	const startTime = Date.now();
-
-	try {
-		const hermesHome = resolveHermesHome(cmdOpts.hermesHome);
-		const response = await sendHermesTapDaemonRequest(hermesHome, {
-			method: "sync",
-			params: cmdOpts.identity ? { identity: cmdOpts.identity } : undefined,
-		});
-		success(response, opts, startTime);
-	} catch (err) {
-		error(errorCode(err), formatHermesDaemonError(err), opts);
-		process.exitCode = exitCodeForError(err);
-	}
+	const scopedOpts = await resolveHermesScopedOpts(cmdOpts, opts);
+	await messageSyncCommand(scopedOpts);
 }
 
+/**
+ * Thin wrapper that forwards to `tap daemon restart`. Kept for muscle
+ * memory; there is only one daemon to restart after Phase 4.
+ */
 export async function hermesRestartCommand(
 	cmdOpts: HermesBaseOptions,
 	opts: GlobalOptions,
 ): Promise<void> {
-	const startTime = Date.now();
-
-	try {
-		const hermesHome = resolveHermesHome(cmdOpts.hermesHome);
-		const response = await sendHermesTapDaemonRequest(hermesHome, {
-			method: "restart",
-			params: cmdOpts.identity ? { identity: cmdOpts.identity } : undefined,
-		});
-		success(response, opts, startTime);
-	} catch (err) {
-		error(errorCode(err), formatHermesDaemonError(err), opts);
-		process.exitCode = exitCodeForError(err);
-	}
-}
-
-export async function hermesDaemonRunCommand(
-	cmdOpts: HermesDaemonRunOptions,
-	opts: GlobalOptions,
-): Promise<void> {
-	try {
-		const daemon = new TapHermesDaemon({
-			hermesHome: cmdOpts.hermesHome,
-			gatewayPid: requirePositiveInt(cmdOpts.gatewayPid, "gateway pid"),
-		});
-		await daemon.runUntilStopped();
-	} catch (err) {
-		error(errorCode(err), err instanceof Error ? err.message : String(err), opts);
-		process.exitCode = exitCodeForError(err);
-	}
+	const scopedOpts = await resolveHermesScopedOpts(cmdOpts, opts);
+	await daemonRestartCommand(scopedOpts);
 }
 
 function parseOptionalPositiveInt(value: string | undefined, label: string): number | undefined {
@@ -216,21 +149,4 @@ function requirePositiveInt(value: string, label: string): number {
 		throw new Error(`Invalid ${label}: ${value}`);
 	}
 	return parsed;
-}
-
-function isProcessAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function formatHermesDaemonError(errorValue: unknown): string {
-	const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-	if (message.includes("ENOENT") || message.includes("connect ENOENT")) {
-		return `${message}. Hermes TAP daemon is not running. Start or restart \`hermes gateway\` after configuring TAP.`;
-	}
-	return message;
 }

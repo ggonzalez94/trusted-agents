@@ -26,11 +26,13 @@
   "dependencies": {
     "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
     "@xmtp/node-sdk": "^5.4.0",
+    "better-sqlite3": "^11.5.0",
     "uuid": "^11.0.0",
     "viem": "2.46.3",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^25.3.3",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.7.0",

@@ -13,6 +13,7 @@ export {
 	findSchedulableSchedulingSlots,
 	matchesSchedulingConstraints,
 } from "./grants.js";
+export { buildSchedulingSlots } from "./build-slots.js";
 export { SchedulingHandler, mapSchedulingDecisionToResult } from "./handler.js";
 export type {
 	SchedulingApprovalContext,

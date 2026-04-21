@@ -19,6 +19,7 @@ export interface ConversationLog {
 	topic?: string;
 	startedAt: string;
 	lastMessageAt: string;
+	lastReadAt?: string;
 	status: ConversationStatus;
 	messages: ConversationMessage[];
 }

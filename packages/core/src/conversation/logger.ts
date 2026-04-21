@@ -5,6 +5,7 @@ import {
 	AsyncMutex,
 	assertPathWithinBase,
 	assertSafeFileComponent,
+	fsErrorCode,
 	resolveDataDir,
 } from "../common/index.js";
 import { generateMarkdownTranscript } from "./transcript.js";
@@ -26,6 +27,7 @@ export interface IConversationLogger {
 	getConversation(conversationId: string): Promise<ConversationLog | null>;
 	listConversations(filter?: { connectionId?: string }): Promise<ConversationLog[]>;
 	generateTranscript(conversationId: string): Promise<string>;
+	markRead(conversationId: string, readAt: string): Promise<void>;
 }
 
 export class FileConversationLogger implements IConversationLogger {
@@ -126,19 +128,22 @@ export class FileConversationLogger implements IConversationLogger {
 		return generateMarkdownTranscript(log);
 	}
 
+	async markRead(conversationId: string, readAt: string): Promise<void> {
+		await this.writeMutex.runExclusive(async () => {
+			const log = await this.loadLog(conversationId);
+			if (!log) return;
+			log.lastReadAt = readAt;
+			await this.saveLog(conversationId, log);
+		});
+	}
+
 	private async loadLog(conversationId: string): Promise<ConversationLog | null> {
 		const filePath = this.filePathForConversation(conversationId);
 		try {
 			const raw = await readFile(filePath, "utf-8");
 			return normalizeConversationLog(JSON.parse(raw) as ConversationLog);
 		} catch (err: unknown) {
-			if (
-				err instanceof Error &&
-				"code" in err &&
-				(err as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return null;
-			}
+			if (fsErrorCode(err) === "ENOENT") return null;
 			throw err;
 		}
 	}

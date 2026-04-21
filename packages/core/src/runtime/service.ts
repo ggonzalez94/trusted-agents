@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { parseEther, parseUnits } from "viem";
@@ -96,6 +97,7 @@ import {
 import { getUsdcAsset } from "./assets.js";
 import type { TapCommandJob, TapCommandJobResultPayload } from "./command-job.js";
 import type { TapRuntimeContext } from "./default-context.js";
+import type { TapActionKind, TapEvent, TapEventEnvelope, TapPeerRef } from "./event-types.js";
 import {
 	findActiveGrantsByScope,
 	normalizeGrantInput,
@@ -112,6 +114,7 @@ import {
 	buildOutgoingMessageRequest,
 	findContactForPeer,
 	findUniqueContactForAgentId,
+	resolveConversationId,
 } from "./message-conversations.js";
 import {
 	type PermissionLedgerEntry,
@@ -124,6 +127,18 @@ import {
 	TransportOwnerLock,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+
+type TapEventBody = TapEvent extends infer E
+	? E extends TapEvent
+		? Omit<E, keyof TapEventEnvelope>
+		: never
+	: never;
+
+function actionKindFromType(actionType: string): TapActionKind {
+	if (actionType.startsWith("scheduling/")) return "scheduling";
+	if (actionType.startsWith("transfer/")) return "transfer";
+	return "grant";
+}
 
 const ACTION_RESULT_WAIT_TIMEOUT_MS = 15_000;
 /**
@@ -177,6 +192,8 @@ export interface TapPendingRequest {
 	requestId: string;
 	method: string;
 	peerAgentId: number;
+	/** CAIP-2 chain; empty when unknown — consumers must fail closed on routing. */
+	peerChain: string;
 	direction: string;
 	kind: string;
 	status: string;
@@ -316,6 +333,7 @@ export interface TapServiceHooks {
 	appendLedgerEntry?: (dataDir: string, entry: PermissionLedgerEntry) => Promise<string>;
 	log?: (level: "info" | "warn" | "error", message: string) => void;
 	emitEvent?: (payload: Record<string, unknown>) => void;
+	onTypedEvent?: (event: TapEvent) => void;
 	/**
 	 * Called after a connection has been established via an inbound
 	 * `connection/request` — the contact has been written as active and the
@@ -692,15 +710,15 @@ export class TapMessagingService {
 	// ──────────────────────────────────────────────────────────────
 
 	async syncOnce(): Promise<TapSyncReport> {
-		const processed = await this.executionMutex.runExclusive(
-			async () => await this.withTransportSession(async () => await this.runMaintenanceCycle(true)),
+		const processed = await this.executionMutex.runExclusive(() =>
+			this.withTransportSession(() => this.runMaintenanceCycle(true)),
 		);
 		return await this.buildSyncReport(processed);
 	}
 
 	async processOutboxOnce(): Promise<number> {
-		return await this.executionMutex.runExclusive(
-			async () => await this.withTransportSession(async () => await this.processOutboxInternal()),
+		return await this.executionMutex.runExclusive(() =>
+			this.withTransportSession(() => this.processOutboxInternal()),
 		);
 	}
 
@@ -715,10 +733,13 @@ export class TapMessagingService {
 	}
 
 	async listPendingRequests(): Promise<TapServiceStatus["pendingRequests"]> {
-		const pending = await this.context.requestJournal.listPending();
+		const [pending, contacts] = await Promise.all([
+			this.context.requestJournal.listPending(),
+			this.context.trustStore.getContacts(),
+		]);
 		return pending
 			.filter((entry) => entry.kind === "request" && !isOutboundDeliveryEntry(entry))
-			.map(toPendingRequestView);
+			.map((entry) => toPendingRequestView(entry, contacts));
 	}
 
 	private async findCancellableSchedulingRequest(
@@ -807,6 +828,7 @@ export class TapMessagingService {
 		requestId: string,
 		approve: boolean,
 		reason?: string,
+		options?: { decidedBy?: "operator" | "auto-grant" },
 	): Promise<TapSyncReport> {
 		const entry = await this.context.requestJournal.getByRequestId(requestId);
 		if (!entry || entry.direction !== "inbound" || entry.kind !== "request") {
@@ -824,7 +846,7 @@ export class TapMessagingService {
 			this.decisionOverrides.transfers.set(requestId, approve);
 		}
 		try {
-			return await this.executionMutex.runExclusive(
+			const report = await this.executionMutex.runExclusive(
 				async () =>
 					await this.withTransportSession(async () => {
 						await this.drain();
@@ -855,6 +877,15 @@ export class TapMessagingService {
 						return await this.buildSyncReport(1);
 					}),
 			);
+
+			this.emit({
+				type: "pending.resolved",
+				requestId,
+				decision: approve ? "approved" : "denied",
+				decidedBy: options?.decidedBy ?? "operator",
+			});
+
+			return report;
 		} finally {
 			if (isScheduling) {
 				this.decisionOverrides.scheduling.delete(requestId);
@@ -1093,6 +1124,8 @@ export class TapMessagingService {
 				});
 			}
 
+			this.emitConnectionRequested(requestId, peerAgent.agentId, peerAgent.chain, "outbound");
+
 			// Register a waiter before sending so that a result arriving during or
 			// immediately after send() can resolve it. waitMs === 0 means fire-and-forget.
 			//
@@ -1251,7 +1284,7 @@ export class TapMessagingService {
 				await this.recordSendFailure(requestId, error);
 				this.log(
 					"warn",
-					`Failed to send connection/revoke to ${peerLabel(contact)} — will retry on next reconciliation: ${error instanceof Error ? error.message : String(error)}`,
+					`Failed to send connection/revoke to ${peerLabel(contact)} — will retry on next reconciliation: ${toErrorMessage(error)}`,
 				);
 			}
 		});
@@ -1287,6 +1320,15 @@ export class TapMessagingService {
 			});
 
 			await this.appendConversationLogSafe(contact, request, "outgoing", timestamp);
+
+			this.emit({
+				type: "message.sent",
+				conversationId: resolveConversationId(contact),
+				peer: this.peerRefFromContact(contact),
+				messageId: String(request.id),
+				text,
+				scope,
+			});
 
 			return {
 				receipt,
@@ -1347,7 +1389,15 @@ export class TapMessagingService {
 				request,
 				requestId,
 				timestamp,
-				{ actionType },
+				{ actionType, peerChain: contact.peerChain },
+			);
+
+			this.emitActionRequested(
+				contact,
+				requestId,
+				actionKindFromType(actionType),
+				data as Record<string, unknown>,
+				"outbound",
 			);
 
 			return {
@@ -1539,8 +1589,16 @@ export class TapMessagingService {
 				request,
 				requestId,
 				timestamp,
-				undefined,
+				{ peerChain: contact.peerChain },
 				() => waiter.cancel(),
+			);
+
+			this.emitActionRequested(
+				contact,
+				requestId,
+				"transfer",
+				requestPayload as Record<string, unknown>,
+				"outbound",
 			);
 
 			const asyncResult = await waiter.promise;
@@ -1627,6 +1685,14 @@ export class TapMessagingService {
 				),
 			);
 
+			this.emitActionRequested(
+				contact,
+				requestId,
+				"scheduling",
+				proposal as unknown as Record<string, unknown>,
+				"outbound",
+			);
+
 			return {
 				receipt,
 				schedulingId: proposal.schedulingId,
@@ -1675,9 +1741,7 @@ export class TapMessagingService {
 		const allPending = await journal.listPending("outbound");
 		for (const entry of allPending) {
 			if (!entry.method.startsWith("command/")) continue;
-			const claim = (entry.metadata as Record<string, unknown> | undefined)?.claim as
-				| { claimedAt?: string }
-				| undefined;
+			const claim = entry.metadata?.claim as { claimedAt?: string } | undefined;
 			if (!claim?.claimedAt) continue;
 			const claimedAt = Date.parse(claim.claimedAt);
 			if (Number.isFinite(claimedAt) && Date.now() - claimedAt >= QUEUED_JOURNAL_STALE_CLAIM_MS) {
@@ -1716,11 +1780,8 @@ export class TapMessagingService {
 			await journal.updateMetadata(entry.requestId, claimMeta);
 			await journal.updateStatus(entry.requestId, "pending");
 
-			const commandType = (entry.metadata as Record<string, unknown> | undefined)?.commandType as
-				| TapCommandJob["type"]
-				| undefined;
-			const commandPayload = (entry.metadata as Record<string, unknown> | undefined)
-				?.commandPayload as TapCommandJob["payload"] | undefined;
+			const commandType = entry.metadata?.commandType as TapCommandJob["type"] | undefined;
+			const commandPayload = entry.metadata?.commandPayload as TapCommandJob["payload"] | undefined;
 
 			if (!commandType || commandPayload === undefined) {
 				this.log(
@@ -1905,10 +1966,13 @@ export class TapMessagingService {
 	private async buildSyncReport(processed: number): Promise<TapSyncReport> {
 		// Single journal scan partitioned into the two views the report needs.
 		// Avoids reading request-journal.json twice per sync.
-		const allPending = await this.context.requestJournal.listPending();
+		const [allPending, contacts] = await Promise.all([
+			this.context.requestJournal.listPending(),
+			this.context.trustStore.getContacts(),
+		]);
 		const pendingRequests = allPending
 			.filter((entry) => entry.kind === "request" && !isOutboundDeliveryEntry(entry))
-			.map(toPendingRequestView);
+			.map((entry) => toPendingRequestView(entry, contacts));
 		const pendingDeliveries = allPending
 			.filter((entry) => entry.direction === "outbound" && isDeliveryEntry(entry))
 			.map((entry) => toPendingDeliveryView(entry, Date.now()));
@@ -1929,6 +1993,103 @@ export class TapMessagingService {
 		} catch (error: unknown) {
 			this.log("warn", `emitEvent hook threw: ${toErrorMessage(error)}`);
 		}
+	}
+
+	private emit(body: TapEventBody): void {
+		const event = {
+			id: `evt-${randomUUID()}`,
+			occurredAt: nowISO(),
+			identityAgentId: this.context.config.agentId,
+			...body,
+		} as TapEvent;
+		try {
+			this.hooks.onTypedEvent?.(event);
+		} catch (error: unknown) {
+			this.log("warn", `onTypedEvent hook threw: ${toErrorMessage(error)}`);
+		}
+	}
+
+	private peerRefFromContact(contact: Contact): TapPeerRef {
+		return {
+			connectionId: contact.connectionId,
+			peerAgentId: contact.peerAgentId,
+			peerName: contact.peerDisplayName,
+			peerChain: contact.peerChain,
+		};
+	}
+
+	private emitActionRequested(
+		contact: Contact,
+		requestId: string,
+		kind: TapActionKind,
+		payload: Record<string, unknown>,
+		direction: "inbound" | "outbound",
+	): void {
+		this.emit({
+			type: "action.requested",
+			conversationId: resolveConversationId(contact),
+			peer: this.peerRefFromContact(contact),
+			requestId,
+			kind,
+			payload,
+			direction,
+		});
+	}
+
+	private emitActionPending(
+		contact: Contact,
+		requestId: string,
+		kind: TapActionKind,
+		payload: Record<string, unknown>,
+	): void {
+		this.emit({
+			type: "action.pending",
+			conversationId: resolveConversationId(contact),
+			requestId,
+			kind,
+			payload,
+			awaitingDecision: true,
+		});
+	}
+
+	private emitConnectionEstablished(connectionId: string, peer: TapPeerRef): void {
+		this.emit({ type: "connection.established", connectionId, peer });
+	}
+
+	private emitConnectionRequested(
+		requestId: string,
+		peerAgentId: number,
+		peerChain: string,
+		direction: "inbound" | "outbound",
+	): void {
+		this.emit({ type: "connection.requested", requestId, peerAgentId, peerChain, direction });
+	}
+
+	private emitActionCompleted(
+		conversationId: string,
+		requestId: string,
+		kind: TapActionKind,
+		result: Record<string, unknown>,
+		extras?: Record<string, unknown>,
+	): void {
+		this.emit({
+			type: "action.completed",
+			conversationId,
+			requestId,
+			kind,
+			result,
+			...extras,
+			completedAt: nowISO(),
+		});
+	}
+
+	private emitActionFailed(
+		conversationId: string,
+		requestId: string,
+		kind: TapActionKind,
+		error: string,
+	): void {
+		this.emit({ type: "action.failed", conversationId, requestId, kind, error });
 	}
 
 	private emitIncomingAndReturn<S extends string>(
@@ -2300,6 +2461,15 @@ export class TapMessagingService {
 				return this.emitIncomingAndReturn(envelope, "duplicate");
 			}
 
+			if (!claimed.duplicate) {
+				this.emitConnectionRequested(
+					String(envelope.message.id),
+					envelope.from,
+					(envelope.message.params as { from?: { chain?: string } } | undefined)?.from?.chain ?? "",
+					"inbound",
+				);
+			}
+
 			this.enqueue(requestKey, async () => {
 				const result = await this.processConnectionRequest(envelope.message);
 				if (result === "processed") {
@@ -2384,6 +2554,21 @@ export class TapMessagingService {
 				// Defensive: don't fail message processing if extraction fails
 			}
 
+			if (!claimed.duplicate) {
+				const params = envelope.message.params as MessageSendParams | undefined;
+				const scope =
+					(params?.message?.metadata?.trustedAgent as { scope?: string } | undefined)?.scope ??
+					DEFAULT_MESSAGE_SCOPE;
+				this.emit({
+					type: "message.received",
+					conversationId: resolveConversationId(contact),
+					peer: this.peerRefFromContact(contact),
+					messageId: String(envelope.message.id),
+					text: messageText,
+					scope,
+				});
+			}
+
 			return this.emitIncomingAndReturn(envelope, claimed.duplicate ? "duplicate" : "received", {
 				fromName: contact.peerDisplayName,
 				messageText,
@@ -2463,6 +2648,16 @@ export class TapMessagingService {
 					);
 				}
 
+				if (!claimed.duplicate) {
+					this.emitActionRequested(
+						contact,
+						String(envelope.message.id),
+						"scheduling",
+						schedulingRequest as unknown as Record<string, unknown>,
+						"inbound",
+					);
+				}
+
 				this.enqueue(requestKey, async () => {
 					await this.processSchedulingRequest(
 						contact,
@@ -2497,6 +2692,16 @@ export class TapMessagingService {
 						this.context.config.dataDir,
 					),
 				);
+
+				if (!claimed.duplicate) {
+					this.emitActionRequested(
+						contact,
+						String(envelope.message.id),
+						"transfer",
+						transferRequest as Record<string, unknown>,
+						"inbound",
+					);
+				}
 
 				this.enqueue(requestKey, async () => {
 					await this.processTransferRequest(contact, String(envelope.message.id), transferRequest);
@@ -2636,6 +2841,13 @@ export class TapMessagingService {
 			`Accepted connection request from ${plan.peer.registrationFile.name} (#${plan.peer.agentId})`,
 		);
 
+		this.emitConnectionEstablished(plan.plannedContact.connectionId, {
+			connectionId: plan.plannedContact.connectionId,
+			peerAgentId: plan.peer.agentId,
+			peerName: plan.peer.registrationFile.name,
+			peerChain: plan.peer.chain,
+		});
+
 		// 5. Notify the host (non-blocking, informational).
 		try {
 			await this.hooks.onConnectionEstablished?.({
@@ -2644,10 +2856,7 @@ export class TapMessagingService {
 				peerChain: plan.peer.chain,
 			});
 		} catch (error: unknown) {
-			this.log(
-				"warn",
-				`onConnectionEstablished hook threw: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.log("warn", `onConnectionEstablished hook threw: ${toErrorMessage(error)}`);
 		}
 
 		return "processed";
@@ -2838,6 +3047,7 @@ export class TapMessagingService {
 				"info",
 				`Queued action request ${request.actionId} from ${contact.peerDisplayName}; resolve it later with TAP sync or the host approval flow`,
 			);
+			this.emitActionPending(contact, requestId, "transfer", request as Record<string, unknown>);
 			return;
 		}
 
@@ -3280,12 +3490,19 @@ export class TapMessagingService {
 				await this.deliverSchedulingReject(contact, requestId, proposal, decision.reason);
 				break;
 			}
-			case "defer":
+			case "defer": {
 				this.log(
 					"info",
 					`Scheduling request ${proposal.schedulingId} deferred for manual decision`,
 				);
+				this.emitActionPending(
+					contact,
+					requestId,
+					"scheduling",
+					proposal as unknown as Record<string, unknown>,
+				);
 				break;
+			}
 		}
 	}
 
@@ -3410,6 +3627,13 @@ export class TapMessagingService {
 				if (journalEntry) {
 					await this.context.requestJournal.updateStatus(result.requestId, "completed");
 				}
+				this.emit({
+					type: "connection.failed",
+					requestId: result.requestId,
+					error:
+						result.reason ??
+						`Connection rejected by ${existingContact.peerDisplayName} (#${existingContact.peerAgentId})`,
+				});
 				// Notify any in-flight connect() waiter so it surfaces the rejection
 				// immediately rather than waiting for the full waitMs timeout.
 				this.rejectConnectWaiter(
@@ -3540,6 +3764,10 @@ export class TapMessagingService {
 			await this.context.trustStore.addContact(freshContact);
 			await this.context.requestJournal.updateStatus(result.requestId, "completed");
 			this.log("info", `Connection accepted by ${peerLabel(freshContact)} (partial-wipe recovery)`);
+			this.emitConnectionEstablished(
+				freshContact.connectionId,
+				this.peerRefFromContact(freshContact),
+			);
 			// Notify any in-flight connect() waiter.
 			this.resolveConnectWaiter(result.requestId);
 			return "received";
@@ -3572,6 +3800,10 @@ export class TapMessagingService {
 		}
 
 		this.log("info", `Connection accepted by ${peerLabel(nextContact)}`);
+		// `existingContact.status` is narrowed to non-active here — the active
+		// branch returned "duplicate" above. This is a real state transition
+		// (connecting/idle/stale → active).
+		this.emitConnectionEstablished(nextContact.connectionId, this.peerRefFromContact(nextContact));
 		// Notify any in-flight connect() waiter.
 		this.resolveConnectWaiter(result.requestId);
 		return "received";
@@ -3616,6 +3848,24 @@ export class TapMessagingService {
 			}
 			if (contact) {
 				this.log("info", `Received transfer ${response.status} result from ${peerLabel(contact)}`);
+			}
+			const transferConversationId = contact ? resolveConversationId(contact) : "";
+			const transferRequestId = response.requestId ?? response.actionId;
+			if (response.status === "completed") {
+				this.emitActionCompleted(
+					transferConversationId,
+					transferRequestId,
+					"transfer",
+					response as Record<string, unknown>,
+					response.txHash ? { txHash: response.txHash } : undefined,
+				);
+			} else if (response.status === "rejected" || response.status === "failed") {
+				this.emitActionFailed(
+					transferConversationId,
+					transferRequestId,
+					"transfer",
+					response.error ?? `transfer ${response.status}`,
+				);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -3666,8 +3916,8 @@ export class TapMessagingService {
 				await this.context.requestJournal.updateStatus(requestId, "completed");
 			}
 
+			const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
 			if (contact) {
-				const eventType = schedulingResponse.type.split("/")[1] ?? schedulingResponse.type;
 				await this.appendLedger({
 					peer: peerLabel(contact),
 					direction: "local",
@@ -3677,6 +3927,26 @@ export class TapMessagingService {
 					decision: eventType,
 				});
 				this.log("info", `Received scheduling ${eventType} result from ${peerLabel(contact)}`);
+			}
+			const schedConversationId = contact ? resolveConversationId(contact) : "";
+			const schedRequestId = requestId ?? schedulingResponse.schedulingId;
+			if (schedulingResponse.type === "scheduling/accept") {
+				this.emitActionCompleted(
+					schedConversationId,
+					schedRequestId,
+					"scheduling",
+					schedulingResponse as unknown as Record<string, unknown>,
+				);
+			} else if (
+				schedulingResponse.type === "scheduling/reject" ||
+				schedulingResponse.type === "scheduling/cancel"
+			) {
+				this.emitActionFailed(
+					schedConversationId,
+					schedRequestId,
+					"scheduling",
+					(schedulingResponse as { reason?: string }).reason ?? `scheduling ${eventType}`,
+				);
 			}
 			return contact?.peerDisplayName;
 		}
@@ -3738,7 +4008,7 @@ export class TapMessagingService {
 				peerAgentId: peer.agentId,
 				correlationId: result.requestId,
 				status: "pending",
-				metadata: delivery as unknown as Record<string, unknown>,
+				metadata: delivery as Record<string, unknown>,
 			});
 			persisted = true;
 			this.peersWithPendingConnectionResult.add(
@@ -3918,7 +4188,7 @@ export class TapMessagingService {
 		if (!existing) return;
 		const prior = existing.metadata?.lastError as RequestJournalLastError | undefined;
 		const attempts = (prior?.attempts ?? 0) + 1;
-		const message = error instanceof Error ? error.message : String(error);
+		const message = toErrorMessage(error);
 		await this.context.requestJournal.updateMetadata(requestId, {
 			...(existing.metadata ?? {}),
 			lastError: { message, at: nowISO(), attempts },
@@ -4848,7 +5118,7 @@ function buildPendingActionResultDelivery(
 function serializePendingActionResultDelivery(
 	delivery: PendingActionResultDelivery,
 ): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
+	return delivery as Record<string, unknown>;
 }
 
 function buildPendingPermissionsUpdateDelivery(
@@ -4870,7 +5140,7 @@ function buildPendingPermissionsUpdateDelivery(
 function serializePendingPermissionsUpdateDelivery(
 	delivery: PendingPermissionsUpdateDelivery,
 ): Record<string, unknown> {
-	return delivery as unknown as Record<string, unknown>;
+	return delivery as Record<string, unknown>;
 }
 
 function serializePendingConnectionRequest(message: ProtocolMessage): Record<string, unknown> {
@@ -5203,11 +5473,25 @@ function isOutboundDeliveryEntry(entry: RequestJournalEntry): boolean {
 	return entry.direction === "outbound" && isDeliveryEntry(entry);
 }
 
-function toPendingRequestView(entry: RequestJournalEntry): TapPendingRequest {
+function toPendingRequestView(
+	entry: RequestJournalEntry,
+	contacts: readonly Contact[],
+): TapPendingRequest {
+	const metadataChain = (entry.metadata as { peerChain?: string } | undefined)?.peerChain;
+
+	let peerChain = metadataChain ?? "";
+	if (!peerChain) {
+		const candidates = contacts.filter((c) => c.peerAgentId === entry.peerAgentId);
+		if (candidates.length === 1) {
+			peerChain = candidates[0]?.peerChain ?? "";
+		}
+	}
+
 	return {
 		requestId: entry.requestId,
 		method: entry.method,
 		peerAgentId: entry.peerAgentId,
+		peerChain,
 		direction: entry.direction,
 		kind: entry.kind,
 		status: entry.status,

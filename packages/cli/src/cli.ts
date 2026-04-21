@@ -75,6 +75,66 @@ export function createCli(): Command {
 			);
 		});
 
+	// daemon — control the long-lived tapd background process
+	const daemon = program
+		.command("daemon")
+		.description("Manage the tapd background daemon (start, stop, status, restart, logs)");
+
+	daemon
+		.command("start")
+		.description("Start tapd in the background")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonStartCommand } = await import("./commands/daemon-start.js");
+			await daemonStartCommand(opts);
+		});
+
+	daemon
+		.command("stop")
+		.description("Stop the running tapd daemon")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonStopCommand } = await import("./commands/daemon-stop.js");
+			await daemonStopCommand(opts);
+		});
+
+	daemon
+		.command("status")
+		.description("Check whether tapd is running and report its health")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonStatusCommand } = await import("./commands/daemon-status.js");
+			await daemonStatusCommand(opts);
+		});
+
+	daemon
+		.command("restart")
+		.description("Stop and start tapd (no-op stop if not running)")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonRestartCommand } = await import("./commands/daemon-restart.js");
+			await daemonRestartCommand(opts);
+		});
+
+	daemon
+		.command("logs")
+		.description("Print the tapd log file; pass --follow to tail it")
+		.option("--follow", "Tail the log file (Ctrl+C to stop)")
+		.action(async (cmdOpts: { follow?: boolean }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { daemonLogsCommand } = await import("./commands/daemon-logs.js");
+			await daemonLogsCommand(opts, cmdOpts);
+		});
+
+	program
+		.command("ui")
+		.description("Open the tapd web dashboard in your default browser")
+		.action(async () => {
+			const opts = program.opts<GlobalOptions>();
+			const { uiCommand } = await import("./commands/ui.js");
+			await uiCommand(opts);
+		});
+
 	const hermes = program.command("hermes").description("Manage the TAP Hermes gateway integration");
 
 	hermes
@@ -100,7 +160,7 @@ export function createCli(): Command {
 
 	hermes
 		.command("status")
-		.description("Show Hermes TAP daemon and identity status")
+		.description("Show tapd status (alias for `tap daemon status`)")
 		.option("--identity <name>", "Configured TAP Hermes identity name")
 		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
 		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
@@ -111,7 +171,7 @@ export function createCli(): Command {
 
 	hermes
 		.command("sync")
-		.description("Trigger a Hermes TAP background reconcile now")
+		.description("Trigger a tapd reconcile (alias for `tap message sync`)")
 		.option("--identity <name>", "Configured TAP Hermes identity name")
 		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
 		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
@@ -122,26 +182,13 @@ export function createCli(): Command {
 
 	hermes
 		.command("restart")
-		.description("Restart TAP runtimes inside the Hermes daemon")
+		.description("Restart tapd (the single TAP daemon used by Hermes)")
 		.option("--identity <name>", "Configured TAP Hermes identity name")
 		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
 		.action(async (cmdOpts: { identity?: string; hermesHome?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { hermesRestartCommand } = await import("./commands/hermes.js");
 			await hermesRestartCommand(cmdOpts, opts);
-		});
-
-	const hermesDaemon = hermes.command("daemon").description("Internal Hermes TAP daemon commands");
-
-	hermesDaemon
-		.command("run")
-		.description("Run the internal Hermes TAP daemon")
-		.requiredOption("--gateway-pid <pid>", "Hermes gateway process PID")
-		.option("--hermes-home <path>", "Override HERMES_HOME for the Hermes integration")
-		.action(async (cmdOpts: { gatewayPid: string; hermesHome?: string }) => {
-			const opts = program.opts<GlobalOptions>();
-			const { hermesDaemonRunCommand } = await import("./commands/hermes.js");
-			await hermesDaemonRunCommand(cmdOpts, opts);
 		});
 
 	program

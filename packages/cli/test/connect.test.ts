@@ -1,78 +1,49 @@
 /**
- * Tests for `tap connect` — verifies the new 4.3 behavior:
- * - Default: blocks up to 30s; exits 0 on active, exits 2 on timeout
- * - --no-wait: exits 0 immediately with status pending
- * - --wait-seconds 0: equivalent to --no-wait
- * - No --yes flag / no prompt is shown
+ * Tests for `tap connect` after the Phase 3 refactor and the Unix-socket
+ * migration.
+ *
+ * The command is now a thin tapd HTTP-over-Unix-socket client. It still
+ * owns the wait-flag logic (--no-wait, --wait-seconds N, default 30s
+ * blocking) but the actual connect work happens in tapd. These tests stand
+ * up a fake tapd-shaped socket server to verify the wait semantics survive
+ * the refactor.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type FakeTapdHandle, startFakeTapd } from "./helpers/fake-tapd-socket.ts";
 
-const {
-	loadConfigMock,
-	createCliRuntimeMock,
-	runOrQueueTapCommandMock,
-	successMock,
-	errorMock,
-	infoMock,
-	parseInviteUrlMock,
-	verifyInviteMock,
-	isSelfInviteMock,
-} = vi.hoisted(() => ({
-	loadConfigMock: vi.fn(async () => ({
-		chain: "eip155:8453",
-		agentId: 1,
-		dataDir: "/tmp/tap-test",
-	})),
-	createCliRuntimeMock: vi.fn(),
-	runOrQueueTapCommandMock: vi.fn(),
-	successMock: vi.fn(),
-	errorMock: vi.fn(),
-	infoMock: vi.fn(),
-	parseInviteUrlMock: vi.fn(() => ({
-		agentId: 42,
-		chain: "eip155:8453",
-		expires: Math.floor(Date.now() / 1000) + 86400,
-	})),
-	verifyInviteMock: vi.fn(async () => ({ valid: true })),
-	isSelfInviteMock: vi.fn(() => false),
-}));
+const { loadConfigMock, successMock, errorMock, infoMock, parseInviteUrlMock, isSelfInviteMock } =
+	vi.hoisted(() => ({
+		loadConfigMock: vi.fn(),
+		successMock: vi.fn(),
+		errorMock: vi.fn(),
+		infoMock: vi.fn(),
+		parseInviteUrlMock: vi.fn(() => ({
+			agentId: 42,
+			chain: "eip155:8453",
+			expires: Math.floor(Date.now() / 1000) + 86400,
+		})),
+		isSelfInviteMock: vi.fn(() => false),
+	}));
 
-vi.mock("../src/lib/config-loader.js", () => ({
-	loadConfig: loadConfigMock,
-}));
+vi.mock("../src/lib/config-loader.js", async () => {
+	const actual = await vi.importActual<typeof import("../src/lib/config-loader.js")>(
+		"../src/lib/config-loader.js",
+	);
+	return { ...actual, loadConfig: loadConfigMock };
+});
 
-vi.mock("../src/lib/cli-runtime.js", () => ({
-	createCliRuntime: createCliRuntimeMock,
-}));
-
-vi.mock("../src/lib/queued-commands.js", () => ({
-	runOrQueueTapCommand: runOrQueueTapCommandMock,
-	isQueuedTapCommandPending: (outcome: { status: string }) => outcome.status === "queued",
-	queuedTapCommandPendingFields: (outcome: { jobId: string; owner?: unknown }) => ({
-		queued: true,
-		job_id: outcome.jobId,
-		owner: outcome.owner,
-	}),
-	queuedTapCommandResultFields: (outcome: { queued: boolean; status: string; jobId?: string }) => ({
-		queued: outcome.queued,
-		job_id: outcome.status === "completed" ? outcome.jobId : undefined,
-	}),
-}));
-
-vi.mock("../src/lib/output.js", () => ({
-	success: successMock,
-	error: errorMock,
-	info: infoMock,
-}));
+vi.mock("../src/lib/output.js", async () => {
+	const actual =
+		await vi.importActual<typeof import("../src/lib/output.js")>("../src/lib/output.js");
+	return { ...actual, success: successMock, error: errorMock, info: infoMock };
+});
 
 vi.mock("trusted-agents-core", async () => {
 	const actual = await vi.importActual<typeof import("trusted-agents-core")>("trusted-agents-core");
 	return {
 		...actual,
 		parseInviteUrl: parseInviteUrlMock,
-		verifyInvite: verifyInviteMock,
 		isSelfInvite: isSelfInviteMock,
-		caip2ToChainId: () => 8453,
 	};
 });
 
@@ -80,261 +51,186 @@ import { connectCommand } from "../src/commands/connect.js";
 
 const INVITE_URL = "tap://invite?data=abc123";
 
-const PEER_AGENT = {
-	agentId: 42,
-	chain: "eip155:8453",
-	agentAddress: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-	registrationFile: { name: "Alice" },
-	capabilities: ["messaging"],
-};
+describe("tap connect (tapd client refactor)", () => {
+	let fake: FakeTapdHandle | null;
 
-const OPTS = { json: true };
+	beforeEach(async () => {
+		fake = null;
+		// Tests that don't actually call tapd (dry-run, self-invite) still
+		// need loadConfig to resolve to *some* dataDir; the connect command
+		// short-circuits before talking to tapd in those paths.
+		loadConfigMock.mockResolvedValue({
+			dataDir: "/tmp/tap-connect-validation-stub",
+			agentId: 1,
+			chain: "eip155:8453",
+		});
+	});
 
-function buildRuntime(connectFn: () => Promise<unknown>) {
-	return {
-		resolver: {
-			resolve: vi.fn(async () => PEER_AGENT),
-		},
-		trustStore: {
-			getContacts: vi.fn(async () => []),
-		},
-		service: {
-			connect: connectFn,
-		},
-		// Required for the try/finally cleanup in connectCommand — releases the
-		// transport owner lock when the command exits.
-		stop: vi.fn(async () => {}),
-	};
-}
-
-describe("tap connect", () => {
-	afterEach(() => {
+	afterEach(async () => {
 		vi.clearAllMocks();
+		await fake?.stop();
 		process.exitCode = undefined;
 	});
 
-	it("default: exits 0 when service returns active within 30s", async () => {
-		const activeResult = {
-			connectionId: "conn-abc",
-			peerName: "Alice",
-			peerAgentId: 42,
-			status: "active" as const,
-			receipt: { messageId: "msg-1" },
-		};
+	/** Spin up a fake tapd socket and wire loadConfig to its dataDir. */
+	async function withFakeTapd(
+		routes: Parameters<typeof startFakeTapd>[0]["routes"],
+	): Promise<void> {
+		fake = await startFakeTapd({ routes });
+		loadConfigMock.mockResolvedValue({
+			dataDir: fake.dataDir,
+			agentId: 1,
+			chain: "eip155:8453",
+		});
+	}
 
-		createCliRuntimeMock.mockResolvedValue(buildRuntime(async () => activeResult));
-		runOrQueueTapCommandMock.mockImplementation(async (_dir, _job, run) => ({
-			status: "executed",
-			result: await run(),
-			queued: false,
-		}));
+	it("default: forwards waitMs=30000 and prints active on success", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/connect",
+				handler: () => ({
+					connectionId: "conn-abc",
+					peerName: "Alice",
+					peerAgentId: 42,
+					status: "active",
+					receipt: { messageId: "msg-1" },
+				}),
+			},
+		]);
 
-		await connectCommand(INVITE_URL, OPTS, undefined, false, false);
+		await connectCommand(INVITE_URL, { json: true }, undefined, false, false);
 
 		expect(process.exitCode).toBeUndefined();
+		const body = fake?.calls[0]?.body as { waitMs: number };
+		expect(body.waitMs).toBe(30_000);
 		expect(successMock).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "active", connection_id: "conn-abc" }),
-			OPTS,
+			expect.any(Object),
 			expect.any(Number),
 		);
 		expect(errorMock).not.toHaveBeenCalled();
-		expect(runOrQueueTapCommandMock).toHaveBeenCalledWith(
-			"/tmp/tap-test",
-			expect.objectContaining({ type: "connect" }),
-			expect.any(Function),
-			expect.objectContaining({ requestedBy: "tap:connect" }),
-		);
 	});
 
-	it("default: exits 2 when service returns pending (30s wait timed out)", async () => {
-		const pendingResult = {
-			connectionId: "conn-abc",
-			peerName: "Alice",
-			peerAgentId: 42,
-			status: "pending" as const,
-			receipt: { messageId: "msg-1" },
-		};
+	it("default: exits 2 when tapd returns pending (blocking wait timed out)", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/connect",
+				handler: () => ({
+					connectionId: "conn-abc",
+					peerName: "Alice",
+					peerAgentId: 42,
+					status: "pending",
+					receipt: { messageId: "msg-1" },
+				}),
+			},
+		]);
 
-		createCliRuntimeMock.mockResolvedValue(buildRuntime(async () => pendingResult));
-		runOrQueueTapCommandMock.mockImplementation(async (_dir, _job, run) => ({
-			status: "executed",
-			result: await run(),
-			queued: false,
-		}));
-
-		await connectCommand(INVITE_URL, OPTS, undefined, false, false);
+		await connectCommand(INVITE_URL, { json: true }, undefined, false, false);
 
 		expect(process.exitCode).toBe(2);
-		expect(errorMock).toHaveBeenCalledWith("TIMEOUT", expect.stringContaining("30s"), OPTS);
+		expect(errorMock).toHaveBeenCalledWith(
+			"TIMEOUT",
+			expect.stringContaining("30s"),
+			expect.any(Object),
+		);
 		expect(successMock).not.toHaveBeenCalled();
 	});
 
-	it("--no-wait: exits 0 immediately when service returns pending", async () => {
-		const pendingResult = {
-			connectionId: "conn-abc",
-			peerName: "Alice",
-			peerAgentId: 42,
-			status: "pending" as const,
-			receipt: { messageId: "msg-1" },
-		};
+	it("--no-wait: exits 0 immediately on pending", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/connect",
+				handler: () => ({
+					connectionId: "conn-abc",
+					peerName: "Alice",
+					peerAgentId: 42,
+					status: "pending",
+					receipt: { messageId: "msg-1" },
+				}),
+			},
+		]);
 
-		createCliRuntimeMock.mockResolvedValue(buildRuntime(async () => pendingResult));
-		runOrQueueTapCommandMock.mockImplementation(async (_dir, _job, run) => ({
-			status: "executed",
-			result: await run(),
-			queued: false,
-		}));
-
-		await connectCommand(INVITE_URL, OPTS, undefined, true /* noWait */, false);
+		await connectCommand(INVITE_URL, { json: true }, undefined, true, false);
 
 		expect(process.exitCode).toBeUndefined();
+		const body = fake?.calls[0]?.body as { waitMs: number };
+		expect(body.waitMs).toBe(0);
 		expect(successMock).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "pending", connection_id: "conn-abc" }),
-			OPTS,
+			expect.any(Object),
 			expect.any(Number),
 		);
 		expect(errorMock).not.toHaveBeenCalled();
 	});
 
-	it("--wait-seconds 0: exits 0 immediately (equivalent to --no-wait)", async () => {
-		const pendingResult = {
-			connectionId: "conn-abc",
-			peerName: "Alice",
-			peerAgentId: 42,
-			status: "pending" as const,
-			receipt: { messageId: "msg-1" },
-		};
+	it("--wait-seconds 0: equivalent to --no-wait", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/connect",
+				handler: () => ({
+					connectionId: "conn-abc",
+					peerName: "Alice",
+					peerAgentId: 42,
+					status: "pending",
+					receipt: { messageId: "msg-1" },
+				}),
+			},
+		]);
 
-		createCliRuntimeMock.mockResolvedValue(buildRuntime(async () => pendingResult));
-		runOrQueueTapCommandMock.mockImplementation(async (_dir, _job, run) => ({
-			status: "executed",
-			result: await run(),
-			queued: false,
-		}));
-
-		// waitSeconds=0, noWait=false — zero wait-seconds is treated as no-wait
-		await connectCommand(INVITE_URL, OPTS, 0 /* waitSeconds */, false, false);
+		await connectCommand(INVITE_URL, { json: true }, 0, false, false);
 
 		expect(process.exitCode).toBeUndefined();
 		expect(successMock).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "pending" }),
-			OPTS,
+			expect.any(Object),
 			expect.any(Number),
 		);
-		expect(errorMock).not.toHaveBeenCalled();
 	});
 
-	it("keeps waiting after a queued command finishes with a pending result", async () => {
-		createCliRuntimeMock.mockResolvedValue({
-			...buildRuntime(async () => ({
-				connectionId: "conn-abc",
-				peerName: "Alice",
-				peerAgentId: 42,
-				status: "pending" as const,
-				receipt: { messageId: "msg-1" },
-			})),
-			trustStore: {
-				getContacts: vi.fn(async () => [
-					{
-						connectionId: "conn-abc",
-						peerAgentId: 42,
-						peerChain: "eip155:8453",
-						peerDisplayName: "Alice",
-						status: "active",
-					},
-				]),
+	it("--wait-seconds N: forwards N*1000 to tapd", async () => {
+		await withFakeTapd([
+			{
+				method: "POST",
+				path: "/api/connect",
+				handler: () => ({
+					connectionId: "conn-abc",
+					peerName: "Alice",
+					peerAgentId: 42,
+					status: "active",
+					receipt: { messageId: "msg-1" },
+				}),
 			},
-		});
-		runOrQueueTapCommandMock.mockResolvedValue({
-			status: "completed",
-			queued: true,
-			jobId: "job-1",
-			result: {
-				connectionId: "conn-abc",
-				peerName: "Alice",
-				peerAgentId: 42,
-				status: "pending" as const,
-				receipt: { messageId: "msg-1" },
-			},
-		});
+		]);
 
-		await connectCommand(INVITE_URL, OPTS, 30, false, false);
+		await connectCommand(INVITE_URL, { json: true }, 120, false, false);
 
-		expect(process.exitCode).toBeUndefined();
-		expect(successMock).toHaveBeenCalledWith(
-			expect.objectContaining({ status: "active", waited: true }),
-			OPTS,
-			expect.any(Number),
-		);
-		expect(errorMock).not.toHaveBeenCalled();
+		const body = fake?.calls[0]?.body as { waitMs: number };
+		expect(body.waitMs).toBe(120_000);
 	});
 
-	it("no --yes flag: no prompt is called when service returns active", async () => {
-		const activeResult = {
-			connectionId: "conn-abc",
-			peerName: "Alice",
-			peerAgentId: 42,
-			status: "active" as const,
-			receipt: { messageId: "msg-1" },
-		};
+	it("--dry-run: previews without contacting tapd", async () => {
+		await connectCommand(INVITE_URL, { json: true }, undefined, false, true);
 
-		createCliRuntimeMock.mockResolvedValue(buildRuntime(async () => activeResult));
-		runOrQueueTapCommandMock.mockImplementation(async (_dir, _job, run) => ({
-			status: "executed",
-			result: await run(),
-			queued: false,
-		}));
-
-		// Run with no stdin TTY (non-interactive). Should NOT fail or prompt.
-		const origIsTTY = process.stdin.isTTY;
-		try {
-			// @ts-expect-error — intentionally overriding for test
-			process.stdin.isTTY = false;
-			await connectCommand(INVITE_URL, OPTS, undefined, false, false);
-		} finally {
-			// @ts-expect-error — restoring
-			process.stdin.isTTY = origIsTTY;
-		}
-
-		// No VALIDATION_ERROR about --yes or interactive prompt
-		expect(errorMock).not.toHaveBeenCalledWith("VALIDATION_ERROR", expect.any(String), OPTS);
+		expect(fake).toBeNull();
 		expect(successMock).toHaveBeenCalledWith(
-			expect.objectContaining({ status: "active" }),
-			OPTS,
+			expect.objectContaining({ status: "preview", dry_run: true }),
+			expect.any(Object),
 			expect.any(Number),
 		);
 	});
 
-	it("--wait-seconds N: passes N*1000 as waitMs to service.connect", async () => {
-		const activeResult = {
-			connectionId: "conn-abc",
-			peerName: "Alice",
-			peerAgentId: 42,
-			status: "active" as const,
-			receipt: { messageId: "msg-1" },
-		};
+	it("rejects self-invites with a validation error", async () => {
+		isSelfInviteMock.mockReturnValueOnce(true);
 
-		let capturedWaitMs: number | undefined;
-		const connectFn = vi.fn(async ({ waitMs }: { inviteUrl: string; waitMs: number }) => {
-			capturedWaitMs = waitMs;
-			return activeResult;
-		});
+		await connectCommand(INVITE_URL, { json: true }, undefined, false, false);
 
-		createCliRuntimeMock.mockResolvedValue(buildRuntime(connectFn as never));
-		runOrQueueTapCommandMock.mockImplementation(async (_dir, _job, run) => ({
-			status: "executed",
-			result: await run(),
-			queued: false,
-		}));
-
-		await connectCommand(INVITE_URL, OPTS, 120 /* waitSeconds */, false, false);
-
-		expect(capturedWaitMs).toBe(120_000);
-		expect(successMock).toHaveBeenCalledWith(
-			expect.objectContaining({ status: "active" }),
-			OPTS,
-			expect.any(Number),
-		);
+		expect(fake).toBeNull();
+		expect(errorMock).toHaveBeenCalled();
+		expect(successMock).not.toHaveBeenCalled();
 	});
 
 	it("cli flags: --no-wait registers in CLI and --yes is absent", async () => {
@@ -342,9 +238,7 @@ describe("tap connect", () => {
 		const program = createCli();
 		const connect = program.commands.find((cmd) => cmd.name() === "connect");
 		expect(connect).toBeDefined();
-
 		const helpText = connect?.helpInformation() ?? "";
-
 		expect(helpText).toContain("--no-wait");
 		expect(helpText).toContain("--wait-seconds");
 		expect(helpText).not.toContain("--yes");

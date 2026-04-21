@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .client import format_notification_context, send_request
+from .client import drain_all_identities, format_notification_context, send_request
 
 TOOLSET = "plugin_trusted_agents_tap"
 ACTIONS = [
@@ -148,12 +148,12 @@ def handle_tap_gateway(args: dict, **kwargs) -> str:
 
 
 def inject_tap_notifications(**kwargs):
-    result = send_request("drain_notifications")
-    if not isinstance(result, dict):
-        return None
-    notifications = result.get("notifications")
-    if not isinstance(notifications, list):
-        return None
+    # Drain from every configured identity so multi-identity Hermes
+    # setups surface pending approvals and escalations from every agent,
+    # not just the default one. ``drain_all_identities`` never raises —
+    # per-identity failures come back as meta escalations so they
+    # aren't silently swallowed.
+    notifications = drain_all_identities()
     return format_notification_context(notifications)
 
 

@@ -1,24 +1,16 @@
-import {
-	ValidationError,
-	caip2ToChainId,
-	isSelfInvite,
-	parseInviteUrl,
-	verifyInvite,
-} from "trusted-agents-core";
-import type { ITrustStore } from "trusted-agents-core";
-import type { TapRuntime } from "trusted-agents-sdk";
-import { createCliRuntime } from "../lib/cli-runtime.js";
+import { ValidationError, isSelfInvite, parseInviteUrl } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, info, success } from "../lib/output.js";
-import {
-	isQueuedTapCommandPending,
-	queuedTapCommandPendingFields,
-	queuedTapCommandResultFields,
-	runOrQueueTapCommand,
-} from "../lib/queued-commands.js";
+import { TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
+/**
+ * `tap connect <invite-url>` — accept an invite by handing it to tapd, then
+ * format the daemon's response. The daemon owns the transport, the durable
+ * journal, and the synchronous waiter that blocks for the peer's
+ * `connection/result`. This command is the thin formatting layer.
+ */
 export async function connectCommand(
 	inviteUrl: string,
 	opts: GlobalOptions,
@@ -27,18 +19,14 @@ export async function connectCommand(
 	dryRun = false,
 ): Promise<void> {
 	const startTime = Date.now();
-	let runtime: TapRuntime | undefined;
 
 	try {
 		const config = await loadConfig(opts);
-		const chainId = caip2ToChainId(config.chain);
-		if (chainId === null) {
-			error("VALIDATION_ERROR", `Invalid chain format: ${config.chain}`, opts);
-			process.exitCode = 2;
-			return;
-		}
 
-		runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:connect" });
+		// Local validation that doesn't require the daemon: parse the invite,
+		// reject self-invites with a clear message. The daemon validates again
+		// authoritatively but we surface these early so dry-runs work without a
+		// running tapd.
 		const invite = parseInviteUrl(inviteUrl);
 		if (isSelfInvite(invite, { agentId: config.agentId, chain: config.chain })) {
 			throw new ValidationError(
@@ -46,38 +34,15 @@ export async function connectCommand(
 			);
 		}
 
-		const peerAgent = await runtime.resolver.resolve(invite.agentId, invite.chain);
-		const verification = await verifyInvite(invite, {
-			expectedSignerAddress: peerAgent.agentAddress,
-		});
-		if (!verification.valid) {
-			error("VALIDATION_ERROR", verification.error ?? "Invite verification failed", opts);
-			process.exitCode = 2;
-			return;
-		}
-
-		info(
-			`Preparing connection to ${peerAgent.registrationFile.name} (#${peerAgent.agentId}) on ${peerAgent.chain}`,
-			opts,
-		);
-		info(`Capabilities: ${peerAgent.capabilities.join(", ")}`, opts);
-		info(
-			"Connect establishes trust only. Publish or request grants after the contact is active.",
-			opts,
-		);
-
 		if (dryRun) {
 			success(
 				{
 					status: "preview",
 					dry_run: true,
 					scope: "connection/request",
-					peer_name: peerAgent.registrationFile.name,
-					peer_agent_id: peerAgent.agentId,
-					peer_chain: peerAgent.chain,
-					capabilities: peerAgent.capabilities,
+					peer_agent_id: invite.agentId,
+					peer_chain: invite.chain,
 					invite_expires_at: new Date(invite.expires * 1000).toISOString(),
-					verified: verification.valid,
 					wait_seconds: waitSeconds ?? null,
 				},
 				opts,
@@ -92,125 +57,30 @@ export async function connectCommand(
 		// default => 30s blocking wait
 		const waitMs = noWait ? 0 : waitSeconds !== undefined ? waitSeconds * 1000 : 30_000;
 
-		const { service } = runtime;
-		const connectInput = { inviteUrl, waitMs };
-		const outcome = await runOrQueueTapCommand(
-			config.dataDir,
-			{
-				type: "connect",
-				payload: { inviteUrl },
-			},
-			async () => await service.connect(connectInput),
-			{
-				requestedBy: "tap:connect",
-			},
-		);
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const result = await client.connect({ inviteUrl, waitMs });
 
-		if (isQueuedTapCommandPending(outcome)) {
-			// Command was queued (transport held by another process). The executing
-			// process is different so the service's internal waiter can't be used here.
-			// Fall back to polling for the queued-path only.
-			if (waitMs > 0) {
-				info(
-					`Connect queued. Waiting up to ${waitMs / 1000}s for connection to become active...`,
-					opts,
-				);
-				if (
-					await pollForActiveContact(
-						runtime.trustStore,
-						peerAgent.agentId,
-						peerAgent.chain,
-						Math.ceil(waitMs / 1000),
-						opts,
-						startTime,
-					)
-				) {
-					return; // pollForActiveContact already prints success on active
-				}
-				// Blocking wait timed out in the queued path. Match the non-queued
-				// timeout contract: exit code 2, clear message, no success event.
-				info(
-					`Connection pending — ${peerAgent.registrationFile.name} queued behind another process. Run 'tap message sync' later to check.`,
-					opts,
-				);
-				error(
-					"TIMEOUT",
-					`Timed out waiting for queued connection to become active after ${waitMs / 1000}s.`,
-					opts,
-				);
-				process.exitCode = 2;
-				return;
-			}
-			// Fire-and-forget (waitMs === 0): report queued status with exit 0.
-			success(
-				{
-					...queuedTapCommandPendingFields(outcome),
-					peer_name: peerAgent.registrationFile.name,
-					peer_agent_id: peerAgent.agentId,
-					status: "pending",
-				},
-				opts,
-				startTime,
-			);
-			return;
-		}
-
-		const result = outcome.result;
-		if (result.status === "pending" && outcome.status === "completed" && waitMs > 0) {
-			const elapsedMs = Date.now() - startTime;
-			const remainingSeconds = Math.ceil(Math.max(0, waitMs - elapsedMs) / 1000);
-			if (
-				remainingSeconds > 0 &&
-				(await pollForActiveContact(
-					runtime.trustStore,
-					peerAgent.agentId,
-					peerAgent.chain,
-					remainingSeconds,
-					opts,
-					startTime,
-				))
-			) {
-				return;
-			}
-		}
+		const base = {
+			connection_id: result.connectionId,
+			peer_name: result.peerName,
+			peer_agent_id: result.peerAgentId,
+			receipt: result.receipt,
+		};
 
 		if (result.status === "active") {
-			success(
-				{
-					connection_id: result.connectionId,
-					peer_name: result.peerName,
-					peer_agent_id: result.peerAgentId,
-					status: "active",
-					...queuedTapCommandResultFields(outcome),
-					receipt: result.receipt,
-				},
-				opts,
-				startTime,
-			);
+			success({ ...base, status: "active" }, opts, startTime);
 			return;
 		}
 
 		// status === "pending"
 		if (noWait || waitSeconds === 0) {
-			// Caller asked for fire-and-forget — exit 0 with pending.
-			success(
-				{
-					connection_id: result.connectionId,
-					peer_name: result.peerName,
-					peer_agent_id: result.peerAgentId,
-					status: "pending",
-					...queuedTapCommandResultFields(outcome),
-					receipt: result.receipt,
-				},
-				opts,
-				startTime,
-			);
+			success({ ...base, status: "pending" }, opts, startTime);
 			return;
 		}
 
 		// Default path: blocking wait timed out. Exit 2.
 		info(
-			`Connection pending — ${peerAgent.registrationFile.name} hasn't responded yet. Run 'tap message sync' later to check.`,
+			`Connection pending — ${result.peerName} hasn't responded yet. Run 'tap message sync' later to check.`,
 			opts,
 		);
 		error(
@@ -221,53 +91,5 @@ export async function connectCommand(
 		process.exitCode = 2;
 	} catch (err) {
 		handleCommandError(err, opts);
-	} finally {
-		// Release the transport owner lock and any XMTP resources held by the
-		// runtime. Important for short-lived CLI commands so parallel tap
-		// processes can acquire the lock without waiting for process exit.
-		if (runtime) {
-			await runtime.stop().catch(() => {
-				/* best-effort: cleanup failures should not mask the primary outcome */
-			});
-		}
 	}
-}
-
-async function pollForActiveContact(
-	trustStore: ITrustStore,
-	peerAgentId: number,
-	peerChain: string,
-	waitSeconds: number,
-	opts: GlobalOptions,
-	startTime: number,
-): Promise<boolean> {
-	const pollIntervalMs = 3000;
-	const deadline = Date.now() + waitSeconds * 1000;
-
-	while (Date.now() <= deadline) {
-		const contacts = await trustStore.getContacts();
-		const match = contacts.find(
-			(c) => c.peerAgentId === peerAgentId && c.peerChain === peerChain && c.status === "active",
-		);
-		if (match) {
-			info(`Connection with ${match.peerDisplayName} is now active.`, opts);
-			success(
-				{
-					connection_id: match.connectionId,
-					peer_name: match.peerDisplayName,
-					peer_agent_id: match.peerAgentId,
-					status: "active",
-					waited: true,
-				},
-				opts,
-				startTime,
-			);
-			return true;
-		}
-		if (Date.now() >= deadline) {
-			break;
-		}
-		await new Promise((r) => setTimeout(r, pollIntervalMs));
-	}
-	return false;
 }

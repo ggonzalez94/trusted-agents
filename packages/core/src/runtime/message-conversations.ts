@@ -267,7 +267,7 @@ function extractMessageContent(parts: MessagePart[]): string | null {
 	return fragments.length > 0 ? fragments.join("\n\n") : null;
 }
 
-function resolveConversationId(contact: Contact): string {
+export function resolveConversationId(contact: Contact): string {
 	const safeConnectionId = toSafeConversationId(contact.connectionId);
 	if (safeConnectionId) {
 		return safeConnectionId;

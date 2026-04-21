@@ -10,6 +10,7 @@ import {
 } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import { error } from "./output.js";
+import { TapdClientError } from "./tapd-client.js";
 
 export const EXIT_SUCCESS = 0;
 export const EXIT_GENERAL_ERROR = 1;
@@ -19,6 +20,23 @@ export const EXIT_NOT_FOUND = 4;
 export const EXIT_TEMPORARY_ERROR = 5;
 
 export function exitCodeForError(err: unknown): number {
+	if (err instanceof TapdClientError) {
+		// Map tapd's structured error responses back to the same exit codes the
+		// in-process CLI used to emit, so scripts depending on `tap <cmd>`
+		// returning 3 for a peer-rejected action keep working after the
+		// HTTP-client refactor.
+		const message = err.message.toLowerCase();
+		if (
+			message.includes("rejected by agent") ||
+			message.includes("permission") ||
+			message.includes("auth")
+		) {
+			return EXIT_AUTH_ERROR;
+		}
+		if (message.includes("not found")) return EXIT_NOT_FOUND;
+		if (message.includes("validation")) return EXIT_USAGE_ERROR;
+		return EXIT_GENERAL_ERROR;
+	}
 	if (err instanceof TransportError) return EXIT_TEMPORARY_ERROR;
 	if (err instanceof AuthenticationError) return EXIT_AUTH_ERROR;
 	if (err instanceof PermissionError) return EXIT_AUTH_ERROR;

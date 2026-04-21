@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	color-scheme: dark;
+	--font-display: "Inter Tight", -apple-system, system-ui, sans-serif;
+	--font-sans: -apple-system, "SF Pro Text", system-ui, sans-serif;
+	--font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+	--bg-default: #0e0e12;
+	--bg-divider: #26262e;
+	--bg-elevated: #1b1b23;
+	--text-default: #e8e8ec;
+}
+
+html,
+body {
+	height: 100%;
+	background: var(--bg-default);
+	color: var(--text-default);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+	font-feature-settings: "ss01", "cv11";
+}
+
+/* Scrollbar styling — subtle and flush with the dark theme */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--bg-divider);
+	border-radius: 10px;
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: var(--bg-elevated);
+	background-clip: padding-box;
+	border: 2px solid transparent;
+}

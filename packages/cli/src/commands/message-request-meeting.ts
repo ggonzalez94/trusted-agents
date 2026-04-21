@@ -1,22 +1,9 @@
-import {
-	type SchedulingProposal,
-	type TimeSlot,
-	ValidationError,
-	generateSchedulingId,
-	requireActiveContact,
-	validateSchedulingProposal,
-} from "trusted-agents-core";
+import { ValidationError, buildSchedulingSlots, generateSchedulingId } from "trusted-agents-core";
 import { resolveConfiguredCalendarProvider } from "../lib/calendar/setup.js";
-import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { success, verbose } from "../lib/output.js";
-import {
-	isQueuedTapCommandPending,
-	queuedTapCommandPendingFields,
-	queuedTapCommandResultFields,
-	runOrQueueTapCommand,
-} from "../lib/queued-commands.js";
+import { type RequestMeetingBody, TapdClient } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
 export interface RequestMeetingOptions {
@@ -28,6 +15,11 @@ export interface RequestMeetingOptions {
 	dryRun?: boolean;
 }
 
+/**
+ * `tap message request-meeting` — propose a meeting to a connected peer. The
+ * CLI builds the slot list locally (using the configured calendar provider
+ * when available) and posts the proposal to tapd, which sends the action.
+ */
 export async function messageRequestMeetingCommand(
 	peer: string,
 	cmdOpts: RequestMeetingOptions,
@@ -41,47 +33,48 @@ export async function messageRequestMeetingCommand(
 		}
 
 		const config = await loadConfig(opts);
-		const runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:request-meeting" });
 		const durationMinutes = Number.parseInt(cmdOpts.duration ?? "60", 10);
-
 		if (Number.isNaN(durationMinutes) || durationMinutes <= 0) {
 			throw new ValidationError("--duration must be a positive number of minutes");
 		}
 
+		// CLI builds the slot list locally (with the configured calendar
+		// provider) and sends the result over the flat /api/meetings shape;
+		// tapd fills in the schedulingId default if we omit it and validates
+		// the resulting proposal. We pre-generate the id here so dry-run can
+		// echo it back to the operator.
 		const schedulingId = generateSchedulingId();
-		const slots = await buildSlots(config.dataDir, cmdOpts.preferred, durationMinutes);
+		const calendarProvider = resolveConfiguredCalendarProvider(config.dataDir) ?? null;
+		const slots = await buildSchedulingSlots(cmdOpts.preferred, durationMinutes, calendarProvider);
 		const originTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-		const proposal: SchedulingProposal = {
-			type: "scheduling/propose",
-			schedulingId,
+		const body: RequestMeetingBody = {
+			peer,
 			title: cmdOpts.title,
 			duration: durationMinutes,
 			slots,
 			originTimezone,
+			schedulingId,
+			...(cmdOpts.preferred ? { preferred: cmdOpts.preferred } : {}),
 			...(cmdOpts.location ? { location: cmdOpts.location } : {}),
 			...(cmdOpts.note ? { note: cmdOpts.note } : {}),
 		};
-
-		validateSchedulingProposal(proposal);
-		const contact = requireActiveContact(await runtime.trustStore.getContacts(), peer);
 
 		if (cmdOpts.dryRun) {
 			success(
 				{
 					status: "preview",
 					dry_run: true,
-					peer: contact.peerDisplayName,
-					agent_id: contact.peerAgentId,
+					peer,
 					scheduling_id: schedulingId,
-					title: proposal.title,
-					duration: proposal.duration,
-					slot_count: proposal.slots.length,
-					slots: proposal.slots,
+					title: body.title,
+					duration: body.duration,
+					slot_count: slots.length,
+					slots,
 					scope: "scheduling/request",
-					origin_timezone: proposal.originTimezone,
-					...(proposal.location ? { location: proposal.location } : {}),
-					...(proposal.note ? { note: proposal.note } : {}),
+					origin_timezone: originTimezone,
+					...(cmdOpts.location ? { location: cmdOpts.location } : {}),
+					...(cmdOpts.note ? { note: cmdOpts.note } : {}),
 				},
 				opts,
 				startTime,
@@ -91,41 +84,12 @@ export async function messageRequestMeetingCommand(
 
 		verbose(`Requesting meeting with ${peer}: "${cmdOpts.title}"...`, opts);
 
-		const outcome = await runOrQueueTapCommand(
-			config.dataDir,
-			{
-				type: "request-meeting",
-				payload: {
-					input: { peer, proposal },
-				},
-			},
-			async () => await runtime.service.requestMeeting({ peer, proposal }),
-			{
-				requestedBy: "tap:request-meeting",
-			},
-		);
-
-		if (isQueuedTapCommandPending(outcome)) {
-			success(
-				{
-					...queuedTapCommandPendingFields(outcome),
-					peer,
-					scheduling_id: schedulingId,
-					title: cmdOpts.title,
-					scope: "scheduling/request",
-				},
-				opts,
-				startTime,
-			);
-			return;
-		}
-
-		const result = outcome.result;
+		const client = await TapdClient.forDataDir(config.dataDir);
+		const result = await client.requestMeeting(body);
 
 		success(
 			{
 				requested: true,
-				...queuedTapCommandResultFields(outcome),
 				peer: result.peerName,
 				agent_id: result.peerAgentId,
 				scheduling_id: result.schedulingId,
@@ -141,76 +105,4 @@ export async function messageRequestMeetingCommand(
 	} catch (err) {
 		handleCommandError(err, opts);
 	}
-}
-
-async function buildSlots(
-	dataDir: string,
-	preferred: string | undefined,
-	durationMinutes: number,
-): Promise<TimeSlot[]> {
-	if (!preferred) {
-		// Default: offer a slot 24h from now
-		const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
-		const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-		return [{ start: start.toISOString(), end: end.toISOString() }];
-	}
-
-	const preferredDate = new Date(preferred);
-	if (Number.isNaN(preferredDate.getTime())) {
-		throw new ValidationError(`Invalid preferred time: ${preferred}. Use ISO 8601 format.`);
-	}
-
-	const calendarProvider = resolveConfiguredCalendarProvider(dataDir);
-	if (!calendarProvider) {
-		// No calendar: single slot at preferred time
-		const end = new Date(preferredDate.getTime() + durationMinutes * 60 * 1000);
-		return [{ start: preferredDate.toISOString(), end: end.toISOString() }];
-	}
-
-	// With calendar: check availability around preferred time and build ranked slots
-	const windowStart = new Date(preferredDate.getTime() - 2 * 60 * 60 * 1000); // 2h before
-	const windowEnd = new Date(preferredDate.getTime() + 4 * 60 * 60 * 1000); // 4h after
-
-	const availability = await calendarProvider.getAvailability({
-		start: windowStart.toISOString(),
-		end: windowEnd.toISOString(),
-	});
-
-	const freeWindows = availability.filter((w) => w.status === "free");
-	const slots: TimeSlot[] = [];
-
-	for (const window of freeWindows) {
-		const windowStartMs = new Date(window.start).getTime();
-		const windowEndMs = new Date(window.end).getTime();
-		const durationMs = durationMinutes * 60 * 1000;
-
-		if (windowEndMs - windowStartMs >= durationMs) {
-			// Offer a slot at the start of this free window
-			const slotStart = new Date(Math.max(windowStartMs, preferredDate.getTime() - durationMs));
-			const adjustedStart = new Date(Math.max(slotStart.getTime(), windowStartMs));
-			const adjustedEnd = new Date(adjustedStart.getTime() + durationMs);
-
-			if (adjustedEnd.getTime() <= windowEndMs) {
-				slots.push({
-					start: adjustedStart.toISOString(),
-					end: adjustedEnd.toISOString(),
-				});
-			}
-		}
-	}
-
-	if (slots.length === 0) {
-		// No free slots found, fall back to preferred time
-		const end = new Date(preferredDate.getTime() + durationMinutes * 60 * 1000);
-		slots.push({ start: preferredDate.toISOString(), end: end.toISOString() });
-	}
-
-	// Rank: preferred time first (or closest to it)
-	slots.sort((a, b) => {
-		const aDist = Math.abs(new Date(a.start).getTime() - preferredDate.getTime());
-		const bDist = Math.abs(new Date(b.start).getTime() - preferredDate.getTime());
-		return aDist - bDist;
-	});
-
-	return slots;
 }

@@ -45,6 +45,7 @@ export {
 	findContactForPeer,
 	findUniqueContactForAgentId,
 	requireActiveContact,
+	resolveConversationId,
 	DEFAULT_MESSAGE_SCOPE,
 } from "./message-conversations.js";
 export {
@@ -99,3 +100,27 @@ export {
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
+export {
+	classifyTapEvent,
+	type TapEmitEventPayload,
+	type TapEventBucket,
+} from "./event-classifier.js";
+export type {
+	ActionCompletedEvent,
+	ActionFailedEvent,
+	ActionPendingEvent,
+	ActionRequestedEvent,
+	ConnectionEstablishedEvent,
+	ConnectionFailedEvent,
+	ConnectionRequestedEvent,
+	ContactUpdatedEvent,
+	DaemonStatusEvent,
+	MessageReceivedEvent,
+	MessageSentEvent,
+	PendingResolvedEvent,
+	TapActionKind,
+	TapEvent,
+	TapEventEnvelope,
+	TapEventType,
+	TapPeerRef,
+} from "./event-types.js";

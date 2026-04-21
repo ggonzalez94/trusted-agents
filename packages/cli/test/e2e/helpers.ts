@@ -2,8 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { TapRuntime } from "trusted-agents-sdk";
 import { http, createPublicClient, formatUnits, parseAbi } from "viem";
-import { type CliTapServiceHooks, createCliRuntime } from "../../src/lib/cli-runtime.js";
-import { loadConfig } from "../../src/lib/config-loader.js";
+import type { CliTapServiceHooks } from "../../src/lib/cli-runtime.js";
 import { runCli } from "../helpers/run-cli.js";
 
 // ── Agent Session ───────────────────────────────────────────────────────────
@@ -13,22 +12,25 @@ export interface AgentSession {
 	stop(): Promise<void>;
 }
 
-export async function createAgentSession(opts: {
+/**
+ * After the Phase 3 refactor, the real transport lives inside an in-process
+ * `tapd` Daemon spun up by `startInProcessTapd`. The legacy
+ * `createAgentSession` no longer owns transport — it returns an inert session
+ * whose `runtime` is undefined-equivalent for waitForSync/waitForContact
+ * (those helpers fall back to spawning `tap message sync` via runCli, which
+ * goes through the in-process tapd's HTTP API).
+ *
+ * The session and its `stop()` method are kept as a backwards-compat shim so
+ * the e2e-live test does not need a wholesale rewrite.
+ */
+export async function createAgentSession(_opts: {
 	dataDir: string;
 	hooks?: CliTapServiceHooks;
 }): Promise<AgentSession> {
-	const config = await loadConfig({ plain: true, dataDir: opts.dataDir });
-	const runtime = await createCliRuntime({
-		config,
-		opts: { plain: true, dataDir: opts.dataDir },
-		ownerLabel: "e2e-session",
-		hooks: opts.hooks,
-	});
-	await runtime.service.start();
 	return {
-		runtime,
+		runtime: undefined as unknown as TapRuntime,
 		stop: async () => {
-			await runtime.service.stop();
+			// no-op: tapd owns the transport now.
 		},
 	};
 }

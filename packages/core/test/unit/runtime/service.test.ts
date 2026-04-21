@@ -246,6 +246,7 @@ function createNoopConversationLogger(): IConversationLogger {
 		getConversation: async (_conversationId) => null,
 		listConversations: async (_filter) => [],
 		generateTranscript: async (_conversationId) => "",
+		markRead: async (_conversationId, _readAt) => {},
 	};
 }
 
@@ -3284,7 +3285,10 @@ describe("TapMessagingService", () => {
 		expect(entry!.method).toBe("action/request");
 		expect(entry!.peerAgentId).toBe(PEER_AGENT.agentId);
 		expect(entry!.status).toBe("pending");
-		expect(entry!.metadata).toEqual({ actionType: "bet/propose" });
+		expect(entry!.metadata).toEqual({
+			actionType: "bet/propose",
+			peerChain: PEER_AGENT.chain,
+		});
 
 		await service.stop();
 	});
@@ -3457,6 +3461,7 @@ describe("TapMessagingService", () => {
 				getConversation: async () => null,
 				listConversations: async () => [],
 				generateTranscript: async () => "",
+				markRead: async () => {},
 			};
 
 			// Custom transport that NEVER sends a transport-level ack back —
@@ -3542,6 +3547,7 @@ describe("TapMessagingService", () => {
 				getConversation: async () => null,
 				listConversations: async () => [],
 				generateTranscript: async () => "",
+				markRead: async () => {},
 			};
 
 			const transport = new FakeTransport();
@@ -3586,6 +3592,7 @@ describe("TapMessagingService", () => {
 				getConversation: async () => null,
 				listConversations: async () => [],
 				generateTranscript: async () => "",
+				markRead: async () => {},
 			};
 
 			class PublishFailTransport extends FakeTransport {

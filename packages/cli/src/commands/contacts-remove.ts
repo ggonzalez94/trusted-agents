@@ -1,65 +1,61 @@
 import { TransportOwnershipError } from "trusted-agents-core";
-import type { TapRuntime } from "trusted-agents-sdk";
-import { createCliRuntime } from "../lib/cli-runtime.js";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
-import { error, info, success } from "../lib/output.js";
+import { error, success } from "../lib/output.js";
+import { TapdClient, TapdNotRunningError } from "../lib/tapd-client.js";
 import type { GlobalOptions } from "../types.js";
 
+/**
+ * `tap contacts remove <connectionId>` — must route through tapd so the
+ * revoke-before-delete invariant holds. If tapd is not running, we fail
+ * closed rather than deleting the local trust row unilaterally.
+ *
+ * Rationale: revoke-before-delete is a trust-graph invariant. A local-only
+ * delete looks cheaper but leaks trust state that the peer still honors,
+ * leading to manual recovery on both sides when the two views diverge.
+ * Failing closed forces the operator to bring tapd up first, which is cheap
+ * (one command) and preserves the invariant. See `Agents.md` recovery
+ * primitives and F3.1 in `docs/superpowers/reviews/2026-04-13-adversarial-review.md`.
+ */
 export async function contactsRemoveCommand(
 	connectionId: string,
 	opts: GlobalOptions,
 ): Promise<void> {
 	const startTime = Date.now();
-	let runtime: TapRuntime | undefined;
 
 	try {
 		const config = await loadConfig(opts);
-		runtime = await createCliRuntime({ config, opts, ownerLabel: "tap:contacts-remove" });
 
-		// Find the contact first
-		const contacts = await runtime.trustStore.getContacts();
-		const contact = contacts.find((c) => c.connectionId === connectionId);
-		if (!contact) {
-			error("NOT_FOUND", `Contact not found: ${connectionId}`, opts);
-			process.exitCode = 4;
-			return;
-		}
-
-		// Send connection/revoke to the peer (best-effort — local delete always happens)
+		let client: TapdClient;
 		try {
-			await runtime.service.revokeConnection(contact);
-			info(`Sent connection/revoke to ${contact.peerDisplayName} (#${contact.peerAgentId}).`, opts);
+			client = await TapdClient.forDataDir(config.dataDir);
 		} catch (err) {
-			if (err instanceof TransportOwnershipError) {
+			if (err instanceof TapdNotRunningError) {
 				error(
-					"TRANSPORT_ERROR",
-					`Contact removal must run through the active TAP owner so revoke can be delivered first. Use the running TAP host to remove ${contact.peerDisplayName}.`,
+					"TAPD_NOT_RUNNING",
+					"tapd must be running to revoke a contact. Run `tap daemon start` first, then retry.",
 					opts,
 				);
 				process.exitCode = 2;
 				return;
 			}
-			info(
-				`Could not deliver connection/revoke to ${contact.peerDisplayName} — removing locally anyway. ${err instanceof Error ? err.message : String(err)}`,
+			throw err;
+		}
+
+		const result = await client.revokeContact(connectionId);
+		success({ removed: connectionId, peer: result.peer }, opts, startTime);
+		return;
+	} catch (err) {
+		// Surface the special "owner held elsewhere" error pattern from before.
+		if (err instanceof TransportOwnershipError) {
+			error(
+				"TRANSPORT_ERROR",
+				"Contact removal must run through the active TAP owner so revoke can be delivered first.",
 				opts,
 			);
+			process.exitCode = 2;
+			return;
 		}
-
-		// Delete the local contact regardless of revoke delivery
-		await runtime.trustStore.removeContact(connectionId);
-
-		success({ removed: connectionId, peer: contact.peerDisplayName }, opts, startTime);
-	} catch (err) {
 		handleCommandError(err, opts);
-	} finally {
-		// Release the transport owner lock and any XMTP resources held by the
-		// runtime. Important for short-lived CLI commands so parallel tap
-		// processes can acquire the lock without waiting for process exit.
-		if (runtime) {
-			await runtime.stop().catch(() => {
-				/* best-effort: cleanup failures should not mask the primary outcome */
-			});
-		}
 	}
 }

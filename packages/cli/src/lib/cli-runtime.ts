@@ -46,12 +46,16 @@ export interface CliRuntimeOptions {
 /**
  * Create a TapRuntime configured for CLI usage.
  *
- * This is the bridge between the CLI host and the SDK. It:
- * - Resolves CLI-specific calendar provider
- * - Wires TTY-aware approval prompts (transfer, scheduling, meeting confirmation)
- * - Wires NDJSON event emission when requested
- * - Checks for test runtime overrides (loopback transport, fake executor)
- * - Delegates to the SDK's `createTapRuntime` for construction
+ * **Phase 3 status:** no production CLI command calls this function any more —
+ * every transport-touching command goes through `TapdClient` instead. The
+ * remaining callers are inside the test tree:
+ *   - `test/helpers/in-process-tapd.ts` uses it to construct a real
+ *     `TapMessagingService` that the in-process `Daemon` then owns.
+ *
+ * The function is kept (not deleted) because Phase 4 / Phase 5 will reuse it
+ * from the Hermes daemon refactor — the wiring (approval prompts, calendar
+ * provider, signing provider) is still the right shape for any host that
+ * needs a real runtime. If those phases ever stop using it, delete this file.
  */
 export async function createCliRuntime(options: CliRuntimeOptions): Promise<TapRuntime> {
 	const { config, opts } = options;
