@@ -42,9 +42,6 @@ describe("createTapGatewayTool", () => {
 		await tool.execute?.("c", { action: "sync" });
 		expect(client.sync).toHaveBeenCalled();
 
-		await tool.execute?.("c", { action: "restart" });
-		expect(client.shutdown).toHaveBeenCalled();
-
 		await tool.execute?.("c", { action: "create_invite", expiresInSeconds: 600 });
 		expect(client.createInvite).toHaveBeenCalledWith({ expiresInSeconds: 600 });
 
@@ -67,6 +64,19 @@ describe("createTapGatewayTool", () => {
 
 		await tool.execute?.("c", { action: "list_pending" });
 		expect(client.listPending).toHaveBeenCalled();
+	});
+
+	it("refuses action=restart with a pointer to the CLI supervisor command", async () => {
+		// Thin plugins can't respawn tapd; a bare shutdown-as-restart was a
+		// silent outage. The action must now fail loudly with operator
+		// guidance rather than dispatching to client.shutdown().
+		const client = makeClient();
+		const tool = createTapGatewayTool(client);
+
+		await expect(tool.execute?.("c", { action: "restart" })).rejects.toThrow(
+			/tap daemon restart/,
+		);
+		expect(client.shutdown).not.toHaveBeenCalled();
 	});
 
 	it("requires inviteUrl for the connect action", async () => {
