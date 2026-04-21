@@ -245,8 +245,20 @@ def _dispatch(action: str, params: dict, socket_path: Path) -> Any:
         return _http_request("POST", "/daemon/sync", socket_path)
 
     if action == "restart":
-        result = _http_request("POST", "/daemon/shutdown", socket_path)
-        return {"ok": True, "previous": result}
+        # tapd is a separate process; this client is a thin HTTP shell
+        # over its unix socket. A bare `/daemon/shutdown` leaves tapd
+        # down — notification drain runs with auto_start=False and stays
+        # dark until a user action happens to trigger the fast-start
+        # path, so the action can silently kill background events. Fail
+        # loudly and point at the CLI supervisor command instead.
+        return {
+            "error": (
+                "Hermes plugin client cannot restart tapd directly. Run "
+                "`tap daemon restart` or `tap hermes restart` from the CLI, "
+                "or restart `hermes gateway` so the startup hook relaunches "
+                "tapd."
+            )
+        }
 
     if action == "create_invite":
         return _http_request("POST", "/api/invites", socket_path, body=_pick(params, {

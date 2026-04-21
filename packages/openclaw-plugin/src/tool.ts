@@ -134,7 +134,15 @@ async function executeTapGatewayAction(
 		case "sync":
 			return await client.sync();
 		case "restart":
-			return await client.shutdown();
+			// tapd is a separate process; the plugin is a thin HTTP client
+			// over its unix socket (CLAUDE.md §16, thin-plugin rule). The
+			// plugin has no spawn capability, so calling `client.shutdown()`
+			// alone leaves tapd down — an apparent recovery action becomes a
+			// silent outage. Fail loudly and direct the operator to the CLI
+			// surface that actually performs a stop+start cycle.
+			throw new Error(
+				"tap_gateway cannot restart tapd from within the plugin. Run `tap daemon restart` (or `tap hermes restart`) from the CLI, or restart the OpenClaw Gateway process to re-run the Hermes startup hook.",
+			);
 		case "create_invite":
 			return await client.createInvite({ expiresInSeconds: params.expiresInSeconds });
 		case "connect":
