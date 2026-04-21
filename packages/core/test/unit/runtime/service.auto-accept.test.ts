@@ -443,7 +443,7 @@ describe("connection request auto-accept (spec §1.5)", () => {
 		expect(contact?.status).toBe("active");
 
 		// Journal entry should be completed.
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+		expect(await waitForJournalStatus(requestJournal, String(request.id), "completed")).toEqual(
 			expect.objectContaining({ status: "completed" }),
 		);
 

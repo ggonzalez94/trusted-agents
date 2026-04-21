@@ -2173,16 +2173,23 @@ describe("TapMessagingService", () => {
 		await service.start();
 		const request = await submitConnectionRequest(transport, "peer-inbox-auto-accept-connection");
 
-		await sleep(50);
+		let contact: Contact | null = null;
+		let journalEntry: Awaited<ReturnType<typeof requestJournal.getByRequestId>> = null;
+		for (let attempt = 0; attempt < 20; attempt++) {
+			contact = await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain);
+			journalEntry = await requestJournal.getByRequestId(String(request.id));
+			if (contact?.status === "active" && journalEntry?.status === "completed") {
+				break;
+			}
+			await sleep(10);
+		}
 
-		// Contact should have been created (auto-accept)
-		expect(await trustStore.findByAgentId(PEER_AGENT.agentId, PEER_AGENT.chain)).toEqual(
+		expect(contact).toEqual(
 			expect.objectContaining({
 				status: "active",
 			}),
 		);
-		// Journal entry should be completed
-		expect(await requestJournal.getByRequestId(String(request.id))).toEqual(
+		expect(journalEntry).toEqual(
 			expect.objectContaining({
 				status: "completed",
 			}),
