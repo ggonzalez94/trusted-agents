@@ -50,21 +50,30 @@ export async function uiCommand(opts: GlobalOptions): Promise<void> {
 		}
 
 		// The UI reads the bearer token from the URL hash so it never lands in
-		// the browser history or referrer headers.
-		const url = `${connection.baseUrl}/#token=${connection.token}`;
-		const opened = openInBrowser(url);
+		// the browser history or referrer headers. The token-bearing URL also
+		// must not land in terminal logs, --json output, or CI capture when we
+		// don't need to show it: echoing the token to stdout/structured output
+		// defeats the protections above, since it authorizes the daemon
+		// control and write APIs. When we open the browser for the user we
+		// hand the URL to the OS directly and only echo the base URL; only
+		// when auto-open fails do we print the full URL (the user has no
+		// other way to reach it).
+		const tokenBearingUrl = `${connection.baseUrl}/#token=${connection.token}`;
+		const opened = openInBrowser(tokenBearingUrl);
 
 		if (opened) {
-			info(`Opened tapd UI in your browser: ${url}`, opts);
+			info(`Opened tapd UI in your browser: ${connection.baseUrl}/`, opts);
 		} else {
-			info(`Open this URL in your browser: ${url}`, opts);
+			info(`Open this URL in your browser: ${tokenBearingUrl}`, opts);
 		}
 
 		success(
 			{
-				url,
 				base_url: connection.baseUrl,
 				opened,
+				// Only surface the token-bearing URL when the user has to copy
+				// it by hand; otherwise structured consumers shouldn't see it.
+				...(opened ? {} : { url: tokenBearingUrl }),
 				data_dir: dataDir,
 			},
 			opts,

@@ -45,7 +45,13 @@ export class EscalationWatcher {
 	}
 
 	start(): void {
-		if (this.stopped || this.req) return;
+		// Already running — ignore repeat start() calls.
+		if (this.req) return;
+		// Allow start() after stop(). `stopped` is a signal to the reconnect
+		// loop, not a terminal state; if the plugin service lifecycle calls
+		// stop+start (Gateway reload without process replacement), we want
+		// the SSE stream to come back up instead of silently staying dark.
+		this.stopped = false;
 		this.connect();
 	}
 

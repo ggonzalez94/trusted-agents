@@ -73,9 +73,7 @@ describe("createTapGatewayTool", () => {
 		const client = makeClient();
 		const tool = createTapGatewayTool(client);
 
-		await expect(tool.execute?.("c", { action: "restart" })).rejects.toThrow(
-			/tap daemon restart/,
-		);
+		await expect(tool.execute?.("c", { action: "restart" })).rejects.toThrow(/tap daemon restart/);
 		expect(client.shutdown).not.toHaveBeenCalled();
 	});
 
