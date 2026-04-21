@@ -328,7 +328,15 @@ def _dispatch(action: str, params: dict, socket_path: Path) -> Any:
         rid, err = _require_param(params, "request_id")
         if err:
             return err
-        verb = "approve" if bool(params.get("approve")) else "deny"
+        # Require an explicit boolean. `bool(params.get("approve"))` would
+        # coerce a missing value, a string, a dict, anything truthy/falsy —
+        # and a missing approve would silently route to /deny, rejecting
+        # pending actions without the agent ever intending to. Approval
+        # must be a deliberate yes/no.
+        approve = params.get("approve")
+        if not isinstance(approve, bool):
+            return {"error": "approve is required and must be a boolean (true or false)"}
+        verb = "approve" if approve else "deny"
         return _http_request("POST", f"/api/pending/{quote(rid, safe='')}/{verb}", socket_path, body=_pick(params, {
             "note": "note", "reason": "reason",
         }))

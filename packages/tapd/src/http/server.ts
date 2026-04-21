@@ -3,6 +3,7 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 import { dirname, extname } from "node:path";
 import { toErrorMessage } from "trusted-agents-core";
 import { authorizeRequest } from "./auth.js";
+import { HttpError } from "./errors.js";
 import { sendError, sendJson, sendNotFound, sendUnauthorized } from "./response.js";
 import type { Router } from "./router.js";
 import { resolveStaticAsset } from "./static-assets.js";
@@ -109,6 +110,14 @@ export class TapdHttpServer {
 
 	private handle(req: IncomingMessage, res: ServerResponse, transport: "unix" | "tcp"): void {
 		void this.handleAsync(req, res, transport).catch((error) => {
+			// Client-caused errors (malformed JSON, payload too large, invalid
+			// route params) arrive as HttpError so we can surface the intended
+			// 4xx status. Unknown exceptions fall through to 500 — those are
+			// bugs, not user input, and clients shouldn't auto-retry them.
+			if (error instanceof HttpError) {
+				sendError(res, error.status, error.code, error.message);
+				return;
+			}
 			sendError(res, 500, "internal_error", toErrorMessage(error));
 		});
 	}
@@ -189,7 +198,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 			raw += chunk;
 			if (raw.length > 1024 * 1024) {
 				req.destroy();
-				reject(new Error("request body too large"));
+				reject(new HttpError(413, "payload_too_large", "request body too large"));
 			}
 		});
 		req.on("end", () => {
@@ -200,7 +209,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 			try {
 				resolve(JSON.parse(raw));
 			} catch {
-				reject(new Error("invalid JSON body"));
+				reject(new HttpError(400, "invalid_json", "invalid JSON body"));
 			}
 		});
 		req.on("error", reject);

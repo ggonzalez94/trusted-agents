@@ -25,6 +25,18 @@ function openInBrowser(url: string): boolean {
 			stdio: "ignore",
 			detached: true,
 		});
+		// spawn() resolves command lookup asynchronously. On systems without
+		// `open`/`xdg-open`, the child emits `"error"` after we return here.
+		// Without a handler, node treats that as an unhandled exception and
+		// crashes the process — attach a no-op handler so we stay crash-safe.
+		// We can't synchronously know whether the open actually succeeded, so
+		// the return value stays optimistic; the caller's fallback still
+		// prints the full URL only when spawn itself throws synchronously
+		// (permission denied etc).
+		child.on("error", () => {
+			// Silently ignored — the caller's messaging already tells the
+			// user how to reach the URL manually if auto-open didn't work.
+		});
 		child.unref();
 		return true;
 	} catch {
