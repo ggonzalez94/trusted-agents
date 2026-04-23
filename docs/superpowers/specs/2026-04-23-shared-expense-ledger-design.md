@@ -260,7 +260,7 @@ The model does not block these later, but v1 ships the smallest useful loop: log
 
 ## Implementation Defaults
 
-Use a TypeScript Node service for `packages/expense-server`, with Fastify for the public HTTP API and PostgreSQL as the durable system of record. Keep the ledger storage behind a repository interface so unit tests can use an in-memory implementation and integration tests can use an isolated Postgres database.
+Use a TypeScript Node service for `packages/expense-server`, with a small Node HTTP API and an `ExpenseStore` repository interface. The first implementation ships an in-memory store for tests and local development. A durable Postgres store can replace that interface later without changing the TAP app, CLI commands, or HTTP API.
 
 Settlement defaults:
 - groups default to manual settlement

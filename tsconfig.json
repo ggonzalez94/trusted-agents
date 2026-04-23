@@ -1,6 +1,8 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" }
+    { "path": "packages/core" },
+    { "path": "packages/app-expenses" },
+    { "path": "packages/expense-server" }
   ]
 }

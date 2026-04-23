@@ -10,6 +10,16 @@
         "vitest": "^3.0.0",
       },
     },
+    "packages/app-expenses": {
+      "name": "@trustedagents/app-expenses",
+      "version": "0.1.0",
+      "dependencies": {
+        "trusted-agents-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^25.3.3",
+      },
+    },
     "packages/app-scheduling": {
       "name": "@trustedagents/app-scheduling",
       "version": "0.1.0",
@@ -35,6 +45,7 @@
       },
       "dependencies": {
         "@open-wallet-standard/core": "npm:@silicon-intern/ows-core@^1.2.0-eip712.3",
+        "@trustedagents/app-expenses": "workspace:*",
         "@x402/evm": "^2.5.0",
         "@x402/fetch": "^2.5.0",
         "commander": "^13.0.0",
@@ -65,6 +76,21 @@
         "@types/better-sqlite3": "^7.6.11",
         "@types/node": "^25.3.3",
         "@types/uuid": "^10.0.0",
+        "typescript": "^5.7.0",
+        "vitest": "^3.0.0",
+      },
+    },
+    "packages/expense-server": {
+      "name": "trusted-agents-expense-server",
+      "version": "0.1.0",
+      "bin": {
+        "tap-expense-server": "./dist/bin.js",
+      },
+      "dependencies": {
+        "@trustedagents/app-expenses": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^25.3.3",
         "typescript": "^5.7.0",
         "vitest": "^3.0.0",
       },
@@ -936,6 +962,8 @@
     "@tokenizer/token": ["@tokenizer/token@0.3.0", "", {}, "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A=="],
 
     "@tootallnate/quickjs-emscripten": ["@tootallnate/quickjs-emscripten@0.23.0", "", {}, "sha512-C5Mc6rdnsaJDjO3UpGW/CQTHtCKaYlScZTly4JIu97Jxo/odCiH0ITnDXSJPTOrEKk/ycSZ0AOgTmkDtkOsvIA=="],
+
+    "@trustedagents/app-expenses": ["@trustedagents/app-expenses@workspace:packages/app-expenses"],
 
     "@trustedagents/app-scheduling": ["@trustedagents/app-scheduling@workspace:packages/app-scheduling"],
 
@@ -2060,6 +2088,8 @@
     "trusted-agents-cli": ["trusted-agents-cli@workspace:packages/cli"],
 
     "trusted-agents-core": ["trusted-agents-core@workspace:packages/core"],
+
+    "trusted-agents-expense-server": ["trusted-agents-expense-server@workspace:packages/expense-server"],
 
     "trusted-agents-sdk": ["trusted-agents-sdk@workspace:packages/sdk"],
 
