@@ -1,6 +1,6 @@
 ---
 name: trusted-agents
-description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, request funds, and schedule meetings. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, schedule meetings or dinners, check calendar availability, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill when the user mentions scheduling, meetings, dinners, calendar setup, or coordinating times with another agent. Also use inside OpenClaw Gateway or Hermes when the `tap_gateway` tool is available or when handling TAP notifications.
+description: Operate a Trusted Agents Protocol agent with the `tap` CLI — install, onboard, connect to other agents, manage permissions, send messages, request funds, track shared expenses, and schedule meetings. Use this skill whenever the user wants to work with TAP, set up an agent identity, connect agents, exchange grants, split bills, schedule meetings or dinners, check calendar availability, or do anything involving agent-to-agent communication or on-chain identity — even if they don't explicitly say "TAP." Also use this skill when the user mentions scheduling, meetings, dinners, shared expenses, splitting bills, calendar setup, or coordinating times with another agent. Also use inside OpenClaw Gateway or Hermes when the `tap_gateway` tool is available or when handling TAP notifications.
 ---
 
 # Trusted Agents Protocol
@@ -335,6 +335,7 @@ See `references/permissions-v1.md` for the full JSON spec with all fields and ad
 | `research` | Questions, information gathering |
 | `scheduling/request` | Meeting scheduling — propose, counter, accept, reject, cancel |
 | `transfer/request` | Value movement |
+| `expense/settle` | Automatic shared-expense settlement permission |
 | `permissions/request-grants` | Ask for permissions |
 
 ## Messages
@@ -392,6 +393,25 @@ Validation errors:
 - unknown chain or `usdc` on a chain without a configured USDC token
 
 In OpenClaw or Hermes plugin mode, use `tap_gateway transfer` with `asset`, `amount`, `toAddress`, and optionally `chain` (defaults to configured chain, must be CAIP-2).
+
+## Shared Expenses
+
+Shared expenses keep an off-chain tab with a connected peer and settle only the net balance in USDC. Expenses are recorded through the configured expense server; the server does not custody funds or broadcast transfers.
+
+```bash
+tap expenses setup --server https://expenses.example.com --api-token $EXPENSE_SERVER_API_TOKEN --settlement-address 0x1111111111111111111111111111111111111111
+tap expenses group create Bob --settle-threshold 25
+tap expenses log Bob 45 "groceries" --category household --idempotency-key groceries-2026-04-23
+tap expenses balance Bob
+tap expenses history Bob
+tap expenses settle Bob --idempotency-key settle-2026-week-17
+```
+
+Flow: setup server -> create or auto-create peer group -> log expenses without on-chain transactions -> inspect net balance -> create settlement intent for one USDC transfer. Positive balances mean the agent is owed USDC; negative balances mean the agent owes USDC.
+
+Use `expense/settle` grants for automatic settlement policy. Do not reuse `transfer/request` grants for shared-expense settlement; shared expenses have their own ledger and netting context.
+
+The standalone expense server reads `EXPENSE_SERVER_DATA_FILE` for its durable ledger path and `EXPENSE_SERVER_API_TOKEN` for bearer authentication. Binding the server outside loopback requires `EXPENSE_SERVER_API_TOKEN`. Clients can configure the bearer token with `tap expenses setup --api-token` or `TAP_EXPENSES_API_TOKEN`.
 
 ## Meeting Scheduling
 

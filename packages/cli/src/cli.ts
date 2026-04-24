@@ -398,6 +398,81 @@ Examples:
 			},
 		);
 
+	const expenses = program
+		.command("expenses")
+		.description("Track shared expenses and settle net balances in USDC");
+
+	expenses
+		.command("setup")
+		.description("Configure the shared expense server for this agent")
+		.requiredOption("--server <url>", "Expense server base URL")
+		.option("--settlement-address <address>", "USDC settlement receiving address for this agent")
+		.option("--api-token <token>", "Bearer token for the expense server")
+		.action(async (cmdOpts: { server: string; settlementAddress?: string; apiToken?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { expensesSetupCommand } = await import("./commands/expenses.js");
+			await expensesSetupCommand(cmdOpts, opts);
+		});
+
+	const expensesGroup = expenses.command("group").description("Manage shared expense groups");
+
+	expensesGroup
+		.command("create <peer>")
+		.description("Create or update a one-to-one shared expense group")
+		.option("--settle-threshold <amount>", "USDC amount before threshold settlement")
+		.action(async (peer: string, cmdOpts: { settleThreshold?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { expensesGroupCreateCommand } = await import("./commands/expenses.js");
+			await expensesGroupCreateCommand(peer, cmdOpts, opts);
+		});
+
+	expenses
+		.command("log <peer> <amount> <description>")
+		.description("Log an expense paid by this agent and split with a peer")
+		.option("--category <name>", "Expense category")
+		.option("--idempotency-key <key>", "Idempotency key for retries")
+		.action(
+			async (
+				peer: string,
+				amount: string,
+				description: string,
+				cmdOpts: { category?: string; idempotencyKey?: string },
+			) => {
+				const opts = program.opts<GlobalOptions>();
+				const { expensesLogCommand } = await import("./commands/expenses.js");
+				await expensesLogCommand(peer, amount, description, cmdOpts, opts);
+			},
+		);
+
+	expenses
+		.command("balance <peer>")
+		.description("Show the shared expense balance with a peer")
+		.action(async (peer: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { expensesBalanceCommand } = await import("./commands/expenses.js");
+			await expensesBalanceCommand(peer, opts);
+		});
+
+	expenses
+		.command("history <peer>")
+		.description("Show shared expense history with a peer")
+		.action(async (peer: string) => {
+			const opts = program.opts<GlobalOptions>();
+			const { expensesHistoryCommand } = await import("./commands/expenses.js");
+			await expensesHistoryCommand(peer, opts);
+		});
+
+	expenses
+		.command("settle <peer>")
+		.description("Create a net USDC settlement intent with a peer")
+		.option("--idempotency-key <key>", "Idempotency key for retries")
+		.option("--reason <reason>", "Settlement reason: manual, threshold, or schedule", "manual")
+		.action(async (peer: string, cmdOpts: { idempotencyKey?: string; reason?: string }) => {
+			const opts = program.opts<GlobalOptions>();
+			const { expensesSettleCommand } = await import("./commands/expenses.js");
+			await expensesSettleCommand(peer, cmdOpts, opts);
+		});
+
 	// config
 	const config = program.command("config").description("Manage configuration");
 

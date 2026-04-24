@@ -10,11 +10,6 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"trusted-agents-core": path.resolve(import.meta.dirname, "../core/src/index.ts"),
-			"trusted-agents-sdk": path.resolve(import.meta.dirname, "../sdk/src/index.ts"),
-			"@trustedagents/app-expenses": path.resolve(
-				import.meta.dirname,
-				"../app-expenses/src/index.ts",
-			),
 		},
 	},
 });

@@ -1,0 +1,32 @@
+{
+	"name": "trusted-agents-expense-server",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"tap-expense-server": "./dist/bin.js"
+	},
+	"files": [
+		"dist"
+	],
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@trustedagents/app-expenses": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^25.3.3",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}
