@@ -43,7 +43,7 @@
 
 - [x] **Step 1: Write failing ledger tests for create group, log expense, balance, history, and settlement intent**
 - [x] **Step 2: Run tests and verify they fail because server modules do not exist**
-- [x] **Step 3: Implement in-memory repository and ledger service**
+- [x] **Step 3: Implement in-memory/file-backed repositories and ledger service**
 - [x] **Step 4: Write failing HTTP tests for `/health`, group creation, expense creation, balance, history, and settlement intent**
 - [x] **Step 5: Implement Node HTTP routing**
 - [x] **Step 6: Run server tests and verify they pass**

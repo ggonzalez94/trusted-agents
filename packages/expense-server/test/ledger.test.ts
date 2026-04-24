@@ -13,6 +13,12 @@ const bob = {
 	displayName: "Bob",
 	address: "0x2222222222222222222222222222222222222222" as const,
 };
+const carol = {
+	agentId: 3,
+	chain: "eip155:8453",
+	displayName: "Carol",
+	address: "0x3333333333333333333333333333333333333333" as const,
+};
 
 describe("expense ledger", () => {
 	it("logs an equal-split expense and computes net balances", async () => {
@@ -74,6 +80,23 @@ describe("expense ledger", () => {
 		expect((await ledger.listHistory(group.groupId)).expenses).toHaveLength(1);
 	});
 
+	it("rejects expenses whose participants do not match the existing group", async () => {
+		const ledger = createExpenseLedger({ store: new InMemoryExpenseStore() });
+		const group = await ledger.createGroup({ members: [alice, bob], chain: "eip155:8453" });
+
+		await expect(
+			ledger.logExpense({
+				groupId: group.groupId,
+				idempotencyKey: "wrong-members",
+				creator: alice,
+				paidBy: alice,
+				amount: "45",
+				description: "groceries",
+				participants: [alice, carol],
+			}),
+		).rejects.toThrow("Expense participants must match group members");
+	});
+
 	it("creates a settlement intent for the net debtor", async () => {
 		const ledger = createExpenseLedger({ store: new InMemoryExpenseStore() });
 		const group = await ledger.createGroup({ members: [alice, bob], chain: "eip155:8453" });
@@ -98,5 +121,60 @@ describe("expense ledger", () => {
 		expect(settlement.amountMinor).toBe("22500000");
 		expect(settlement.chain).toBe("eip155:8453");
 		expect(settlement.toAddress).toBe(alice.address);
+	});
+
+	it("returns the existing pending settlement for the same net balance", async () => {
+		const store = new InMemoryExpenseStore();
+		const ledger = createExpenseLedger({ store });
+		const group = await ledger.createGroup({ members: [alice, bob], chain: "eip155:8453" });
+		await ledger.logExpense({
+			groupId: group.groupId,
+			idempotencyKey: "groceries-1",
+			creator: alice,
+			paidBy: alice,
+			amount: "45",
+			description: "groceries",
+			participants: [alice, bob],
+		});
+
+		const first = await ledger.createSettlementIntent({
+			groupId: group.groupId,
+			reason: "manual",
+			idempotencyKey: "settle-1",
+		});
+		const second = await ledger.createSettlementIntent({
+			groupId: group.groupId,
+			reason: "manual",
+			idempotencyKey: "settle-2",
+		});
+
+		expect(second).toEqual(first);
+		expect((await store.snapshot()).settlements).toHaveLength(1);
+	});
+
+	it("enforces threshold settlement minimums", async () => {
+		const ledger = createExpenseLedger({ store: new InMemoryExpenseStore() });
+		const group = await ledger.createGroup({
+			members: [alice, bob],
+			chain: "eip155:8453",
+			settlementThreshold: "30",
+		});
+		await ledger.logExpense({
+			groupId: group.groupId,
+			idempotencyKey: "groceries-1",
+			creator: alice,
+			paidBy: alice,
+			amount: "45",
+			description: "groceries",
+			participants: [alice, bob],
+		});
+
+		await expect(
+			ledger.createSettlementIntent({
+				groupId: group.groupId,
+				reason: "threshold",
+				idempotencyKey: "settle-threshold",
+			}),
+		).rejects.toThrow("Settlement amount is below the group threshold");
 	});
 });

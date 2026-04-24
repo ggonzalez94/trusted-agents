@@ -11,6 +11,7 @@ import {
 	formatUsdcMinor,
 	parseUsdcAmount,
 } from "@trustedagents/app-expenses";
+import { conflict, notFound } from "./errors.js";
 import type { ExpenseStore } from "./store.js";
 import type {
 	CreateExpenseGroupInput,
@@ -69,6 +70,9 @@ class DefaultExpenseLedger implements ExpenseLedger {
 		const group =
 			(await this.store.getGroup(groupId)) ??
 			(await this.createGroup({ members: input.participants, chain: input.creator.chain }));
+		assertSameMembers(group.members, input.participants);
+		assertMember(group.members, input.creator, "creator");
+		assertMember(group.members, input.paidBy, "paidBy");
 		const amountMinor = parseUsdcAmount(input.amount);
 		const timestamp = this.now().toISOString();
 		const expense: ExpenseRecord = {
@@ -135,18 +139,40 @@ class DefaultExpenseLedger implements ExpenseLedger {
 		const debtorShare = minBy(balance.shares, (share) => BigInt(share.netMinor));
 		const creditorShare = maxBy(balance.shares, (share) => BigInt(share.netMinor));
 		if (!debtorShare || !creditorShare) {
-			throw new Error("Cannot settle an empty group");
+			throw conflict("Cannot settle an empty group", "EMPTY_GROUP");
 		}
 
 		const debtorAmount = -BigInt(debtorShare.netMinor);
 		const creditorAmount = BigInt(creditorShare.netMinor);
 		if (debtorAmount <= 0n || creditorAmount <= 0n) {
-			throw new Error("Group has no outstanding balance to settle");
+			throw conflict("Group has no outstanding balance to settle", "NO_OUTSTANDING_BALANCE");
 		}
 
 		const amountMinor = debtorAmount < creditorAmount ? debtorAmount : creditorAmount;
 		const debtor = findMember(group.members, debtorShare);
 		const creditor = findMember(group.members, creditorShare);
+		if (
+			input.reason === "threshold" &&
+			group.settlementThresholdMinor !== undefined &&
+			amountMinor < BigInt(group.settlementThresholdMinor)
+		) {
+			throw conflict(
+				"Settlement amount is below the group threshold",
+				"SETTLEMENT_BELOW_THRESHOLD",
+			);
+		}
+
+		const openSettlement = await this.findOpenSettlement(
+			input.groupId,
+			debtor,
+			creditor,
+			amountMinor,
+			group.chain,
+		);
+		if (openSettlement) {
+			return openSettlement;
+		}
+
 		const createdAt = this.now();
 		const expiresAt =
 			input.expiresAt ?? new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -173,20 +199,63 @@ class DefaultExpenseLedger implements ExpenseLedger {
 	private async requireGroup(groupId: string): Promise<ExpenseGroup> {
 		const group = await this.store.getGroup(groupId);
 		if (!group) {
-			throw new Error(`Expense group not found: ${groupId}`);
+			throw notFound(`Expense group not found: ${groupId}`, "EXPENSE_GROUP_NOT_FOUND");
 		}
 		return group;
+	}
+
+	private async findOpenSettlement(
+		groupId: string,
+		debtor: ExpenseParticipant,
+		creditor: ExpenseParticipant,
+		amountMinor: bigint,
+		chain: string,
+	): Promise<ExpenseSettlementIntent | undefined> {
+		return (await this.store.listSettlements(groupId)).find(
+			(settlement) =>
+				(settlement.status === "pending" || settlement.status === "submitted") &&
+				settlement.chain === chain &&
+				settlement.amountMinor === amountMinor.toString() &&
+				sameMember(settlement.debtor, debtor) &&
+				sameMember(settlement.creditor, creditor),
+		);
 	}
 }
 
 function assertMembers(members: ExpenseParticipant[]): void {
 	if (members.length < 2) {
-		throw new Error("Expense groups require at least two members");
+		throw conflict("Expense groups require at least two members", "INVALID_GROUP_MEMBERS");
+	}
+}
+
+function assertSameMembers(expected: ExpenseParticipant[], actual: ExpenseParticipant[]): void {
+	if (
+		expected.length !== actual.length ||
+		expected.some((member) => !actual.some((candidate) => sameMember(member, candidate)))
+	) {
+		throw conflict("Expense participants must match group members", "GROUP_MEMBERS_MISMATCH");
+	}
+}
+
+function assertMember(
+	members: ExpenseParticipant[],
+	participant: ExpenseParticipant,
+	field: string,
+): void {
+	if (!members.some((member) => sameMember(member, participant))) {
+		throw conflict(`${field} must be a group member`, "GROUP_MEMBER_REQUIRED");
 	}
 }
 
 function memberKey(member: Pick<ExpenseParticipant, "agentId" | "chain">): string {
 	return `${member.chain}:${member.agentId}`;
+}
+
+function sameMember(
+	left: Pick<ExpenseParticipant, "agentId" | "chain">,
+	right: Pick<ExpenseParticipant, "agentId" | "chain">,
+): boolean {
+	return left.agentId === right.agentId && left.chain === right.chain;
 }
 
 function addToMap(map: Map<string, bigint>, key: string, delta: bigint): void {

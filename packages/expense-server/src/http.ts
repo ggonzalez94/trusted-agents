@@ -1,22 +1,29 @@
+import { timingSafeEqual } from "node:crypto";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { ExpenseServerError, badRequest, unauthenticated } from "./errors.js";
 import type { ExpenseLedger } from "./ledger.js";
-import type {
-	CreateExpenseGroupInput,
-	CreateSettlementIntentInput,
-	LogExpenseInput,
-} from "./types.js";
+import {
+	parseCreateGroupInput,
+	parseCreateSettlementIntentInput,
+	parseLogExpenseInput,
+} from "./validation.js";
 
 export interface ExpenseHttpServer {
 	listen(options: { host: string; port: number }): Promise<string>;
 	stop(): Promise<void>;
 }
 
-export function createExpenseHttpServer(options: { ledger: ExpenseLedger }): ExpenseHttpServer {
+export function createExpenseHttpServer(options: {
+	ledger: ExpenseLedger;
+	apiToken?: string;
+}): ExpenseHttpServer {
 	const server = createServer((req, res) => {
-		void route(options.ledger, req, res).catch((error: unknown) => {
-			const message = error instanceof Error ? error.message : String(error);
-			sendJson(res, 500, { error: { code: "INTERNAL_ERROR", message } });
+		void route(options.ledger, options.apiToken, req, res).catch((error: unknown) => {
+			const normalized = normalizeError(error);
+			sendJson(res, normalized.status, {
+				error: { code: normalized.code, message: normalized.message },
+			});
 		});
 	});
 
@@ -30,16 +37,20 @@ export function createExpenseHttpServer(options: { ledger: ExpenseLedger }): Exp
 				});
 			});
 			const address = server.address() as AddressInfo;
-			return `http://${address.address}:${address.port}`;
+			const displayHost = address.family === "IPv6" ? `[${address.address}]` : address.address;
+			return `http://${displayHost}:${address.port}`;
 		},
 		stop: async () => {
-			await new Promise<void>((resolve) => server.close(() => resolve()));
+			await new Promise<void>((resolve, reject) => {
+				server.close((error) => (error ? reject(error) : resolve()));
+			});
 		},
 	};
 }
 
 async function route(
 	ledger: ExpenseLedger,
+	apiToken: string | undefined,
 	req: IncomingMessage,
 	res: ServerResponse,
 ): Promise<void> {
@@ -51,13 +62,15 @@ async function route(
 		return;
 	}
 
+	authorize(req, apiToken);
+
 	if (method === "POST" && path === "/v1/groups") {
-		sendJson(res, 200, await ledger.createGroup((await readJson(req)) as CreateExpenseGroupInput));
+		sendJson(res, 200, await ledger.createGroup(parseCreateGroupInput(await readJson(req))));
 		return;
 	}
 
 	if (method === "POST" && path === "/v1/expenses") {
-		sendJson(res, 200, await ledger.logExpense((await readJson(req)) as LogExpenseInput));
+		sendJson(res, 200, await ledger.logExpense(parseLogExpenseInput(await readJson(req))));
 		return;
 	}
 
@@ -75,19 +88,31 @@ async function route(
 
 	const settlementMatch = /^\/v1\/groups\/([^/]+)\/settlements$/.exec(path);
 	if (method === "POST" && settlementMatch?.[1]) {
-		const body = (await readJson(req)) as Record<string, unknown>;
 		sendJson(
 			res,
 			200,
-			await ledger.createSettlementIntent({
-				...body,
-				groupId: decodeURIComponent(settlementMatch[1]),
-			} as CreateSettlementIntentInput),
+			await ledger.createSettlementIntent(
+				parseCreateSettlementIntentInput(
+					decodeURIComponent(settlementMatch[1]),
+					await readJson(req),
+				),
+			),
 		);
 		return;
 	}
 
 	sendJson(res, 404, { error: { code: "NOT_FOUND", message: "Route not found" } });
+}
+
+function authorize(req: IncomingMessage, apiToken: string | undefined): void {
+	if (!apiToken) {
+		return;
+	}
+	const authorization = req.headers.authorization;
+	const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+	if (!constantTimeEqual(token, apiToken)) {
+		throw unauthenticated();
+	}
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -98,7 +123,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 			body += chunk;
 			if (body.length > 1024 * 1024) {
 				req.destroy();
-				reject(new Error("Request body too large"));
+				reject(badRequest("Request body too large"));
 			}
 		});
 		req.on("end", () => {
@@ -109,11 +134,24 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 			try {
 				resolve(JSON.parse(body));
 			} catch {
-				reject(new Error("Invalid JSON body"));
+				reject(badRequest("Invalid JSON body"));
 			}
 		});
 		req.on("error", reject);
 	});
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+	const leftBuffer = Buffer.from(left);
+	const rightBuffer = Buffer.from(right);
+	return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function normalizeError(error: unknown): ExpenseServerError {
+	if (error instanceof ExpenseServerError) {
+		return error;
+	}
+	return new ExpenseServerError(500, "INTERNAL_ERROR", "Internal server error");
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {

@@ -14,6 +14,7 @@ import { loadConfig, resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { ExpensesClient } from "../lib/expenses-client.js";
 import {
+	normalizeExpenseApiToken,
 	normalizeExpenseSettlementAddress,
 	normalizeExpensesServerUrl,
 	readExpensesConfig,
@@ -25,6 +26,7 @@ import type { GlobalOptions } from "../types.js";
 interface ExpensesSetupOptions {
 	server: string;
 	settlementAddress?: string;
+	apiToken?: string;
 }
 
 interface ExpensesGroupCreateOptions {
@@ -50,15 +52,18 @@ export async function expensesSetupCommand(
 		const settlementAddress = cmdOpts.settlementAddress
 			? normalizeExpenseSettlementAddress(cmdOpts.settlementAddress)
 			: undefined;
+		const apiToken = cmdOpts.apiToken ? normalizeExpenseApiToken(cmdOpts.apiToken) : undefined;
 		const serverUrl = normalizeExpensesServerUrl(cmdOpts.server);
 		const result = await writeExpensesConfig(opts, {
 			serverUrl,
 			...(settlementAddress ? { settlementAddress } : {}),
+			...(apiToken ? { apiToken } : {}),
 		});
 		success(
 			{
 				server_url: serverUrl,
 				...(settlementAddress ? { settlement_address: settlementAddress } : {}),
+				...(apiToken ? { api_token: "***redacted***" } : {}),
 				path: result.path,
 			},
 			opts,
@@ -186,7 +191,9 @@ async function buildExpenseCommandContext(
 	};
 	const peerParticipant = contactToParticipant(contact);
 	return {
-		client: new ExpensesClient(expensesConfig.serverUrl),
+		client: new ExpensesClient(expensesConfig.serverUrl, {
+			...(expensesConfig.apiToken ? { apiToken: expensesConfig.apiToken } : {}),
+		}),
 		config,
 		self,
 		members: [self, peerParticipant],

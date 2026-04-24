@@ -82,4 +82,15 @@ describe("expense settlement grants", () => {
 			}),
 		).toHaveLength(1);
 	});
+
+	it("does not use scheduled grants for manual settlement", () => {
+		expect(
+			findApplicableExpenseSettlementGrants(grantSet, {
+				asset: "usdc",
+				amount: "50",
+				chain: "eip155:8453",
+				reason: "manual",
+			}),
+		).toHaveLength(0);
+	});
 });

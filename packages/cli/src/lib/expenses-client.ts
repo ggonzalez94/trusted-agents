@@ -10,7 +10,10 @@ export class ExpensesClientError extends Error {
 }
 
 export class ExpensesClient {
-	constructor(private readonly baseUrl: string) {}
+	constructor(
+		private readonly baseUrl: string,
+		private readonly options: { apiToken?: string } = {},
+	) {}
 
 	createGroup(body: Record<string, unknown>): Promise<Record<string, unknown>> {
 		return this.post("/v1/groups", body);
@@ -53,9 +56,12 @@ export class ExpensesClient {
 	): Promise<Record<string, unknown>> {
 		const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${path}`, {
 			method,
+			headers: {
+				...(this.options.apiToken ? { authorization: `Bearer ${this.options.apiToken}` } : {}),
+				...(body ? { "content-type": "application/json" } : {}),
+			},
 			...(body
 				? {
-						headers: { "content-type": "application/json" },
 						body: JSON.stringify(body),
 					}
 				: {}),

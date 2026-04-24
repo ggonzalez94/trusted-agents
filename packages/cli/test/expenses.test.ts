@@ -88,6 +88,43 @@ describe("tap expenses commands", () => {
 		expect(yaml.expenses?.settlement_address).toBe("0x1111111111111111111111111111111111111111");
 	});
 
+	it("stores and uses the expense server API token", async () => {
+		await server?.stop();
+		const ledger = createExpenseLedger({ store: new InMemoryExpenseStore() });
+		server = createExpenseHttpServer({ ledger, apiToken: "secret-token" });
+		serverUrl = await server.listen({ host: "127.0.0.1", port: 0 });
+
+		const setup = await runCli([
+			"--data-dir",
+			dataDir,
+			"--json",
+			"expenses",
+			"setup",
+			"--server",
+			serverUrl,
+			"--api-token",
+			"secret-token",
+		]);
+		expect(setup.exitCode).toBe(0);
+
+		const group = await runCli([
+			"--data-dir",
+			dataDir,
+			"--json",
+			"expenses",
+			"group",
+			"create",
+			"Bob",
+		]);
+		expect(group.exitCode).toBe(0);
+		expect(JSON.parse(group.stdout).data.group_id).toBe("expgrp_eip155_8453_1_eip155_8453_2");
+
+		const yaml = YAML.parse(await readFile(join(dataDir, "config.yaml"), "utf-8")) as {
+			expenses?: { api_token?: string };
+		};
+		expect(yaml.expenses?.api_token).toBe("secret-token");
+	});
+
 	it("creates a group, logs an expense, reads balance/history, and creates settlement", async () => {
 		await runCli([
 			"--data-dir",

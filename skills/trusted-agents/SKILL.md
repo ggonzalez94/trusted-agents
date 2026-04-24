@@ -399,7 +399,7 @@ In OpenClaw or Hermes plugin mode, use `tap_gateway transfer` with `asset`, `amo
 Shared expenses keep an off-chain tab with a connected peer and settle only the net balance in USDC. Expenses are recorded through the configured expense server; the server does not custody funds or broadcast transfers.
 
 ```bash
-tap expenses setup --server https://expenses.example.com --settlement-address 0x1111111111111111111111111111111111111111
+tap expenses setup --server https://expenses.example.com --api-token $EXPENSE_SERVER_API_TOKEN --settlement-address 0x1111111111111111111111111111111111111111
 tap expenses group create Bob --settle-threshold 25
 tap expenses log Bob 45 "groceries" --category household --idempotency-key groceries-2026-04-23
 tap expenses balance Bob
@@ -410,6 +410,8 @@ tap expenses settle Bob --idempotency-key settle-2026-week-17
 Flow: setup server -> create or auto-create peer group -> log expenses without on-chain transactions -> inspect net balance -> create settlement intent for one USDC transfer. Positive balances mean the agent is owed USDC; negative balances mean the agent owes USDC.
 
 Use `expense/settle` grants for automatic settlement policy. Do not reuse `transfer/request` grants for shared-expense settlement; shared expenses have their own ledger and netting context.
+
+The standalone expense server reads `EXPENSE_SERVER_DATA_FILE` for its durable ledger path and `EXPENSE_SERVER_API_TOKEN` for bearer authentication. Binding the server outside loopback requires `EXPENSE_SERVER_API_TOKEN`. Clients can configure the bearer token with `tap expenses setup --api-token` or `TAP_EXPENSES_API_TOKEN`.
 
 ## Meeting Scheduling
 

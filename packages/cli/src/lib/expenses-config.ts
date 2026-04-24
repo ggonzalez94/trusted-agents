@@ -8,18 +8,21 @@ import { resolveConfigPath, resolveDataDir, validateConfigPathInDataDir } from "
 export interface ExpensesConfig {
 	serverUrl: string;
 	settlementAddress?: `0x${string}`;
+	apiToken?: string;
 }
 
 interface StoredExpensesYaml {
 	expenses?: {
 		server_url?: string;
 		settlement_address?: string;
+		api_token?: string;
 	};
 }
 
 export async function readExpensesConfig(opts: GlobalOptions): Promise<ExpensesConfig> {
 	const envServerUrl = process.env.TAP_EXPENSES_SERVER_URL;
 	const envSettlementAddress = process.env.TAP_EXPENSES_SETTLEMENT_ADDRESS;
+	const envApiToken = process.env.TAP_EXPENSES_API_TOKEN;
 	const dataDir = resolveDataDir(opts);
 	const configPath = resolveConfigPath(opts, dataDir);
 	validateConfigPathInDataDir(opts, configPath, dataDir);
@@ -29,11 +32,13 @@ export async function readExpensesConfig(opts: GlobalOptions): Promise<ExpensesC
 		throw new Error("Expense server URL is not configured. Run: tap expenses setup --server <url>");
 	}
 	const settlementAddress = envSettlementAddress ?? yaml.expenses?.settlement_address;
+	const apiToken = envApiToken ?? yaml.expenses?.api_token;
 	return {
 		serverUrl: normalizeExpensesServerUrl(serverUrl),
 		...(settlementAddress
 			? { settlementAddress: normalizeExpenseSettlementAddress(settlementAddress) }
 			: {}),
+		...(apiToken ? { apiToken: normalizeExpenseApiToken(apiToken) } : {}),
 	};
 }
 
@@ -55,6 +60,7 @@ export async function writeExpensesConfig(
 		...(config.settlementAddress
 			? { settlement_address: normalizeExpenseSettlementAddress(config.settlementAddress) }
 			: {}),
+		...(config.apiToken ? { api_token: normalizeExpenseApiToken(config.apiToken) } : {}),
 	};
 	await writeFileAtomic(configPath, YAML.stringify(yaml));
 	return { path: configPath };
@@ -73,6 +79,14 @@ export function normalizeExpenseSettlementAddress(value: string): `0x${string}` 
 		throw new Error(`Invalid settlement address: ${value}`);
 	}
 	return value as `0x${string}`;
+}
+
+export function normalizeExpenseApiToken(value: string): string {
+	const token = value.trim();
+	if (token.length < 8) {
+		throw new Error("Expense API token must be at least 8 characters");
+	}
+	return token;
 }
 
 async function readStoredYaml(configPath: string): Promise<StoredExpensesYaml> {

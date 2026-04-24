@@ -407,7 +407,8 @@ Examples:
 		.description("Configure the shared expense server for this agent")
 		.requiredOption("--server <url>", "Expense server base URL")
 		.option("--settlement-address <address>", "USDC settlement receiving address for this agent")
-		.action(async (cmdOpts: { server: string; settlementAddress?: string }) => {
+		.option("--api-token <token>", "Bearer token for the expense server")
+		.action(async (cmdOpts: { server: string; settlementAddress?: string; apiToken?: string }) => {
 			const opts = program.opts<GlobalOptions>();
 			const { expensesSetupCommand } = await import("./commands/expenses.js");
 			await expensesSetupCommand(cmdOpts, opts);

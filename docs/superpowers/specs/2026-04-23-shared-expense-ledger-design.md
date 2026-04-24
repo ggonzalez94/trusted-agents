@@ -158,7 +158,7 @@ Do not overload `transfer/request` grants for expense settlement. Expense settle
 Add focused commands:
 
 ```bash
-tap expenses setup --server https://expenses.example.com
+tap expenses setup --server https://expenses.example.com --api-token $EXPENSE_SERVER_API_TOKEN
 tap expenses group create Bob --split equal --settle-threshold 25 --chain base
 tap expenses log Bob 45 "groceries" --category household
 tap expenses balance Bob
@@ -260,7 +260,13 @@ The model does not block these later, but v1 ships the smallest useful loop: log
 
 ## Implementation Defaults
 
-Use a TypeScript Node service for `packages/expense-server`, with a small Node HTTP API and an `ExpenseStore` repository interface. The first implementation ships an in-memory store for tests and local development. A durable Postgres store can replace that interface later without changing the TAP app, CLI commands, or HTTP API.
+Use a TypeScript Node service for `packages/expense-server`, with a small Node HTTP API and an `ExpenseStore` repository interface. The server binary uses a file-backed store by default (`EXPENSE_SERVER_DATA_FILE`) and the tests use an in-memory store. A durable Postgres store can replace that interface later without changing the TAP app, CLI commands, or HTTP API.
+
+HTTP defaults:
+- `GET /health` is public
+- all ledger routes require `Authorization: Bearer <token>` when `EXPENSE_SERVER_API_TOKEN` is configured
+- binding outside loopback requires `EXPENSE_SERVER_API_TOKEN`
+- CLI clients can store the token with `tap expenses setup --api-token` or read it from `TAP_EXPENSES_API_TOKEN`
 
 Settlement defaults:
 - groups default to manual settlement

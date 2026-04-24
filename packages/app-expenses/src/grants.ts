@@ -75,6 +75,9 @@ function matchesScheduleConstraint(
 	if (constraint === "manual") {
 		return reason === "manual";
 	}
+	if (reason === "manual") {
+		return false;
+	}
 	if (reason !== "schedule") {
 		return true;
 	}
