@@ -3,6 +3,13 @@ import { extractMessageData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
 
+type SchedulingPayloadParseOptions = {
+	defaultSchedulingId?: () => string;
+	defaultOriginTimezone?: string;
+	copySlots?: boolean;
+	includeLocation?: boolean;
+};
+
 function isValidIsoDate(value: unknown): value is string {
 	if (!isNonEmptyString(value)) {
 		return false;
@@ -32,22 +39,27 @@ function isValidTimeSlot(slot: unknown): slot is TimeSlot {
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
-export function parseSchedulingActionRequest(message: ProtocolMessage): SchedulingProposal | null {
-	if (message.method !== ACTION_REQUEST) {
+export function parseSchedulingActionPayload(
+	data: Record<string, unknown>,
+	options: SchedulingPayloadParseOptions = {},
+): SchedulingProposal | null {
+	if (data.type !== "scheduling/propose" && data.type !== "scheduling/counter") {
 		return null;
 	}
 
-	const data = extractMessageData(message);
-	if (!data || (data.type !== "scheduling/propose" && data.type !== "scheduling/counter")) {
-		return null;
-	}
+	const schedulingId = isNonEmptyString(data.schedulingId)
+		? data.schedulingId
+		: options.defaultSchedulingId?.();
+	const originTimezone = isNonEmptyString(data.originTimezone)
+		? data.originTimezone
+		: options.defaultOriginTimezone;
 
 	if (
-		!isNonEmptyString(data.schedulingId) ||
+		!isNonEmptyString(schedulingId) ||
 		!isNonEmptyString(data.title) ||
 		typeof data.duration !== "number" ||
 		data.duration <= 0 ||
-		!isNonEmptyString(data.originTimezone)
+		!isNonEmptyString(originTimezone)
 	) {
 		return null;
 	}
@@ -62,19 +74,35 @@ export function parseSchedulingActionRequest(message: ProtocolMessage): Scheduli
 		}
 	}
 
-	const location = optionalNonEmptyString(data.location);
+	const location =
+		options.includeLocation === false ? undefined : optionalNonEmptyString(data.location);
 	const note = optionalNonEmptyString(data.note);
+	const slots = options.copySlots
+		? data.slots.map((slot) => {
+				const { start, end } = slot as TimeSlot;
+				return { start, end };
+			})
+		: (data.slots as TimeSlot[]);
 
 	return {
-		type: data.type as "scheduling/propose" | "scheduling/counter",
-		schedulingId: data.schedulingId,
+		type: data.type,
+		schedulingId,
 		title: data.title,
 		duration: data.duration,
-		slots: data.slots as TimeSlot[],
-		originTimezone: data.originTimezone,
+		slots,
+		originTimezone,
 		...(location ? { location } : {}),
 		...(note ? { note } : {}),
 	};
+}
+
+export function parseSchedulingActionRequest(message: ProtocolMessage): SchedulingProposal | null {
+	if (message.method !== ACTION_REQUEST) {
+		return null;
+	}
+
+	const data = extractMessageData(message);
+	return data ? parseSchedulingActionPayload(data) : null;
 }
 
 export function parseSchedulingActionResponse(
