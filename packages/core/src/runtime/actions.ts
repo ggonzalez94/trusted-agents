@@ -73,32 +73,14 @@ export function parseTransferActionPayload(
 export function parseTransferActionResponse(
 	message: ProtocolMessage,
 ): TransferActionResponse | null {
-	if (message.method !== ACTION_RESULT) {
+	const result = extractActionResultData(message);
+	if (!result) return null;
+	if (result.status !== "completed" && result.status !== "rejected" && result.status !== "failed") {
 		return null;
 	}
 
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const params = message.params as {
-		requestId?: unknown;
-		status?: unknown;
-		message?: unknown;
-	};
-	if (
-		typeof params.requestId !== "string" ||
-		params.requestId.length === 0 ||
-		(params.status !== "completed" && params.status !== "rejected" && params.status !== "failed")
-	) {
-		return null;
-	}
-
-	const data = extractMessageData({
-		...message,
-		params: { message: params.message },
-	});
-	if (!data || data.type !== "transfer/response") {
+	const data = result.data;
+	if (data.type !== "transfer/response") {
 		return null;
 	}
 
@@ -108,13 +90,13 @@ export function parseTransferActionResponse(
 
 	return {
 		type: "transfer/response",
-		requestId: params.requestId,
+		requestId: result.requestId,
 		actionId: data.actionId,
 		asset: data.asset,
 		amount: data.amount,
 		chain: data.chain,
 		toAddress: data.toAddress,
-		status: params.status,
+		status: result.status,
 		txHash:
 			typeof data.txHash === "string" && isEthereumAddressLikeHash(data.txHash)
 				? data.txHash
@@ -241,6 +223,43 @@ export function extractMessageData(message: ProtocolMessage): Record<string, unk
 	}
 
 	return null;
+}
+
+export function extractActionResultData(message: ProtocolMessage): {
+	requestId: string;
+	status: unknown;
+	data: Record<string, unknown>;
+} | null {
+	if (message.method !== ACTION_RESULT) {
+		return null;
+	}
+
+	if (typeof message.params !== "object" || message.params === null) {
+		return null;
+	}
+
+	const params = message.params as {
+		requestId?: unknown;
+		status?: unknown;
+		message?: unknown;
+	};
+	if (!isNonEmptyString(params.requestId)) {
+		return null;
+	}
+
+	const data = extractMessageData({
+		...message,
+		params: { message: params.message },
+	});
+	if (!data) {
+		return null;
+	}
+
+	return {
+		requestId: params.requestId,
+		status: params.status,
+		data,
+	};
 }
 
 function hasValidTransferFields(data: Record<string, unknown>): data is Record<string, unknown> & {

@@ -1,6 +1,6 @@
 import { isNonEmptyString, readNonEmptyString } from "../common/index.js";
-import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
-import { extractMessageData } from "../runtime/actions.js";
+import { ACTION_REQUEST } from "../protocol/methods.js";
+import { extractActionResultData, extractMessageData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
 
@@ -163,32 +163,9 @@ export function parseSchedulingActionRequest(message: ProtocolMessage): Scheduli
 export function parseSchedulingActionResponse(
 	message: ProtocolMessage,
 ): SchedulingAccept | SchedulingReject | null {
-	if (message.method !== ACTION_RESULT) {
-		return null;
-	}
-
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const params = message.params as {
-		requestId?: unknown;
-		status?: unknown;
-		message?: unknown;
-	};
-
-	if (!isNonEmptyString(params.requestId)) {
-		return null;
-	}
-
-	const data = extractMessageData({
-		...message,
-		params: { message: params.message },
-	});
-
-	if (!data) {
-		return null;
-	}
+	const result = extractActionResultData(message);
+	if (!result) return null;
+	const data = result.data;
 
 	if (data.type === "scheduling/accept") {
 		if (!isValidTimeSlot(data.acceptedSlot)) {
