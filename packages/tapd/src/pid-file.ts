@@ -1,7 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toErrorMessage } from "trusted-agents-core";
 import { TAPD_PID_FILE } from "./config.js";
+import { writePrivateTextFile } from "./private-file.js";
 
 export interface TapdPidRecord {
 	pid: number;
@@ -40,9 +41,5 @@ export async function persistTapdPidRecordExclusive(
 ): Promise<void> {
 	// `wx` = O_CREAT|O_EXCL. Callers use this as the cross-process guard
 	// against two detached tapd starts clobbering each other's pidfile.
-	await writeFile(pidPath, JSON.stringify(record), {
-		encoding: "utf-8",
-		mode: 0o600,
-		flag: "wx",
-	});
+	await writePrivateTextFile(pidPath, JSON.stringify(record), { flag: "wx" });
 }
