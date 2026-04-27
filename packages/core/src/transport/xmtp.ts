@@ -1,5 +1,4 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { Client, getInboxIdForIdentifier } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm, Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
@@ -31,6 +30,7 @@ import type {
 	TransportReconcileOptions,
 	TransportReconcileResult,
 } from "./interface.js";
+import { xmtpSyncStatePath } from "./paths.js";
 import type { TransportSendOptions } from "./types.js";
 import { createXmtpSigner } from "./xmtp-signer.js";
 import { FileXmtpSyncStateStore, type XmtpConversationCheckpoint } from "./xmtp-sync-state.js";
@@ -98,7 +98,7 @@ export class XmtpTransport implements TransportProvider {
 		this.syncState =
 			config.syncStatePath || config.dbPath
 				? new FileXmtpSyncStateStore(
-						config.syncStatePath ?? join(config.dbPath ?? ".", "sync-state.json"),
+						config.syncStatePath ?? xmtpSyncStatePath(config.dbPath ?? "."),
 					)
 				: null;
 	}
