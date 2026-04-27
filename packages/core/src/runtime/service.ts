@@ -5005,21 +5005,12 @@ function serializePendingSchedulingRequestDetails(
 function parseStoredSchedulingRequest(
 	metadata: Record<string, unknown> | undefined,
 ): SchedulingProposal | null {
-	const payload = parseStoredRequestField(metadata, "scheduling-request", "payload");
-	if (payload === null) {
-		return null;
-	}
-
-	return parseSchedulingActionRequest({
-		jsonrpc: "2.0",
-		id: "pending-scheduling-request",
-		method: ACTION_REQUEST,
-		params: {
-			message: {
-				parts: [{ kind: "data", data: payload }],
-			},
-		},
-	});
+	return parseStoredActionRequest(
+		metadata,
+		"scheduling-request",
+		"pending-scheduling-request",
+		parseSchedulingActionRequest,
+	);
 }
 
 function getLocalTimezone(): string {
@@ -5318,14 +5309,28 @@ function parsePendingPermissionsUpdateDelivery(
 function parseStoredTransferRequest(
 	metadata: Record<string, unknown> | undefined,
 ): TransferActionRequest | null {
-	const payload = parseStoredRequestField(metadata, "transfer-request", "payload");
+	return parseStoredActionRequest(
+		metadata,
+		"transfer-request",
+		"pending-transfer-request",
+		parseTransferActionRequest,
+	);
+}
+
+function parseStoredActionRequest<T>(
+	metadata: Record<string, unknown> | undefined,
+	expectedType: string,
+	messageId: string,
+	parse: (message: ProtocolMessage) => T | null,
+): T | null {
+	const payload = parseStoredRequestField(metadata, expectedType, "payload");
 	if (payload === null) {
 		return null;
 	}
 
-	return parseTransferActionRequest({
+	return parse({
 		jsonrpc: "2.0",
-		id: "pending-transfer-request",
+		id: messageId,
 		method: ACTION_REQUEST,
 		params: {
 			message: {
