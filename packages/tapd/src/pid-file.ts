@@ -1,8 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toErrorMessage } from "trusted-agents-core";
 import { TAPD_PID_FILE } from "./config.js";
-import { writePrivateTextFile } from "./private-file.js";
+import { readTextFile, writePrivateTextFile } from "./private-file.js";
 
 export interface TapdPidRecord {
 	pid: number;
@@ -15,7 +14,7 @@ export function pidFilePath(dataDir: string): string {
 }
 
 export async function loadTapdPidRecord(pidPath: string): Promise<TapdPidRecord> {
-	const raw = (await readFile(pidPath, "utf-8")).trim();
+	const raw = (await readTextFile(pidPath)).trim();
 	if (raw.length === 0) {
 		throw new Error(`Invalid pid in ${pidPath}`);
 	}

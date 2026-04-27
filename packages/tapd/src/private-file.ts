@@ -1,9 +1,13 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fsErrorCode } from "trusted-agents-core";
 
+export async function readTextFile(path: string): Promise<string> {
+	return readFile(path, "utf-8");
+}
+
 export async function readTextFileOrNull(path: string): Promise<string | null> {
 	try {
-		return await readFile(path, "utf-8");
+		return await readTextFile(path);
 	} catch (error: unknown) {
 		if (fsErrorCode(error) === "ENOENT") return null;
 		throw error;
