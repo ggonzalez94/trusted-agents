@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex } from "../common/index.js";
 
 // Per-dataDir mutex to protect read-modify-write sequences in manifest operations
@@ -44,12 +44,7 @@ export async function loadAppManifest(dataDir: string): Promise<AppManifest> {
 }
 
 export async function saveAppManifest(dataDir: string, manifest: AppManifest): Promise<void> {
-	const filePath = manifestPath(dataDir);
-	const dir = dirname(filePath);
-	await mkdir(dir, { recursive: true });
-	const tmpPath = join(dir, `.apps-${randomUUID()}.tmp`);
-	await writeFile(tmpPath, JSON.stringify(manifest, null, "\t"), { mode: 0o600 });
-	await rename(tmpPath, filePath);
+	await writeJsonFileAtomic(manifestPath(dataDir), manifest, { tempPrefix: ".apps" });
 }
 
 export async function addAppToManifest(

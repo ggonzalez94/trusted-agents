@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex } from "../common/index.js";
 import type { TapAppStorage } from "./types.js";
 
@@ -63,10 +63,6 @@ export class FileAppStorage implements TapAppStorage {
 	}
 
 	private async save(data: Record<string, unknown>): Promise<void> {
-		const dir = dirname(this.filePath);
-		await mkdir(dir, { recursive: true });
-		const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
-		await writeFile(tmpPath, JSON.stringify(data, null, "\t"), { mode: 0o600 });
-		await rename(tmpPath, this.filePath);
+		await writeJsonFileAtomic(this.filePath, data, { tempPrefix: ".state" });
 	}
 }

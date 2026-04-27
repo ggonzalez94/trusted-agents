@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 import { ConnectionError } from "../common/index.js";
 import type { ITrustStore } from "./trust-store.js";
@@ -140,12 +140,9 @@ export class FileTrustStore implements ITrustStore {
 	}
 
 	private async save(data: ContactsFile): Promise<void> {
-		await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
-		const tmpPath = `${this.contactsPath}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(data, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(this.contactsPath, data, {
+			directoryMode: 0o700,
+			tempPrefix: ".contacts",
 		});
-		await rename(tmpPath, this.contactsPath);
 	}
 }

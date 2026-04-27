@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 
 export type RequestJournalDirection = "inbound" | "outbound";
@@ -227,13 +227,10 @@ export class FileRequestJournal implements IRequestJournal {
 	}
 
 	private async save(file: RequestJournalFile): Promise<void> {
-		await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
-		const tmpPath = `${this.path}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(file, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(this.path, file, {
+			directoryMode: 0o700,
+			tempPrefix: ".request-journal",
 		});
-		await rename(tmpPath, this.path);
 	}
 
 	private upsertOutboundEntry(
