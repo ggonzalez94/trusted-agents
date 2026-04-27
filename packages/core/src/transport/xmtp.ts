@@ -7,6 +7,7 @@ import {
 	TransportError,
 	isEthereumAddress,
 	isNonEmptyString,
+	isObject,
 	nowISO,
 	toErrorMessage,
 } from "../common/index.js";
@@ -570,11 +571,11 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		if (typeof parsed !== "object" || parsed === null) {
+		if (!isObject(parsed)) {
 			return false;
 		}
 
-		const payload = parsed as Record<string, unknown>;
+		const payload = parsed;
 		if (payload.jsonrpc !== "2.0") {
 			return false;
 		}
@@ -627,7 +628,7 @@ export class XmtpTransport implements TransportProvider {
 		clearTimeout(pending.timer);
 		this.pendingRequests.delete(requestId);
 
-		if ("error" in payload && payload.error && typeof payload.error === "object") {
+		if ("error" in payload && isObject(payload.error)) {
 			const errorMessage =
 				typeof (payload.error as { message?: unknown }).message === "string"
 					? (payload.error as { message: string }).message
@@ -637,12 +638,12 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const result = payload.result;
-		if (typeof result !== "object" || result === null) {
+		if (!isObject(result)) {
 			pending.reject(new TransportError(`Invalid receipt payload for message ${requestId}`));
 			return true;
 		}
 
-		const receipt = result as Record<string, unknown>;
+		const receipt = result;
 		if (
 			receipt.received !== true ||
 			typeof receipt.status !== "string" ||
@@ -803,17 +804,17 @@ export class XmtpTransport implements TransportProvider {
 	}
 
 	private extractAgentIdentifier(params: unknown, key: string): AgentIdentifier | null {
-		if (typeof params !== "object" || params === null) {
+		if (!isObject(params)) {
 			return null;
 		}
 
-		const nested = (params as Record<string, unknown>)[key];
-		if (typeof nested !== "object" || nested === null) {
+		const nested = params[key];
+		if (!isObject(nested)) {
 			return null;
 		}
 
-		const agentId = (nested as { agentId?: unknown }).agentId;
-		const chain = (nested as { chain?: unknown }).chain;
+		const agentId = nested.agentId;
+		const chain = nested.chain;
 		if (
 			typeof agentId !== "number" ||
 			agentId < 0 ||

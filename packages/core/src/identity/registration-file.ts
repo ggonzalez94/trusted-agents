@@ -9,11 +9,11 @@ import {
 import type { RegistrationFile } from "./types.js";
 
 export function validateRegistrationFile(data: unknown): RegistrationFile {
-	if (typeof data !== "object" || data === null) {
+	if (!isObject(data)) {
 		throw new IdentityError("Registration file must be a JSON object");
 	}
 
-	const obj = data as Record<string, unknown>;
+	const obj = data;
 
 	if (obj.type !== "eip-8004-registration-v1") {
 		throw new IdentityError(
@@ -121,7 +121,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		}
 	}
 
-	return data as RegistrationFile;
+	return obj as unknown as RegistrationFile;
 }
 
 function isXmtpService(service: unknown): service is Record<string, unknown> {
