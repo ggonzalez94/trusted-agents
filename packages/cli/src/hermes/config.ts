@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { isRecord } from "trusted-agents-core";
 import { readJsonFileOrDefault, writeJsonFileAtomic } from "../lib/atomic-write.js";
 
 export interface TapHermesIdentityConfig {
@@ -226,10 +227,10 @@ function isFiniteNumberAtLeastOne(value: unknown): value is number {
 }
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+	if (!isRecord(value)) {
 		throw new Error(message);
 	}
-	return value as Record<string, unknown>;
+	return value;
 }
 
 function trimmedNonEmptyString(value: unknown): string | null {
