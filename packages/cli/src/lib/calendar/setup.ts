@@ -1,11 +1,10 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ICalendarProvider } from "trusted-agents-core";
 import { ValidationError } from "trusted-agents-core";
-import YAML from "yaml";
-import { writeYamlFileAtomic } from "../atomic-write.js";
+import { readYamlFileSync, writeYamlFileAtomic } from "../atomic-write.js";
 import { commandExists } from "../shell.js";
 import { GoogleCalendarCliProvider } from "./google-calendar.js";
 
@@ -45,8 +44,7 @@ export async function writeCalendarConfig(dataDir: string, provider: string): Pr
 	let yaml: Record<string, unknown> = {};
 
 	if (existsSync(configPath)) {
-		const content = readFileSync(configPath, "utf-8");
-		yaml = (YAML.parse(content) as Record<string, unknown>) ?? {};
+		yaml = readYamlFileSync<Record<string, unknown> | undefined>(configPath) ?? {};
 	}
 
 	if (typeof yaml.calendar !== "object" || yaml.calendar === null) {
@@ -62,8 +60,7 @@ export function readCalendarProvider(dataDir: string): string | undefined {
 	if (!existsSync(configPath)) {
 		return undefined;
 	}
-	const content = readFileSync(configPath, "utf-8");
-	const yaml = YAML.parse(content) as Record<string, unknown> | undefined;
+	const yaml = readYamlFileSync<Record<string, unknown> | undefined>(configPath);
 	if (!yaml || typeof yaml.calendar !== "object" || yaml.calendar === null) {
 		return undefined;
 	}

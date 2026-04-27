@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import YAML from "yaml";
@@ -29,6 +30,10 @@ export async function readJsonFileOrDefault<T>(
 
 export async function readYamlFile<T = unknown>(path: string): Promise<T> {
 	return YAML.parse(await readFile(path, "utf-8")) as T;
+}
+
+export function readYamlFileSync<T = unknown>(path: string): T {
+	return YAML.parse(readFileSync(path, "utf-8")) as T;
 }
 
 export async function writeJsonFileAtomic(
