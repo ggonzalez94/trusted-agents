@@ -54,6 +54,7 @@ export {
 	buildTransferRequestText,
 	buildTransferResponseText,
 	extractMessageData,
+	parseTransferActionPayload,
 	parsePermissionGrantRequest,
 	parseTransferActionRequest,
 	parseTransferActionResponse,

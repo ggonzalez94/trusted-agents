@@ -41,7 +41,17 @@ export function parseTransferActionRequest(message: ProtocolMessage): TransferAc
 	}
 
 	const data = extractMessageData(message);
-	if (!data || data.type !== "transfer/request") {
+	if (!data) {
+		return null;
+	}
+
+	return parseTransferActionPayload(data);
+}
+
+export function parseTransferActionPayload(
+	data: Record<string, unknown>,
+): TransferActionRequest | null {
+	if (data.type !== "transfer/request") {
 		return null;
 	}
 

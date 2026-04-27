@@ -1,13 +1,8 @@
-import type {
-	TapActionContext,
-	TapActionResult,
-	TransferActionRequest,
-	TransferAsset,
-} from "trusted-agents-core";
+import type { TapActionContext, TapActionResult, TransferActionRequest } from "trusted-agents-core";
 import {
 	createGrantSet,
 	findApplicableTransferGrants,
-	isEthereumAddress,
+	parseTransferActionPayload,
 	toErrorMessage,
 } from "trusted-agents-core";
 
@@ -124,37 +119,5 @@ export async function handleTransferRequest(ctx: TapActionContext): Promise<TapA
 }
 
 function validatePayload(payload: Record<string, unknown>): TransferActionRequest | null {
-	if (payload.type !== "transfer/request") {
-		return null;
-	}
-
-	if (typeof payload.actionId !== "string" || payload.actionId.length === 0) {
-		return null;
-	}
-
-	if (payload.asset !== "native" && payload.asset !== "usdc") {
-		return null;
-	}
-
-	if (typeof payload.amount !== "string" || payload.amount.length === 0) {
-		return null;
-	}
-
-	if (typeof payload.chain !== "string" || payload.chain.length === 0) {
-		return null;
-	}
-
-	if (typeof payload.toAddress !== "string" || !isEthereumAddress(payload.toAddress)) {
-		return null;
-	}
-
-	return {
-		type: "transfer/request",
-		actionId: payload.actionId,
-		asset: payload.asset as TransferAsset,
-		amount: payload.amount,
-		chain: payload.chain,
-		toAddress: payload.toAddress as `0x${string}`,
-		note: typeof payload.note === "string" && payload.note.length > 0 ? payload.note : undefined,
-	};
+	return parseTransferActionPayload(payload);
 }
