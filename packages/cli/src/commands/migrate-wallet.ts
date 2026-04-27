@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, unlink } from "node:fs/promises";
-import { join } from "node:path";
 import { keccak256, toHex } from "viem";
 import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
+import { legacyWalletKeyPath } from "../lib/legacy-wallet.js";
 import { info, success } from "../lib/output.js";
 import {
 	createOwsApiKey,
@@ -48,7 +48,7 @@ export async function migrateWalletCommand(
 		}
 
 		// agent.key must exist
-		const keyPath = join(dataDir, "identity", "agent.key");
+		const keyPath = legacyWalletKeyPath(dataDir);
 		if (!existsSync(keyPath)) {
 			throw new Error(
 				`No key file found at ${keyPath}. Either this agent was already migrated or was never initialized with a raw key.`,

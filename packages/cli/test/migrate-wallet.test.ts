@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { migrateWalletCommand } from "../src/commands/migrate-wallet.js";
 import { defaultConfigPath } from "../src/lib/config-loader.js";
+import { legacyWalletIdentityDir, legacyWalletKeyPath } from "../src/lib/legacy-wallet.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { useOwsArtifactCleanup } from "./helpers/ows-cleanup.js";
 import { runCli } from "./helpers/run-cli.js";
@@ -31,7 +32,7 @@ describe("tap migrate-wallet", () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-migrate-test-"));
 		dataDir = join(tmpDir, "data");
 		configPath = defaultConfigPath(dataDir);
-		keyPath = join(dataDir, "identity", "agent.key");
+		keyPath = legacyWalletKeyPath(dataDir);
 
 		// Clean up stale OWS wallets from previous test runs that may have
 		// failed before afterEach cleanup (wallet names are deterministic)
@@ -50,7 +51,7 @@ describe("tap migrate-wallet", () => {
 
 	/** Set up a legacy data dir with config.yaml + identity/agent.key */
 	async function setupLegacyAgent(agentId: number): Promise<void> {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
 		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
@@ -112,7 +113,7 @@ describe("tap migrate-wallet", () => {
 	});
 
 	it("should fail when agent.key does not exist", async () => {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 
 		const yamlConfig = { agent_id: 42, chain: "eip155:8453" };
 		await writeFile(configPath, YAML.stringify(yamlConfig), "utf-8");
@@ -145,7 +146,7 @@ describe("tap migrate-wallet", () => {
 	});
 
 	it("should handle 0x-prefixed keys", async () => {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
 		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
@@ -192,7 +193,7 @@ describe("tap migrate-wallet", () => {
 	});
 
 	it("should use a random wallet name for unregistered agents (agent_id: -1)", async () => {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
 		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
