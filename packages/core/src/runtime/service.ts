@@ -2585,7 +2585,7 @@ export class TapMessagingService {
 
 		// Extract the action type from the data payload
 		const actionData = extractMessageData(envelope.message);
-		const actionType = typeof actionData?.type === "string" ? actionData.type : undefined;
+		const actionType = asString(actionData?.type);
 
 		// Route through the app registry to determine if a handler exists
 		const resolved = actionType
@@ -3009,7 +3009,7 @@ export class TapMessagingService {
 		entry: RequestJournalEntry,
 	): Promise<Contact | null> {
 		const metadata = entry.metadata as Record<string, unknown> | undefined;
-		const peerChain = typeof metadata?.peerChain === "string" ? metadata.peerChain : undefined;
+		const peerChain = asString(metadata?.peerChain);
 		if (peerChain) {
 			const contact = await this.context.trustStore.findByAgentId(entry.peerAgentId, peerChain);
 			return contact?.status === "active" ? contact : null;
@@ -5154,9 +5154,10 @@ function parsePendingConnectionResultDelivery(
 	}
 
 	const peerAddress = asString(metadata.peerAddress);
+	const peerName = asString(metadata.peerName);
 	if (
 		typeof metadata.peerAgentId !== "number" ||
-		typeof metadata.peerName !== "string" ||
+		peerName === undefined ||
 		!peerAddress?.startsWith("0x") ||
 		!isProtocolMessage(metadata.request)
 	) {
@@ -5191,7 +5192,7 @@ function parsePendingConnectionResultDelivery(
 		type: "connection-result-delivery",
 		peerAgentId: metadata.peerAgentId,
 		...(peerChain ? { peerChain } : {}),
-		peerName: metadata.peerName,
+		peerName,
 		peerAddress: peerAddress as `0x${string}`,
 		request: metadata.request,
 		...(plannedContact ? { plannedContact } : {}),
@@ -5216,14 +5217,13 @@ function parsePendingConnectionRevokeDelivery(
 	const peerAddress = asString(delivery.peerAddress);
 	if (
 		typeof delivery.peerAgentId !== "number" ||
-		typeof delivery.peerChain !== "string" ||
-		delivery.peerChain.length === 0 ||
+		!isNonEmptyString(delivery.peerChain) ||
 		typeof delivery.peerDisplayName !== "string" ||
 		!peerAddress?.startsWith("0x")
 	) {
 		return null;
 	}
-	const reason = typeof delivery.reason === "string" ? delivery.reason : undefined;
+	const reason = asString(delivery.reason);
 	return {
 		peerAgentId: delivery.peerAgentId,
 		peerChain: delivery.peerChain,
