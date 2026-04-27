@@ -116,13 +116,11 @@ function printPlain(data: unknown): void {
 		return;
 	}
 
-	if (typeof data === "object") {
-		const obj = data as Record<string, unknown>;
-
+	if (isObject(data)) {
 		// Check if it's a list wrapper (e.g. { contacts: [...] })
-		const keys = Object.keys(obj);
+		const keys = Object.keys(data);
 		if (keys.length === 1) {
-			const value = obj[keys[0]!];
+			const value = data[keys[0]!];
 			if (Array.isArray(value)) {
 				printTable(value);
 				return;
@@ -133,7 +131,7 @@ function printPlain(data: unknown): void {
 		const scalarEntries: [string, unknown][] = [];
 		const arrayEntries: [string, unknown[]][] = [];
 
-		for (const [key, val] of Object.entries(obj)) {
+		for (const [key, val] of Object.entries(data)) {
 			if (Array.isArray(val)) {
 				arrayEntries.push([key, val]);
 			} else {
@@ -477,7 +475,7 @@ function sortValue(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map(sortValue);
 	}
-	if (typeof value !== "object" || value === null) {
+	if (!isObject(value)) {
 		return value;
 	}
 
