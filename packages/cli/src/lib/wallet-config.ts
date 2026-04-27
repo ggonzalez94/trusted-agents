@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigError, OwsSigningProvider, type TrustedAgentsConfig } from "trusted-agents-core";
 import { readYamlFileSync } from "./atomic-write.js";
+import { defaultConfigPath } from "./config-loader.js";
 
 interface StoredWalletConfig {
 	ows?: {
@@ -35,7 +36,7 @@ function resolveEffectiveOwsConfig(options: WalletConfigStatusOptions): {
 	wallet: string;
 	apiKey: string;
 } {
-	const configPath = options.configPath ?? join(options.dataDir, "config.yaml");
+	const configPath = options.configPath ?? defaultConfigPath(options.dataDir);
 	const stored = loadStoredWalletConfig(configPath);
 
 	return {

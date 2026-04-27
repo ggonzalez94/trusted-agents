@@ -1,10 +1,10 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ICalendarProvider } from "trusted-agents-core";
 import { ValidationError, isObject } from "trusted-agents-core";
 import { readYamlFileSync, writeYamlFileAtomic } from "../atomic-write.js";
+import { defaultConfigPath } from "../config-loader.js";
 import { commandExists } from "../shell.js";
 import { GoogleCalendarCliProvider } from "./google-calendar.js";
 
@@ -40,7 +40,7 @@ export async function runGwsAuth(): Promise<boolean> {
 }
 
 export async function writeCalendarConfig(dataDir: string, provider: string): Promise<void> {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	let yaml: Record<string, unknown> = {};
 
 	if (existsSync(configPath)) {
@@ -56,7 +56,7 @@ export async function writeCalendarConfig(dataDir: string, provider: string): Pr
 }
 
 export function readCalendarProvider(dataDir: string): string | undefined {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	if (!existsSync(configPath)) {
 		return undefined;
 	}

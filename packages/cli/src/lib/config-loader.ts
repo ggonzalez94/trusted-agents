@@ -28,11 +28,15 @@ export function resolveDataDir(opts: GlobalOptions): string {
 	return join(process.env.HOME ?? homedir(), ".trustedagents");
 }
 
+export function defaultConfigPath(dataDir: string): string {
+	return join(dataDir, "config.yaml");
+}
+
 export function resolveConfigPath(opts: GlobalOptions, dataDir: string): string {
 	if (opts.config) {
 		return opts.config;
 	}
-	return join(dataDir, "config.yaml");
+	return defaultConfigPath(dataDir);
 }
 
 interface LoadConfigOptions {
@@ -107,7 +111,7 @@ export function validateConfigPathInDataDir(
 		return;
 	}
 
-	const expectedPath = resolve(dataDir, "config.yaml");
+	const expectedPath = resolve(defaultConfigPath(dataDir));
 	if (resolve(configPath) !== expectedPath) {
 		throw new Error(
 			`Config path must match the TAP data dir config at ${expectedPath}. Use --data-dir to select the agent instead of mixing --config with another data dir.`,

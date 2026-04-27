@@ -19,7 +19,7 @@ import {
 import { formatUnits, isAddress } from "viem";
 import { readYamlFile } from "../lib/atomic-write.js";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
-import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
+import { defaultConfigPath, resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
@@ -547,7 +547,7 @@ async function resolveRemoveDataDir(opts: GlobalOptions): Promise<string> {
 }
 
 function resolveRemoveConfigPath(opts: GlobalOptions, dataDir: string): string {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	if (!opts.config) {
 		return configPath;
 	}
@@ -578,7 +578,7 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 }
 
 async function readAgentAddress(dataDir: string): Promise<[string | null, string | null]> {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	try {
 		const parsed =
 			(await readYamlFile<{ ows?: { wallet?: string; api_key?: string }; chain?: string } | null>(
