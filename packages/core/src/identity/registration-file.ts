@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { IdentityError, isEthereumAddress, toErrorMessage } from "../common/index.js";
+import { IdentityError, isEthereumAddress, isObject, toErrorMessage } from "../common/index.js";
 import type { RegistrationFile } from "./types.js";
 
 export function validateRegistrationFile(data: unknown): RegistrationFile {
@@ -27,23 +27,17 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		throw new IdentityError("Registration file must have at least one service");
 	}
 
-	const hasXmtpService = obj.services.some(
-		(s: unknown) =>
-			typeof s === "object" &&
-			s !== null &&
-			(s as Record<string, unknown>).name === "xmtp" &&
-			typeof (s as Record<string, unknown>).endpoint === "string",
-	);
+	const hasXmtpService = obj.services.some(isXmtpServiceWithEndpoint);
 
 	if (!hasXmtpService) {
 		throw new IdentityError("Registration file must have an 'xmtp' transport service");
 	}
 
 	for (const service of obj.services) {
-		if (typeof service !== "object" || service === null) {
+		if (!isObject(service)) {
 			throw new IdentityError("Each service must be an object");
 		}
-		const svc = service as Record<string, unknown>;
+		const svc = service;
 		if (typeof svc.name !== "string" || svc.name.length === 0) {
 			throw new IdentityError("Each service must have a non-empty name");
 		}
@@ -69,11 +63,11 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		}
 	}
 
-	if (typeof obj.trustedAgentProtocol !== "object" || obj.trustedAgentProtocol === null) {
+	if (!isObject(obj.trustedAgentProtocol)) {
 		throw new IdentityError("Registration file must have a trustedAgentProtocol section");
 	}
 
-	const tap = obj.trustedAgentProtocol as Record<string, unknown>;
+	const tap = obj.trustedAgentProtocol;
 
 	if (typeof tap.version !== "string" || tap.version.length === 0) {
 		throw new IdentityError("trustedAgentProtocol must have a non-empty version");
@@ -88,11 +82,11 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 	}
 
 	if (tap.execution !== undefined) {
-		if (typeof tap.execution !== "object" || tap.execution === null) {
+		if (!isObject(tap.execution)) {
 			throw new IdentityError("trustedAgentProtocol.execution must be an object");
 		}
 
-		const execution = tap.execution as Record<string, unknown>;
+		const execution = tap.execution;
 		if (execution.mode !== "eoa" && execution.mode !== "eip4337" && execution.mode !== "eip7702") {
 			throw new IdentityError(
 				"trustedAgentProtocol.execution.mode must be eoa, eip4337, or eip7702",
@@ -115,12 +109,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		}
 	}
 
-	const xmtpService = obj.services.find(
-		(service) =>
-			typeof service === "object" &&
-			service !== null &&
-			(service as Record<string, unknown>).name === "xmtp",
-	) as Record<string, unknown> | undefined;
+	const xmtpService = obj.services.find(isXmtpService);
 
 	if (xmtpService) {
 		const xmtpEndpoint = String(xmtpService.endpoint).toLowerCase();
@@ -130,6 +119,14 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 	}
 
 	return data as RegistrationFile;
+}
+
+function isXmtpService(service: unknown): service is Record<string, unknown> {
+	return isObject(service) && service.name === "xmtp";
+}
+
+function isXmtpServiceWithEndpoint(service: unknown): service is Record<string, unknown> {
+	return isXmtpService(service) && typeof service.endpoint === "string";
 }
 
 export async function fetchRegistrationFile(uri: string): Promise<RegistrationFile> {
