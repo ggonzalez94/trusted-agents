@@ -13,6 +13,14 @@ export function isOptionalString(value: unknown): boolean {
 	return value === undefined || typeof value === "string";
 }
 
+export function isTapTransferAsset(value: unknown): value is "native" | "usdc" {
+	return value === "native" || value === "usdc";
+}
+
+export function isZeroXPrefixedString(value: unknown): value is `0x${string}` {
+	return typeof value === "string" && value.startsWith("0x");
+}
+
 // Route-level input validation throws HttpError(400, ...) so the server's
 // top-level catch (see http/server.ts `handle`) maps missing route params
 // and guard-rejected bodies to a 4xx response. Plain `Error` would fall
