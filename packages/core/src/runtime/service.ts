@@ -115,6 +115,14 @@ import {
 	summarizeGrantSet,
 } from "./grants.js";
 import {
+	LEGACY_PENDING_CONNECTS_FILE,
+	legacyOutboxDir,
+	legacyOutboxProcessingDir,
+	legacyOutboxQueuedDir,
+	legacyOutboxResultsDir,
+	legacyPendingConnectsPath,
+} from "./legacy-state-paths.js";
+import {
 	DEFAULT_MESSAGE_SCOPE,
 	appendConversationLog,
 	buildOutgoingActionRequest,
@@ -2138,7 +2146,7 @@ export class TapMessagingService {
 	}
 
 	private async migratePendingConnects(): Promise<void> {
-		const path = join(this.context.config.dataDir, "pending-connects.json");
+		const path = legacyPendingConnectsPath(this.context.config.dataDir);
 		let parsed: { pendingConnects?: LegacyPendingConnect[] };
 		try {
 			parsed = await readJsonFile(
@@ -2150,7 +2158,7 @@ export class TapMessagingService {
 			if (!(error instanceof SyntaxError)) throw error;
 			this.log(
 				"warn",
-				`Failed to parse legacy pending-connects.json: ${toErrorMessage(error)}. Skipping migration.`,
+				`Failed to parse legacy ${LEGACY_PENDING_CONNECTS_FILE}: ${toErrorMessage(error)}. Skipping migration.`,
 			);
 			return;
 		}
@@ -2189,7 +2197,7 @@ export class TapMessagingService {
 		if (migrated > 0) {
 			this.log(
 				"info",
-				`Migrated ${migrated} pending-connects.json record(s) to connecting contacts`,
+				`Migrated ${migrated} ${LEGACY_PENDING_CONNECTS_FILE} record(s) to connecting contacts`,
 			);
 		}
 	}
@@ -2206,10 +2214,10 @@ export class TapMessagingService {
 	 */
 	private async migrateOutbox(): Promise<void> {
 		const dataDir = this.context.config.dataDir;
-		const outboxDir = join(dataDir, "outbox");
-		const queuedDir = join(outboxDir, "queued");
-		const processingDir = join(outboxDir, "processing");
-		const resultsDir = join(outboxDir, "results");
+		const outboxDir = legacyOutboxDir(dataDir);
+		const queuedDir = legacyOutboxQueuedDir(dataDir);
+		const processingDir = legacyOutboxProcessingDir(dataDir);
+		const resultsDir = legacyOutboxResultsDir(dataDir);
 
 		// Idempotent: nothing to do if the legacy outbox directory doesn't exist.
 		let queuedFiles: string[] = [];

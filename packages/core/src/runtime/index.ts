@@ -40,6 +40,18 @@ export {
 	type PermissionLedgerEntry,
 } from "./permission-ledger.js";
 export {
+	LEGACY_OUTBOX_DIR,
+	LEGACY_OUTBOX_PROCESSING_DIR,
+	LEGACY_OUTBOX_QUEUED_DIR,
+	LEGACY_OUTBOX_RESULTS_DIR,
+	LEGACY_PENDING_CONNECTS_FILE,
+	legacyOutboxDir,
+	legacyOutboxProcessingDir,
+	legacyOutboxQueuedDir,
+	legacyOutboxResultsDir,
+	legacyPendingConnectsPath,
+} from "./legacy-state-paths.js";
+export {
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
 	buildOutgoingMessageRequest,

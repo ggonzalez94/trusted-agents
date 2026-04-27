@@ -8,6 +8,18 @@ import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
+import {
+	LEGACY_OUTBOX_DIR,
+	LEGACY_OUTBOX_PROCESSING_DIR,
+	LEGACY_OUTBOX_QUEUED_DIR,
+	LEGACY_OUTBOX_RESULTS_DIR,
+	LEGACY_PENDING_CONNECTS_FILE,
+	legacyOutboxDir,
+	legacyOutboxProcessingDir,
+	legacyOutboxQueuedDir,
+	legacyOutboxResultsDir,
+	legacyPendingConnectsPath,
+} from "../../../src/runtime/legacy-state-paths.js";
 import { FileRequestJournal, requestJournalPath } from "../../../src/runtime/request-journal.js";
 import { TapMessagingService } from "../../../src/runtime/service.js";
 import type {
@@ -152,10 +164,23 @@ const SAMPLE_LEGACY_ENTRY = {
 };
 
 describe("legacy state migration — pending-connects.json", () => {
+	it("derives legacy state paths from the data dir", () => {
+		expect(LEGACY_PENDING_CONNECTS_FILE).toBe("pending-connects.json");
+		expect(LEGACY_OUTBOX_DIR).toBe("outbox");
+		expect(LEGACY_OUTBOX_QUEUED_DIR).toBe("queued");
+		expect(LEGACY_OUTBOX_PROCESSING_DIR).toBe("processing");
+		expect(LEGACY_OUTBOX_RESULTS_DIR).toBe("results");
+		expect(legacyPendingConnectsPath("/tmp/tap-data")).toBe("/tmp/tap-data/pending-connects.json");
+		expect(legacyOutboxDir("/tmp/tap-data")).toBe("/tmp/tap-data/outbox");
+		expect(legacyOutboxQueuedDir("/tmp/tap-data")).toBe("/tmp/tap-data/outbox/queued");
+		expect(legacyOutboxProcessingDir("/tmp/tap-data")).toBe("/tmp/tap-data/outbox/processing");
+		expect(legacyOutboxResultsDir("/tmp/tap-data")).toBe("/tmp/tap-data/outbox/results");
+	});
+
 	it("migrates pending-connects.json entries into connecting contacts", async () => {
 		const dir = makeTempDir();
 		writeFileSync(
-			join(dir, "pending-connects.json"),
+			legacyPendingConnectsPath(dir),
 			JSON.stringify({ pendingConnects: [SAMPLE_LEGACY_ENTRY] }),
 		);
 
@@ -167,13 +192,13 @@ describe("legacy state migration — pending-connects.json", () => {
 		expect(contact).not.toBeNull();
 		expect(contact?.status).toBe("connecting");
 		expect(contact?.peerDisplayName).toBe("alice");
-		expect(existsSync(join(dir, "pending-connects.json"))).toBe(false);
+		expect(existsSync(legacyPendingConnectsPath(dir))).toBe(false);
 	});
 
 	it("runs migrations during syncOnce for short-lived sessions", async () => {
 		const dir = makeTempDir();
 		writeFileSync(
-			join(dir, "pending-connects.json"),
+			legacyPendingConnectsPath(dir),
 			JSON.stringify({ pendingConnects: [SAMPLE_LEGACY_ENTRY] }),
 		);
 
@@ -183,13 +208,13 @@ describe("legacy state migration — pending-connects.json", () => {
 		const contact = await trustStore.findByAgentId(42, "eip155:8453");
 		expect(contact).not.toBeNull();
 		expect(contact?.status).toBe("connecting");
-		expect(existsSync(join(dir, "pending-connects.json"))).toBe(false);
+		expect(existsSync(legacyPendingConnectsPath(dir))).toBe(false);
 	});
 
 	it("is idempotent — running start twice produces one contact, not two", async () => {
 		const dir = makeTempDir();
 		writeFileSync(
-			join(dir, "pending-connects.json"),
+			legacyPendingConnectsPath(dir),
 			JSON.stringify({ pendingConnects: [SAMPLE_LEGACY_ENTRY] }),
 		);
 
@@ -217,7 +242,7 @@ describe("legacy state migration — pending-connects.json", () => {
 
 	it("tolerates malformed JSON (logs warning, does not throw)", async () => {
 		const dir = makeTempDir();
-		writeFileSync(join(dir, "pending-connects.json"), "not valid json{");
+		writeFileSync(legacyPendingConnectsPath(dir), "not valid json{");
 		const { service } = makeServiceHarness(dir);
 		await expect(service.start()).resolves.toBeUndefined();
 		await service.stop();
@@ -296,11 +321,14 @@ describe("legacy state migration — acked status rewrite", () => {
 describe("legacy state migration — outbox directory", () => {
 	function seedOutboxFile(
 		dir: string,
-		subdir: "queued" | "processing" | "results",
+		subdir:
+			| typeof LEGACY_OUTBOX_QUEUED_DIR
+			| typeof LEGACY_OUTBOX_PROCESSING_DIR
+			| typeof LEGACY_OUTBOX_RESULTS_DIR,
 		jobId: string,
 		job: Record<string, unknown>,
 	): void {
-		const target = join(dir, "outbox", subdir);
+		const target = join(legacyOutboxDir(dir), subdir);
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, `${jobId}.json`), JSON.stringify(job));
 	}
@@ -358,7 +386,7 @@ describe("legacy state migration — outbox directory", () => {
 		expect(payload?.scope).toBe("general-chat");
 
 		// Legacy outbox directory is deleted.
-		expect(existsSync(join(dir, "outbox"))).toBe(false);
+		expect(existsSync(legacyOutboxDir(dir))).toBe(false);
 	});
 
 	it("is idempotent — running start twice does not double-migrate", async () => {
@@ -393,7 +421,7 @@ describe("legacy state migration — outbox directory", () => {
 		const { service } = makeServiceHarness(dir);
 		await expect(service.start()).resolves.toBeUndefined();
 		await service.stop();
-		expect(existsSync(join(dir, "outbox"))).toBe(false);
+		expect(existsSync(legacyOutboxDir(dir))).toBe(false);
 	});
 
 	it("discards results-only outbox (no queued/processing entries)", async () => {
@@ -413,6 +441,6 @@ describe("legacy state migration — outbox directory", () => {
 		const all = await journal.list("outbound");
 		const commandEntries = all.filter((e) => e.method.startsWith("command/"));
 		expect(commandEntries).toHaveLength(0);
-		expect(existsSync(join(dir, "outbox"))).toBe(false);
+		expect(existsSync(legacyOutboxDir(dir))).toBe(false);
 	});
 });
