@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
 import { saveTapHermesPluginConfig } from "../src/hermes/config.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML } from "./helpers/config-fixtures.js";
 
 const MINIMAL_CONFIG = [
 	"agent_id: 42",
@@ -135,16 +136,7 @@ describe("tap status", () => {
 	});
 
 	it("reports not-registered when agent_id < 0", async () => {
-		const dataDir = await makeAgentDir(
-			tempRoot,
-			[
-				"agent_id: -1",
-				"chain: eip155:8453",
-				"ows:",
-				"  wallet: demo-wallet",
-				"  api_key: demo-key",
-			].join("\n"),
-		);
+		const dataDir = await makeAgentDir(tempRoot, UNREGISTERED_AGENT_CONFIG_YAML);
 
 		await statusCommand({}, { json: true, dataDir });
 

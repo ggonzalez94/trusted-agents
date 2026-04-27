@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configShowCommand } from "../src/commands/config-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import { buildTestConfig } from "./helpers/config-fixtures.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML, buildTestConfig } from "./helpers/config-fixtures.js";
 
 describe("tap config show", () => {
 	let tempRoot: string;
@@ -50,17 +50,7 @@ describe("tap config show", () => {
 	it("loads config show without requiring a registered agent id", async () => {
 		const dataDir = join(tempRoot, "unregistered-agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(
-			join(dataDir, "config.yaml"),
-			[
-				"agent_id: -1",
-				"chain: eip155:8453",
-				"ows:",
-				"  wallet: demo-wallet",
-				"  api_key: demo-key",
-			].join("\n"),
-			"utf-8",
-		);
+		await writeFile(join(dataDir, "config.yaml"), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
 
 		await configShowCommand({ output: "json", dataDir });
 

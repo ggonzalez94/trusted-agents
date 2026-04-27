@@ -6,19 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { journalListCommand } from "../src/commands/journal-list.js";
 import { journalShowCommand } from "../src/commands/journal-show.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-
-const MINIMAL_CONFIG = [
-	"agent_id: -1",
-	"chain: eip155:8453",
-	"ows:",
-	"  wallet: demo-wallet",
-	"  api_key: demo-key",
-].join("\n");
+import { UNREGISTERED_AGENT_CONFIG_YAML } from "./helpers/config-fixtures.js";
 
 async function makeAgentDir(root: string): Promise<string> {
 	const dataDir = join(root, "agent");
 	await mkdir(dataDir, { recursive: true });
-	await writeFile(join(dataDir, "config.yaml"), MINIMAL_CONFIG, "utf-8");
+	await writeFile(join(dataDir, "config.yaml"), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
 	return dataDir;
 }
 

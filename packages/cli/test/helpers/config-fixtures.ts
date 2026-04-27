@@ -16,6 +16,14 @@ export const TEST_TAIKO_CHAIN: ChainConfig = {
 	registryAddress: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
 };
 
+export const UNREGISTERED_AGENT_CONFIG_YAML = [
+	"agent_id: -1",
+	"chain: eip155:8453",
+	"ows:",
+	"  wallet: demo-wallet",
+	"  api_key: demo-key",
+].join("\n");
+
 export function buildMockExecutionPreview(
 	address: `0x${string}`,
 	overrides?: Partial<ExecutionPreview>,

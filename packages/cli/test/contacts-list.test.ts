@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { contactsListCommand } from "../src/commands/contacts-list.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML } from "./helpers/config-fixtures.js";
 
 describe("tap contacts list", () => {
 	let tempRoot: string;
@@ -22,17 +23,7 @@ describe("tap contacts list", () => {
 	it("returns an empty contact list even before registration is complete", async () => {
 		const dataDir = join(tempRoot, "agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(
-			join(dataDir, "config.yaml"),
-			[
-				"agent_id: -1",
-				"chain: eip155:8453",
-				"ows:",
-				"  wallet: demo-wallet",
-				"  api_key: demo-key",
-			].join("\n"),
-			"utf-8",
-		);
+		await writeFile(join(dataDir, "config.yaml"), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
 
 		await contactsListCommand({ output: "json", dataDir });
 
