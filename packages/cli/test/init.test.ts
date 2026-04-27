@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { useOwsArtifactCleanup } from "./helpers/ows-cleanup.js";
 import { runCli } from "./helpers/run-cli.js";
@@ -93,11 +94,12 @@ describe("tap init", () => {
 			{ nonInteractive: true },
 		);
 
-		expect(existsSync(join(dataDir, "config.yaml"))).toBe(true);
+		const defaultConfig = defaultConfigPath(dataDir);
+		expect(existsSync(defaultConfig)).toBe(true);
 		const output = JSON.parse(stdoutWrites[0]!);
-		expect(output.data.config).toBe(join(dataDir, "config.yaml"));
+		expect(output.data.config).toBe(defaultConfig);
 
-		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
+		const configContent = await readFile(defaultConfig, "utf-8");
 		trackOwsArtifacts(YAML.parse(configContent));
 	});
 
@@ -112,7 +114,7 @@ describe("tap init", () => {
 			{ chain: "taiko", nonInteractive: true },
 		);
 
-		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
+		const configContent = await readFile(defaultConfigPath(dataDir), "utf-8");
 		trackOwsArtifacts(YAML.parse(configContent));
 
 		stdoutWrites.length = 0;
@@ -138,7 +140,7 @@ describe("tap init", () => {
 			{ wallet: walletName, passphrase: "test-pass", nonInteractive: true },
 		);
 
-		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
+		const configContent = await readFile(defaultConfigPath(dataDir), "utf-8");
 		const yaml = YAML.parse(configContent);
 		expect(yaml.ows.wallet).toBe(walletName);
 		expect(yaml.ows.api_key).toMatch(/^ows_key_/);
@@ -163,7 +165,7 @@ describe("tap init", () => {
 		expect(output.data.chain).toBe("eip155:8453");
 		expect(output.data.chain_name).toBe("Base");
 
-		const configContent = await readFile(join(dataDir, "config.yaml"), "utf-8");
+		const configContent = await readFile(defaultConfigPath(dataDir), "utf-8");
 		trackOwsArtifacts(YAML.parse(configContent));
 	});
 });
