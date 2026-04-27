@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigError, OwsSigningProvider, type TrustedAgentsConfig } from "trusted-agents-core";
-import YAML from "yaml";
+import { readYamlFileSync } from "./atomic-write.js";
 
 interface StoredWalletConfig {
 	ows?: {
@@ -25,9 +25,7 @@ function loadStoredWalletConfig(configPath: string): StoredWalletConfig | undefi
 	}
 
 	try {
-		return (
-			(YAML.parse(readFileSync(configPath, "utf-8")) as StoredWalletConfig | null) ?? undefined
-		);
+		return readYamlFileSync<StoredWalletConfig | null>(configPath) ?? undefined;
 	} catch {
 		return undefined;
 	}
