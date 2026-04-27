@@ -22,6 +22,7 @@ export {
 } from "./request-journal.js";
 export type {
 	TapCommandJob,
+	TapCommandJobIntent,
 	TapCommandJobResult,
 	TapCommandJobResultPayload,
 	TapCommandJobType,

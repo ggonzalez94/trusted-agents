@@ -89,6 +89,12 @@ export type TapCommandJob =
 	| TapRequestFundsJob
 	| TapRequestMeetingJob;
 
+export type TapCommandJobIntent = TapCommandJob extends infer TJob
+	? TJob extends TapCommandJob
+		? Pick<TJob, "type" | "payload">
+		: never
+	: never;
+
 export type TapCommandJobResultPayload =
 	| TapConnectResult
 	| TapSendMessageResult

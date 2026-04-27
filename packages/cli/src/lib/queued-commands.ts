@@ -6,7 +6,7 @@ import {
 	FileRequestJournal,
 	IdentityError,
 	PermissionError,
-	type TapCommandJob,
+	type TapCommandJobIntent,
 	type TapCommandJobResult,
 	type TapCommandJobResultPayload,
 	TransportError,
@@ -51,7 +51,7 @@ export type SettledQueuedTapCommandOutcome<T> = Exclude<
 
 export async function runOrQueueTapCommand<T extends TapCommandJobResultPayload>(
 	dataDir: string,
-	job: Omit<TapCommandJob, "jobId" | "createdAt">,
+	job: TapCommandJobIntent,
 	run: () => Promise<T>,
 	options: {
 		requestedBy?: string;
@@ -82,7 +82,7 @@ export async function runOrQueueTapCommand<T extends TapCommandJobResultPayload>
 			status: "queued",
 			metadata: {
 				commandType: job.type,
-				commandPayload: (job as TapCommandJob).payload,
+				commandPayload: job.payload,
 				...(options.requestedBy !== undefined ? { commandRequestedBy: options.requestedBy } : {}),
 			},
 		});
