@@ -1,4 +1,4 @@
-import { ValidationError } from "../common/index.js";
+import { ValidationError, isNonEmptyString, isObject, isRecord } from "../common/index.js";
 import {
 	type ContactPermissionState,
 	type PermissionGrant,
@@ -12,19 +12,18 @@ export function normalizeGrantInput(input: unknown): PermissionGrantSet {
 		return createGrantSet(input.map(normalizeGrantLike));
 	}
 
-	if (typeof input !== "object" || input === null) {
+	if (!isObject(input)) {
 		throw new ValidationError("Grant input must be a JSON object or array");
 	}
 
-	const data = input as { grants?: unknown; version?: unknown };
-	if (!Array.isArray(data.grants)) {
+	if (!Array.isArray(input.grants)) {
 		throw new ValidationError('Grant object must include a "grants" array');
 	}
 
-	const grantSet = createGrantSet(data.grants.map(normalizeGrantLike));
-	if (data.version !== undefined && data.version !== TAP_GRANTS_VERSION) {
+	const grantSet = createGrantSet(input.grants.map(normalizeGrantLike));
+	if (input.version !== undefined && input.version !== TAP_GRANTS_VERSION) {
 		throw new ValidationError(
-			`Unsupported grant set version: ${String(data.version)}. Expected ${TAP_GRANTS_VERSION}`,
+			`Unsupported grant set version: ${String(input.version)}. Expected ${TAP_GRANTS_VERSION}`,
 		);
 	}
 	return grantSet;
@@ -75,51 +74,38 @@ export function findActiveGrantsByScope(
 }
 
 function normalizeGrantLike(input: unknown): PermissionGrant {
-	if (typeof input !== "object" || input === null) {
+	if (!isObject(input)) {
 		throw new ValidationError("Each grant must be an object");
 	}
 
-	const grant = input as {
-		grantId?: unknown;
-		scope?: unknown;
-		constraints?: unknown;
-		status?: unknown;
-		updatedAt?: unknown;
-	};
-
-	if (typeof grant.grantId !== "string" || grant.grantId.length === 0) {
+	if (!isNonEmptyString(input.grantId)) {
 		throw new ValidationError("Each grant must include a non-empty grantId");
 	}
 
-	if (typeof grant.scope !== "string" || grant.scope.length === 0) {
-		throw new ValidationError(`Grant ${grant.grantId} must include a non-empty scope`);
+	if (!isNonEmptyString(input.scope)) {
+		throw new ValidationError(`Grant ${input.grantId} must include a non-empty scope`);
 	}
 
-	if (
-		grant.constraints !== undefined &&
-		(typeof grant.constraints !== "object" ||
-			grant.constraints === null ||
-			Array.isArray(grant.constraints))
-	) {
-		throw new ValidationError(`Grant ${grant.grantId} has invalid constraints`);
+	if (input.constraints !== undefined && !isRecord(input.constraints)) {
+		throw new ValidationError(`Grant ${input.grantId} has invalid constraints`);
 	}
 
-	if (grant.status !== undefined && grant.status !== "active" && grant.status !== "revoked") {
-		throw new ValidationError(`Grant ${grant.grantId} has invalid status`);
+	if (input.status !== undefined && input.status !== "active" && input.status !== "revoked") {
+		throw new ValidationError(`Grant ${input.grantId} has invalid status`);
 	}
 
-	if (grant.updatedAt !== undefined && typeof grant.updatedAt !== "string") {
-		throw new ValidationError(`Grant ${grant.grantId} has invalid updatedAt`);
+	if (input.updatedAt !== undefined && typeof input.updatedAt !== "string") {
+		throw new ValidationError(`Grant ${input.grantId} has invalid updatedAt`);
 	}
 
 	return {
-		grantId: grant.grantId,
-		scope: grant.scope,
-		...(grant.constraints ? { constraints: grant.constraints as Record<string, unknown> } : {}),
-		status: grant.status ?? "active",
+		grantId: input.grantId,
+		scope: input.scope,
+		...(input.constraints ? { constraints: input.constraints } : {}),
+		status: input.status ?? "active",
 		updatedAt:
-			typeof grant.updatedAt === "string" && grant.updatedAt.length > 0
-				? grant.updatedAt
+			typeof input.updatedAt === "string" && input.updatedAt.length > 0
+				? input.updatedAt
 				: new Date().toISOString(),
 	};
 }
