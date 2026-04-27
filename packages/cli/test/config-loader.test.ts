@@ -2,14 +2,18 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, resolveConfigPath, resolveDataDir } from "../src/lib/config-loader.js";
+import {
+	defaultConfigPath,
+	loadConfig,
+	resolveConfigPath,
+	resolveDataDir,
+} from "../src/lib/config-loader.js";
 
 describe("config-loader", () => {
 	let tmpDir: string;
 	let originalHome: string | undefined;
-	const configPath = (dataDir = tmpDir) => join(dataDir, "config.yaml");
 	const writeConfig = (lines: string[], dataDir = tmpDir) =>
-		writeFile(configPath(dataDir), [...lines, ""].join("\n"), "utf-8");
+		writeFile(defaultConfigPath(dataDir), [...lines, ""].join("\n"), "utf-8");
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-config-test-"));
@@ -54,13 +58,13 @@ describe("config-loader", () => {
 			await writeConfig(["agent_id: 1"], dataDir);
 
 			const path = resolveConfigPath({}, dataDir);
-			expect(path).toBe(configPath(dataDir));
+			expect(path).toBe(defaultConfigPath(dataDir));
 		});
 
 		it("should return <dataDir>/config.yaml as default path", () => {
 			const dataDir = join(tmpDir, "fresh-data-no-config");
 			const path = resolveConfigPath({}, dataDir);
-			expect(path).toBe(configPath(dataDir));
+			expect(path).toBe(defaultConfigPath(dataDir));
 		});
 	});
 
@@ -156,11 +160,13 @@ describe("config-loader", () => {
 				loadConfig(
 					{
 						dataDir,
-						config: join(otherDir, "config.yaml"),
+						config: defaultConfigPath(otherDir),
 					},
 					{ requireAgentId: false },
 				),
-			).rejects.toThrow(`Config path must match the TAP data dir config at ${configPath(dataDir)}`);
+			).rejects.toThrow(
+				`Config path must match the TAP data dir config at ${defaultConfigPath(dataDir)}`,
+			);
 		});
 	});
 });
