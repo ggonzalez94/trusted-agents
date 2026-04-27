@@ -1,5 +1,3 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import type {
 	ICalendarProvider,
 	IConversationLogger,
@@ -7,7 +5,7 @@ import type {
 	TapMessagingService,
 } from "trusted-agents-core";
 import { generateAuthToken, persistAuthToken } from "./auth-token.js";
-import { TAPD_PORT_FILE, TAPD_TOKEN_FILE, type TapdConfig } from "./config.js";
+import type { TapdConfig } from "./config.js";
 import { EventBus } from "./event-bus.js";
 import { Router } from "./http/router.js";
 import { createConnectRoute } from "./http/routes/connect.js";
@@ -32,6 +30,7 @@ import { handleSseConnection } from "./http/sse.js";
 import { classifyEventToNotification } from "./notification-classifier.js";
 import { NotificationQueue } from "./notification-queue.js";
 import { persistBoundPort } from "./port-file.js";
+import { cleanupTapdRuntimeStateFiles } from "./runtime-state-files.js";
 import { TapdRuntime } from "./runtime.js";
 
 export const TAPD_VERSION = "0.2.0-beta.7";
@@ -191,10 +190,7 @@ export class Daemon {
 			this.notificationUnsubscribe();
 			this.notificationUnsubscribe = null;
 		}
-		await Promise.all([
-			rm(join(this.options.config.dataDir, TAPD_PORT_FILE), { force: true }).catch(() => {}),
-			rm(join(this.options.config.dataDir, TAPD_TOKEN_FILE), { force: true }).catch(() => {}),
-		]);
+		await cleanupTapdRuntimeStateFiles(this.options.config.dataDir);
 	}
 
 	authToken(): string {

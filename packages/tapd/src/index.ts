@@ -32,3 +32,4 @@ export {
 	pidFilePath,
 	type TapdPidRecord,
 } from "./pid-file.js";
+export { cleanupTapdRuntimeStateFiles } from "./runtime-state-files.js";
