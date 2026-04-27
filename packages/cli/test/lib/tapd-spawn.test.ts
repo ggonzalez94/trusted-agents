@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logFilePath } from "trusted-agents-tapd";
+import { TAPD_PORT_FILE, logFilePath, pidFilePath, portFilePath } from "trusted-agents-tapd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnTapdDetached, stopTapdDetached } from "../../src/lib/tapd-spawn.js";
 
@@ -15,6 +15,7 @@ const STUB_TAPD = `#!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+const PORT_FILE = ${JSON.stringify(TAPD_PORT_FILE)};
 const dataDir = process.env.TAP_DATA_DIR;
 if (!dataDir) {
 	process.stderr.write("missing TAP_DATA_DIR\\n");
@@ -22,7 +23,7 @@ if (!dataDir) {
 }
 
 const port = 49999;
-await writeFile(join(dataDir, ".tapd.port"), String(port), { encoding: "utf-8", mode: 0o600 });
+await writeFile(join(dataDir, PORT_FILE), String(port), { encoding: "utf-8", mode: 0o600 });
 
 let stopping = false;
 const stop = async () => {
@@ -30,7 +31,7 @@ const stop = async () => {
 	stopping = true;
 	try {
 		const { rm } = await import("node:fs/promises");
-		await rm(join(dataDir, ".tapd.port"), { force: true });
+		await rm(join(dataDir, PORT_FILE), { force: true });
 	} catch {}
 	process.exit(0);
 };
@@ -64,7 +65,7 @@ describe("tapd-spawn", () => {
 		expect(result.pid).toBeGreaterThan(0);
 		expect(result.port).toBe(49999);
 		expect(result.logPath).toBe(logFilePath(dataDir));
-		expect(result.pidPath).toBe(join(dataDir, ".tapd.pid"));
+		expect(result.pidPath).toBe(pidFilePath(dataDir));
 
 		// Cleanup so we don't leak a child process
 		await stopTapdDetached(dataDir, 3_000);
@@ -82,7 +83,7 @@ describe("tapd-spawn", () => {
 
 		// Port file should be gone
 		const { existsSync } = await import("node:fs");
-		expect(existsSync(join(dataDir, ".tapd.port"))).toBe(false);
+		expect(existsSync(portFilePath(dataDir))).toBe(false);
 	});
 
 	it("spawnTapdDetached throws when bin path is missing", async () => {
@@ -104,7 +105,7 @@ describe("tapd-spawn", () => {
 		// Pre-seed a bogus stale port file from a "previous run". If the
 		// spawn path didn't clear it, waitForPortFile would return 11111
 		// immediately before the real child has a chance to overwrite it.
-		await writeFile(join(dataDir, ".tapd.port"), "11111", { encoding: "utf-8" });
+		await writeFile(portFilePath(dataDir), "11111", { encoding: "utf-8" });
 
 		const result = await spawnTapdDetached({
 			dataDir,
@@ -114,7 +115,7 @@ describe("tapd-spawn", () => {
 
 		// The stub writes port 49999 — if we saw 11111, the stale file leaked.
 		expect(result.port).toBe(49999);
-		const onDisk = await readFile(join(dataDir, ".tapd.port"), "utf-8");
+		const onDisk = await readFile(portFilePath(dataDir), "utf-8");
 		expect(Number.parseInt(onDisk, 10)).toBe(49999);
 
 		await stopTapdDetached(dataDir, 3_000);
@@ -138,7 +139,7 @@ describe("tapd-spawn", () => {
 
 		// Pidfile must be cleaned up so the next `tap daemon status` doesn't
 		// report a running daemon that isn't there.
-		expect(existsSync(join(dataDir, ".tapd.pid"))).toBe(false);
+		expect(existsSync(pidFilePath(dataDir))).toBe(false);
 	});
 
 	it("stopTapdDetached escalates to SIGKILL when SIGTERM is ignored", async () => {
@@ -150,7 +151,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const dataDir = process.env.TAP_DATA_DIR;
-await writeFile(join(dataDir, ".tapd.port"), "49999", { encoding: "utf-8", mode: 0o600 });
+await writeFile(join(dataDir, ${JSON.stringify(TAPD_PORT_FILE)}), "49999", { encoding: "utf-8", mode: 0o600 });
 // Install SIGTERM handler that ignores the signal entirely.
 process.on("SIGTERM", () => {});
 // Keep the event loop alive forever.
@@ -169,8 +170,8 @@ setInterval(() => {}, 60_000);
 		expect(stoppedPid).toBe(spawned.pid);
 
 		// Both files must be removed only after the process is actually gone.
-		expect(existsSync(join(dataDir, ".tapd.pid"))).toBe(false);
-		expect(existsSync(join(dataDir, ".tapd.port"))).toBe(false);
+		expect(existsSync(pidFilePath(dataDir))).toBe(false);
+		expect(existsSync(portFilePath(dataDir))).toBe(false);
 
 		// And the process should now be dead.
 		let alive = true;
@@ -184,7 +185,7 @@ setInterval(() => {}, 60_000);
 
 	it("stopTapdDetached refuses to signal a pid that no longer matches tapd ownership", async () => {
 		await writeFile(
-			join(dataDir, ".tapd.pid"),
+			pidFilePath(dataDir),
 			JSON.stringify({
 				pid: process.pid,
 				ownerToken: "tapd-owner-token-that-does-not-match",
@@ -216,7 +217,7 @@ setInterval(() => {}, 60_000);
 		// own pid so isProcessAlive() is true but ownership won't match —
 		// what matters for this test is that the exclusive write fails.
 		await writeFile(
-			join(dataDir, ".tapd.pid"),
+			pidFilePath(dataDir),
 			JSON.stringify({ pid: process.pid, ownerToken: "racer", binPath: stubBin }),
 			{ encoding: "utf-8", mode: 0o600 },
 		);
@@ -230,7 +231,7 @@ setInterval(() => {}, 60_000);
 		).rejects.toThrow(/already.*progress|pidfile.*exists/i);
 
 		// The pidfile we seeded must remain intact (we didn't clobber it).
-		const raw = await readFile(join(dataDir, ".tapd.pid"), "utf-8");
+		const raw = await readFile(pidFilePath(dataDir), "utf-8");
 		expect(JSON.parse(raw)).toMatchObject({ ownerToken: "racer" });
 	});
 });
