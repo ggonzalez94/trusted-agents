@@ -4928,9 +4928,7 @@ function parseSchedulingTrackingMetadata(
 	const schedulingState: SchedulingRequestState | undefined =
 		ss === "accepted" || ss === "cancelled" || ss === "rejected" ? ss : undefined;
 	return {
-		...(typeof metadata.localEventId === "string" && metadata.localEventId.length > 0
-			? { localEventId: metadata.localEventId }
-			: {}),
+		...(isNonEmptyString(metadata.localEventId) ? { localEventId: metadata.localEventId } : {}),
 		...(schedulingState ? { schedulingState } : {}),
 	};
 }
@@ -5169,10 +5167,7 @@ function parsePendingConnectionResultDelivery(
 	// before the field was introduced. Missing/empty chain means the entry
 	// cannot participate in chain-scoped implicit completion, but the direct
 	// retry pipeline still delivers it.
-	const peerChain =
-		typeof metadata.peerChain === "string" && metadata.peerChain.length > 0
-			? metadata.peerChain
-			: undefined;
+	const peerChain = isNonEmptyString(metadata.peerChain) ? metadata.peerChain : undefined;
 
 	// plannedContact is optional — entries written before this field was
 	// introduced do not carry the planned contact and therefore cannot write

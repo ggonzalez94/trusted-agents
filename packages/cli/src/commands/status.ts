@@ -10,6 +10,7 @@ import {
 	type TransportOwnerInfo,
 	TransportOwnerLock,
 	fsErrorCode,
+	isNonEmptyString,
 	isProcessAlive,
 	isRecord,
 	resolveDataDir as resolveDataDirPath,
@@ -252,7 +253,7 @@ function readConfigState(configPath: string): ConfigState {
 	}
 
 	const rawChain = parsed.chain;
-	const chain = typeof rawChain === "string" && rawChain.length > 0 ? rawChain : null;
+	const chain = isNonEmptyString(rawChain) ? rawChain : null;
 
 	return { kind: "parsed", agentId, chain };
 }
