@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appListCommand, appRemoveCommand } from "../src/commands/app.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML } from "./helpers/config-fixtures.js";
 
 describe("tap app commands", () => {
 	let tempRoot: string;
@@ -24,11 +26,7 @@ describe("tap app commands", () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-app-cmd-"));
 		dataDir = join(tempRoot, "data");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(
-			join(dataDir, "config.yaml"),
-			["agent_id: -1", "chain: eip155:8453"].join("\n"),
-			"utf-8",
-		);
+		await writeFile(defaultConfigPath(dataDir), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
 		logWrites = [];
 		// The app commands use console.log for success output
 		vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
