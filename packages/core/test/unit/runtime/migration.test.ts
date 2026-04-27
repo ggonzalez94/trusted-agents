@@ -8,7 +8,7 @@ import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
-import { FileRequestJournal } from "../../../src/runtime/request-journal.js";
+import { FileRequestJournal, requestJournalPath } from "../../../src/runtime/request-journal.js";
 import { TapMessagingService } from "../../../src/runtime/service.js";
 import type {
 	ProtocolMessage,
@@ -228,7 +228,7 @@ describe("legacy state migration — acked status rewrite", () => {
 	it("rewrites legacy acked entries to pending on start", async () => {
 		const dir = makeTempDir();
 		writeFileSync(
-			join(dir, "request-journal.json"),
+			requestJournalPath(dir),
 			JSON.stringify({
 				entries: [
 					{
@@ -259,7 +259,7 @@ describe("legacy state migration — acked status rewrite", () => {
 	it("is idempotent — a second start does not re-migrate", async () => {
 		const dir = makeTempDir();
 		writeFileSync(
-			join(dir, "request-journal.json"),
+			requestJournalPath(dir),
 			JSON.stringify({
 				entries: [
 					{

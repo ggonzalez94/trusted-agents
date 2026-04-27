@@ -14,6 +14,8 @@ export {
 } from "./execution.js";
 export {
 	FileRequestJournal,
+	REQUEST_JOURNAL_FILE,
+	requestJournalPath,
 	type IRequestJournal,
 	type RequestJournalDirection,
 	type RequestJournalEntry,

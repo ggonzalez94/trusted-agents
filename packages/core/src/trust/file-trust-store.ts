@@ -5,13 +5,19 @@ import { ConnectionError } from "../common/index.js";
 import type { ITrustStore } from "./trust-store.js";
 import type { Contact, ContactsFile } from "./types.js";
 
+export const TRUSTED_AGENTS_CONTACTS_FILE = "contacts.json";
+
+export function contactsFilePath(dataDir: string): string {
+	return join(dataDir, TRUSTED_AGENTS_CONTACTS_FILE);
+}
+
 export class FileTrustStore implements ITrustStore {
 	private readonly contactsPath: string;
 	private readonly writeMutex = new AsyncMutex();
 
 	constructor(dataDir = join(process.env.HOME ?? "~", ".trustedagents")) {
 		this.dataDir = resolveDataDir(dataDir);
-		this.contactsPath = join(this.dataDir, "contacts.json");
+		this.contactsPath = contactsFilePath(this.dataDir);
 	}
 	private readonly dataDir: string;
 

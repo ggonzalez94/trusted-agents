@@ -108,7 +108,7 @@ describe("tap remove", () => {
 		expect(output.data.data_dir).toBe(resolvedDataDir);
 		expect(output.data.config_path).toBe(defaultConfigPath(resolvedDataDir));
 		expect(output.data.agent_id).toBe(42);
-		expect(output.data.paths_to_remove).toContain(join(resolvedDataDir, "contacts.json"));
+		expect(output.data.paths_to_remove).toContain(core.contactsFilePath(resolvedDataDir));
 		expect(output.data.paths_to_remove).toContain(
 			join(resolvedDataDir, "conversations", "peer-1.json"),
 		);
@@ -233,7 +233,7 @@ describe("tap remove", () => {
 			join(resolvedDataDir, "apps", "transfer", "state.json"),
 		);
 		expect(dryRun.data.paths_to_remove).toContain(
-			join(resolvedDataDir, "contacts.json.abc123.tmp"),
+			`${core.contactsFilePath(resolvedDataDir)}.abc123.tmp`,
 		);
 
 		stdoutWrites.length = 0;
@@ -305,7 +305,7 @@ describe("tap remove", () => {
 			"some_unrelated_field: value\nanother: thing\n",
 			"utf-8",
 		);
-		await writeFile(join(badDataDir, "contacts.json"), "[]\n", "utf-8");
+		await writeFile(core.contactsFilePath(badDataDir), "[]\n", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -323,7 +323,7 @@ describe("tap remove", () => {
 		const legacyDataDir = join(tmpDir, "legacy-agent");
 		await mkdir(legacyDataDir, { recursive: true });
 		await writeFile(defaultConfigPath(legacyDataDir), "chain: eip155:8453\n", "utf-8");
-		await writeFile(join(legacyDataDir, "contacts.json"), "[]\n", "utf-8");
+		await writeFile(core.contactsFilePath(legacyDataDir), "[]\n", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -366,7 +366,7 @@ describe("tap remove", () => {
 		const chainlessDataDir = join(tmpDir, "chainless-agent");
 		await mkdir(chainlessDataDir, { recursive: true });
 		await writeFile(defaultConfigPath(chainlessDataDir), "agent_id: 42\n", "utf-8");
-		await writeFile(join(chainlessDataDir, "contacts.json"), "[]\n", "utf-8");
+		await writeFile(core.contactsFilePath(chainlessDataDir), "[]\n", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -530,7 +530,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 		`${buildAgentConfigYaml({ agentId: 42, wallet: "test-wallet", apiKey: "test-api-key" })}\n`,
 		"utf-8",
 	);
-	await writeFile(join(dataDir, "contacts.json"), "[]\n", "utf-8");
+	await writeFile(core.contactsFilePath(dataDir), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "conversations", "peer-1.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");
 	await writeFile(join(dataDir, "pending-invites.json"), "[]\n", "utf-8");
@@ -545,5 +545,5 @@ async function seedAgentData(dataDir: string): Promise<void> {
 		"utf-8",
 	);
 	// Simulate an orphaned atomic-write temp file from an interrupted store write.
-	await writeFile(join(dataDir, "contacts.json.abc123.tmp"), "[]\n", "utf-8");
+	await writeFile(`${core.contactsFilePath(dataDir)}.abc123.tmp`, "[]\n", "utf-8");
 }

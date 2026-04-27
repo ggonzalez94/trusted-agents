@@ -7,6 +7,8 @@ import {
 	FileRequestJournal,
 	FileTrustStore,
 	TransportOwnerLock,
+	contactsFilePath,
+	requestJournalPath,
 } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
@@ -470,7 +472,7 @@ describe("tap status", () => {
 		// "everything is fine". Prior bug: a catch-all in readJournal returned
 		// [] for JSON parse failures.
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, "request-journal.json"), "{ not json", "utf-8");
+		await writeFile(requestJournalPath(dataDir), "{ not json", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -485,7 +487,7 @@ describe("tap status", () => {
 
 	it("surfaces corrupt contacts.json as a warning", async () => {
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, "contacts.json"), "[not an object", "utf-8");
+		await writeFile(contactsFilePath(dataDir), "[not an object", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 

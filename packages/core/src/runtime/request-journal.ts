@@ -34,6 +34,12 @@ interface RequestJournalFile {
 	entries: RequestJournalEntry[];
 }
 
+export const REQUEST_JOURNAL_FILE = "request-journal.json";
+
+export function requestJournalPath(dataDir: string): string {
+	return join(dataDir, REQUEST_JOURNAL_FILE);
+}
+
 export interface IRequestJournal {
 	claimInbound(
 		entry: Omit<RequestJournalEntry, "createdAt" | "updatedAt" | "status"> & {
@@ -60,7 +66,7 @@ export class FileRequestJournal implements IRequestJournal {
 
 	constructor(dataDir = join(process.env.HOME ?? "~", ".trustedagents")) {
 		this.dataDir = resolveDataDir(dataDir);
-		this.path = join(this.dataDir, "request-journal.json");
+		this.path = requestJournalPath(this.dataDir);
 	}
 
 	private readonly dataDir: string;
