@@ -29,6 +29,16 @@ export function isZeroXPrefixedString(value: unknown): value is `0x${string}` {
 	return typeof value === "string" && value.startsWith("0x");
 }
 
+export interface PeerField {
+	peer: string;
+}
+
+export function hasPeerField(
+	value: Record<string, unknown>,
+): value is Record<string, unknown> & PeerField {
+	return isNonEmptyString(value.peer);
+}
+
 export interface TapTransferFields {
 	asset: "native" | "usdc";
 	amount: string;

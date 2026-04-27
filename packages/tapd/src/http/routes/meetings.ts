@@ -14,7 +14,7 @@ import { HttpError } from "../errors.js";
 import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
-	isNonEmptyString,
+	hasPeerField,
 	isOptionalReasonBody,
 	isOptionalString,
 	isPositiveFiniteNumber,
@@ -45,7 +45,7 @@ interface RequestMeetingBody {
 function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (!isNonEmptyString(v.peer)) return false;
+	if (!hasPeerField(v)) return false;
 	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
 	if (!isPositiveFiniteNumber(v.duration)) return false;
 	if (v.slots !== undefined && !Array.isArray(v.slots)) return false;
