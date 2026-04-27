@@ -5351,14 +5351,14 @@ function parseStoredRequestField(
 	}
 
 	const request = metadata.request;
-	if (typeof request !== "object" || request === null) {
+	if (!isObject(request)) {
 		return null;
 	}
-	if ((request as { type?: unknown }).type !== expectedType) {
+	if (request.type !== expectedType) {
 		return null;
 	}
 
-	return (request as Record<string, unknown>)[field] ?? null;
+	return request[field] ?? null;
 }
 
 function resolvePermissionsUpdatePeer(
@@ -5393,7 +5393,7 @@ function parseRecordedTransferResponse(
 	}
 
 	const response = metadata.response;
-	if (typeof response !== "object" || response === null) {
+	if (!isObject(response)) {
 		return null;
 	}
 
