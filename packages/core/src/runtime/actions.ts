@@ -111,11 +111,7 @@ export function parsePermissionGrantRequest(
 		return null;
 	}
 
-	if (
-		typeof data.actionId !== "string" ||
-		data.actionId.length === 0 ||
-		!Array.isArray(data.grants)
-	) {
+	if (!isNonEmptyString(data.actionId) || !Array.isArray(data.grants)) {
 		return null;
 	}
 
@@ -125,12 +121,7 @@ export function parsePermissionGrantRequest(
 			return null;
 		}
 
-		if (
-			typeof input.grantId !== "string" ||
-			input.grantId.length === 0 ||
-			typeof input.scope !== "string" ||
-			input.scope.length === 0
-		) {
+		if (!isNonEmptyString(input.grantId) || !isNonEmptyString(input.scope)) {
 			return null;
 		}
 

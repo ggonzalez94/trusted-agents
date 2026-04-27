@@ -1,5 +1,11 @@
 import { isIP } from "node:net";
-import { IdentityError, isEthereumAddress, isObject, toErrorMessage } from "../common/index.js";
+import {
+	IdentityError,
+	isEthereumAddress,
+	isNonEmptyString,
+	isObject,
+	toErrorMessage,
+} from "../common/index.js";
 import type { RegistrationFile } from "./types.js";
 
 export function validateRegistrationFile(data: unknown): RegistrationFile {
@@ -15,7 +21,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 		);
 	}
 
-	if (typeof obj.name !== "string" || obj.name.length === 0) {
+	if (!isNonEmptyString(obj.name)) {
 		throw new IdentityError("Registration file must have a non-empty name");
 	}
 
@@ -38,10 +44,10 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 			throw new IdentityError("Each service must be an object");
 		}
 		const svc = service;
-		if (typeof svc.name !== "string" || svc.name.length === 0) {
+		if (!isNonEmptyString(svc.name)) {
 			throw new IdentityError("Each service must have a non-empty name");
 		}
-		if (typeof svc.endpoint !== "string" || svc.endpoint.length === 0) {
+		if (!isNonEmptyString(svc.endpoint)) {
 			throw new IdentityError("Each service must have a non-empty endpoint");
 		}
 		if (svc.name === "xmtp") {
@@ -69,7 +75,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 
 	const tap = obj.trustedAgentProtocol;
 
-	if (typeof tap.version !== "string" || tap.version.length === 0) {
+	if (!isNonEmptyString(tap.version)) {
 		throw new IdentityError("trustedAgentProtocol must have a non-empty version");
 	}
 
@@ -99,10 +105,7 @@ export function validateRegistrationFile(data: unknown): RegistrationFile {
 			);
 		}
 
-		if (
-			execution.paymaster !== undefined &&
-			(typeof execution.paymaster !== "string" || execution.paymaster.length === 0)
-		) {
+		if (execution.paymaster !== undefined && !isNonEmptyString(execution.paymaster)) {
 			throw new IdentityError(
 				"trustedAgentProtocol.execution.paymaster must be a non-empty string",
 			);
