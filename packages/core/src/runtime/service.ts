@@ -58,6 +58,7 @@ import {
 	buildSchedulingAcceptText,
 	buildSchedulingProposalText,
 	buildSchedulingRejectText,
+	parseSchedulingActionPayload,
 	parseSchedulingActionRequest,
 	parseSchedulingActionResponse,
 } from "../scheduling/actions.js";
@@ -3180,75 +3181,17 @@ export class TapMessagingService {
 	private parseSchedulingProposalFromPayload(
 		payload: Record<string, unknown>,
 	): SchedulingProposal | null {
-		const type = payload.type;
-		if (type !== "scheduling/propose" && type !== "scheduling/counter") {
-			// Also accept "scheduling/request" as the wire format uses it
-			if (type !== "scheduling/request") {
-				return null;
-			}
-		}
-
-		if (typeof payload.title !== "string" || payload.title.length === 0) {
-			return null;
-		}
-
-		const durationMinutes =
-			typeof payload.durationMinutes === "number"
-				? payload.durationMinutes
-				: typeof payload.duration === "number"
-					? payload.duration
-					: undefined;
-		if (durationMinutes === undefined || durationMinutes <= 0) {
-			return null;
-		}
-
-		const rawSlots = Array.isArray(payload.proposedSlots)
-			? payload.proposedSlots
-			: Array.isArray(payload.slots)
-				? payload.slots
-				: undefined;
-		if (!rawSlots || rawSlots.length === 0) {
-			return null;
-		}
-
-		const slots: Array<{ start: string; end: string }> = [];
-		for (const slot of rawSlots) {
-			if (
-				typeof slot !== "object" ||
-				slot === null ||
-				typeof (slot as Record<string, unknown>).start !== "string" ||
-				typeof (slot as Record<string, unknown>).end !== "string"
-			) {
-				return null;
-			}
-			slots.push({ start: (slot as { start: string }).start, end: (slot as { end: string }).end });
-		}
-
-		const schedulingId =
-			typeof payload.schedulingId === "string" && payload.schedulingId.length > 0
-				? payload.schedulingId
-				: `sch_${Date.now()}`;
-
-		const timezone =
-			typeof payload.timezone === "string" && payload.timezone.length > 0
-				? payload.timezone
-				: typeof payload.originTimezone === "string" && payload.originTimezone.length > 0
-					? payload.originTimezone
-					: "UTC";
-
-		return {
-			type: (type === "scheduling/request" ? "scheduling/propose" : type) as
-				| "scheduling/propose"
-				| "scheduling/counter",
-			schedulingId,
-			title: payload.title,
-			duration: durationMinutes,
-			slots,
-			originTimezone: timezone,
-			...(typeof payload.note === "string" && payload.note.length > 0
-				? { note: payload.note }
-				: {}),
-		};
+		return parseSchedulingActionPayload(payload, {
+			typeAliases: { "scheduling/request": "scheduling/propose" },
+			durationFields: ["durationMinutes", "duration"],
+			slotFields: ["proposedSlots", "slots"],
+			originTimezoneFields: ["timezone", "originTimezone"],
+			defaultSchedulingId: () => `sch_${Date.now()}`,
+			defaultOriginTimezone: "UTC",
+			copySlots: true,
+			includeLocation: false,
+			validateSlotDates: false,
+		});
 	}
 
 	private handleSchedulingFallback(

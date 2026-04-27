@@ -4,11 +4,18 @@ import { extractMessageData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
 
+type SchedulingProposalType = "scheduling/propose" | "scheduling/counter";
+
 type SchedulingPayloadParseOptions = {
 	defaultSchedulingId?: () => string;
 	defaultOriginTimezone?: string;
 	copySlots?: boolean;
 	includeLocation?: boolean;
+	typeAliases?: Record<string, SchedulingProposalType>;
+	durationFields?: readonly string[];
+	slotFields?: readonly string[];
+	originTimezoneFields?: readonly string[];
+	validateSlotDates?: boolean;
 };
 
 function isValidIsoDate(value: unknown): value is string {
@@ -30,39 +37,94 @@ function isValidTimeSlot(slot: unknown): slot is TimeSlot {
 	return new Date(s.start as string) < new Date(s.end as string);
 }
 
+function isStringTimeSlot(slot: unknown): slot is TimeSlot {
+	if (typeof slot !== "object" || slot === null) {
+		return false;
+	}
+	const s = slot as { start?: unknown; end?: unknown };
+	return typeof s.start === "string" && typeof s.end === "string";
+}
+
+function readFirstNumber(
+	data: Record<string, unknown>,
+	fields: readonly string[],
+): number | undefined {
+	for (const field of fields) {
+		const value = data[field];
+		if (typeof value === "number") return value;
+	}
+	return undefined;
+}
+
+function readFirstArray(
+	data: Record<string, unknown>,
+	fields: readonly string[],
+): unknown[] | undefined {
+	for (const field of fields) {
+		const value = data[field];
+		if (Array.isArray(value)) return value;
+	}
+	return undefined;
+}
+
+function readFirstNonEmptyString(
+	data: Record<string, unknown>,
+	fields: readonly string[],
+): string | undefined {
+	for (const field of fields) {
+		const value = data[field];
+		if (isNonEmptyString(value)) return value;
+	}
+	return undefined;
+}
+
+function readSchedulingProposalType(
+	value: unknown,
+	aliases: Record<string, SchedulingProposalType> = {},
+): SchedulingProposalType | null {
+	if (value === "scheduling/propose" || value === "scheduling/counter") {
+		return value;
+	}
+	return typeof value === "string" ? (aliases[value] ?? null) : null;
+}
+
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
 export function parseSchedulingActionPayload(
 	data: Record<string, unknown>,
 	options: SchedulingPayloadParseOptions = {},
 ): SchedulingProposal | null {
-	if (data.type !== "scheduling/propose" && data.type !== "scheduling/counter") {
+	const type = readSchedulingProposalType(data.type, options.typeAliases);
+	if (!type) {
 		return null;
 	}
 
 	const schedulingId = isNonEmptyString(data.schedulingId)
 		? data.schedulingId
 		: options.defaultSchedulingId?.();
-	const originTimezone = isNonEmptyString(data.originTimezone)
-		? data.originTimezone
-		: options.defaultOriginTimezone;
+	const originTimezone =
+		readFirstNonEmptyString(data, options.originTimezoneFields ?? ["originTimezone"]) ??
+		options.defaultOriginTimezone;
+	const duration = readFirstNumber(data, options.durationFields ?? ["duration"]);
 
 	if (
 		!isNonEmptyString(schedulingId) ||
 		!isNonEmptyString(data.title) ||
-		typeof data.duration !== "number" ||
-		data.duration <= 0 ||
+		duration === undefined ||
+		duration <= 0 ||
 		!isNonEmptyString(originTimezone)
 	) {
 		return null;
 	}
 
-	if (!Array.isArray(data.slots) || data.slots.length === 0) {
+	const rawSlots = readFirstArray(data, options.slotFields ?? ["slots"]);
+	if (!rawSlots || rawSlots.length === 0) {
 		return null;
 	}
 
-	for (const slot of data.slots) {
-		if (!isValidTimeSlot(slot)) {
+	const isValidSlot = options.validateSlotDates === false ? isStringTimeSlot : isValidTimeSlot;
+	for (const slot of rawSlots) {
+		if (!isValidSlot(slot)) {
 			return null;
 		}
 	}
@@ -71,17 +133,17 @@ export function parseSchedulingActionPayload(
 		options.includeLocation === false ? undefined : readNonEmptyString(data.location);
 	const note = readNonEmptyString(data.note);
 	const slots = options.copySlots
-		? data.slots.map((slot) => {
+		? rawSlots.map((slot) => {
 				const { start, end } = slot as TimeSlot;
 				return { start, end };
 			})
-		: (data.slots as TimeSlot[]);
+		: (rawSlots as TimeSlot[]);
 
 	return {
-		type: data.type,
+		type,
 		schedulingId,
 		title: data.title,
-		duration: data.duration,
+		duration,
 		slots,
 		originTimezone,
 		...(location ? { location } : {}),
