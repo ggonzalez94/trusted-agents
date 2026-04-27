@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
-import { AsyncMutex, isObject, nowISO } from "../common/index.js";
+import { AsyncMutex, isNonEmptyString, isObject, nowISO } from "../common/index.js";
 
 export interface XmtpConversationCheckpoint {
 	lastSentAtNs: string;
@@ -27,7 +27,7 @@ export class FileXmtpSyncStateStore {
 
 	async isInitialized(): Promise<boolean> {
 		const state = await this.load();
-		return typeof state.initializedAt === "string" && state.initializedAt.length > 0;
+		return isNonEmptyString(state.initializedAt);
 	}
 
 	async getCheckpoint(conversationId: string): Promise<XmtpConversationCheckpoint | null> {
@@ -77,10 +77,7 @@ export class FileXmtpSyncStateStore {
 				const parsed = raw as Partial<XmtpSyncStateFile>;
 				return {
 					version: 1,
-					initializedAt:
-						typeof parsed.initializedAt === "string" && parsed.initializedAt.length > 0
-							? parsed.initializedAt
-							: undefined,
+					initializedAt: isNonEmptyString(parsed.initializedAt) ? parsed.initializedAt : undefined,
 					conversations: normalizeConversations(parsed.conversations),
 				};
 			},
@@ -117,7 +114,7 @@ function normalizeCheckpoint(checkpoint: unknown): XmtpConversationCheckpoint | 
 	}
 
 	const candidate = checkpoint as Partial<XmtpConversationCheckpoint>;
-	if (typeof candidate.lastSentAtNs !== "string" || candidate.lastSentAtNs.length === 0) {
+	if (!isNonEmptyString(candidate.lastSentAtNs)) {
 		return null;
 	}
 
