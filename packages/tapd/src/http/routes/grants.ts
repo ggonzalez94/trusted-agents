@@ -23,8 +23,8 @@ function isGrantsBody(value: unknown): value is GrantsBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (!hasPeerField(v)) return false;
-	if (!v.grantSet || typeof v.grantSet !== "object") return false;
-	const gs = v.grantSet as Record<string, unknown>;
+	const gs = asRecord(v.grantSet);
+	if (!gs) return false;
 	if (!isArray(gs.grants)) return false;
 	if (!hasOptionalStringFields(v, ["note"])) return false;
 	return true;
