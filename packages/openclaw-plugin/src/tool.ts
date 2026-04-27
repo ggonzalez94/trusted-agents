@@ -226,11 +226,18 @@ function json(payload: unknown): {
 	};
 }
 
+function readTrimmedString(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function requireString(value: string | undefined, name: string): string {
-	if (typeof value !== "string" || value.trim().length === 0) {
+	const trimmed = readTrimmedString(value);
+	if (trimmed === undefined) {
 		throw new Error(`${name} is required`);
 	}
-	return value.trim();
+	return trimmed;
 }
 
 function requireAmount(value: string | undefined, name: string): string {
@@ -245,7 +252,7 @@ function requireAmount(value: string | undefined, name: string): string {
 }
 
 function optionalString(value: string | undefined): string | undefined {
-	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+	return readTrimmedString(value);
 }
 
 function requireBoolean(value: boolean | undefined, name: string): boolean {
