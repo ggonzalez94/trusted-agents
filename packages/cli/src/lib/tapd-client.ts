@@ -363,13 +363,7 @@ function tapdHttpRequest<T>(
 					reject(buildErrorFromBody(text, status));
 					return;
 				}
-				let parsed: unknown;
-				try {
-					parsed = text ? JSON.parse(text) : undefined;
-				} catch {
-					parsed = undefined;
-				}
-				resolve(parsed as T);
+				resolve(parseOptionalJson(text) as T);
 			});
 			res.on("error", reject);
 		});
@@ -388,12 +382,7 @@ function tapdHttpRequest<T>(
 }
 
 function buildErrorFromBody(text: string, status: number): TapdClientError {
-	let body: unknown;
-	try {
-		body = text ? JSON.parse(text) : undefined;
-	} catch {
-		body = undefined;
-	}
+	const body = parseOptionalJson(text);
 	const errPayload = (
 		body as
 			| { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
@@ -405,4 +394,12 @@ function buildErrorFromBody(text: string, status: number): TapdClientError {
 		status,
 		errPayload?.details,
 	);
+}
+
+function parseOptionalJson(text: string): unknown {
+	try {
+		return text ? JSON.parse(text) : undefined;
+	} catch {
+		return undefined;
+	}
 }
