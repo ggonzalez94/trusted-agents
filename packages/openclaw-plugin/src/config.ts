@@ -46,17 +46,17 @@ export function parseTapOpenClawPluginConfig(raw: unknown): TapOpenClawPluginCon
 	}
 	const input = raw as { dataDir?: unknown; tapdSocketPath?: unknown };
 	const result: TapOpenClawPluginConfig = {};
-	if (input.dataDir !== undefined) {
-		if (typeof input.dataDir !== "string" || input.dataDir.trim().length === 0) {
-			throw new Error("TAP plugin config.dataDir must be a non-empty string");
-		}
-		result.dataDir = input.dataDir.trim();
-	}
-	if (input.tapdSocketPath !== undefined) {
-		if (typeof input.tapdSocketPath !== "string" || input.tapdSocketPath.trim().length === 0) {
-			throw new Error("TAP plugin config.tapdSocketPath must be a non-empty string");
-		}
-		result.tapdSocketPath = input.tapdSocketPath.trim();
-	}
+	const dataDir = parseOptionalTrimmedString(input.dataDir, "dataDir");
+	if (dataDir !== undefined) result.dataDir = dataDir;
+	const tapdSocketPath = parseOptionalTrimmedString(input.tapdSocketPath, "tapdSocketPath");
+	if (tapdSocketPath !== undefined) result.tapdSocketPath = tapdSocketPath;
 	return result;
+}
+
+function parseOptionalTrimmedString(value: unknown, field: string): string | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string" || value.trim().length === 0) {
+		throw new Error(`TAP plugin config.${field} must be a non-empty string`);
+	}
+	return value.trim();
 }
