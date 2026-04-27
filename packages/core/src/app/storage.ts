@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonFileAtomic } from "../common/atomic-json.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex } from "../common/index.js";
 import type { TapAppStorage } from "./types.js";
 
@@ -46,20 +45,7 @@ export class FileAppStorage implements TapAppStorage {
 	}
 
 	private async load(): Promise<Record<string, unknown>> {
-		try {
-			const content = await readFile(this.filePath, "utf-8");
-			return JSON.parse(content) as Record<string, unknown>;
-		} catch (err: unknown) {
-			if (
-				err &&
-				typeof err === "object" &&
-				"code" in err &&
-				(err as { code: string }).code === "ENOENT"
-			) {
-				return {};
-			}
-			throw err;
-		}
+		return readJsonFileOrDefault(this.filePath, (raw) => raw as Record<string, unknown>, {});
 	}
 
 	private async save(data: Record<string, unknown>): Promise<void> {

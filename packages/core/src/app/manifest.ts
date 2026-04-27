@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonFileAtomic } from "../common/atomic-json.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex } from "../common/index.js";
 
 // Per-dataDir mutex to protect read-modify-write sequences in manifest operations
@@ -35,12 +34,14 @@ function manifestPath(dataDir: string): string {
 }
 
 export async function loadAppManifest(dataDir: string): Promise<AppManifest> {
-	try {
-		const content = await readFile(manifestPath(dataDir), "utf-8");
-		return JSON.parse(content) as AppManifest;
-	} catch {
-		return { apps: {} };
-	}
+	return readJsonFileOrDefault(
+		manifestPath(dataDir),
+		(raw) => raw as AppManifest,
+		{ apps: {} },
+		{
+			fallbackOnError: true,
+		},
+	);
 }
 
 export async function saveAppManifest(dataDir: string, manifest: AppManifest): Promise<void> {

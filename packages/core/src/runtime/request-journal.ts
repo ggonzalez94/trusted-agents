@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonFileAtomic } from "../common/atomic-json.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 
 export type RequestJournalDirection = "inbound" | "outbound";
@@ -210,20 +209,14 @@ export class FileRequestJournal implements IRequestJournal {
 	}
 
 	private async load(): Promise<RequestJournalFile> {
-		try {
-			const raw = await readFile(this.path, "utf-8");
-			const parsed = JSON.parse(raw) as RequestJournalFile;
-			return Array.isArray(parsed.entries) ? parsed : { entries: [] };
-		} catch (err: unknown) {
-			if (
-				err instanceof Error &&
-				"code" in err &&
-				(err as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return { entries: [] };
-			}
-			throw err;
-		}
+		return readJsonFileOrDefault(
+			this.path,
+			(raw) => {
+				const parsed = raw as RequestJournalFile;
+				return Array.isArray(parsed.entries) ? parsed : { entries: [] };
+			},
+			{ entries: [] },
+		);
 	}
 
 	private async save(file: RequestJournalFile): Promise<void> {
