@@ -1,8 +1,8 @@
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import Database from "better-sqlite3";
 import { isNonEmptyString, isObject, resolveDataDir } from "../common/index.js";
 import type { IConversationLogger } from "./logger.js";
+import { conversationsDbPath } from "./paths.js";
 import { applySchema } from "./sqlite-schema.js";
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
@@ -85,7 +85,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 	constructor(dataDir: string) {
 		this.dataDir = resolveDataDir(dataDir);
 		mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
-		this.db = new Database(join(this.dataDir, "conversations.db"));
+		this.db = new Database(conversationsDbPath(this.dataDir));
 		applySchema(this.db);
 
 		this.stmtSelectConversation = this.db.prepare(

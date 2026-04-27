@@ -7,6 +7,7 @@ import {
 	assertSafeFileComponent,
 	resolveDataDir,
 } from "../common/index.js";
+import { legacyConversationsDir } from "./paths.js";
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
 
@@ -35,7 +36,7 @@ export class FileConversationLogger implements IConversationLogger {
 
 	constructor(dataDir: string = join(process.env.HOME ?? "~", ".trustedagents")) {
 		this.dataDir = resolveDataDir(dataDir);
-		this.conversationsDir = join(this.dataDir, "conversations");
+		this.conversationsDir = legacyConversationsDir(this.dataDir);
 	}
 	private readonly dataDir: string;
 
