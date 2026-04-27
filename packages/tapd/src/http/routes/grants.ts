@@ -5,7 +5,13 @@ import type {
 	TapRequestGrantSetResult,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord, hasOptionalStringFields, hasPeerField, requireBody } from "../validation.js";
+import {
+	asRecord,
+	hasOptionalStringFields,
+	hasPeerField,
+	isArray,
+	requireBody,
+} from "../validation.js";
 
 interface GrantsBody {
 	peer: string;
@@ -19,7 +25,7 @@ function isGrantsBody(value: unknown): value is GrantsBody {
 	if (!hasPeerField(v)) return false;
 	if (!v.grantSet || typeof v.grantSet !== "object") return false;
 	const gs = v.grantSet as Record<string, unknown>;
-	if (!Array.isArray(gs.grants)) return false;
+	if (!isArray(gs.grants)) return false;
 	if (!hasOptionalStringFields(v, ["note"])) return false;
 	return true;
 }

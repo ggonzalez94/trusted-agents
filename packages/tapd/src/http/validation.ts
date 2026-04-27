@@ -28,12 +28,24 @@ export function isOptionalBoolean(value: unknown): boolean {
 	return value === undefined || isBoolean(value);
 }
 
+export function isOptionalNumber(value: unknown): boolean {
+	return value === undefined || typeof value === "number";
+}
+
 export function isFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value);
 }
 
 export function isPositiveFiniteNumber(value: unknown): value is number {
 	return isFiniteNumber(value) && value > 0;
+}
+
+export function isArray(value: unknown): value is unknown[] {
+	return Array.isArray(value);
+}
+
+export function isOptionalArray(value: unknown): boolean {
+	return value === undefined || isArray(value);
 }
 
 export function isTapTransferAsset(value: unknown): value is "native" | "usdc" {

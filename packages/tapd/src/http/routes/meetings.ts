@@ -17,6 +17,7 @@ import {
 	hasOptionalStringFields,
 	hasPeerField,
 	isBoolean,
+	isOptionalArray,
 	isOptionalReasonBody,
 	isPositiveFiniteNumber,
 	requireBody,
@@ -49,7 +50,7 @@ function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	if (!hasPeerField(v)) return false;
 	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
 	if (!isPositiveFiniteNumber(v.duration)) return false;
-	if (v.slots !== undefined && !Array.isArray(v.slots)) return false;
+	if (!isOptionalArray(v.slots)) return false;
 	if (
 		!hasOptionalStringFields(v, ["preferred", "location", "note", "schedulingId", "originTimezone"])
 	) {
