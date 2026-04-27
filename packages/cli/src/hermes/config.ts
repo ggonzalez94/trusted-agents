@@ -125,10 +125,7 @@ export async function upsertTapHermesIdentity(
 ): Promise<TapHermesIdentityConfig> {
 	const hermesHome = resolveHermesHome(options.hermesHome);
 	const config = await loadTapHermesPluginConfig(hermesHome);
-	const name =
-		typeof options.name === "string" && options.name.trim().length > 0
-			? options.name.trim()
-			: "default";
+	const name = trimmedNonEmptyString(options.name) ?? "default";
 	const reconcileIntervalMinutes = normalizeReconcileInterval(options.reconcileIntervalMinutes);
 	const nextIdentity: TapHermesIdentityConfig = {
 		name,
@@ -169,20 +166,17 @@ function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityCo
 		reconcileIntervalMinutes?: unknown;
 	};
 
-	if (typeof input.dataDir !== "string" || input.dataDir.trim().length === 0) {
-		throw new Error(`TAP Hermes identity ${index + 1} is missing a valid dataDir`);
-	}
+	const dataDir = requireTrimmedNonEmptyString(
+		input.dataDir,
+		`TAP Hermes identity ${index + 1} is missing a valid dataDir`,
+	);
 
 	const name =
-		typeof input.name === "string" && input.name.trim().length > 0
-			? input.name.trim()
-			: index === 0
-				? "default"
-				: `identity-${index + 1}`;
+		trimmedNonEmptyString(input.name) ?? (index === 0 ? "default" : `identity-${index + 1}`);
 
 	return {
 		name,
-		dataDir: resolve(input.dataDir.trim()),
+		dataDir: resolve(dataDir),
 		reconcileIntervalMinutes: normalizeReconcileInterval(input.reconcileIntervalMinutes),
 	};
 }
@@ -206,12 +200,14 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 	if (!isFinitePositiveInteger(input.gatewayPid)) {
 		throw new Error("Invalid TAP Hermes daemon state gatewayPid");
 	}
-	if (typeof input.socketPath !== "string" || input.socketPath.trim().length === 0) {
-		throw new Error("Invalid TAP Hermes daemon state socketPath");
-	}
-	if (typeof input.startedAt !== "string" || input.startedAt.trim().length === 0) {
-		throw new Error("Invalid TAP Hermes daemon state startedAt");
-	}
+	const socketPath = requireTrimmedNonEmptyString(
+		input.socketPath,
+		"Invalid TAP Hermes daemon state socketPath",
+	);
+	const startedAt = requireTrimmedNonEmptyString(
+		input.startedAt,
+		"Invalid TAP Hermes daemon state startedAt",
+	);
 	if (
 		!Array.isArray(input.identities) ||
 		input.identities.some((value) => typeof value !== "string")
@@ -222,8 +218,8 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 	return {
 		pid: input.pid,
 		gatewayPid: input.gatewayPid,
-		socketPath: input.socketPath.trim(),
-		startedAt: input.startedAt.trim(),
+		socketPath,
+		startedAt,
 		identities: input.identities,
 	};
 }
@@ -237,4 +233,16 @@ function normalizeReconcileInterval(value: unknown): number {
 
 function isFinitePositiveInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 1;
+}
+
+function trimmedNonEmptyString(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function requireTrimmedNonEmptyString(value: unknown, message: string): string {
+	const trimmed = trimmedNonEmptyString(value);
+	if (trimmed === null) throw new Error(message);
+	return trimmed;
 }
