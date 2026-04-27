@@ -6,6 +6,7 @@ import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as removeCommandModule from "../src/commands/remove.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { buildAgentConfigYaml } from "./helpers/config-fixtures.js";
 import { runCli } from "./helpers/run-cli.js";
 
 const { TEST_ADDRESS, mockOwsProvider, mockCreateViemAccount } = vi.hoisted(() => {
@@ -525,7 +526,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "apps", "transfer"), { recursive: true });
 	await writeFile(
 		join(dataDir, "config.yaml"),
-		"agent_id: 42\nchain: eip155:8453\nows:\n  wallet: test-wallet\n  api_key: test-api-key\n",
+		`${buildAgentConfigYaml({ agentId: 42, wallet: "test-wallet", apiKey: "test-api-key" })}\n`,
 		"utf-8",
 	);
 	await writeFile(join(dataDir, "contacts.json"), "[]\n", "utf-8");

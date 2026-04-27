@@ -12,15 +12,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
 import { saveTapHermesPluginConfig } from "../src/hermes/config.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import { UNREGISTERED_AGENT_CONFIG_YAML } from "./helpers/config-fixtures.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML, buildAgentConfigYaml } from "./helpers/config-fixtures.js";
 
-const MINIMAL_CONFIG = [
-	"agent_id: 42",
-	"chain: eip155:8453",
-	"ows:",
-	"  wallet: demo-wallet",
-	"  api_key: demo-key",
-].join("\n");
+const MINIMAL_CONFIG = buildAgentConfigYaml({ agentId: 42 });
 
 async function makeAgentDir(root: string, config = MINIMAL_CONFIG): Promise<string> {
 	const dataDir = join(root, "agent");
