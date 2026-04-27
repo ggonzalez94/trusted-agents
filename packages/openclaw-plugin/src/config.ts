@@ -1,4 +1,5 @@
 import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk";
+import { readTrimmedString } from "./input.js";
 
 /**
  * Plugin config for the thin OpenClaw TAP plugin. Both fields are optional —
@@ -55,8 +56,9 @@ export function parseTapOpenClawPluginConfig(raw: unknown): TapOpenClawPluginCon
 
 function parseOptionalTrimmedString(value: unknown, field: string): string | undefined {
 	if (value === undefined) return undefined;
-	if (typeof value !== "string" || value.trim().length === 0) {
+	const trimmed = readTrimmedString(value);
+	if (trimmed === undefined) {
 		throw new Error(`TAP plugin config.${field} must be a non-empty string`);
 	}
-	return value.trim();
+	return trimmed;
 }

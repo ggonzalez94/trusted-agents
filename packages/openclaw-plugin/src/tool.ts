@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { isEthereumAddress, normalizeGrantInput } from "trusted-agents-core";
+import { readTrimmedString } from "./input.js";
 import type { OpenClawTapdClient } from "./tapd-client.js";
 
 const ACTIONS = [
@@ -224,12 +225,6 @@ function json(payload: unknown): {
 		content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
 		details: payload,
 	};
-}
-
-function readTrimmedString(value: unknown): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const trimmed = value.trim();
-	return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function requireString(value: string | undefined, name: string): string {
