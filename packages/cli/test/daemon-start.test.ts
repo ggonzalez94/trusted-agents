@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logFilePath } from "trusted-agents-tapd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -55,7 +56,7 @@ describe("tap daemon start", () => {
 		spawnTapdDetachedMock.mockResolvedValue({
 			pid: 4321,
 			port: 49999,
-			logPath: join(dataDir, ".tapd.log"),
+			logPath: logFilePath(dataDir),
 			pidPath: join(dataDir, ".tapd.pid"),
 		});
 	});

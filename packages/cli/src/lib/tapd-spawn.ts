@@ -9,6 +9,7 @@ import { fsErrorCode } from "trusted-agents-core";
 import {
 	type TapdPidRecord,
 	loadTapdPidRecord,
+	logFilePath,
 	parseBoundPort,
 	persistTapdPidRecordExclusive,
 	pidFilePath,
@@ -34,8 +35,6 @@ export function resolveTapdBinPath(): string {
 	const pkgDir = dirname(pkgPath);
 	return join(pkgDir, "dist", "bin.js");
 }
-
-const LOG_FILE = ".tapd.log";
 
 export interface TapdProcessInspection {
 	status: "missing" | "running" | "dead" | "mismatch" | "unknown";
@@ -175,7 +174,7 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 		);
 	}
 
-	const logPath = join(options.dataDir, LOG_FILE);
+	const logPath = logFilePath(options.dataDir);
 	const pidPath = pidFilePath(options.dataDir);
 	const portPath = portFilePath(options.dataDir);
 

@@ -30,6 +30,7 @@ const SOCKET_FILE = ".tapd.sock";
 export const TAPD_PORT_FILE = ".tapd.port";
 export const TAPD_PID_FILE = ".tapd.pid";
 export const TAPD_TOKEN_FILE = ".tapd-token";
+export const TAPD_LOG_FILE = ".tapd.log";
 
 export function resolveTapdConfig(
 	env: Record<string, string | undefined>,

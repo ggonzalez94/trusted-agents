@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logFilePath } from "trusted-agents-tapd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnTapdDetached, stopTapdDetached } from "../../src/lib/tapd-spawn.js";
 
@@ -62,7 +63,7 @@ describe("tapd-spawn", () => {
 
 		expect(result.pid).toBeGreaterThan(0);
 		expect(result.port).toBe(49999);
-		expect(result.logPath).toBe(join(dataDir, ".tapd.log"));
+		expect(result.logPath).toBe(logFilePath(dataDir));
 		expect(result.pidPath).toBe(join(dataDir, ".tapd.pid"));
 
 		// Cleanup so we don't leak a child process

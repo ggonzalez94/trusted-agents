@@ -1,6 +1,7 @@
 export { Daemon, TAPD_VERSION, type DaemonOptions } from "./daemon.js";
 export {
 	resolveTapdConfig,
+	TAPD_LOG_FILE,
 	TAPD_PORT_FILE,
 	TAPD_PID_FILE,
 	TAPD_TOKEN_FILE,
@@ -32,4 +33,4 @@ export {
 	pidFilePath,
 	type TapdPidRecord,
 } from "./pid-file.js";
-export { cleanupTapdRuntimeStateFiles } from "./runtime-state-files.js";
+export { cleanupTapdRuntimeStateFiles, logFilePath } from "./runtime-state-files.js";

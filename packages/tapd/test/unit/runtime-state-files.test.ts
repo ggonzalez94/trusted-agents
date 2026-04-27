@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { tokenFilePath } from "../../src/auth-token.js";
 import { portFilePath } from "../../src/port-file.js";
-import { cleanupTapdRuntimeStateFiles } from "../../src/runtime-state-files.js";
+import { cleanupTapdRuntimeStateFiles, logFilePath } from "../../src/runtime-state-files.js";
 
 describe("runtime-state-files", () => {
 	let dataDir: string;
@@ -25,6 +25,10 @@ describe("runtime-state-files", () => {
 
 		await expect(readFile(portFilePath(dataDir), "utf-8")).rejects.toThrow();
 		await expect(readFile(tokenFilePath(dataDir), "utf-8")).rejects.toThrow();
+	});
+
+	it("derives the tapd log file path under the data dir", () => {
+		expect(logFilePath("/tmp/tap-data")).toBe(join("/tmp/tap-data", ".tapd.log"));
 	});
 
 	it("allows missing runtime-owned state files", async () => {

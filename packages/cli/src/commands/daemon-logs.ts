@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, statSync, watch } from "node:fs";
-import { join } from "node:path";
+import { logFilePath } from "trusted-agents-tapd";
 import { resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error, info } from "../lib/output.js";
@@ -11,7 +11,7 @@ export async function daemonLogsCommand(
 ): Promise<void> {
 	try {
 		const dataDir = resolveDataDir(opts);
-		const logPath = join(dataDir, ".tapd.log");
+		const logPath = logFilePath(dataDir);
 
 		if (!existsSync(logPath)) {
 			error(
