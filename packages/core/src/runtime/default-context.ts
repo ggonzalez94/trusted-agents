@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { TapAppRegistry } from "../app/registry.js";
 import { buildChainPublicClient, toErrorMessage } from "../common/index.js";
 import type { TrustedAgentsConfig } from "../config/types.js";
@@ -8,6 +7,7 @@ import { migrateFileLogsToSqlite } from "../conversation/sqlite-migration.js";
 import { AgentResolver, type IAgentResolver } from "../identity/resolver.js";
 import type { SigningProvider } from "../signing/provider.js";
 import type { TransportProvider } from "../transport/interface.js";
+import { xmtpDataDirPath } from "../transport/paths.js";
 import { XmtpTransport } from "../transport/xmtp.js";
 import { FileTrustStore } from "../trust/file-trust-store.js";
 import type { ITrustStore } from "../trust/trust-store.js";
@@ -80,7 +80,7 @@ export async function buildDefaultTapRuntimeContext(
 			{
 				signingProvider: options.signingProvider,
 				chain: config.chain,
-				dbPath: join(config.dataDir, "xmtp"),
+				dbPath: xmtpDataDirPath(config.dataDir),
 				dbEncryptionKey: config.xmtpDbEncryptionKey,
 				agentResolver: resolver,
 				resolveCacheTtlMs: config.resolveCacheTtlMs,

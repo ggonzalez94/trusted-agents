@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { legacyConversationsDir } from "trusted-agents-core";
+import { dirname } from "node:path";
+import { legacyConversationsDir, xmtpDataDirPath } from "trusted-agents-core";
 import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { ALL_CHAINS, DEFAULT_CHAIN_ALIAS, resolveChainAlias } from "../lib/chains.js";
 import {
@@ -48,7 +48,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 
 		// Create data directory structure
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		const existingConfig = existsSync(configPath)
 			? ((await readYamlFile<{

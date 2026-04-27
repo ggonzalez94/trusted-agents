@@ -521,7 +521,7 @@ describe("tap remove", () => {
 async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "identity"), { recursive: true });
 	await mkdir(core.legacyConversationsDir(dataDir), { recursive: true });
-	await mkdir(join(dataDir, "xmtp"), { recursive: true });
+	await mkdir(core.xmtpDataDirPath(dataDir), { recursive: true });
 	await mkdir(core.appDataDirPath(dataDir, "transfer"), { recursive: true });
 	await writeFile(
 		defaultConfigPath(dataDir),
@@ -530,7 +530,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	);
 	await writeFile(core.contactsFilePath(dataDir), "[]\n", "utf-8");
 	await writeFile(join(core.legacyConversationsDir(dataDir), "peer-1.json"), "[]\n", "utf-8");
-	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");
+	await writeFile(join(core.xmtpDataDirPath(dataDir), "agent.db3"), "", "utf-8");
 	await writeFile(join(dataDir, "pending-invites.json"), "[]\n", "utf-8");
 	await writeFile(
 		core.appManifestPath(dataDir),

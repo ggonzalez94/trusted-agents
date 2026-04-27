@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deleteWallet } from "@open-wallet-standard/core";
-import { legacyConversationsDir } from "trusted-agents-core";
+import { legacyConversationsDir, xmtpDataDirPath } from "trusted-agents-core";
 import { keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -52,7 +52,7 @@ describe("tap migrate-wallet", () => {
 	async function setupLegacyAgent(agentId: number): Promise<void> {
 		await mkdir(join(dataDir, "identity"), { recursive: true });
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		await writeFile(keyPath, TEST_PRIVATE_KEY, { mode: 0o600 });
 
@@ -147,7 +147,7 @@ describe("tap migrate-wallet", () => {
 	it("should handle 0x-prefixed keys", async () => {
 		await mkdir(join(dataDir, "identity"), { recursive: true });
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		// Write key with 0x prefix
 		await writeFile(keyPath, `0x${TEST_PRIVATE_KEY}`, { mode: 0o600 });
@@ -194,7 +194,7 @@ describe("tap migrate-wallet", () => {
 	it("should use a random wallet name for unregistered agents (agent_id: -1)", async () => {
 		await mkdir(join(dataDir, "identity"), { recursive: true });
 		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		await writeFile(keyPath, TEST_PRIVATE_KEY, { mode: 0o600 });
 

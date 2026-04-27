@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { legacyConversationsDir } from "trusted-agents-core";
+import { legacyConversationsDir, xmtpDataDirPath } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { initCommand } from "../src/commands/init.js";
@@ -56,7 +56,7 @@ describe("tap init", () => {
 
 		// Directories created
 		expect(existsSync(legacyConversationsDir(dataDir))).toBe(true);
-		expect(existsSync(join(dataDir, "xmtp"))).toBe(true);
+		expect(existsSync(xmtpDataDirPath(dataDir))).toBe(true);
 
 		// JSON output
 		expect(stdoutWrites).toHaveLength(1);
