@@ -26,3 +26,4 @@ export {
 	persistBoundPort,
 	portFilePath,
 } from "./port-file.js";
+export { pidFilePath } from "./pid-file.js";

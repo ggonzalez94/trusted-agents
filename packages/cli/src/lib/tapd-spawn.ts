@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fsErrorCode } from "trusted-agents-core";
-import { TAPD_PID_FILE, TAPD_PORT_FILE, parseBoundPort } from "trusted-agents-tapd";
+import { parseBoundPort, pidFilePath, portFilePath } from "trusted-agents-tapd";
 import { toErrorMessage } from "./errors.js";
 
 const execFileAsync = promisify(execFile);
@@ -132,12 +132,12 @@ async function readProcessCommandLine(pid: number): Promise<string | null> {
 }
 
 export async function cleanupTapdStateFiles(dataDir: string): Promise<void> {
-	await rm(join(dataDir, TAPD_PID_FILE), { force: true }).catch(() => {});
-	await rm(join(dataDir, TAPD_PORT_FILE), { force: true }).catch(() => {});
+	await rm(pidFilePath(dataDir), { force: true }).catch(() => {});
+	await rm(portFilePath(dataDir), { force: true }).catch(() => {});
 }
 
 export async function inspectTapdProcess(dataDir: string): Promise<TapdProcessInspection> {
-	const pidPath = join(dataDir, TAPD_PID_FILE);
+	const pidPath = pidFilePath(dataDir);
 	if (!existsSync(pidPath)) return { status: "missing" };
 
 	let record: TapdPidRecord;
@@ -209,8 +209,8 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 	}
 
 	const logPath = join(options.dataDir, LOG_FILE);
-	const pidPath = join(options.dataDir, TAPD_PID_FILE);
-	const portPath = join(options.dataDir, TAPD_PORT_FILE);
+	const pidPath = pidFilePath(options.dataDir);
+	const portPath = portFilePath(options.dataDir);
 
 	// Unlink any stale port file from a previous run. Without this, the port
 	// wait below can return a stale port from a dead daemon and the caller
@@ -302,8 +302,8 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
  * a zombie process (finding F3.2).
  */
 export async function stopTapdDetached(dataDir: string, timeoutMs = 5_000): Promise<number> {
-	const pidPath = join(dataDir, TAPD_PID_FILE);
-	const portPath = join(dataDir, TAPD_PORT_FILE);
+	const pidPath = pidFilePath(dataDir);
+	const portPath = portFilePath(dataDir);
 
 	if (!existsSync(pidPath)) {
 		throw new Error(`No tapd pidfile at ${pidPath}. Is tapd running?`);
