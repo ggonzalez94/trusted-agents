@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { portFilePath, socketFilePath, tokenFilePath } from "trusted-agents-tapd";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	TapdClient,
@@ -18,8 +19,8 @@ import {
 } from "../helpers/fake-tapd-socket.ts";
 
 async function seedTapdMetadata(dataDir: string, port: number, token: string): Promise<void> {
-	await writeFile(join(dataDir, ".tapd.port"), `${port}\n`, "utf-8");
-	await writeFile(join(dataDir, ".tapd-token"), token, "utf-8");
+	await writeFile(portFilePath(dataDir), `${port}\n`, "utf-8");
+	await writeFile(tokenFilePath(dataDir), token, "utf-8");
 }
 
 describe("tapd-client discovery", () => {
@@ -34,9 +35,9 @@ describe("tapd-client discovery", () => {
 	});
 
 	it("returns the per-data-dir socket path and token", async () => {
-		await writeFile(join(dataDir, ".tapd-token"), "token-abc", "utf-8");
+		await writeFile(tokenFilePath(dataDir), "token-abc", "utf-8");
 		const info = await discoverTapd(dataDir);
-		expect(info.socketPath).toBe(join(dataDir, ".tapd.sock"));
+		expect(info.socketPath).toBe(socketFilePath(dataDir));
 		expect(info.token).toBe("token-abc");
 	});
 
@@ -45,7 +46,7 @@ describe("tapd-client discovery", () => {
 	});
 
 	it("throws TapdNotRunningError when token is empty", async () => {
-		await writeFile(join(dataDir, ".tapd-token"), "", "utf-8");
+		await writeFile(tokenFilePath(dataDir), "", "utf-8");
 		await expect(discoverTapd(dataDir)).rejects.toBeInstanceOf(TapdNotRunningError);
 	});
 
@@ -55,7 +56,7 @@ describe("tapd-client discovery", () => {
 	});
 
 	it("tryDiscoverTapd returns connection info when running", async () => {
-		await writeFile(join(dataDir, ".tapd-token"), "token-abc", "utf-8");
+		await writeFile(tokenFilePath(dataDir), "token-abc", "utf-8");
 		const info = await tryDiscoverTapd(dataDir);
 		expect(info?.token).toBe("token-abc");
 	});
@@ -67,7 +68,7 @@ describe("tapd-client discovery", () => {
 	});
 
 	it("discoverTapdUiUrl throws TapdNotRunningError when port file is missing", async () => {
-		await writeFile(join(dataDir, ".tapd-token"), "token-abc", "utf-8");
+		await writeFile(tokenFilePath(dataDir), "token-abc", "utf-8");
 		await expect(discoverTapdUiUrl(dataDir)).rejects.toBeInstanceOf(TapdNotRunningError);
 	});
 

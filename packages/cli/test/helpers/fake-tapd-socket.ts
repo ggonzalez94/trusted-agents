@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { portFilePath, socketFilePath, tokenFilePath } from "trusted-agents-tapd";
 
 export const FAKE_TAPD_TOKEN = "fake-tapd-token-padding-padding-";
 
@@ -54,13 +55,13 @@ export interface FakeTapdOptions {
  */
 export async function startFakeTapd(options: FakeTapdOptions): Promise<FakeTapdHandle> {
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-fake-tapd-"));
-	const socketPath = join(dataDir, ".tapd.sock");
-	await writeFile(join(dataDir, ".tapd-token"), FAKE_TAPD_TOKEN, {
+	const socketPath = socketFilePath(dataDir);
+	await writeFile(tokenFilePath(dataDir), FAKE_TAPD_TOKEN, {
 		encoding: "utf-8",
 		mode: 0o600,
 	});
 	if (options.port !== undefined) {
-		await writeFile(join(dataDir, ".tapd.port"), String(options.port), {
+		await writeFile(portFilePath(dataDir), String(options.port), {
 			encoding: "utf-8",
 			mode: 0o600,
 		});

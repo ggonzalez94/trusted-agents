@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { socketFilePath, tokenFilePath } from "trusted-agents-tapd";
 
 export const FAKE_TAPD_TOKEN = "fake-tapd-token-padding-padding-";
 
@@ -47,12 +48,12 @@ export interface FakeTapdOptions {
  */
 export async function startFakeTapd(options: FakeTapdOptions): Promise<FakeTapdHandle> {
 	const dataDir = await mkdtemp(join(tmpdir(), "openclaw-tapd-"));
-	const socketPath = join(dataDir, ".tapd.sock");
+	const socketPath = socketFilePath(dataDir);
 	// Persist a fake bearer token alongside the socket. The real tapd writes
 	// one at start-time; the OpenClaw client now reads it per-request and
 	// sends it as `Authorization: Bearer`. Without this, every client call
 	// would fail at the token-load step before reaching the fake server.
-	await writeFile(join(dataDir, ".tapd-token"), FAKE_TAPD_TOKEN, {
+	await writeFile(tokenFilePath(dataDir), FAKE_TAPD_TOKEN, {
 		encoding: "utf-8",
 		mode: 0o600,
 	});
