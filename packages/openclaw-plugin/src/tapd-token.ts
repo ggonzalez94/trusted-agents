@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { tokenFilePath } from "trusted-agents-tapd";
 
-export const TAPD_TOKEN_FILE_NAME = ".tapd-token";
+export function tapdTokenPathForSocket(socketPath: string): string {
+	return tokenFilePath(dirname(socketPath));
+}
 
 export async function readTapdToken(tokenPath: string): Promise<string> {
 	const token = (await readFile(tokenPath, "utf-8")).trim();

@@ -1,7 +1,7 @@
 import { request } from "node:http";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { TapNotification, TapNotificationType } from "trusted-agents-tapd";
-import { TAPD_TOKEN_FILE_NAME, readTapdToken } from "./tapd-token.js";
+import { readTapdToken, tapdTokenPathForSocket } from "./tapd-token.js";
 
 export type { TapNotification, TapNotificationType };
 
@@ -84,7 +84,7 @@ export class OpenClawTapdClient {
 
 	constructor(options: OpenClawTapdClientOptions = {}) {
 		this.socketPath = resolveSocketPath(options);
-		this.tokenPath = join(dirname(this.socketPath), TAPD_TOKEN_FILE_NAME);
+		this.tokenPath = tapdTokenPathForSocket(this.socketPath);
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	}
 
