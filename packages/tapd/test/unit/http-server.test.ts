@@ -3,6 +3,7 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { socketFilePath } from "../../src/config.js";
 import { Router } from "../../src/http/router.js";
 import { TapdHttpServer } from "../../src/http/server.js";
 
@@ -47,7 +48,7 @@ describe("TapdHttpServer", () => {
 
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0, // 0 = OS-assigned ephemeral port
 			authToken: "test-token-test-token-test-token",
@@ -68,7 +69,7 @@ describe("TapdHttpServer", () => {
 
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
@@ -84,7 +85,7 @@ describe("TapdHttpServer", () => {
 		const router = new Router();
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
@@ -102,7 +103,7 @@ describe("TapdHttpServer", () => {
 		const router = new Router();
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
@@ -129,7 +130,7 @@ describe("TapdHttpServer", () => {
 
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
@@ -153,7 +154,7 @@ describe("TapdHttpServer", () => {
 		const router = new Router();
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
@@ -174,7 +175,7 @@ describe("TapdHttpServer", () => {
 		const router = new Router();
 		router.add("GET", "/api/identity", async () => ({ agentId: 42 }));
 
-		const socketPath = join(dataDir, ".tapd.sock");
+		const socketPath = socketFilePath(dataDir);
 		server = new TapdHttpServer({
 			router,
 			socketPath,
@@ -200,7 +201,7 @@ describe("TapdHttpServer", () => {
 
 		server = new TapdHttpServer({
 			router,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			authToken: "test-token-test-token-test-token",
