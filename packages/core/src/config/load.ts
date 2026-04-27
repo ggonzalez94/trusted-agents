@@ -39,6 +39,8 @@ interface StoredYamlConfig {
 	invite_expiry_seconds?: number;
 }
 
+export const TRUSTED_AGENTS_CONFIG_FILE = "config.yaml";
+
 export interface LoadTrustedAgentConfigOptions {
 	requireAgentId?: boolean;
 	agentId?: number;
@@ -51,8 +53,8 @@ export interface LoadTrustedAgentConfigOptions {
 	paymasterProvider?: ExecutionPaymasterProvider;
 }
 
-function resolveTrustedAgentConfigPath(dataDir: string): string {
-	return join(resolveDataDir(dataDir), "config.yaml");
+export function defaultConfigPath(dataDir: string): string {
+	return join(dataDir, TRUSTED_AGENTS_CONFIG_FILE);
 }
 
 export function getDefaultExecutionModeForChain(chain: string): ExecutionMode {
@@ -86,7 +88,7 @@ export async function loadTrustedAgentConfigFromDataDir(
 	options: LoadTrustedAgentConfigOptions = {},
 ): Promise<TrustedAgentsConfig> {
 	const resolvedDataDir = resolveDataDir(dataDir);
-	const configPath = options.configPath ?? resolveTrustedAgentConfigPath(resolvedDataDir);
+	const configPath = options.configPath ?? defaultConfigPath(resolvedDataDir);
 	const yaml = loadYamlConfig(configPath);
 
 	const agentId = options.agentId ?? yaml?.agent_id;

@@ -5,6 +5,7 @@ import {
 	type ExecutionMode,
 	type ExecutionPaymasterProvider,
 	type TrustedAgentsConfig,
+	defaultConfigPath as coreDefaultConfigPath,
 	getDefaultExecutionModeForChain,
 	getDefaultPaymasterProviderForMode,
 	loadTrustedAgentConfigFromDataDir,
@@ -29,7 +30,7 @@ export function resolveDataDir(opts: GlobalOptions): string {
 }
 
 export function defaultConfigPath(dataDir: string): string {
-	return join(dataDir, "config.yaml");
+	return coreDefaultConfigPath(dataDir);
 }
 
 export function resolveConfigPath(opts: GlobalOptions, dataDir: string): string {

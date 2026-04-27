@@ -3,6 +3,8 @@ import {
 	ALL_CHAINS,
 	BASE_MAINNET,
 	TAIKO_MAINNET,
+	TRUSTED_AGENTS_CONFIG_FILE,
+	defaultConfigPath,
 	loadTrustedAgentConfigFromDataDir,
 } from "../../../src/config/index.js";
 
@@ -17,6 +19,11 @@ describe("ALL_CHAINS", () => {
 		expect(TAIKO_MAINNET.caip2).toBe("eip155:167000");
 		expect(TAIKO_MAINNET.rpcUrl).toMatch(/taiko/);
 		expect(TAIKO_MAINNET.registryAddress).toMatch(/^0x/);
+	});
+
+	it("derives the default config path from the shared config filename", () => {
+		expect(TRUSTED_AGENTS_CONFIG_FILE).toBe("config.yaml");
+		expect(defaultConfigPath("/tmp/tap-data")).toBe("/tmp/tap-data/config.yaml");
 	});
 
 	it("is accepted by loadTrustedAgentConfigFromDataDir as extraChains", async () => {
