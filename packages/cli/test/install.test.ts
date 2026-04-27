@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installCommand } from "../src/commands/install.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap install", () => {
@@ -272,7 +273,7 @@ describe("tap install", () => {
 		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
 		await mkdir(join(homeDir, ".trustedagents", "identity"), { recursive: true });
 		await writeFile(
-			join(homeDir, ".trustedagents", "config.yaml"),
+			defaultConfigPath(join(homeDir, ".trustedagents")),
 			"agent_id: 11\nchain: eip155:8453\n",
 			"utf-8",
 		);

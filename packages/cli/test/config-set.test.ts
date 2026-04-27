@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { configSetCommand } from "../src/commands/config-set.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("config set", () => {
 	let tmpDir: string;
 	const { stdout: stdoutWrites } = useCapturedOutput();
-	const configPath = () => join(tmpDir, "config.yaml");
+	const configPath = () => defaultConfigPath(tmpDir);
 	const readConfig = () => readFile(configPath(), "utf-8");
 	const readConfigYaml = async <T>() => YAML.parse(await readConfig()) as T;
 
@@ -89,13 +90,14 @@ describe("config set", () => {
 
 	it("rejects split-brain config and data-dir overrides", async () => {
 		const otherDir = join(tmpDir, "other-agent");
+		const otherConfigPath = defaultConfigPath(otherDir);
 		await mkdir(otherDir, { recursive: true });
-		await writeFile(join(otherDir, "config.yaml"), "agent_id: 9\nchain: eip155:8453\n", "utf-8");
+		await writeFile(otherConfigPath, "agent_id: 9\nchain: eip155:8453\n", "utf-8");
 
 		await configSetCommand("chain", "base", {
 			json: true,
 			dataDir: tmpDir,
-			config: join(otherDir, "config.yaml"),
+			config: otherConfigPath,
 		});
 
 		expect(process.exitCode).toBe(1);

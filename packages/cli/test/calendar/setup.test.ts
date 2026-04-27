@@ -7,6 +7,7 @@ import {
 	readCalendarProvider,
 	writeCalendarConfig,
 } from "../../src/lib/calendar/setup.js";
+import { defaultConfigPath } from "../../src/lib/config-loader.js";
 
 describe("createCalendarProvider", () => {
 	it("throws for unknown providers", () => {
@@ -18,7 +19,7 @@ describe("createCalendarProvider", () => {
 	it("writes calendar provider without replacing existing config", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "tap-calendar-"));
 		try {
-			const configPath = join(dataDir, "config.yaml");
+			const configPath = defaultConfigPath(dataDir);
 			await writeFile(configPath, "agent_id: 42\nchain: eip155:8453\n", "utf-8");
 
 			await writeCalendarConfig(dataDir, "google");

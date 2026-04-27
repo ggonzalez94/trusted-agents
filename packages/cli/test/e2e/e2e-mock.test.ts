@@ -10,6 +10,7 @@ import {
 import type { SigningProvider, TransportProvider, TransportReceipt } from "trusted-agents-core";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { defaultConfigPath } from "../../src/lib/config-loader.js";
 import { clearCliRuntimeOverride, setCliRuntimeOverride } from "../../src/lib/runtime-overrides.js";
 import { type InProcessTapd, startInProcessTapd } from "../helpers/in-process-tapd.ts";
 import {
@@ -98,7 +99,7 @@ async function setOwsConfig(
 	apiKey: string,
 	agentId: number,
 ): Promise<void> {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	const { default: YAML } = await import("yaml");
 	const content = await readFile(configPath, "utf-8");
 	const yaml = YAML.parse(content) as Record<string, unknown>;
