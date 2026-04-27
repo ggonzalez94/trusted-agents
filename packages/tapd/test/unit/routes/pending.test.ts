@@ -61,6 +61,7 @@ describe("pending routes", () => {
 		const call = service.resolvePending.mock.calls[0];
 		expect(call[0]).toBe("a");
 		expect(call[1]).toBe(true);
+		expect(call[2]).toBe("looks good");
 	});
 
 	it("denies a pending request with a reason", async () => {
@@ -73,5 +74,16 @@ describe("pending routes", () => {
 		expect(call[0]).toBe("a");
 		expect(call[1]).toBe(false);
 		expect(call[2]).toBe("policy");
+	});
+
+	it("ignores non-string note and reason values", async () => {
+		const service = makeService([makePendingRequest({ requestId: "a" })]);
+		const { approve, deny } = createPendingRoutes(service as never);
+
+		await approve({ id: "a" }, { note: 123 });
+		await deny({ id: "a" }, { reason: false });
+
+		expect(service.resolvePending).toHaveBeenNthCalledWith(1, "a", true, undefined);
+		expect(service.resolvePending).toHaveBeenNthCalledWith(2, "a", false, undefined);
 	});
 });

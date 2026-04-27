@@ -20,6 +20,12 @@ export function hasOptionalStringFields(
 	return fields.every((field) => isOptionalString(value[field]));
 }
 
+export function readOptionalStringField(value: unknown, field: string): string | undefined {
+	const record = asRecord(value);
+	const fieldValue = record?.[field];
+	return typeof fieldValue === "string" ? fieldValue : undefined;
+}
+
 export function isBoolean(value: unknown): value is boolean {
 	return typeof value === "boolean";
 }
