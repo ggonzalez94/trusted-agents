@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { parseEther, parseUnits } from "viem";
 import { buildActionContext } from "../app/context.js";
 import type { TapActionContext, TapActionResult } from "../app/types.js";
 import { defineTapApp } from "../app/types.js";
+import { readJsonFile } from "../common/atomic-json.js";
 import {
 	AsyncMutex,
 	PermissionError,
@@ -2135,18 +2136,15 @@ export class TapMessagingService {
 
 	private async migratePendingConnects(): Promise<void> {
 		const path = join(this.context.config.dataDir, "pending-connects.json");
-		let raw: string;
-		try {
-			raw = await readFile(path, "utf-8");
-		} catch (error: unknown) {
-			if (fsErrorCode(error) === "ENOENT") return; // Nothing to migrate
-			throw error;
-		}
-
 		let parsed: { pendingConnects?: LegacyPendingConnect[] };
 		try {
-			parsed = JSON.parse(raw) as { pendingConnects?: LegacyPendingConnect[] };
+			parsed = await readJsonFile(
+				path,
+				(raw) => raw as { pendingConnects?: LegacyPendingConnect[] },
+			);
 		} catch (error: unknown) {
+			if (fsErrorCode(error) === "ENOENT") return; // Nothing to migrate
+			if (!(error instanceof SyntaxError)) throw error;
 			this.log(
 				"warn",
 				`Failed to parse legacy pending-connects.json: ${toErrorMessage(error)}. Skipping migration.`,
@@ -2242,17 +2240,12 @@ export class TapMessagingService {
 		let migrated = 0;
 
 		const migrateFile = async (filePath: string): Promise<void> => {
-			let raw: string;
-			try {
-				raw = await readFile(filePath, "utf-8");
-			} catch (error: unknown) {
-				if (fsErrorCode(error) === "ENOENT") return; // Already deleted
-				throw error;
-			}
 			let job: Record<string, unknown>;
 			try {
-				job = JSON.parse(raw) as Record<string, unknown>;
-			} catch {
+				job = await readJsonFile(filePath, (raw) => raw as Record<string, unknown>);
+			} catch (error: unknown) {
+				if (fsErrorCode(error) === "ENOENT") return; // Already deleted
+				if (!(error instanceof SyntaxError)) throw error;
 				this.log("warn", `Failed to parse legacy outbox file ${filePath} — skipping`);
 				await rm(filePath, { force: true });
 				return;

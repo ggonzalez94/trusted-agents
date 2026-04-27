@@ -1,5 +1,6 @@
-import { readFile, readdir, rename } from "node:fs/promises";
+import { readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
+import { readJsonFile } from "../common/atomic-json.js";
 import { fsErrorCode, resolveDataDir, toErrorMessage } from "../common/index.js";
 import type { SqliteConversationLogger } from "./sqlite-logger.js";
 import type { ConversationLog } from "./types.js";
@@ -97,8 +98,7 @@ export async function migrateFileLogsToSqlite(
 
 		const filePath = join(conversationsDir, entry);
 		try {
-			const raw = await readFile(filePath, "utf-8");
-			const parsed = JSON.parse(raw) as unknown;
+			const parsed = await readJsonFile(filePath, (raw) => raw);
 			if (!isConversationLog(parsed)) {
 				report.errors.push({ file: entry, error: "missing required fields" });
 				continue;
