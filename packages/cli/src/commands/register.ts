@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
 	ERC8004Registry,
 	ERC8004_ABI,
@@ -25,7 +25,7 @@ import type {
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
 import { resolveHermesHome } from "../hermes/config.js";
-import { writeYamlFileAtomic } from "../lib/atomic-write.js";
+import { writeJsonFileAtomic, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import {
@@ -259,8 +259,7 @@ async function loadIpfsCache(dataDir: string): Promise<IpfsCache> {
 
 async function saveIpfsCache(dataDir: string, cache: IpfsCache): Promise<void> {
 	const cachePath = `${dataDir}/ipfs-cache.json`;
-	await mkdir(dirname(cachePath), { recursive: true });
-	await writeFile(cachePath, JSON.stringify(cache, null, 2), "utf-8");
+	await writeJsonFileAtomic(cachePath, cache, { indent: 2 });
 }
 
 /** Check if the CID is still reachable via an IPFS gateway. */

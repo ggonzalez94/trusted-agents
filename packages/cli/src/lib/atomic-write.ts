@@ -11,8 +11,12 @@ export async function writeFileAtomic(path: string, content: string): Promise<vo
 	await rename(tempPath, path);
 }
 
-export async function writeJsonFileAtomic(path: string, data: unknown): Promise<void> {
-	await writeFileAtomic(path, JSON.stringify(data, null, "\t"));
+export async function writeJsonFileAtomic(
+	path: string,
+	data: unknown,
+	options: { indent?: string | number } = {},
+): Promise<void> {
+	await writeFileAtomic(path, JSON.stringify(data, null, options.indent ?? "\t"));
 }
 
 export async function writeYamlFileAtomic(path: string, data: unknown): Promise<void> {
