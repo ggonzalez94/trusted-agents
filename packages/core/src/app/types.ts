@@ -103,3 +103,7 @@ export interface TapApp {
 export function defineTapApp(app: TapApp): TapApp {
 	return app;
 }
+
+export function hasTapAppShape(app: TapApp): app is TapApp {
+	return Boolean(app.id && app.actions && typeof app.actions === "object");
+}

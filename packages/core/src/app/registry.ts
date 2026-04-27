@@ -1,6 +1,6 @@
 import { toErrorMessage } from "../common/index.js";
 import { type AppManifest, loadAppManifest } from "./manifest.js";
-import type { TapActionHandler, TapApp } from "./types.js";
+import { type TapActionHandler, type TapApp, hasTapAppShape } from "./types.js";
 
 export interface RegisteredAppInfo {
 	id: string;
@@ -105,7 +105,7 @@ export class TapAppRegistry {
 		try {
 			const mod = await import(entry.entryPoint);
 			const app: TapApp = mod.default ?? mod.app ?? mod;
-			if (!app.id || !app.actions || typeof app.actions !== "object") {
+			if (!hasTapAppShape(app)) {
 				this.log("error", `App "${appId}" from "${entry.entryPoint}" has invalid TapApp shape`);
 				return undefined;
 			}

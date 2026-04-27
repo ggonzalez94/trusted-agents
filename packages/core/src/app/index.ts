@@ -9,6 +9,7 @@ export {
 	type PaymentRequestParams,
 	type TransferExecuteParams,
 	defineTapApp,
+	hasTapAppShape,
 } from "./types.js";
 export { FileAppStorage } from "./storage.js";
 export { buildActionContext, type BuildActionContextDeps } from "./context.js";
