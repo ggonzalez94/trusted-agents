@@ -11,6 +11,15 @@ describe("tap app commands", () => {
 	let logWrites: string[];
 	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
+	const appsManifestPath = () => join(dataDir, "apps.json");
+	const writeManifest = async (manifest: unknown) => {
+		await writeFile(appsManifestPath(), JSON.stringify(manifest));
+	};
+	const readManifest = async () =>
+		JSON.parse(await readFile(appsManifestPath(), "utf-8")) as {
+			apps: Record<string, unknown>;
+		};
+
 	beforeEach(async () => {
 		tempRoot = await mkdtemp(join(tmpdir(), "tap-app-cmd-"));
 		dataDir = join(tempRoot, "data");
@@ -40,23 +49,20 @@ describe("tap app commands", () => {
 			["by package name", "betting", "tap-app-betting"],
 			["by short name fallback", "mybet", "betting"],
 		])("removes app %s", async (_, appKey, lookupId) => {
-			await writeFile(
-				join(dataDir, "apps.json"),
-				JSON.stringify({
-					apps: {
-						[appKey]: {
-							package: "tap-app-betting",
-							entryPoint: "tap-app-betting",
-							installedAt: "2026-03-30T00:00:00.000Z",
-							status: "active",
-						},
+			await writeManifest({
+				apps: {
+					[appKey]: {
+						package: "tap-app-betting",
+						entryPoint: "tap-app-betting",
+						installedAt: "2026-03-30T00:00:00.000Z",
+						status: "active",
 					},
-				}),
-			);
+				},
+			});
 
 			await appRemoveCommand(lookupId, { dataDir });
 
-			const manifest = JSON.parse(await readFile(join(dataDir, "apps.json"), "utf-8"));
+			const manifest = await readManifest();
 			expect(manifest.apps[appKey]).toBeUndefined();
 			const allOutput = logWrites.join("\n");
 			expect(allOutput).toContain("Removed");
@@ -64,7 +70,7 @@ describe("tap app commands", () => {
 		});
 
 		it("errors when no matching app is found", async () => {
-			await writeFile(join(dataDir, "apps.json"), JSON.stringify({ apps: {} }));
+			await writeManifest({ apps: {} });
 
 			await appRemoveCommand("nonexistent", { dataDir });
 
@@ -72,24 +78,21 @@ describe("tap app commands", () => {
 			const allOutput = [...logWrites, ...stdoutWrites, ...stderrWrites].join("\n");
 			expect(allOutput).toContain("No installed app matches");
 			expect(allOutput).toContain("nonexistent");
-			const manifest = JSON.parse(await readFile(join(dataDir, "apps.json"), "utf-8"));
+			const manifest = await readManifest();
 			expect(Object.keys(manifest.apps)).toHaveLength(0);
 		});
 
 		it("errors when manifest has apps but none match the given name", async () => {
-			await writeFile(
-				join(dataDir, "apps.json"),
-				JSON.stringify({
-					apps: {
-						transfer: {
-							package: "@trustedagents/app-transfer",
-							entryPoint: "@trustedagents/app-transfer",
-							installedAt: "2026-03-30T00:00:00.000Z",
-							status: "active",
-						},
+			await writeManifest({
+				apps: {
+					transfer: {
+						package: "@trustedagents/app-transfer",
+						entryPoint: "@trustedagents/app-transfer",
+						installedAt: "2026-03-30T00:00:00.000Z",
+						status: "active",
 					},
-				}),
-			);
+				},
+			});
 
 			await appRemoveCommand("betting", { dataDir });
 
@@ -97,26 +100,23 @@ describe("tap app commands", () => {
 			const allOutput = [...logWrites, ...stdoutWrites, ...stderrWrites].join("\n");
 			expect(allOutput).toContain("No installed app matches");
 			// The existing app should remain untouched
-			const manifest = JSON.parse(await readFile(join(dataDir, "apps.json"), "utf-8"));
+			const manifest = await readManifest();
 			expect(manifest.apps.transfer).toBeDefined();
 		});
 	});
 
 	describe("app list", () => {
 		it("shows installed apps", async () => {
-			await writeFile(
-				join(dataDir, "apps.json"),
-				JSON.stringify({
-					apps: {
-						transfer: {
-							package: "@trustedagents/app-transfer",
-							entryPoint: "@trustedagents/app-transfer",
-							installedAt: "2026-03-30T00:00:00.000Z",
-							status: "active",
-						},
+			await writeManifest({
+				apps: {
+					transfer: {
+						package: "@trustedagents/app-transfer",
+						entryPoint: "@trustedagents/app-transfer",
+						installedAt: "2026-03-30T00:00:00.000Z",
+						status: "active",
 					},
-				}),
-			);
+				},
+			});
 
 			await appListCommand({ dataDir });
 
@@ -126,7 +126,7 @@ describe("tap app commands", () => {
 		});
 
 		it("shows 'no apps' when manifest is empty", async () => {
-			await writeFile(join(dataDir, "apps.json"), JSON.stringify({ apps: {} }));
+			await writeManifest({ apps: {} });
 
 			await appListCommand({ dataDir });
 
@@ -135,19 +135,16 @@ describe("tap app commands", () => {
 		});
 
 		it("shows status suffix for inactive apps", async () => {
-			await writeFile(
-				join(dataDir, "apps.json"),
-				JSON.stringify({
-					apps: {
-						betting: {
-							package: "tap-app-betting",
-							entryPoint: "tap-app-betting",
-							installedAt: "2026-03-30T00:00:00.000Z",
-							status: "inactive",
-						},
+			await writeManifest({
+				apps: {
+					betting: {
+						package: "tap-app-betting",
+						entryPoint: "tap-app-betting",
+						installedAt: "2026-03-30T00:00:00.000Z",
+						status: "inactive",
 					},
-				}),
-			);
+				},
+			});
 
 			await appListCommand({ dataDir });
 
