@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
 	ERC8004Registry,
@@ -23,10 +22,10 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
-import YAML from "yaml";
 import { resolveHermesHome } from "../hermes/config.js";
 import {
 	readJsonFileOrDefault,
+	readYamlFile,
 	writeJsonFileAtomic,
 	writeYamlFileAtomic,
 } from "../lib/atomic-write.js";
@@ -907,8 +906,7 @@ async function executeSetAgentURI(
 async function updateConfigAgentId(configPath: string, agentId: number): Promise<void> {
 	if (!existsSync(configPath)) return;
 
-	const content = await readFile(configPath, "utf-8");
-	const yaml = YAML.parse(content) as Record<string, unknown>;
+	const yaml = await readYamlFile<Record<string, unknown>>(configPath);
 	yaml.agent_id = agentId;
 	await writeYamlFileAtomic(configPath, yaml);
 }

@@ -27,6 +27,10 @@ export async function readJsonFileOrDefault<T>(
 	}
 }
 
+export async function readYamlFile<T = unknown>(path: string): Promise<T> {
+	return YAML.parse(await readFile(path, "utf-8")) as T;
+}
+
 export async function writeJsonFileAtomic(
 	path: string,
 	data: unknown,

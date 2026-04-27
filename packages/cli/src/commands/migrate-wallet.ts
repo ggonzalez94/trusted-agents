@@ -3,8 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { keccak256, toHex } from "viem";
-import YAML from "yaml";
-import { writeYamlFileAtomic } from "../lib/atomic-write.js";
+import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
@@ -40,8 +39,7 @@ export async function migrateWalletCommand(
 			throw new Error(`No config found at ${configPath}. Run 'tap init' first to set up an agent.`);
 		}
 
-		const configContent = await readFile(configPath, "utf-8");
-		const yaml = (YAML.parse(configContent) ?? {}) as Record<string, unknown>;
+		const yaml = (await readYamlFile<Record<string, unknown> | null>(configPath)) ?? {};
 
 		// Already migrated?
 		const existingOws = yaml.ows as { wallet?: string; api_key?: string } | undefined;

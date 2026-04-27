@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -16,7 +16,7 @@ import {
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
-import YAML from "yaml";
+import { readYamlFile } from "../lib/atomic-write.js";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
 import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
@@ -104,8 +104,7 @@ export interface RemovePlan {
 // generic `chain: mainnet` field.
 async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 	try {
-		const raw = await readFile(configPath, "utf-8");
-		const parsed = YAML.parse(raw);
+		const parsed = await readYamlFile(configPath);
 		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
 			return false;
 		}
@@ -564,8 +563,8 @@ function resolveRemoveConfigPath(opts: GlobalOptions, dataDir: string): string {
 
 async function readAgentId(configPath: string): Promise<[number | null, string | null]> {
 	try {
-		const raw = await readFile(configPath, "utf-8");
-		const parsed = (YAML.parse(raw) as RemoveStoredConfig | null | undefined) ?? undefined;
+		const parsed =
+			(await readYamlFile<RemoveStoredConfig | null | undefined>(configPath)) ?? undefined;
 		if (typeof parsed?.agent_id === "number" && Number.isFinite(parsed.agent_id)) {
 			return [parsed.agent_id, null];
 		}
@@ -581,10 +580,10 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 async function readAgentAddress(dataDir: string): Promise<[string | null, string | null]> {
 	const configPath = join(dataDir, "config.yaml");
 	try {
-		const raw = await readFile(configPath, "utf-8");
 		const parsed =
-			(YAML.parse(raw) as { ows?: { wallet?: string; api_key?: string }; chain?: string } | null) ??
-			undefined;
+			(await readYamlFile<{ ows?: { wallet?: string; api_key?: string }; chain?: string } | null>(
+				configPath,
+			)) ?? undefined;
 		if (!parsed?.ows?.wallet || !parsed?.ows?.api_key) {
 			const legacyWarning = getLegacyWalletMigrationWarning({ dataDir, configPath });
 			return [null, legacyWarning ?? "OWS wallet config is missing from config.yaml."];

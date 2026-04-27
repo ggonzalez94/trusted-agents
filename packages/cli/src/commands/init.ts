@@ -1,9 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import YAML from "yaml";
-import { writeYamlFileAtomic } from "../lib/atomic-write.js";
+import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { ALL_CHAINS, DEFAULT_CHAIN_ALIAS, resolveChainAlias } from "../lib/chains.js";
 import {
 	getDefaultExecutionModeForChain,
@@ -51,11 +50,11 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 		await mkdir(join(dataDir, "xmtp"), { recursive: true });
 
 		const existingConfig = existsSync(configPath)
-			? ((YAML.parse(await readFile(configPath, "utf-8")) as {
+			? ((await readYamlFile<{
 					chain?: string;
 					ows?: { wallet?: string; api_key?: string };
 					xmtp?: { db_encryption_key?: string };
-				} | null) ?? undefined)
+				} | null>(configPath)) ?? undefined)
 			: undefined;
 
 		// Reuse the saved chain when config already exists; otherwise fall back to the CLI default.

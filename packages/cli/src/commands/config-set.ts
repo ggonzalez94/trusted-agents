@@ -1,7 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import YAML from "yaml";
-import { writeYamlFileAtomic } from "../lib/atomic-write.js";
+import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import {
 	resolveConfigPath,
@@ -61,8 +59,7 @@ export async function configSetCommand(
 			throw new Error(`Config file not found at ${configPath}. Run 'tap init' first.`);
 		}
 
-		const content = await readFile(configPath, "utf-8");
-		const yaml = (YAML.parse(content) as Record<string, unknown>) ?? {};
+		const yaml = (await readYamlFile<Record<string, unknown> | null>(configPath)) ?? {};
 
 		// Handle nested keys like xmtp.db_encryption_key
 		const parts = normalizeConfigPath(key);
