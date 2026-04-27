@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import YAML from "yaml";
-import { writeFileAtomic } from "../lib/atomic-write.js";
+import { writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import {
 	resolveConfigPath,
@@ -81,7 +81,7 @@ export async function configSetCommand(
 		const resolvedValue = leafKey === "chain" ? resolveChainAlias(value) : value;
 		target[leafKey] = parseConfigValue(parts, resolvedValue);
 
-		await writeFileAtomic(configPath, YAML.stringify(yaml));
+		await writeYamlFileAtomic(configPath, yaml);
 
 		success({ key, value: target[leafKey], path: configPath }, opts, startTime);
 	} catch (err) {

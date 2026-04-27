@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { writeFileAtomic } from "../lib/atomic-write.js";
+import { writeJsonFileAtomic } from "../lib/atomic-write.js";
 
 export interface TapHermesIdentityConfig {
 	name: string;
@@ -126,7 +126,7 @@ export async function saveTapHermesPluginConfig(
 ): Promise<void> {
 	const { configPath } = getTapHermesPaths(hermesHome);
 	const normalized = parseTapHermesPluginConfig(config);
-	await writeFileAtomic(configPath, JSON.stringify(normalized, null, "\t"));
+	await writeJsonFileAtomic(configPath, normalized);
 }
 
 export async function upsertTapHermesIdentity(
@@ -172,10 +172,7 @@ export async function saveTapHermesDaemonState(
 	state: TapHermesDaemonState,
 ): Promise<void> {
 	const { daemonStatePath } = getTapHermesPaths(hermesHome);
-	await writeFileAtomic(
-		daemonStatePath,
-		JSON.stringify(parseTapHermesDaemonState(state), null, "\t"),
-	);
+	await writeJsonFileAtomic(daemonStatePath, parseTapHermesDaemonState(state));
 }
 
 function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityConfig {

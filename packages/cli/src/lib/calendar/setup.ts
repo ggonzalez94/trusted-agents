@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import type { ICalendarProvider } from "trusted-agents-core";
 import { ValidationError } from "trusted-agents-core";
 import YAML from "yaml";
-import { writeFileAtomic } from "../atomic-write.js";
+import { writeYamlFileAtomic } from "../atomic-write.js";
 import { commandExists } from "../shell.js";
 import { GoogleCalendarCliProvider } from "./google-calendar.js";
 
@@ -54,7 +54,7 @@ export async function writeCalendarConfig(dataDir: string, provider: string): Pr
 	}
 	(yaml.calendar as Record<string, unknown>).provider = provider;
 
-	await writeFileAtomic(configPath, YAML.stringify(yaml));
+	await writeYamlFileAtomic(configPath, yaml);
 }
 
 export function readCalendarProvider(dataDir: string): string | undefined {
