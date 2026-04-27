@@ -4,6 +4,7 @@ import {
 	ValidationError,
 	assertSafeFileComponent,
 	generateNonce,
+	isObject,
 	nowISO,
 } from "../common/index.js";
 import type { IConversationLogger } from "../conversation/logger.js";
@@ -218,30 +219,30 @@ function extractMessageId(message: Message): string | undefined {
 }
 
 function extractProtocolMessage(request: ProtocolMessage): Message | null {
-	if (typeof request.params !== "object" || request.params === null) {
+	if (!isObject(request.params)) {
 		return null;
 	}
 
-	const message = (request.params as { message?: unknown }).message;
-	if (typeof message !== "object" || message === null) {
+	const message = request.params.message;
+	if (!isObject(message)) {
 		return null;
 	}
 
-	const parts = (message as { parts?: unknown }).parts;
+	const parts = message.parts;
 	if (!Array.isArray(parts)) {
 		return null;
 	}
 
-	return message as Message;
+	return message as unknown as Message;
 }
 
 function extractTrustedAgentMetadata(message: Message): Partial<TrustedAgentMetadata> | undefined {
-	if (typeof message.metadata !== "object" || message.metadata === null) {
+	if (!isObject(message.metadata)) {
 		return undefined;
 	}
 
 	const metadata = message.metadata.trustedAgent;
-	if (typeof metadata !== "object" || metadata === null) {
+	if (!isObject(metadata)) {
 		return undefined;
 	}
 
