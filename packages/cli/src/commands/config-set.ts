@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { isObject } from "trusted-agents-core";
 import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import {
@@ -66,10 +67,14 @@ export async function configSetCommand(
 		let target: Record<string, unknown> = yaml;
 		for (let i = 0; i < parts.length - 1; i++) {
 			const part = parts[i]!;
-			if (typeof target[part] !== "object" || target[part] === null) {
-				target[part] = {};
+			const next = target[part];
+			if (isObject(next)) {
+				target = next;
+			} else {
+				const child: Record<string, unknown> = {};
+				target[part] = child;
+				target = child;
 			}
-			target = target[part] as Record<string, unknown>;
 		}
 
 		const leafKey = parts[parts.length - 1]!;

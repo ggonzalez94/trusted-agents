@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { TAP_GRANTS_VERSION } from "trusted-agents-core";
+import { TAP_GRANTS_VERSION, isObject } from "trusted-agents-core";
 import type { TapRuntime } from "trusted-agents-sdk";
 import { http, createPublicClient, formatUnits, parseAbi } from "viem";
 import type { CliTapServiceHooks } from "../../src/lib/cli-runtime.js";
@@ -180,20 +180,19 @@ function parseRequiredBigInt(value: unknown, label: string): bigint {
 }
 
 function parseAgentBalanceSnapshotData(data: unknown): AgentBalanceSnapshot {
-	if (typeof data !== "object" || data === null) {
+	if (!isObject(data)) {
 		throw new Error("Invalid balance output payload");
 	}
 
-	const payload = data as Record<string, unknown>;
-	const messagingAddress = parseRequiredAddress(payload.messaging_address, "messaging_address");
-	const executionAddress = parseRequiredAddress(payload.execution_address, "execution_address");
-	const fundingAddress = parseRequiredAddress(payload.funding_address, "funding_address");
+	const messagingAddress = parseRequiredAddress(data.messaging_address, "messaging_address");
+	const executionAddress = parseRequiredAddress(data.execution_address, "execution_address");
+	const fundingAddress = parseRequiredAddress(data.funding_address, "funding_address");
 	const messagingUsdcBalance = parseRequiredBigInt(
-		payload.messaging_usdc_balance_raw,
+		data.messaging_usdc_balance_raw,
 		"messaging_usdc_balance_raw",
 	);
 	const executionUsdcBalance = parseRequiredBigInt(
-		payload.execution_usdc_balance_raw,
+		data.execution_usdc_balance_raw,
 		"execution_usdc_balance_raw",
 	);
 

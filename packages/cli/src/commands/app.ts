@@ -1,4 +1,4 @@
-import type { TapApp } from "trusted-agents-core";
+import { type TapApp, isObject } from "trusted-agents-core";
 import { loadConfig } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
 import { error } from "../lib/output.js";
@@ -23,12 +23,11 @@ export async function appInstallCommand(name: string, opts: GlobalOptions): Prom
 			const mod = await import(packageName);
 			const exported = mod.default ?? mod.app ?? mod;
 			if (
-				!exported ||
-				typeof exported !== "object" ||
-				typeof (exported as Record<string, unknown>).id !== "string" ||
-				typeof (exported as Record<string, unknown>).name !== "string" ||
-				typeof (exported as Record<string, unknown>).version !== "string" ||
-				typeof (exported as Record<string, unknown>).actions !== "object"
+				!isObject(exported) ||
+				typeof exported.id !== "string" ||
+				typeof exported.name !== "string" ||
+				typeof exported.version !== "string" ||
+				typeof exported.actions !== "object"
 			) {
 				error(
 					"VALIDATION_ERROR",
@@ -38,7 +37,7 @@ export async function appInstallCommand(name: string, opts: GlobalOptions): Prom
 				process.exitCode = 1;
 				return;
 			}
-			tapApp = exported as TapApp;
+			tapApp = exported as unknown as TapApp;
 		} catch (_importErr) {
 			error(
 				"NOT_FOUND",
