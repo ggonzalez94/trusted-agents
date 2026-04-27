@@ -8,6 +8,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { migrateWalletCommand } from "../src/commands/migrate-wallet.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { useOwsArtifactCleanup } from "./helpers/ows-cleanup.js";
 import { runCli } from "./helpers/run-cli.js";
@@ -28,7 +29,7 @@ describe("tap migrate-wallet", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-migrate-test-"));
 		dataDir = join(tmpDir, "data");
-		configPath = join(dataDir, "config.yaml");
+		configPath = defaultConfigPath(dataDir);
 		keyPath = join(dataDir, "identity", "agent.key");
 
 		// Clean up stale OWS wallets from previous test runs that may have
