@@ -1,3 +1,4 @@
+import { isObject } from "../common/validation.js";
 import type { PermissionGrant } from "../permissions/types.js";
 import type { Contact } from "../trust/types.js";
 
@@ -105,5 +106,5 @@ export function defineTapApp(app: TapApp): TapApp {
 }
 
 export function hasTapAppShape(app: TapApp): app is TapApp {
-	return Boolean(app.id && app.actions && typeof app.actions === "object");
+	return Boolean(app.id && isObject(app.actions));
 }
