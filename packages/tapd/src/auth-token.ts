@@ -10,13 +10,12 @@ export function generateAuthToken(): string {
 
 export async function persistAuthToken(dataDir: string, token: string): Promise<void> {
 	await mkdir(dataDir, { recursive: true, mode: 0o700 });
-	const path = join(dataDir, TAPD_TOKEN_FILE);
-	await writeFile(path, token, { encoding: "utf-8", mode: 0o600 });
+	await writeFile(tokenFilePath(dataDir), token, { encoding: "utf-8", mode: 0o600 });
 }
 
 export async function loadAuthToken(dataDir: string): Promise<string | null> {
 	try {
-		const contents = await readFile(join(dataDir, TAPD_TOKEN_FILE), "utf-8");
+		const contents = await readFile(tokenFilePath(dataDir), "utf-8");
 		return contents.trim() || null;
 	} catch (error: unknown) {
 		if (fsErrorCode(error) === "ENOENT") return null;
