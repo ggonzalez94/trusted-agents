@@ -164,7 +164,7 @@ describe("tap remove", () => {
 
 	it("refuses removal when a live transport owner lock exists", async () => {
 		await writeFile(
-			join(dataDir, ".transport.lock"),
+			core.transportOwnerLockPath(dataDir),
 			JSON.stringify(
 				{
 					pid: process.pid,

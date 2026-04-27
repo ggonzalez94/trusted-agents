@@ -10,6 +10,7 @@ import {
 	contactsFilePath,
 	legacyConversationsDir,
 	requestJournalPath,
+	transportOwnerLockPath,
 } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
@@ -435,7 +436,7 @@ describe("tap status", () => {
 		const dataDir = await makeAgentDir(tempRoot);
 
 		// Write a lock file pointing at a pid that can't be alive.
-		const lockPath = join(dataDir, ".transport.lock");
+		const lockPath = transportOwnerLockPath(dataDir);
 		await writeFile(
 			lockPath,
 			JSON.stringify({
@@ -505,7 +506,7 @@ describe("tap status", () => {
 		// malformed lock file aborted the whole status command — which is
 		// exactly the crash-recovery scenario tap status exists to diagnose.
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, ".transport.lock"), "{ not json", "utf-8");
+		await writeFile(transportOwnerLockPath(dataDir), "{ not json", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -579,7 +580,7 @@ describe("tap status", () => {
 		// fired even though ownership was actually unknown. A live host might
 		// still be draining the queue.
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, ".transport.lock"), "{ not json", "utf-8");
+		await writeFile(transportOwnerLockPath(dataDir), "{ not json", "utf-8");
 		const journal = new FileRequestJournal(dataDir);
 		await journal.putOutbound({
 			requestId: "cmd-unknown",

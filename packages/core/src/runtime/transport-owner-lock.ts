@@ -4,6 +4,12 @@ import { join } from "node:path";
 import { readJsonFileOrDefault } from "../common/atomic-json.js";
 import { fsErrorCode, resolveDataDir } from "../common/index.js";
 
+export const TRANSPORT_OWNER_LOCK_FILE = ".transport.lock";
+
+export function transportOwnerLockPath(dataDir: string): string {
+	return join(dataDir, TRANSPORT_OWNER_LOCK_FILE);
+}
+
 export interface TransportOwnerInfo {
 	pid: number;
 	owner: string;
@@ -33,7 +39,7 @@ export class TransportOwnerLock {
 		private readonly owner: string,
 	) {
 		const resolvedDataDir = resolveDataDir(dataDir);
-		this.lockPath = join(resolvedDataDir, ".transport.lock");
+		this.lockPath = transportOwnerLockPath(resolvedDataDir);
 		this.dataDirRealpathPromise = realpath(resolvedDataDir).catch(() => resolvedDataDir);
 	}
 

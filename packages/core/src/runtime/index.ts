@@ -100,7 +100,9 @@ export {
 export { ERC20_TRANSFER_ABI, executeOnchainTransfer } from "./transfer-executor.js";
 export {
 	isProcessAlive,
+	TRANSPORT_OWNER_LOCK_FILE,
 	TransportOwnerLock,
+	transportOwnerLockPath,
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";
