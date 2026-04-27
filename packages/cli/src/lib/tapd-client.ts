@@ -17,7 +17,7 @@ import type {
 	TapSyncReport,
 	TimeSlot,
 } from "trusted-agents-core";
-import { TAPD_PORT_FILE, TAPD_TOKEN_FILE } from "trusted-agents-tapd";
+import { TAPD_PORT_FILE, loadAuthToken } from "trusted-agents-tapd";
 
 // The Unix socket lives next to the token file. tapd binds it on every start
 // at `<dataDir>/.tapd.sock`. The CLI talks to tapd over this socket so it
@@ -67,9 +67,9 @@ export interface TapdConnectionInfo {
  * signals tapd is not running for this data dir.
  */
 export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo> {
-	let token: string;
+	let token: string | null;
 	try {
-		token = (await readFile(join(dataDir, TAPD_TOKEN_FILE), "utf-8")).trim();
+		token = await loadAuthToken(dataDir);
 	} catch {
 		throw new TapdNotRunningError();
 	}
