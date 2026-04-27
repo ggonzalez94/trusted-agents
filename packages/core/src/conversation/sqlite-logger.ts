@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { resolveDataDir } from "../common/index.js";
+import { isObject, resolveDataDir } from "../common/index.js";
 import type { IConversationLogger } from "./logger.js";
 import { applySchema } from "./sqlite-schema.js";
 import { generateMarkdownTranscript } from "./transcript.js";
@@ -767,7 +767,7 @@ function validateConversationLogForImport(log: ConversationLog): void {
 		new Error(`importLog: conversation ${log.conversationId} message[${i}] ${issue}`);
 	for (let i = 0; i < log.messages.length; i += 1) {
 		const message = log.messages[i];
-		if (!message || typeof message !== "object") throw msgErr(i, "is not an object");
+		if (!isObject(message)) throw msgErr(i, "is not an object");
 		if (typeof message.timestamp !== "string" || message.timestamp.length === 0)
 			throw msgErr(i, "has missing or non-string timestamp");
 		if (!isStrictIsoTimestamp(message.timestamp))

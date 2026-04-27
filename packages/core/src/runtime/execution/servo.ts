@@ -12,7 +12,7 @@ import {
 	toHex,
 } from "viem";
 import { createBundlerClient, getUserOperationHash } from "viem/account-abstraction";
-import { ConnectionError, ValidationError, toErrorMessage } from "../../common/index.js";
+import { ConnectionError, ValidationError, isObject, toErrorMessage } from "../../common/index.js";
 import type { ChainConfig } from "../../config/types.js";
 import { getUsdcAsset } from "../assets.js";
 import {
@@ -51,10 +51,10 @@ const POST_OP_REVERTED_ERROR_ABI = [
 ] as const;
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
-	if (typeof value !== "object" || value === null) {
+	if (!isObject(value)) {
 		throw new Error(`${label} must be an object`);
 	}
-	return value as Record<string, unknown>;
+	return value;
 }
 
 function asHex(value: unknown, label: string): Hex {

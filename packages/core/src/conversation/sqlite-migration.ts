@@ -1,7 +1,7 @@
 import { readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { readJsonFile } from "../common/atomic-json.js";
-import { fsErrorCode, resolveDataDir, toErrorMessage } from "../common/index.js";
+import { fsErrorCode, isObject, resolveDataDir, toErrorMessage } from "../common/index.js";
 import type { SqliteConversationLogger } from "./sqlite-logger.js";
 import type { ConversationLog } from "./types.js";
 
@@ -184,8 +184,8 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 }
 
 function isConversationLog(value: unknown): value is ConversationLog {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	if (!isObject(value)) return false;
+	const v = value;
 	return (
 		typeof v.conversationId === "string" &&
 		typeof v.connectionId === "string" &&

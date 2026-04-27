@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
-import { AsyncMutex, nowISO } from "../common/index.js";
+import { AsyncMutex, isObject, nowISO } from "../common/index.js";
 
 export interface XmtpConversationCheckpoint {
 	lastSentAtNs: string;
@@ -99,7 +99,7 @@ export class FileXmtpSyncStateStore {
 function normalizeConversations(
 	conversations: unknown,
 ): Record<string, XmtpConversationCheckpoint> {
-	if (!conversations || typeof conversations !== "object") {
+	if (!isObject(conversations)) {
 		return {};
 	}
 
@@ -112,7 +112,7 @@ function normalizeConversations(
 }
 
 function normalizeCheckpoint(checkpoint: unknown): XmtpConversationCheckpoint | null {
-	if (!checkpoint || typeof checkpoint !== "object") {
+	if (!isObject(checkpoint)) {
 		return null;
 	}
 
