@@ -17,6 +17,7 @@ import {
 	hasOptionalStringFields,
 	hasPeerField,
 	isBoolean,
+	isNonBlankString,
 	isOptionalArray,
 	isOptionalReasonBody,
 	isPositiveFiniteNumber,
@@ -48,7 +49,7 @@ function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (!hasPeerField(v)) return false;
-	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
+	if (!isNonBlankString(v.title)) return false;
 	if (!isPositiveFiniteNumber(v.duration)) return false;
 	if (!isOptionalArray(v.slots)) return false;
 	if (
