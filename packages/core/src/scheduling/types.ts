@@ -50,7 +50,7 @@ export function validateSchedulingProposal(proposal: SchedulingProposal): void {
 			`Invalid proposal type: ${proposal.type}. Must be scheduling/propose or scheduling/counter`,
 		);
 	}
-	if (!proposal.title || proposal.title.trim() === "") {
+	if (isBlankString(proposal.title)) {
 		throw new ValidationError("Proposal title must not be empty");
 	}
 	if (proposal.duration <= 0) {
@@ -62,7 +62,7 @@ export function validateSchedulingProposal(proposal: SchedulingProposal): void {
 	for (const slot of proposal.slots) {
 		validateTimeSlot(slot);
 	}
-	if (!proposal.originTimezone || proposal.originTimezone.trim() === "") {
+	if (isBlankString(proposal.originTimezone)) {
 		throw new ValidationError("Proposal originTimezone must not be empty");
 	}
 }
@@ -71,7 +71,7 @@ export function validateSchedulingAccept(accept: SchedulingAccept): void {
 	if (accept.type !== "scheduling/accept") {
 		throw new ValidationError(`Invalid accept type: ${accept.type}. Must be scheduling/accept`);
 	}
-	if (!accept.schedulingId || accept.schedulingId.trim() === "") {
+	if (isBlankString(accept.schedulingId)) {
 		throw new ValidationError("Accept schedulingId must not be empty");
 	}
 	validateTimeSlot(accept.acceptedSlot);
@@ -83,7 +83,11 @@ export function validateSchedulingReject(reject: SchedulingReject): void {
 			`Invalid reject type: ${reject.type}. Must be scheduling/reject or scheduling/cancel`,
 		);
 	}
-	if (!reject.schedulingId || reject.schedulingId.trim() === "") {
+	if (isBlankString(reject.schedulingId)) {
 		throw new ValidationError("Reject schedulingId must not be empty");
 	}
+}
+
+function isBlankString(value: string | undefined): boolean {
+	return !value || value.trim() === "";
 }
