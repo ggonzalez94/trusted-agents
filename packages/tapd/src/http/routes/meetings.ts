@@ -17,6 +17,7 @@ import {
 	isNonEmptyString,
 	isOptionalReasonBody,
 	isOptionalString,
+	isPositiveFiniteNumber,
 	requireBody,
 	requireParam,
 } from "../validation.js";
@@ -46,9 +47,7 @@ function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	if (!v) return false;
 	if (!isNonEmptyString(v.peer)) return false;
 	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
-	if (typeof v.duration !== "number" || !Number.isFinite(v.duration) || v.duration <= 0) {
-		return false;
-	}
+	if (!isPositiveFiniteNumber(v.duration)) return false;
 	if (v.slots !== undefined && !Array.isArray(v.slots)) return false;
 	if (!isOptionalString(v.preferred)) return false;
 	if (!isOptionalString(v.location)) return false;

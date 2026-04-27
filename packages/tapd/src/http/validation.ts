@@ -13,6 +13,14 @@ export function isOptionalString(value: unknown): boolean {
 	return value === undefined || typeof value === "string";
 }
 
+export function isFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
+export function isPositiveFiniteNumber(value: unknown): value is number {
+	return isFiniteNumber(value) && value > 0;
+}
+
 export function isTapTransferAsset(value: unknown): value is "native" | "usdc" {
 	return value === "native" || value === "usdc";
 }
