@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { TAP_GRANTS_VERSION } from "trusted-agents-core";
 import type { TapRuntime } from "trusted-agents-sdk";
 import { http, createPublicClient, formatUnits, parseAbi } from "viem";
 import type { CliTapServiceHooks } from "../../src/lib/cli-runtime.js";
@@ -566,7 +567,7 @@ export async function writeGrantFile(
 	grants: unknown[],
 ): Promise<string> {
 	const filePath = join(dir, filename);
-	const content = { version: "tap-grants/v1", grants };
+	const content = { version: TAP_GRANTS_VERSION, grants };
 	await writeFile(filePath, JSON.stringify(content, null, 2), "utf-8");
 	return filePath;
 }
