@@ -4,11 +4,19 @@ import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
 
 function isValidIsoDate(value: unknown): value is string {
-	if (typeof value !== "string" || value.length === 0) {
+	if (!isNonEmptyString(value)) {
 		return false;
 	}
 	const d = new Date(value);
 	return !Number.isNaN(d.getTime());
+}
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
+}
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+	return isNonEmptyString(value) ? value : undefined;
 }
 
 function isValidTimeSlot(slot: unknown): slot is TimeSlot {
@@ -35,14 +43,11 @@ export function parseSchedulingActionRequest(message: ProtocolMessage): Scheduli
 	}
 
 	if (
-		typeof data.schedulingId !== "string" ||
-		data.schedulingId.length === 0 ||
-		typeof data.title !== "string" ||
-		data.title.length === 0 ||
+		!isNonEmptyString(data.schedulingId) ||
+		!isNonEmptyString(data.title) ||
 		typeof data.duration !== "number" ||
 		data.duration <= 0 ||
-		typeof data.originTimezone !== "string" ||
-		data.originTimezone.length === 0
+		!isNonEmptyString(data.originTimezone)
 	) {
 		return null;
 	}
@@ -57,6 +62,9 @@ export function parseSchedulingActionRequest(message: ProtocolMessage): Scheduli
 		}
 	}
 
+	const location = optionalNonEmptyString(data.location);
+	const note = optionalNonEmptyString(data.note);
+
 	return {
 		type: data.type as "scheduling/propose" | "scheduling/counter",
 		schedulingId: data.schedulingId,
@@ -64,10 +72,8 @@ export function parseSchedulingActionRequest(message: ProtocolMessage): Scheduli
 		duration: data.duration,
 		slots: data.slots as TimeSlot[],
 		originTimezone: data.originTimezone,
-		...(typeof data.location === "string" && data.location.length > 0
-			? { location: data.location }
-			: {}),
-		...(typeof data.note === "string" && data.note.length > 0 ? { note: data.note } : {}),
+		...(location ? { location } : {}),
+		...(note ? { note } : {}),
 	};
 }
 
@@ -88,7 +94,7 @@ export function parseSchedulingActionResponse(
 		message?: unknown;
 	};
 
-	if (typeof params.requestId !== "string" || params.requestId.length === 0) {
+	if (!isNonEmptyString(params.requestId)) {
 		return null;
 	}
 
@@ -106,27 +112,31 @@ export function parseSchedulingActionResponse(
 			return null;
 		}
 
-		if (typeof data.schedulingId !== "string" || data.schedulingId.length === 0) {
+		if (!isNonEmptyString(data.schedulingId)) {
 			return null;
 		}
+
+		const note = optionalNonEmptyString(data.note);
 
 		return {
 			type: "scheduling/accept",
 			schedulingId: data.schedulingId,
 			acceptedSlot: data.acceptedSlot as TimeSlot,
-			...(typeof data.note === "string" && data.note.length > 0 ? { note: data.note } : {}),
+			...(note ? { note } : {}),
 		};
 	}
 
 	if (data.type === "scheduling/reject" || data.type === "scheduling/cancel") {
-		if (typeof data.schedulingId !== "string" || data.schedulingId.length === 0) {
+		if (!isNonEmptyString(data.schedulingId)) {
 			return null;
 		}
+
+		const reason = optionalNonEmptyString(data.reason);
 
 		return {
 			type: data.type as "scheduling/reject" | "scheduling/cancel",
 			schedulingId: data.schedulingId,
-			...(typeof data.reason === "string" && data.reason.length > 0 ? { reason: data.reason } : {}),
+			...(reason ? { reason } : {}),
 		};
 	}
 
