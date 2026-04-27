@@ -1,7 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { writeJsonFileAtomic } from "../lib/atomic-write.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../lib/atomic-write.js";
 
 export interface TapHermesIdentityConfig {
 	name: string;
@@ -236,28 +235,6 @@ function normalizeReconcileInterval(value: unknown): number {
 	return DEFAULT_HERMES_RECONCILE_INTERVAL_MINUTES;
 }
 
-async function readJsonFileOrDefault<T>(
-	path: string,
-	parse: (raw: unknown) => T,
-	defaultValue: T,
-): Promise<T> {
-	try {
-		const raw = await readFile(path, "utf-8");
-		return parse(JSON.parse(raw));
-	} catch (error: unknown) {
-		if (isMissingFileError(error)) {
-			return defaultValue;
-		}
-		throw error;
-	}
-}
-
 function isFinitePositiveInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 1;
-}
-
-function isMissingFileError(error: unknown): boolean {
-	return (
-		error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
-	);
 }

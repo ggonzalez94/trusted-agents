@@ -25,7 +25,11 @@ import type {
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
 import { resolveHermesHome } from "../hermes/config.js";
-import { writeJsonFileAtomic, writeYamlFileAtomic } from "../lib/atomic-write.js";
+import {
+	readJsonFileOrDefault,
+	writeJsonFileAtomic,
+	writeYamlFileAtomic,
+} from "../lib/atomic-write.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import {
@@ -250,11 +254,7 @@ const X402_TOP_UP_GAS_RESERVE_USDC = 10_000n;
 
 async function loadIpfsCache(dataDir: string): Promise<IpfsCache> {
 	const cachePath = `${dataDir}/ipfs-cache.json`;
-	try {
-		return JSON.parse(await readFile(cachePath, "utf-8")) as IpfsCache;
-	} catch {
-		return {};
-	}
+	return readJsonFileOrDefault(cachePath, (raw) => raw as IpfsCache, {}, { fallbackOnError: true });
 }
 
 async function saveIpfsCache(dataDir: string, cache: IpfsCache): Promise<void> {

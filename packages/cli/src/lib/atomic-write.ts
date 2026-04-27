@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import YAML from "yaml";
 
@@ -9,6 +9,22 @@ export async function writeFileAtomic(path: string, content: string): Promise<vo
 	const tempPath = join(dir, `.tmp-${randomUUID()}`);
 	await writeFile(tempPath, content, { encoding: "utf-8", mode: 0o600 });
 	await rename(tempPath, path);
+}
+
+export async function readJsonFileOrDefault<T>(
+	path: string,
+	parse: (raw: unknown) => T,
+	fallback: T,
+	options: { fallbackOnError?: boolean } = {},
+): Promise<T> {
+	try {
+		return parse(JSON.parse(await readFile(path, "utf-8")));
+	} catch (error: unknown) {
+		if (options.fallbackOnError || isMissingFileError(error)) {
+			return fallback;
+		}
+		throw error;
+	}
 }
 
 export async function writeJsonFileAtomic(
@@ -21,4 +37,10 @@ export async function writeJsonFileAtomic(
 
 export async function writeYamlFileAtomic(path: string, data: unknown): Promise<void> {
 	await writeFileAtomic(path, YAML.stringify(data));
+}
+
+function isMissingFileError(error: unknown): boolean {
+	return (
+		error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+	);
 }
