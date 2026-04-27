@@ -184,10 +184,10 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 		identities?: unknown;
 	};
 
-	if (!isFinitePositiveInteger(input.pid)) {
+	if (!isFiniteNumberAtLeastOne(input.pid)) {
 		throw new Error("Invalid TAP Hermes daemon state pid");
 	}
-	if (!isFinitePositiveInteger(input.gatewayPid)) {
+	if (!isFiniteNumberAtLeastOne(input.gatewayPid)) {
 		throw new Error("Invalid TAP Hermes daemon state gatewayPid");
 	}
 	const socketPath = requireTrimmedNonEmptyString(
@@ -215,13 +215,13 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 }
 
 function normalizeReconcileInterval(value: unknown): number {
-	if (typeof value === "number" && Number.isFinite(value) && value >= 1) {
+	if (isFiniteNumberAtLeastOne(value)) {
 		return value;
 	}
 	return DEFAULT_HERMES_RECONCILE_INTERVAL_MINUTES;
 }
 
-function isFinitePositiveInteger(value: unknown): value is number {
+function isFiniteNumberAtLeastOne(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 1;
 }
 
