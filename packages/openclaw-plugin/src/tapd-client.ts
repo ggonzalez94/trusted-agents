@@ -1,12 +1,11 @@
-import { readFile } from "node:fs/promises";
 import { request } from "node:http";
 import { dirname, join } from "node:path";
 import type { TapNotification, TapNotificationType } from "trusted-agents-tapd";
+import { TAPD_TOKEN_FILE_NAME, readTapdToken } from "./tapd-token.js";
 
 export type { TapNotification, TapNotificationType };
 
 const DEFAULT_SOCKET_NAME = ".tapd.sock";
-const TOKEN_FILE_NAME = ".tapd-token";
 const DEFAULT_DATA_DIR = ".trustedagents";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -85,7 +84,7 @@ export class OpenClawTapdClient {
 
 	constructor(options: OpenClawTapdClientOptions = {}) {
 		this.socketPath = resolveSocketPath(options);
-		this.tokenPath = join(dirname(this.socketPath), TOKEN_FILE_NAME);
+		this.tokenPath = join(dirname(this.socketPath), TAPD_TOKEN_FILE_NAME);
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	}
 
@@ -199,9 +198,7 @@ export class OpenClawTapdClient {
 
 	private async loadToken(): Promise<string> {
 		try {
-			const token = (await readFile(this.tokenPath, "utf-8")).trim();
-			if (!token) throw new Error(`tapd token file ${this.tokenPath} is empty`);
-			return token;
+			return await readTapdToken(this.tokenPath);
 		} catch (err: unknown) {
 			const code = (err as NodeJS.ErrnoException | undefined)?.code;
 			if (code === "ENOENT") {
