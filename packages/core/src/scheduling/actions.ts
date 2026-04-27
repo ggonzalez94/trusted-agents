@@ -44,37 +44,24 @@ function isStringTimeSlot(slot: unknown): slot is TimeSlot {
 	return typeof s.start === "string" && typeof s.end === "string";
 }
 
-function readFirstNumber(
+function readFirstMatching<T>(
 	data: Record<string, unknown>,
 	fields: readonly string[],
-): number | undefined {
+	predicate: (value: unknown) => value is T,
+): T | undefined {
 	for (const field of fields) {
 		const value = data[field];
-		if (typeof value === "number") return value;
+		if (predicate(value)) return value;
 	}
 	return undefined;
 }
 
-function readFirstArray(
-	data: Record<string, unknown>,
-	fields: readonly string[],
-): unknown[] | undefined {
-	for (const field of fields) {
-		const value = data[field];
-		if (Array.isArray(value)) return value;
-	}
-	return undefined;
+function isNumber(value: unknown): value is number {
+	return typeof value === "number";
 }
 
-function readFirstNonEmptyString(
-	data: Record<string, unknown>,
-	fields: readonly string[],
-): string | undefined {
-	for (const field of fields) {
-		const value = data[field];
-		if (isNonEmptyString(value)) return value;
-	}
-	return undefined;
+function isUnknownArray(value: unknown): value is unknown[] {
+	return Array.isArray(value);
 }
 
 function readSchedulingProposalType(
@@ -102,9 +89,9 @@ export function parseSchedulingActionPayload(
 		? data.schedulingId
 		: options.defaultSchedulingId?.();
 	const originTimezone =
-		readFirstNonEmptyString(data, options.originTimezoneFields ?? ["originTimezone"]) ??
+		readFirstMatching(data, options.originTimezoneFields ?? ["originTimezone"], isNonEmptyString) ??
 		options.defaultOriginTimezone;
-	const duration = readFirstNumber(data, options.durationFields ?? ["duration"]);
+	const duration = readFirstMatching(data, options.durationFields ?? ["duration"], isNumber);
 
 	if (
 		!isNonEmptyString(schedulingId) ||
@@ -116,7 +103,7 @@ export function parseSchedulingActionPayload(
 		return null;
 	}
 
-	const rawSlots = readFirstArray(data, options.slotFields ?? ["slots"]);
+	const rawSlots = readFirstMatching(data, options.slotFields ?? ["slots"], isUnknownArray);
 	if (!rawSlots || rawSlots.length === 0) {
 		return null;
 	}
