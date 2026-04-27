@@ -15,6 +15,7 @@ import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
 	hasPeerField,
+	isBoolean,
 	isOptionalReasonBody,
 	isOptionalString,
 	isPositiveFiniteNumber,
@@ -65,7 +66,7 @@ interface RespondBody {
 function isRespondBody(value: unknown): value is RespondBody {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (typeof v.approve !== "boolean") return false;
+	if (!isBoolean(v.approve)) return false;
 	if (!isOptionalString(v.reason)) return false;
 	return true;
 }

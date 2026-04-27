@@ -13,6 +13,14 @@ export function isOptionalString(value: unknown): boolean {
 	return value === undefined || typeof value === "string";
 }
 
+export function isBoolean(value: unknown): value is boolean {
+	return typeof value === "boolean";
+}
+
+export function isOptionalBoolean(value: unknown): boolean {
+	return value === undefined || isBoolean(value);
+}
+
 export function isFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value);
 }
