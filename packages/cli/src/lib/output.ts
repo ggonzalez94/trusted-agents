@@ -188,9 +188,9 @@ function printNdjson(data: unknown): void {
 
 	if (isObject(data)) {
 		const obj = data as Record<string, unknown>;
-		const entries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
-		if (entries.length === 1) {
-			for (const item of entries[0]![1] as unknown[]) {
+		const arrayEntry = findSingleArrayEntry(obj);
+		if (arrayEntry) {
+			for (const item of arrayEntry[1]) {
 				process.stdout.write(`${stableStringify(item)}\n`);
 			}
 			return;
@@ -353,12 +353,12 @@ function applyFieldSelection(data: unknown, fields: string[]): unknown {
 	}
 
 	const obj = data as Record<string, unknown>;
-	const arrayEntries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
-	if (arrayEntries.length === 1) {
-		const [arrayKey, arrayValue] = arrayEntries[0]!;
+	const arrayEntry = findSingleArrayEntry(obj);
+	if (arrayEntry) {
+		const [arrayKey, arrayValue] = arrayEntry;
 		return {
-			...Object.fromEntries(Object.entries(obj).filter(([key]) => key !== arrayKey)),
-			[arrayKey]: (arrayValue as unknown[]).map((item) => selectFields(item, fields)),
+			...objectWithoutKey(obj, arrayKey),
+			[arrayKey]: arrayValue.map((item) => selectFields(item, fields)),
 		};
 	}
 
@@ -427,14 +427,14 @@ function applyPagination(
 	}
 
 	const obj = data as Record<string, unknown>;
-	const arrayEntries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
-	if (arrayEntries.length !== 1) {
+	const arrayEntry = findSingleArrayEntry(obj);
+	if (!arrayEntry) {
 		return { data };
 	}
 
-	const [arrayKey, arrayValue] = arrayEntries[0]!;
-	const paginated = paginateArray(arrayValue as unknown[], limit, offset, (items) => ({
-		...Object.fromEntries(Object.entries(obj).filter(([key]) => key !== arrayKey)),
+	const [arrayKey, arrayValue] = arrayEntry;
+	const paginated = paginateArray(arrayValue, limit, offset, (items) => ({
+		...objectWithoutKey(obj, arrayKey),
 		[arrayKey]: items,
 	}));
 
@@ -465,6 +465,17 @@ function paginateArray<T>(
 			total: items.length,
 		},
 	};
+}
+
+function findSingleArrayEntry(obj: Record<string, unknown>): [string, unknown[]] | undefined {
+	const entries = Object.entries(obj).filter((entry): entry is [string, unknown[]] =>
+		Array.isArray(entry[1]),
+	);
+	return entries.length === 1 ? entries[0] : undefined;
+}
+
+function objectWithoutKey(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(obj).filter(([candidate]) => candidate !== key));
 }
 
 function stableStringify(value: unknown): string {
