@@ -11,7 +11,7 @@ export {
 	fsErrorCode,
 } from "./errors.js";
 
-export { generateNonce, generateConnectionId } from "./crypto.js";
+export { generateNonce, generateConnectionId, generateActionId } from "./crypto.js";
 
 export { nowISO, isExpired, expiresIn, toISO } from "./time.js";
 

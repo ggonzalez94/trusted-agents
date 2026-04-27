@@ -1,4 +1,4 @@
-import { defineTapApp } from "trusted-agents-core";
+import { defineTapApp, generateActionId } from "trusted-agents-core";
 import { handleTransferRequest } from "./handler.js";
 
 export { handleTransferRequest } from "./handler.js";
@@ -28,7 +28,7 @@ export function buildTransferPayload(params: {
 }): Record<string, unknown> {
 	return {
 		type: "transfer/request",
-		actionId: params.actionId ?? `txn_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+		actionId: params.actionId ?? generateActionId("txn"),
 		...params,
 	};
 }
