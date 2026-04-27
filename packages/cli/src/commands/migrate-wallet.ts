@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { keccak256, toHex } from "viem";
 import YAML from "yaml";
+import { writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
@@ -144,7 +145,7 @@ export async function migrateWalletCommand(
 			db_encryption_key: xmtpDbEncryptionKey,
 		};
 
-		await writeFile(configPath, YAML.stringify(yaml), "utf-8");
+		await writeYamlFileAtomic(configPath, yaml);
 		info(`Updated config at ${configPath}`, opts);
 
 		// ── Step 9: Delete raw key file ───────────────────────────────

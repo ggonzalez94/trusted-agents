@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import YAML from "yaml";
+import { writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { ALL_CHAINS, DEFAULT_CHAIN_ALIAS, resolveChainAlias } from "../lib/chains.js";
 import {
 	getDefaultExecutionModeForChain,
@@ -132,7 +133,7 @@ export async function initCommand(opts: GlobalOptions, cmdOpts?: InitOptions): P
 			}
 
 			await mkdir(dirname(configPath), { recursive: true });
-			await writeFile(configPath, YAML.stringify(yamlConfig), "utf-8");
+			await writeYamlFileAtomic(configPath, yamlConfig);
 			info(`Created config at ${configPath}`, opts);
 		}
 

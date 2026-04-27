@@ -25,6 +25,7 @@ import type {
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
 import YAML from "yaml";
 import { resolveHermesHome } from "../hermes/config.js";
+import { writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import {
@@ -910,5 +911,5 @@ async function updateConfigAgentId(configPath: string, agentId: number): Promise
 	const content = await readFile(configPath, "utf-8");
 	const yaml = YAML.parse(content) as Record<string, unknown>;
 	yaml.agent_id = agentId;
-	await writeFile(configPath, YAML.stringify(yaml), "utf-8");
+	await writeYamlFileAtomic(configPath, yaml);
 }
