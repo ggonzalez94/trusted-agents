@@ -22,6 +22,7 @@ export {
 	addAppToManifest,
 	removeAppFromManifest,
 	buildRoutingTable,
+	appManifestPath,
 } from "./manifest.js";
 export {
 	TapAppRegistry,

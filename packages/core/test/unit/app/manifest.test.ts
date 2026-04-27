@@ -3,6 +3,7 @@ import {
 	type AppManifest,
 	type AppManifestEntry,
 	addAppToManifest,
+	appManifestPath,
 	buildRoutingTable,
 	loadAppManifest,
 	removeAppFromManifest,
@@ -12,6 +13,10 @@ import { useTempDir } from "../../helpers/temp-dir.js";
 
 describe("AppManifest", () => {
 	const dir = useTempDir("tap-manifest");
+
+	it("derives the app manifest path from the data dir", () => {
+		expect(appManifestPath("/tmp/tap-data")).toBe("/tmp/tap-data/apps.json");
+	});
 
 	it("returns empty manifest when file does not exist", async () => {
 		const manifest = await loadAppManifest(dir.path);

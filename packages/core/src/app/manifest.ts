@@ -29,13 +29,13 @@ export interface RoutingEntry {
 	entryPoint: string;
 }
 
-function manifestPath(dataDir: string): string {
+export function appManifestPath(dataDir: string): string {
 	return join(dataDir, "apps.json");
 }
 
 export async function loadAppManifest(dataDir: string): Promise<AppManifest> {
 	return readJsonFileOrDefault(
-		manifestPath(dataDir),
+		appManifestPath(dataDir),
 		(raw) => raw as AppManifest,
 		{ apps: {} },
 		{
@@ -45,7 +45,7 @@ export async function loadAppManifest(dataDir: string): Promise<AppManifest> {
 }
 
 export async function saveAppManifest(dataDir: string, manifest: AppManifest): Promise<void> {
-	await writeJsonFileAtomic(manifestPath(dataDir), manifest, { tempPrefix: ".apps" });
+	await writeJsonFileAtomic(appManifestPath(dataDir), manifest, { tempPrefix: ".apps" });
 }
 
 export async function addAppToManifest(

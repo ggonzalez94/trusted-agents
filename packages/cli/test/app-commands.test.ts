@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appManifestPath } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appListCommand, appRemoveCommand } from "../src/commands/app.js";
 import { defaultConfigPath } from "../src/lib/config-loader.js";
@@ -13,12 +14,11 @@ describe("tap app commands", () => {
 	let logWrites: string[];
 	const { stdout: stdoutWrites, stderr: stderrWrites } = useCapturedOutput();
 
-	const appsManifestPath = () => join(dataDir, "apps.json");
 	const writeManifest = async (manifest: unknown) => {
-		await writeFile(appsManifestPath(), JSON.stringify(manifest));
+		await writeFile(appManifestPath(dataDir), JSON.stringify(manifest));
 	};
 	const readManifest = async () =>
-		JSON.parse(await readFile(appsManifestPath(), "utf-8")) as {
+		JSON.parse(await readFile(appManifestPath(dataDir), "utf-8")) as {
 			apps: Record<string, unknown>;
 		};
 
