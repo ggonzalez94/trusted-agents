@@ -5,13 +5,14 @@ import { FileRequestJournal } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { journalListCommand } from "../src/commands/journal-list.js";
 import { journalShowCommand } from "../src/commands/journal-show.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { UNREGISTERED_AGENT_CONFIG_YAML } from "./helpers/config-fixtures.js";
 
 async function makeAgentDir(root: string): Promise<string> {
 	const dataDir = join(root, "agent");
 	await mkdir(dataDir, { recursive: true });
-	await writeFile(join(dataDir, "config.yaml"), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
+	await writeFile(defaultConfigPath(dataDir), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
 	return dataDir;
 }
 
