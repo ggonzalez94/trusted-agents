@@ -1,4 +1,4 @@
-import { generateNonce, isObject } from "../common/index.js";
+import { generateNonce, isNonEmptyString, isObject } from "../common/index.js";
 import type { JsonRpcId, JsonRpcRequest } from "./types.js";
 
 export function createJsonRpcRequest(
@@ -24,5 +24,5 @@ export function extractConnectionIdFromParams(params: unknown): string | null {
 	const trustedAgent =
 		metadata && isObject(metadata.trustedAgent) ? metadata.trustedAgent : undefined;
 	const connectionId = trustedAgent?.connectionId;
-	return typeof connectionId === "string" && connectionId.length > 0 ? connectionId : null;
+	return isNonEmptyString(connectionId) ? connectionId : null;
 }

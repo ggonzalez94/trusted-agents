@@ -103,9 +103,6 @@ function normalizeGrantLike(input: unknown): PermissionGrant {
 		scope: input.scope,
 		...(input.constraints ? { constraints: input.constraints } : {}),
 		status: input.status ?? "active",
-		updatedAt:
-			typeof input.updatedAt === "string" && input.updatedAt.length > 0
-				? input.updatedAt
-				: new Date().toISOString(),
+		updatedAt: isNonEmptyString(input.updatedAt) ? input.updatedAt : new Date().toISOString(),
 	};
 }

@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { Client, getInboxIdForIdentifier } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm, Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { TransportError, isEthereumAddress, nowISO, toErrorMessage } from "../common/index.js";
+import {
+	TransportError,
+	isEthereumAddress,
+	isNonEmptyString,
+	nowISO,
+	toErrorMessage,
+} from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import {
 	CONNECTION_REQUEST,
@@ -650,15 +656,9 @@ export class XmtpTransport implements TransportProvider {
 
 		pending.resolve({
 			received: true,
-			requestId:
-				typeof receipt.requestId === "string" && receipt.requestId.length > 0
-					? receipt.requestId
-					: requestId,
+			requestId: isNonEmptyString(receipt.requestId) ? receipt.requestId : requestId,
 			status: receipt.status,
-			receivedAt:
-				typeof receipt.receivedAt === "string" && receipt.receivedAt.length > 0
-					? receipt.receivedAt
-					: nowISO(),
+			receivedAt: isNonEmptyString(receipt.receivedAt) ? receipt.receivedAt : nowISO(),
 		});
 		return true;
 	}
