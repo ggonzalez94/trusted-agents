@@ -109,15 +109,7 @@ export async function loadTapHermesPluginConfig(
 	hermesHome?: string,
 ): Promise<TapHermesPluginConfig> {
 	const { configPath } = getTapHermesPaths(hermesHome);
-	try {
-		const raw = await readFile(configPath, "utf-8");
-		return parseTapHermesPluginConfig(JSON.parse(raw));
-	} catch (error: unknown) {
-		if (isMissingFileError(error)) {
-			return { identities: [] };
-		}
-		throw error;
-	}
+	return readJsonFileOrDefault(configPath, parseTapHermesPluginConfig, { identities: [] });
 }
 
 export async function saveTapHermesPluginConfig(
@@ -156,15 +148,7 @@ export async function loadTapHermesDaemonState(
 	hermesHome?: string,
 ): Promise<TapHermesDaemonState | null> {
 	const { daemonStatePath } = getTapHermesPaths(hermesHome);
-	try {
-		const raw = await readFile(daemonStatePath, "utf-8");
-		return parseTapHermesDaemonState(JSON.parse(raw));
-	} catch (error: unknown) {
-		if (isMissingFileError(error)) {
-			return null;
-		}
-		throw error;
-	}
+	return readJsonFileOrDefault(daemonStatePath, parseTapHermesDaemonState, null);
 }
 
 export async function saveTapHermesDaemonState(
@@ -250,6 +234,22 @@ function normalizeReconcileInterval(value: unknown): number {
 		return value;
 	}
 	return DEFAULT_HERMES_RECONCILE_INTERVAL_MINUTES;
+}
+
+async function readJsonFileOrDefault<T>(
+	path: string,
+	parse: (raw: unknown) => T,
+	defaultValue: T,
+): Promise<T> {
+	try {
+		const raw = await readFile(path, "utf-8");
+		return parse(JSON.parse(raw));
+	} catch (error: unknown) {
+		if (isMissingFileError(error)) {
+			return defaultValue;
+		}
+		throw error;
+	}
 }
 
 function isFinitePositiveInteger(value: unknown): value is number {
