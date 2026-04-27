@@ -73,11 +73,9 @@ export function parseTapHermesPluginConfig(raw: unknown): TapHermesPluginConfig 
 		return { identities: [] };
 	}
 
-	if (typeof raw !== "object" || Array.isArray(raw)) {
-		throw new Error("TAP Hermes plugin config must be an object");
-	}
-
-	const input = raw as { identities?: unknown };
+	const input = requireRecord(raw, "TAP Hermes plugin config must be an object") as {
+		identities?: unknown;
+	};
 	if (input.identities === undefined) {
 		return { identities: [] };
 	}
@@ -156,11 +154,7 @@ export async function saveTapHermesDaemonState(
 }
 
 function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityConfig {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		throw new Error(`TAP Hermes identity at index ${index} must be an object`);
-	}
-
-	const input = value as {
+	const input = requireRecord(value, `TAP Hermes identity at index ${index} must be an object`) as {
 		name?: unknown;
 		dataDir?: unknown;
 		reconcileIntervalMinutes?: unknown;
@@ -182,11 +176,7 @@ function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityCo
 }
 
 function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-		throw new Error("Invalid TAP Hermes daemon state");
-	}
-
-	const input = raw as {
+	const input = requireRecord(raw, "Invalid TAP Hermes daemon state") as {
 		pid?: unknown;
 		gatewayPid?: unknown;
 		socketPath?: unknown;
@@ -233,6 +223,13 @@ function normalizeReconcileInterval(value: unknown): number {
 
 function isFinitePositiveInteger(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 1;
+}
+
+function requireRecord(value: unknown, message: string): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error(message);
+	}
+	return value as Record<string, unknown>;
 }
 
 function trimmedNonEmptyString(value: unknown): string | null {
