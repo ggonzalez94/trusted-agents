@@ -19,13 +19,17 @@ export async function readJsonFileOrDefault<T>(
 	options: { fallbackOnError?: boolean } = {},
 ): Promise<T> {
 	try {
-		return parse(JSON.parse(await readFile(path, "utf-8")));
+		return await readJsonFile(path, parse);
 	} catch (error: unknown) {
 		if (options.fallbackOnError || isMissingFileError(error)) {
 			return fallback;
 		}
 		throw error;
 	}
+}
+
+export async function readJsonFile<T>(path: string, parse: (raw: unknown) => T): Promise<T> {
+	return parse(JSON.parse(await readFile(path, "utf-8")));
 }
 
 export async function readYamlFile<T = unknown>(path: string): Promise<T> {

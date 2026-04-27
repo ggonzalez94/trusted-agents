@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import {
 	type Contact,
@@ -20,7 +20,7 @@ import {
 	loadTapHermesPluginConfig,
 	resolveHermesHome,
 } from "../hermes/config.js";
-import { readYamlFileSync } from "../lib/atomic-write.js";
+import { readJsonFile, readYamlFileSync } from "../lib/atomic-write.js";
 import {
 	resolveConfigPath,
 	resolveDataDir,
@@ -306,13 +306,14 @@ async function readConversations(dataDir: string): Promise<ReadResult<Conversati
 		if (!entry.endsWith(".json")) continue;
 		const filePath = join(conversationsDir, entry);
 		try {
-			const raw = await readFile(filePath, "utf-8");
-			const parsed = JSON.parse(raw) as unknown;
-			if (!isConversationLog(parsed)) {
-				failed.push(entry);
-				continue;
-			}
-			value.push(parsed);
+			value.push(
+				await readJsonFile(filePath, (parsed) => {
+					if (!isConversationLog(parsed)) {
+						throw new Error("Invalid conversation log");
+					}
+					return parsed;
+				}),
+			);
 		} catch {
 			failed.push(entry);
 		}
