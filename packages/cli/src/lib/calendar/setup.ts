@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ICalendarProvider } from "trusted-agents-core";
-import { ValidationError } from "trusted-agents-core";
+import { ValidationError, isObject } from "trusted-agents-core";
 import { readYamlFileSync, writeYamlFileAtomic } from "../atomic-write.js";
 import { commandExists } from "../shell.js";
 import { GoogleCalendarCliProvider } from "./google-calendar.js";
@@ -47,7 +47,7 @@ export async function writeCalendarConfig(dataDir: string, provider: string): Pr
 		yaml = readYamlFileSync<Record<string, unknown> | undefined>(configPath) ?? {};
 	}
 
-	if (typeof yaml.calendar !== "object" || yaml.calendar === null) {
+	if (!isObject(yaml.calendar)) {
 		yaml.calendar = {};
 	}
 	(yaml.calendar as Record<string, unknown>).provider = provider;
@@ -61,7 +61,7 @@ export function readCalendarProvider(dataDir: string): string | undefined {
 		return undefined;
 	}
 	const yaml = readYamlFileSync<Record<string, unknown> | undefined>(configPath);
-	if (!yaml || typeof yaml.calendar !== "object" || yaml.calendar === null) {
+	if (!yaml || !isObject(yaml.calendar)) {
 		return undefined;
 	}
 	const provider = (yaml.calendar as Record<string, unknown>).provider;
