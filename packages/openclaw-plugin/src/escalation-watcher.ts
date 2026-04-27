@@ -1,11 +1,9 @@
-import { readFile } from "node:fs/promises";
 import { type ClientRequest, type IncomingMessage, request } from "node:http";
-import { dirname, join } from "node:path";
 import { toErrorMessage } from "trusted-agents-core";
+import { readTapdToken, tapdTokenPathForSocket } from "./tapd-token.js";
 
 const ESCALATION_EVENT_TYPES = new Set(["action.pending", "connection.requested"]);
 const RECONNECT_DELAY_MS = 1000;
-const TOKEN_FILE_NAME = ".tapd-token";
 
 export interface EscalationEvent {
 	type: string;
@@ -77,9 +75,8 @@ export class EscalationWatcher {
 	private async connect(): Promise<void> {
 		let token: string;
 		try {
-			const tokenPath = join(dirname(this.options.socketPath), TOKEN_FILE_NAME);
-			token = (await readFile(tokenPath, "utf-8")).trim();
-			if (!token) throw new Error(`tapd token file ${tokenPath} is empty`);
+			const tokenPath = tapdTokenPathForSocket(this.options.socketPath);
+			token = await readTapdToken(tokenPath);
 		} catch (err) {
 			this.options.logger?.warn(
 				`escalation watcher cannot read tapd token: ${toErrorMessage(err)}`,

@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createGrantSet } from "trusted-agents-core";
 import { describe, expect, it } from "vitest";
 import { TapRuntime, createTapRuntime } from "../src/index.js";
 
@@ -24,7 +25,7 @@ describe("TapRuntime before start()", () => {
 		expect(runtime.listApps()).toEqual([]);
 	});
 
-	const grantSet = { version: "tap-grants/v1" as const, updatedAt: "", grants: [] };
+	const grantSet = createGrantSet([], "");
 
 	it.each<[string, (r: TapRuntime) => Promise<unknown>]>([
 		["sendMessage", (r) => r.sendMessage(1, "hello")],

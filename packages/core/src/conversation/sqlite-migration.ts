@@ -1,11 +1,15 @@
-import { readFile, readdir, rename } from "node:fs/promises";
+import { readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import { fsErrorCode, resolveDataDir, toErrorMessage } from "../common/index.js";
+import { readJsonFile } from "../common/atomic-json.js";
+import { fsErrorCode, isObject, resolveDataDir, toErrorMessage } from "../common/index.js";
+import {
+	LEGACY_CONVERSATIONS_DIR,
+	legacyConversationsBackupDir,
+	legacyConversationsDir,
+} from "./paths.js";
 import type { SqliteConversationLogger } from "./sqlite-logger.js";
 import type { ConversationLog } from "./types.js";
 
-const CONVERSATIONS_DIRNAME = "conversations";
-const BACKUP_DIRNAME = "conversations.bak";
 const MIGRATION_FLAG_KEY = "conversation_logs_migrated_at";
 
 export interface MigrationReport {
@@ -47,7 +51,7 @@ export async function migrateFileLogsToSqlite(
 	logger: SqliteConversationLogger,
 ): Promise<MigrationReport> {
 	const resolved = resolveDataDir(dataDir);
-	const conversationsDir = join(resolved, CONVERSATIONS_DIRNAME);
+	const conversationsDir = legacyConversationsDir(resolved);
 
 	// Idempotency check: read the migration flag from schema_meta.
 	const flag = logger.database
@@ -97,8 +101,7 @@ export async function migrateFileLogsToSqlite(
 
 		const filePath = join(conversationsDir, entry);
 		try {
-			const raw = await readFile(filePath, "utf-8");
-			const parsed = JSON.parse(raw) as unknown;
+			const parsed = await readJsonFile(filePath, (raw) => raw);
 			if (!isConversationLog(parsed)) {
 				report.errors.push({ file: entry, error: "missing required fields" });
 				continue;
@@ -142,7 +145,7 @@ export async function migrateFileLogsToSqlite(
 			await renameToUniqueBackup(conversationsDir, resolved);
 		} catch (error: unknown) {
 			report.errors.push({
-				file: CONVERSATIONS_DIRNAME,
+				file: LEGACY_CONVERSATIONS_DIR,
 				error: `rename to backup failed: ${toErrorMessage(error)}`,
 			});
 			return report;
@@ -160,7 +163,7 @@ function markMigrationComplete(logger: SqliteConversationLogger): void {
 }
 
 async function renameToUniqueBackup(source: string, parentDir: string): Promise<void> {
-	let target = join(parentDir, BACKUP_DIRNAME);
+	let target = legacyConversationsBackupDir(parentDir);
 	try {
 		await rename(source, target);
 		return;
@@ -171,7 +174,7 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 	}
 	let suffix = 1;
 	while (suffix < 1000) {
-		target = join(parentDir, `${BACKUP_DIRNAME}.${suffix}`);
+		target = legacyConversationsBackupDir(parentDir, suffix);
 		try {
 			await rename(source, target);
 			return;
@@ -184,8 +187,8 @@ async function renameToUniqueBackup(source: string, parentDir: string): Promise<
 }
 
 function isConversationLog(value: unknown): value is ConversationLog {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
+	if (!isObject(value)) return false;
+	const v = value;
 	return (
 		typeof v.conversationId === "string" &&
 		typeof v.connectionId === "string" &&

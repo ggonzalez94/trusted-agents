@@ -1,3 +1,4 @@
+import { isObject } from "../common/validation.js";
 import type { PermissionGrant, PermissionGrantSet } from "../permissions/types.js";
 import { findActiveGrantsByScope } from "../runtime/grants.js";
 import type { SchedulingProposal, TimeSlot } from "./types.js";
@@ -88,8 +89,8 @@ export function filterSchedulingProposalSlots(
 			}
 		}
 
-		if (constraints.allowedTimeRange && typeof constraints.allowedTimeRange === "object") {
-			const range = constraints.allowedTimeRange as { start?: string; end?: string };
+		if (isObject(constraints.allowedTimeRange)) {
+			const range = constraints.allowedTimeRange;
 			if (
 				typeof range.start === "string" &&
 				typeof range.end === "string" &&

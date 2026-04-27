@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { writeFileAtomic } from "../lib/atomic-write.js";
+import { isRecord } from "trusted-agents-core";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../lib/atomic-write.js";
 
 export interface TapHermesIdentityConfig {
 	name: string;
@@ -74,11 +74,9 @@ export function parseTapHermesPluginConfig(raw: unknown): TapHermesPluginConfig 
 		return { identities: [] };
 	}
 
-	if (typeof raw !== "object" || Array.isArray(raw)) {
-		throw new Error("TAP Hermes plugin config must be an object");
-	}
-
-	const input = raw as { identities?: unknown };
+	const input = requireRecord(raw, "TAP Hermes plugin config must be an object") as {
+		identities?: unknown;
+	};
 	if (input.identities === undefined) {
 		return { identities: [] };
 	}
@@ -109,15 +107,7 @@ export async function loadTapHermesPluginConfig(
 	hermesHome?: string,
 ): Promise<TapHermesPluginConfig> {
 	const { configPath } = getTapHermesPaths(hermesHome);
-	try {
-		const raw = await readFile(configPath, "utf-8");
-		return parseTapHermesPluginConfig(JSON.parse(raw));
-	} catch (error: unknown) {
-		if (isMissingFileError(error)) {
-			return { identities: [] };
-		}
-		throw error;
-	}
+	return readJsonFileOrDefault(configPath, parseTapHermesPluginConfig, { identities: [] });
 }
 
 export async function saveTapHermesPluginConfig(
@@ -126,7 +116,7 @@ export async function saveTapHermesPluginConfig(
 ): Promise<void> {
 	const { configPath } = getTapHermesPaths(hermesHome);
 	const normalized = parseTapHermesPluginConfig(config);
-	await writeFileAtomic(configPath, JSON.stringify(normalized, null, "\t"));
+	await writeJsonFileAtomic(configPath, normalized);
 }
 
 export async function upsertTapHermesIdentity(
@@ -134,10 +124,7 @@ export async function upsertTapHermesIdentity(
 ): Promise<TapHermesIdentityConfig> {
 	const hermesHome = resolveHermesHome(options.hermesHome);
 	const config = await loadTapHermesPluginConfig(hermesHome);
-	const name =
-		typeof options.name === "string" && options.name.trim().length > 0
-			? options.name.trim()
-			: "default";
+	const name = trimmedNonEmptyString(options.name) ?? "default";
 	const reconcileIntervalMinutes = normalizeReconcileInterval(options.reconcileIntervalMinutes);
 	const nextIdentity: TapHermesIdentityConfig = {
 		name,
@@ -156,15 +143,7 @@ export async function loadTapHermesDaemonState(
 	hermesHome?: string,
 ): Promise<TapHermesDaemonState | null> {
 	const { daemonStatePath } = getTapHermesPaths(hermesHome);
-	try {
-		const raw = await readFile(daemonStatePath, "utf-8");
-		return parseTapHermesDaemonState(JSON.parse(raw));
-	} catch (error: unknown) {
-		if (isMissingFileError(error)) {
-			return null;
-		}
-		throw error;
-	}
+	return readJsonFileOrDefault(daemonStatePath, parseTapHermesDaemonState, null);
 }
 
 export async function saveTapHermesDaemonState(
@@ -172,47 +151,33 @@ export async function saveTapHermesDaemonState(
 	state: TapHermesDaemonState,
 ): Promise<void> {
 	const { daemonStatePath } = getTapHermesPaths(hermesHome);
-	await writeFileAtomic(
-		daemonStatePath,
-		JSON.stringify(parseTapHermesDaemonState(state), null, "\t"),
-	);
+	await writeJsonFileAtomic(daemonStatePath, parseTapHermesDaemonState(state));
 }
 
 function parseIdentityConfig(value: unknown, index: number): TapHermesIdentityConfig {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		throw new Error(`TAP Hermes identity at index ${index} must be an object`);
-	}
-
-	const input = value as {
+	const input = requireRecord(value, `TAP Hermes identity at index ${index} must be an object`) as {
 		name?: unknown;
 		dataDir?: unknown;
 		reconcileIntervalMinutes?: unknown;
 	};
 
-	if (typeof input.dataDir !== "string" || input.dataDir.trim().length === 0) {
-		throw new Error(`TAP Hermes identity ${index + 1} is missing a valid dataDir`);
-	}
+	const dataDir = requireTrimmedNonEmptyString(
+		input.dataDir,
+		`TAP Hermes identity ${index + 1} is missing a valid dataDir`,
+	);
 
 	const name =
-		typeof input.name === "string" && input.name.trim().length > 0
-			? input.name.trim()
-			: index === 0
-				? "default"
-				: `identity-${index + 1}`;
+		trimmedNonEmptyString(input.name) ?? (index === 0 ? "default" : `identity-${index + 1}`);
 
 	return {
 		name,
-		dataDir: resolve(input.dataDir.trim()),
+		dataDir: resolve(dataDir),
 		reconcileIntervalMinutes: normalizeReconcileInterval(input.reconcileIntervalMinutes),
 	};
 }
 
 function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-		throw new Error("Invalid TAP Hermes daemon state");
-	}
-
-	const input = raw as {
+	const input = requireRecord(raw, "Invalid TAP Hermes daemon state") as {
 		pid?: unknown;
 		gatewayPid?: unknown;
 		socketPath?: unknown;
@@ -220,18 +185,20 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 		identities?: unknown;
 	};
 
-	if (!isFinitePositiveInteger(input.pid)) {
+	if (!isFiniteNumberAtLeastOne(input.pid)) {
 		throw new Error("Invalid TAP Hermes daemon state pid");
 	}
-	if (!isFinitePositiveInteger(input.gatewayPid)) {
+	if (!isFiniteNumberAtLeastOne(input.gatewayPid)) {
 		throw new Error("Invalid TAP Hermes daemon state gatewayPid");
 	}
-	if (typeof input.socketPath !== "string" || input.socketPath.trim().length === 0) {
-		throw new Error("Invalid TAP Hermes daemon state socketPath");
-	}
-	if (typeof input.startedAt !== "string" || input.startedAt.trim().length === 0) {
-		throw new Error("Invalid TAP Hermes daemon state startedAt");
-	}
+	const socketPath = requireTrimmedNonEmptyString(
+		input.socketPath,
+		"Invalid TAP Hermes daemon state socketPath",
+	);
+	const startedAt = requireTrimmedNonEmptyString(
+		input.startedAt,
+		"Invalid TAP Hermes daemon state startedAt",
+	);
 	if (
 		!Array.isArray(input.identities) ||
 		input.identities.some((value) => typeof value !== "string")
@@ -242,25 +209,38 @@ function parseTapHermesDaemonState(raw: unknown): TapHermesDaemonState {
 	return {
 		pid: input.pid,
 		gatewayPid: input.gatewayPid,
-		socketPath: input.socketPath.trim(),
-		startedAt: input.startedAt.trim(),
+		socketPath,
+		startedAt,
 		identities: input.identities,
 	};
 }
 
 function normalizeReconcileInterval(value: unknown): number {
-	if (typeof value === "number" && Number.isFinite(value) && value >= 1) {
+	if (isFiniteNumberAtLeastOne(value)) {
 		return value;
 	}
 	return DEFAULT_HERMES_RECONCILE_INTERVAL_MINUTES;
 }
 
-function isFinitePositiveInteger(value: unknown): value is number {
+function isFiniteNumberAtLeastOne(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 1;
 }
 
-function isMissingFileError(error: unknown): boolean {
-	return (
-		error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
-	);
+function requireRecord(value: unknown, message: string): Record<string, unknown> {
+	if (!isRecord(value)) {
+		throw new Error(message);
+	}
+	return value;
+}
+
+function trimmedNonEmptyString(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function requireTrimmedNonEmptyString(value: unknown, message: string): string {
+	const trimmed = trimmedNonEmptyString(value);
+	if (trimmed === null) throw new Error(message);
+	return trimmed;
 }

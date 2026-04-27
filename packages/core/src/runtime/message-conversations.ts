@@ -4,6 +4,8 @@ import {
 	ValidationError,
 	assertSafeFileComponent,
 	generateNonce,
+	isNonEmptyString,
+	isObject,
 	nowISO,
 } from "../common/index.js";
 import type { IConversationLogger } from "../conversation/logger.js";
@@ -212,36 +214,34 @@ function buildProtocolMessage(
 }
 
 function extractMessageId(message: Message): string | undefined {
-	return typeof message.messageId === "string" && message.messageId.length > 0
-		? message.messageId
-		: undefined;
+	return isNonEmptyString(message.messageId) ? message.messageId : undefined;
 }
 
 function extractProtocolMessage(request: ProtocolMessage): Message | null {
-	if (typeof request.params !== "object" || request.params === null) {
+	if (!isObject(request.params)) {
 		return null;
 	}
 
-	const message = (request.params as { message?: unknown }).message;
-	if (typeof message !== "object" || message === null) {
+	const message = request.params.message;
+	if (!isObject(message)) {
 		return null;
 	}
 
-	const parts = (message as { parts?: unknown }).parts;
+	const parts = message.parts;
 	if (!Array.isArray(parts)) {
 		return null;
 	}
 
-	return message as Message;
+	return message as unknown as Message;
 }
 
 function extractTrustedAgentMetadata(message: Message): Partial<TrustedAgentMetadata> | undefined {
-	if (typeof message.metadata !== "object" || message.metadata === null) {
+	if (!isObject(message.metadata)) {
 		return undefined;
 	}
 
 	const metadata = message.metadata.trustedAgent;
-	if (typeof metadata !== "object" || metadata === null) {
+	if (!isObject(metadata)) {
 		return undefined;
 	}
 
@@ -252,12 +252,12 @@ function extractMessageContent(parts: MessagePart[]): string | null {
 	const fragments = parts
 		.flatMap((part) => {
 			if (part.kind === "text") {
-				return typeof part.text === "string" && part.text.length > 0 ? [part.text] : [];
+				return isNonEmptyString(part.text) ? [part.text] : [];
 			}
 
 			try {
 				const serialized = JSON.stringify(part.data);
-				return typeof serialized === "string" && serialized.length > 0 ? [serialized] : [];
+				return isNonEmptyString(serialized) ? [serialized] : [];
 			} catch {
 				return [];
 			}
@@ -277,13 +277,11 @@ export function resolveConversationId(contact: Contact): string {
 }
 
 function resolveScope(request: ProtocolMessage, metadata?: Partial<TrustedAgentMetadata>): string {
-	return typeof metadata?.scope === "string" && metadata.scope.length > 0
-		? metadata.scope
-		: request.method;
+	return isNonEmptyString(metadata?.scope) ? metadata.scope : request.method;
 }
 
 function toSafeConversationId(value: string | undefined): string | null {
-	if (typeof value !== "string" || value.length === 0) {
+	if (!isNonEmptyString(value)) {
 		return null;
 	}
 

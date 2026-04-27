@@ -1,4 +1,10 @@
-import { isEthereumAddress } from "../common/index.js";
+import {
+	isEthereumAddress,
+	isNonEmptyString,
+	isObject,
+	isRecord,
+	readNonEmptyString,
+} from "../common/index.js";
 import type { PermissionGrant } from "../permissions/types.js";
 import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
 import type { ProtocolMessage } from "../transport/interface.js";
@@ -36,12 +42,14 @@ export interface PermissionGrantRequestAction extends Record<string, unknown> {
 }
 
 export function parseTransferActionRequest(message: ProtocolMessage): TransferActionRequest | null {
-	if (message.method !== ACTION_REQUEST) {
-		return null;
-	}
+	const data = extractActionRequestData(message);
+	return data ? parseTransferActionPayload(data) : null;
+}
 
-	const data = extractMessageData(message);
-	if (!data || data.type !== "transfer/request") {
+export function parseTransferActionPayload(
+	data: Record<string, unknown>,
+): TransferActionRequest | null {
+	if (data.type !== "transfer/request") {
 		return null;
 	}
 
@@ -56,39 +64,21 @@ export function parseTransferActionRequest(message: ProtocolMessage): TransferAc
 		amount: data.amount,
 		chain: data.chain,
 		toAddress: data.toAddress,
-		note: typeof data.note === "string" && data.note.length > 0 ? data.note : undefined,
+		note: readNonEmptyString(data.note),
 	};
 }
 
 export function parseTransferActionResponse(
 	message: ProtocolMessage,
 ): TransferActionResponse | null {
-	if (message.method !== ACTION_RESULT) {
+	const result = extractActionResultData(message);
+	if (!result) return null;
+	if (result.status !== "completed" && result.status !== "rejected" && result.status !== "failed") {
 		return null;
 	}
 
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const params = message.params as {
-		requestId?: unknown;
-		status?: unknown;
-		message?: unknown;
-	};
-	if (
-		typeof params.requestId !== "string" ||
-		params.requestId.length === 0 ||
-		(params.status !== "completed" && params.status !== "rejected" && params.status !== "failed")
-	) {
-		return null;
-	}
-
-	const data = extractMessageData({
-		...message,
-		params: { message: params.message },
-	});
-	if (!data || data.type !== "transfer/response") {
+	const data = result.data;
+	if (data.type !== "transfer/response") {
 		return null;
 	}
 
@@ -98,77 +88,49 @@ export function parseTransferActionResponse(
 
 	return {
 		type: "transfer/response",
-		requestId: params.requestId,
+		requestId: result.requestId,
 		actionId: data.actionId,
 		asset: data.asset,
 		amount: data.amount,
 		chain: data.chain,
 		toAddress: data.toAddress,
-		status: params.status,
+		status: result.status,
 		txHash:
 			typeof data.txHash === "string" && isEthereumAddressLikeHash(data.txHash)
 				? data.txHash
 				: undefined,
-		error: typeof data.error === "string" && data.error.length > 0 ? data.error : undefined,
+		error: readNonEmptyString(data.error),
 	};
 }
 
 export function parsePermissionGrantRequest(
 	message: ProtocolMessage,
 ): PermissionGrantRequestAction | null {
-	if (message.method !== ACTION_REQUEST) {
-		return null;
-	}
-
-	const data = extractMessageData(message);
+	const data = extractActionRequestData(message);
 	if (!data || data.type !== "permissions/request-grants") {
 		return null;
 	}
 
-	if (
-		typeof data.actionId !== "string" ||
-		data.actionId.length === 0 ||
-		!Array.isArray(data.grants)
-	) {
+	if (!isNonEmptyString(data.actionId) || !Array.isArray(data.grants)) {
 		return null;
 	}
 
 	const grants: PermissionGrant[] = [];
 	for (const input of data.grants) {
-		if (typeof input !== "object" || input === null) {
+		if (!isObject(input)) {
 			return null;
 		}
 
-		const grant = input as {
-			grantId?: unknown;
-			scope?: unknown;
-			constraints?: unknown;
-			status?: unknown;
-			updatedAt?: unknown;
-		};
-
-		if (
-			typeof grant.grantId !== "string" ||
-			grant.grantId.length === 0 ||
-			typeof grant.scope !== "string" ||
-			grant.scope.length === 0
-		) {
+		if (!isNonEmptyString(input.grantId) || !isNonEmptyString(input.scope)) {
 			return null;
 		}
 
 		grants.push({
-			grantId: grant.grantId,
-			scope: grant.scope,
-			...(grant.constraints &&
-			typeof grant.constraints === "object" &&
-			!Array.isArray(grant.constraints)
-				? { constraints: grant.constraints as Record<string, unknown> }
-				: {}),
-			status: grant.status === "revoked" ? "revoked" : "active",
-			updatedAt:
-				typeof grant.updatedAt === "string" && grant.updatedAt.length > 0
-					? grant.updatedAt
-					: new Date().toISOString(),
+			grantId: input.grantId,
+			scope: input.scope,
+			...(isRecord(input.constraints) ? { constraints: input.constraints } : {}),
+			status: input.status === "revoked" ? "revoked" : "active",
+			updatedAt: isNonEmptyString(input.updatedAt) ? input.updatedAt : new Date().toISOString(),
 		});
 	}
 
@@ -176,7 +138,7 @@ export function parsePermissionGrantRequest(
 		type: "permissions/request-grants",
 		actionId: data.actionId,
 		grants,
-		note: typeof data.note === "string" && data.note.length > 0 ? data.note : undefined,
+		note: readNonEmptyString(data.note),
 	};
 }
 
@@ -204,33 +166,67 @@ export function buildPermissionGrantRequestText(request: PermissionGrantRequestA
 }
 
 export function extractMessageData(message: ProtocolMessage): Record<string, unknown> | null {
-	if (typeof message.params !== "object" || message.params === null) {
+	if (!isObject(message.params)) {
 		return null;
 	}
 
-	const container = (message.params as { message?: unknown }).message;
-	if (typeof container !== "object" || container === null) {
+	const container = message.params.message;
+	if (!isObject(container)) {
 		return null;
 	}
 
-	const parts = (container as { parts?: unknown }).parts;
+	const parts = container.parts;
 	if (!Array.isArray(parts)) {
 		return null;
 	}
 
 	for (const part of parts) {
-		if (
-			typeof part === "object" &&
-			part !== null &&
-			(part as { kind?: unknown }).kind === "data" &&
-			typeof (part as { data?: unknown }).data === "object" &&
-			(part as { data?: unknown }).data !== null
-		) {
-			return (part as { data: Record<string, unknown> }).data;
+		if (isObject(part) && part.kind === "data" && isObject(part.data)) {
+			return part.data;
 		}
 	}
 
 	return null;
+}
+
+export function extractActionRequestData(message: ProtocolMessage): Record<string, unknown> | null {
+	if (message.method !== ACTION_REQUEST) {
+		return null;
+	}
+
+	return extractMessageData(message);
+}
+
+export function extractActionResultData(message: ProtocolMessage): {
+	requestId: string;
+	status: unknown;
+	data: Record<string, unknown>;
+} | null {
+	if (message.method !== ACTION_RESULT) {
+		return null;
+	}
+
+	if (!isObject(message.params)) {
+		return null;
+	}
+
+	if (!isNonEmptyString(message.params.requestId)) {
+		return null;
+	}
+
+	const data = extractMessageData({
+		...message,
+		params: { message: message.params.message },
+	});
+	if (!data) {
+		return null;
+	}
+
+	return {
+		requestId: message.params.requestId,
+		status: message.params.status,
+		data,
+	};
 }
 
 function hasValidTransferFields(data: Record<string, unknown>): data is Record<string, unknown> & {
@@ -242,12 +238,9 @@ function hasValidTransferFields(data: Record<string, unknown>): data is Record<s
 } {
 	return (
 		(data.asset === "native" || data.asset === "usdc") &&
-		typeof data.actionId === "string" &&
-		data.actionId.length > 0 &&
-		typeof data.amount === "string" &&
-		data.amount.length > 0 &&
-		typeof data.chain === "string" &&
-		data.chain.length > 0 &&
+		isNonEmptyString(data.actionId) &&
+		isNonEmptyString(data.amount) &&
+		isNonEmptyString(data.chain) &&
 		typeof data.toAddress === "string" &&
 		isEthereumAddress(data.toAddress)
 	);

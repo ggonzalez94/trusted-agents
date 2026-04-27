@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+	TRANSPORT_OWNER_LOCK_FILE,
 	TransportOwnerLock,
 	type TransportOwnershipError,
+	transportOwnerLockPath,
 } from "../../../src/runtime/transport-owner-lock.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
@@ -17,6 +19,11 @@ async function createDataDir() {
 }
 
 describe("TransportOwnerLock", () => {
+	it("pins the ownership lock file path", () => {
+		expect(TRANSPORT_OWNER_LOCK_FILE).toBe(".transport.lock");
+		expect(transportOwnerLockPath("/tmp/tap-data")).toBe(join("/tmp/tap-data", ".transport.lock"));
+	});
+
 	it("writes and releases the ownership file", async () => {
 		const dataDir = await createDataDir();
 		const lock = new TransportOwnerLock(dataDir, "tap:test-owner");
@@ -31,7 +38,7 @@ describe("TransportOwnerLock", () => {
 			}),
 		);
 
-		const lockPath = join(dataDir, ".transport.lock");
+		const lockPath = transportOwnerLockPath(dataDir);
 		const raw = JSON.parse(await readFile(lockPath, "utf-8")) as {
 			owner: string;
 			instanceId?: string;
@@ -61,7 +68,7 @@ describe("TransportOwnerLock", () => {
 
 	it("reclaims stale lock files from dead owners", async () => {
 		const dataDir = await createDataDir();
-		const lockPath = join(dataDir, ".transport.lock");
+		const lockPath = transportOwnerLockPath(dataDir);
 
 		await writeFile(
 			lockPath,
@@ -111,8 +118,8 @@ describe("TransportOwnerLock", () => {
 
 		await original.acquire();
 		await writeFile(
-			join(copiedDir, ".transport.lock"),
-			await readFile(join(originalDir, ".transport.lock"), "utf-8"),
+			transportOwnerLockPath(copiedDir),
+			await readFile(transportOwnerLockPath(originalDir), "utf-8"),
 			"utf-8",
 		);
 
@@ -133,7 +140,7 @@ describe("TransportOwnerLock", () => {
 
 		await first.acquire();
 		await writeFile(
-			join(dataDir, ".transport.lock"),
+			transportOwnerLockPath(dataDir),
 			JSON.stringify(
 				{
 					pid: 0,

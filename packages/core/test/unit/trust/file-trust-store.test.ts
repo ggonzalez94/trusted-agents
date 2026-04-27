@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { FileTrustStore } from "../../../src/trust/file-trust-store.js";
+import {
+	FileTrustStore,
+	TRUSTED_AGENTS_CONTACTS_FILE,
+	contactsFilePath,
+} from "../../../src/trust/file-trust-store.js";
 import { BOB } from "../../fixtures/test-keys.js";
 import { useTempDir } from "../../helpers/temp-dir.js";
 import { createTestContact } from "../../helpers/test-agent.js";
@@ -10,6 +14,11 @@ describe("FileTrustStore", () => {
 
 	beforeEach(() => {
 		store = new FileTrustStore(dir.path);
+	});
+
+	it("builds the default contacts file path", () => {
+		expect(TRUSTED_AGENTS_CONTACTS_FILE).toBe("contacts.json");
+		expect(contactsFilePath("/tmp/tap-data")).toBe("/tmp/tap-data/contacts.json");
 	});
 
 	it("should return empty contacts list initially", async () => {

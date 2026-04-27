@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configShowCommand } from "../src/commands/config-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
+import { legacyWalletIdentityDir, legacyWalletKeyPath } from "../src/lib/legacy-wallet.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
-import { buildTestConfig } from "./helpers/config-fixtures.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML, buildTestConfig } from "./helpers/config-fixtures.js";
 
 describe("tap config show", () => {
 	let tempRoot: string;
@@ -24,9 +26,9 @@ describe("tap config show", () => {
 
 	it("shows a migration warning when a legacy raw key is still present", async () => {
 		const dataDir = join(tempRoot, "agent");
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 		await writeFile(
-			join(dataDir, "identity", "agent.key"),
+			legacyWalletKeyPath(dataDir),
 			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 			"utf-8",
 		);
@@ -50,17 +52,7 @@ describe("tap config show", () => {
 	it("loads config show without requiring a registered agent id", async () => {
 		const dataDir = join(tempRoot, "unregistered-agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(
-			join(dataDir, "config.yaml"),
-			[
-				"agent_id: -1",
-				"chain: eip155:8453",
-				"ows:",
-				"  wallet: demo-wallet",
-				"  api_key: demo-key",
-			].join("\n"),
-			"utf-8",
-		);
+		await writeFile(defaultConfigPath(dataDir), UNREGISTERED_AGENT_CONFIG_YAML, "utf-8");
 
 		await configShowCommand({ output: "json", dataDir });
 

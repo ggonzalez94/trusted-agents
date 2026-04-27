@@ -4,6 +4,7 @@ import type {
 	SchedulingHandler,
 	TapActionContext,
 } from "trusted-agents-core";
+import { createGrantSet } from "trusted-agents-core";
 import { describe, expect, it, vi } from "vitest";
 import { handleSchedulingRequest } from "../src/handler.js";
 
@@ -54,16 +55,8 @@ function buildMockContext(
 				status: "active",
 				createdAt: new Date().toISOString(),
 				permissions: {
-					grantedByMe: {
-						version: "tap-grants/v1",
-						updatedAt: new Date().toISOString(),
-						grants: overrides.grantsToPeer ?? [],
-					},
-					grantedByPeer: {
-						version: "tap-grants/v1",
-						updatedAt: new Date().toISOString(),
-						grants: [],
-					},
+					grantedByMe: createGrantSet(overrides.grantsToPeer ?? []),
+					grantedByPeer: createGrantSet([]),
 				},
 			},
 			grantsFromPeer: [],
@@ -121,16 +114,8 @@ function buildMockContact(): Contact {
 		status: "active",
 		createdAt: new Date().toISOString(),
 		permissions: {
-			grantedByMe: {
-				version: "tap-grants/v1",
-				updatedAt: new Date().toISOString(),
-				grants: [makeGrant()],
-			},
-			grantedByPeer: {
-				version: "tap-grants/v1",
-				updatedAt: new Date().toISOString(),
-				grants: [],
-			},
+			grantedByMe: createGrantSet([makeGrant()]),
+			grantedByPeer: createGrantSet([]),
 		},
 	};
 }

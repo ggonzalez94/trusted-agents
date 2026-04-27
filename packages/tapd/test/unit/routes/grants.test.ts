@@ -62,4 +62,9 @@ describe("grants routes", () => {
 		const { publish } = createGrantsRoutes(makeService() as never);
 		await expect(publish({}, { peer: "Alice" })).rejects.toThrow();
 	});
+
+	it("publish rejects grantSet without grants array", async () => {
+		const { publish } = createGrantsRoutes(makeService() as never);
+		await expect(publish({}, { peer: "Alice", grantSet: { updatedAt: "x" } })).rejects.toThrow();
+	});
 });

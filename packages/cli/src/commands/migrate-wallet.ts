@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, unlink } from "node:fs/promises";
 import { keccak256, toHex } from "viem";
-import YAML from "yaml";
+import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
 import { handleCommandError } from "../lib/errors.js";
+import { legacyWalletKeyPath } from "../lib/legacy-wallet.js";
 import { info, success } from "../lib/output.js";
 import {
 	createOwsApiKey,
@@ -39,8 +39,7 @@ export async function migrateWalletCommand(
 			throw new Error(`No config found at ${configPath}. Run 'tap init' first to set up an agent.`);
 		}
 
-		const configContent = await readFile(configPath, "utf-8");
-		const yaml = (YAML.parse(configContent) ?? {}) as Record<string, unknown>;
+		const yaml = (await readYamlFile<Record<string, unknown> | null>(configPath)) ?? {};
 
 		// Already migrated?
 		const existingOws = yaml.ows as { wallet?: string; api_key?: string } | undefined;
@@ -49,7 +48,7 @@ export async function migrateWalletCommand(
 		}
 
 		// agent.key must exist
-		const keyPath = join(dataDir, "identity", "agent.key");
+		const keyPath = legacyWalletKeyPath(dataDir);
 		if (!existsSync(keyPath)) {
 			throw new Error(
 				`No key file found at ${keyPath}. Either this agent was already migrated or was never initialized with a raw key.`,
@@ -144,7 +143,7 @@ export async function migrateWalletCommand(
 			db_encryption_key: xmtpDbEncryptionKey,
 		};
 
-		await writeFile(configPath, YAML.stringify(yaml), "utf-8");
+		await writeYamlFileAtomic(configPath, yaml);
 		info(`Updated config at ${configPath}`, opts);
 
 		// ── Step 9: Delete raw key file ───────────────────────────────

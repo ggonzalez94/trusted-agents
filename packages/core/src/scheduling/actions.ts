@@ -1,10 +1,24 @@
-import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
-import { extractMessageData } from "../runtime/actions.js";
+import { isNonEmptyString, isObject, readNonEmptyString } from "../common/index.js";
+import { extractActionRequestData, extractActionResultData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
 
+type SchedulingProposalType = "scheduling/propose" | "scheduling/counter";
+
+type SchedulingPayloadParseOptions = {
+	defaultSchedulingId?: () => string;
+	defaultOriginTimezone?: string;
+	copySlots?: boolean;
+	includeLocation?: boolean;
+	typeAliases?: Record<string, SchedulingProposalType>;
+	durationFields?: readonly string[];
+	slotFields?: readonly string[];
+	originTimezoneFields?: readonly string[];
+	validateSlotDates?: boolean;
+};
+
 function isValidIsoDate(value: unknown): value is string {
-	if (typeof value !== "string" || value.length === 0) {
+	if (!isNonEmptyString(value)) {
 		return false;
 	}
 	const d = new Date(value);
@@ -12,121 +26,157 @@ function isValidIsoDate(value: unknown): value is string {
 }
 
 function isValidTimeSlot(slot: unknown): slot is TimeSlot {
-	if (typeof slot !== "object" || slot === null) {
+	if (!isObject(slot)) {
 		return false;
 	}
-	const s = slot as { start?: unknown; end?: unknown };
-	if (!isValidIsoDate(s.start) || !isValidIsoDate(s.end)) {
+	if (!isValidIsoDate(slot.start) || !isValidIsoDate(slot.end)) {
 		return false;
 	}
-	return new Date(s.start as string) < new Date(s.end as string);
+	return new Date(slot.start) < new Date(slot.end);
+}
+
+function isStringTimeSlot(slot: unknown): slot is TimeSlot {
+	if (!isObject(slot)) {
+		return false;
+	}
+	return typeof slot.start === "string" && typeof slot.end === "string";
+}
+
+function readFirstMatching<T>(
+	data: Record<string, unknown>,
+	fields: readonly string[],
+	predicate: (value: unknown) => value is T,
+): T | undefined {
+	for (const field of fields) {
+		const value = data[field];
+		if (predicate(value)) return value;
+	}
+	return undefined;
+}
+
+function isNumber(value: unknown): value is number {
+	return typeof value === "number";
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+	return Array.isArray(value);
+}
+
+function readSchedulingProposalType(
+	value: unknown,
+	aliases: Record<string, SchedulingProposalType> = {},
+): SchedulingProposalType | null {
+	if (value === "scheduling/propose" || value === "scheduling/counter") {
+		return value;
+	}
+	return typeof value === "string" ? (aliases[value] ?? null) : null;
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
-export function parseSchedulingActionRequest(message: ProtocolMessage): SchedulingProposal | null {
-	if (message.method !== ACTION_REQUEST) {
+export function parseSchedulingActionPayload(
+	data: Record<string, unknown>,
+	options: SchedulingPayloadParseOptions = {},
+): SchedulingProposal | null {
+	const type = readSchedulingProposalType(data.type, options.typeAliases);
+	if (!type) {
 		return null;
 	}
 
-	const data = extractMessageData(message);
-	if (!data || (data.type !== "scheduling/propose" && data.type !== "scheduling/counter")) {
-		return null;
-	}
+	const schedulingId = isNonEmptyString(data.schedulingId)
+		? data.schedulingId
+		: options.defaultSchedulingId?.();
+	const originTimezone =
+		readFirstMatching(data, options.originTimezoneFields ?? ["originTimezone"], isNonEmptyString) ??
+		options.defaultOriginTimezone;
+	const duration = readFirstMatching(data, options.durationFields ?? ["duration"], isNumber);
 
 	if (
-		typeof data.schedulingId !== "string" ||
-		data.schedulingId.length === 0 ||
-		typeof data.title !== "string" ||
-		data.title.length === 0 ||
-		typeof data.duration !== "number" ||
-		data.duration <= 0 ||
-		typeof data.originTimezone !== "string" ||
-		data.originTimezone.length === 0
+		!isNonEmptyString(schedulingId) ||
+		!isNonEmptyString(data.title) ||
+		duration === undefined ||
+		duration <= 0 ||
+		!isNonEmptyString(originTimezone)
 	) {
 		return null;
 	}
 
-	if (!Array.isArray(data.slots) || data.slots.length === 0) {
+	const rawSlots = readFirstMatching(data, options.slotFields ?? ["slots"], isUnknownArray);
+	if (!rawSlots || rawSlots.length === 0) {
 		return null;
 	}
 
-	for (const slot of data.slots) {
-		if (!isValidTimeSlot(slot)) {
+	const isValidSlot = options.validateSlotDates === false ? isStringTimeSlot : isValidTimeSlot;
+	for (const slot of rawSlots) {
+		if (!isValidSlot(slot)) {
 			return null;
 		}
 	}
 
+	const location =
+		options.includeLocation === false ? undefined : readNonEmptyString(data.location);
+	const note = readNonEmptyString(data.note);
+	const slots = options.copySlots
+		? rawSlots.map((slot) => {
+				const { start, end } = slot as TimeSlot;
+				return { start, end };
+			})
+		: (rawSlots as TimeSlot[]);
+
 	return {
-		type: data.type as "scheduling/propose" | "scheduling/counter",
-		schedulingId: data.schedulingId,
+		type,
+		schedulingId,
 		title: data.title,
-		duration: data.duration,
-		slots: data.slots as TimeSlot[],
-		originTimezone: data.originTimezone,
-		...(typeof data.location === "string" && data.location.length > 0
-			? { location: data.location }
-			: {}),
-		...(typeof data.note === "string" && data.note.length > 0 ? { note: data.note } : {}),
+		duration,
+		slots,
+		originTimezone,
+		...(location ? { location } : {}),
+		...(note ? { note } : {}),
 	};
+}
+
+export function parseSchedulingActionRequest(message: ProtocolMessage): SchedulingProposal | null {
+	const data = extractActionRequestData(message);
+	return data ? parseSchedulingActionPayload(data) : null;
 }
 
 export function parseSchedulingActionResponse(
 	message: ProtocolMessage,
 ): SchedulingAccept | SchedulingReject | null {
-	if (message.method !== ACTION_RESULT) {
-		return null;
-	}
-
-	if (typeof message.params !== "object" || message.params === null) {
-		return null;
-	}
-
-	const params = message.params as {
-		requestId?: unknown;
-		status?: unknown;
-		message?: unknown;
-	};
-
-	if (typeof params.requestId !== "string" || params.requestId.length === 0) {
-		return null;
-	}
-
-	const data = extractMessageData({
-		...message,
-		params: { message: params.message },
-	});
-
-	if (!data) {
-		return null;
-	}
+	const result = extractActionResultData(message);
+	if (!result) return null;
+	const data = result.data;
 
 	if (data.type === "scheduling/accept") {
 		if (!isValidTimeSlot(data.acceptedSlot)) {
 			return null;
 		}
 
-		if (typeof data.schedulingId !== "string" || data.schedulingId.length === 0) {
+		if (!isNonEmptyString(data.schedulingId)) {
 			return null;
 		}
+
+		const note = readNonEmptyString(data.note);
 
 		return {
 			type: "scheduling/accept",
 			schedulingId: data.schedulingId,
 			acceptedSlot: data.acceptedSlot as TimeSlot,
-			...(typeof data.note === "string" && data.note.length > 0 ? { note: data.note } : {}),
+			...(note ? { note } : {}),
 		};
 	}
 
 	if (data.type === "scheduling/reject" || data.type === "scheduling/cancel") {
-		if (typeof data.schedulingId !== "string" || data.schedulingId.length === 0) {
+		if (!isNonEmptyString(data.schedulingId)) {
 			return null;
 		}
+
+		const reason = readNonEmptyString(data.reason);
 
 		return {
 			type: data.type as "scheduling/reject" | "scheduling/cancel",
 			schedulingId: data.schedulingId,
-			...(typeof data.reason === "string" && data.reason.length > 0 ? { reason: data.reason } : {}),
+			...(reason ? { reason } : {}),
 		};
 	}
 

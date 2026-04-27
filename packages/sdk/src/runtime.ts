@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import {
 	type AppManifestEntry,
 	type BuildTapRuntimeContextOptions,
@@ -30,7 +29,9 @@ import {
 	type TapSyncReport,
 	type TrustedAgentsConfig,
 	addAppToManifest,
+	appDataDirPath,
 	buildDefaultTapRuntimeContext,
+	hasTapAppShape,
 	loadTrustedAgentConfigFromDataDir,
 	removeAppFromManifest,
 } from "trusted-agents-core";
@@ -63,17 +64,8 @@ export interface CreateTapRuntimeOptions {
 	createSigningProvider?: (config: TrustedAgentsConfig) => Promise<SigningProviderLike>;
 }
 
-/**
- * Minimal signing provider shape the SDK accepts.
- * Compatible with both OwsSigningProvider and custom implementations.
- */
-export interface SigningProviderLike {
-	getAddress(): Promise<`0x${string}`>;
-	signMessage(message: unknown): Promise<`0x${string}`>;
-	signTypedData(params: unknown): Promise<`0x${string}`>;
-	signTransaction(tx: unknown): Promise<`0x${string}`>;
-	signAuthorization(params: unknown): Promise<unknown>;
-}
+/** Signing provider shape accepted by the SDK. */
+export type SigningProviderLike = SigningProvider;
 
 /**
  * TapRuntime is the public SDK entry point for all TAP hosts.
@@ -128,8 +120,7 @@ export class TapRuntime extends EventEmitter {
 		}
 
 		const contextOptions: BuildTapRuntimeContextOptions = {
-			// biome-ignore lint/suspicious/noExplicitAny: SigningProviderLike is compatible with SigningProvider
-			signingProvider: signingProvider as any,
+			signingProvider,
 			...this.options.contextOptions,
 		};
 		this.context = await buildDefaultTapRuntimeContext(this._config, contextOptions);
@@ -332,7 +323,7 @@ export class TapRuntime extends EventEmitter {
 		// Load the module to validate it's a valid TapApp
 		const mod = await import(entryPoint);
 		const app = mod.default ?? mod.app ?? mod;
-		if (!app.id || !app.actions || typeof app.actions !== "object") {
+		if (!hasTapAppShape(app)) {
 			throw new Error(
 				`Package "${packageName}" does not export a valid TapApp (missing id or actions)`,
 			);
@@ -372,7 +363,7 @@ export class TapRuntime extends EventEmitter {
 
 		// Optionally remove app state directory
 		if (options?.removeState) {
-			const stateDir = join(ctx.config.dataDir, "apps", appId);
+			const stateDir = appDataDirPath(ctx.config.dataDir, appId);
 			await rm(stateDir, { recursive: true, force: true });
 		}
 	}

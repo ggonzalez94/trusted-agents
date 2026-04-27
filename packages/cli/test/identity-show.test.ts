@@ -5,6 +5,7 @@ import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { identityShowCommand } from "../src/commands/identity-show.js";
 import * as configLoader from "../src/lib/config-loader.js";
+import { legacyWalletIdentityDir, legacyWalletKeyPath } from "../src/lib/legacy-wallet.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { buildMockExecutionPreview, buildTestConfig } from "./helpers/config-fixtures.js";
 
@@ -68,9 +69,9 @@ describe("tap identity show", () => {
 
 	it("shows a migration hint instead of an opaque OWS error for legacy raw-key agents", async () => {
 		const dataDir = join(tempRoot, "legacy-agent");
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 		await writeFile(
-			join(dataDir, "identity", "agent.key"),
+			legacyWalletKeyPath(dataDir),
 			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 			"utf-8",
 		);

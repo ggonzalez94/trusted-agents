@@ -13,3 +13,9 @@ export type {
 export { XmtpTransport } from "./xmtp.js";
 export type { XmtpTransportConfig } from "./xmtp-types.js";
 export { createXmtpSigner } from "./xmtp-signer.js";
+export {
+	XMTP_DATA_DIR,
+	XMTP_SYNC_STATE_FILE,
+	xmtpDataDirPath,
+	xmtpSyncStatePath,
+} from "./paths.js";

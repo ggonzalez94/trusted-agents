@@ -2,7 +2,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FileRequestJournal } from "../../../src/runtime/request-journal.js";
+import {
+	FileRequestJournal,
+	REQUEST_JOURNAL_FILE,
+	requestJournalPath,
+} from "../../../src/runtime/request-journal.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackDir } = useTempDirs();
@@ -14,6 +18,11 @@ async function createJournal() {
 }
 
 describe("FileRequestJournal", () => {
+	it("builds the default journal file path", () => {
+		expect(REQUEST_JOURNAL_FILE).toBe("request-journal.json");
+		expect(requestJournalPath("/tmp/tap-data")).toBe("/tmp/tap-data/request-journal.json");
+	});
+
 	it("claims inbound requests idempotently by request key", async () => {
 		const journal = await createJournal();
 

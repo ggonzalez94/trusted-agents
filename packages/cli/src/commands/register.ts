@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
 	ERC8004Registry,
 	ERC8004_ABI,
@@ -11,6 +10,7 @@ import {
 	fetchRegistrationFile,
 	getExecutionPreview,
 	getUsdcAsset,
+	isObject,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
@@ -23,8 +23,13 @@ import type {
 	TrustedAgentsConfig,
 } from "trusted-agents-core";
 import { encodeFunctionData, erc20Abi, formatUnits } from "viem";
-import YAML from "yaml";
 import { resolveHermesHome } from "../hermes/config.js";
+import {
+	readJsonFileOrDefault,
+	readYamlFile,
+	writeJsonFileAtomic,
+	writeYamlFileAtomic,
+} from "../lib/atomic-write.js";
 import { loadConfig, resolveConfigPath } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import {
@@ -187,7 +192,7 @@ function canonicalizeJson(value: unknown): unknown {
 		return value.map((item) => canonicalizeJson(item));
 	}
 
-	if (value !== null && typeof value === "object") {
+	if (isObject(value)) {
 		return Object.fromEntries(
 			Object.entries(value as Record<string, unknown>)
 				.filter(([, entryValue]) => entryValue !== undefined)
@@ -249,17 +254,12 @@ const X402_TOP_UP_GAS_RESERVE_USDC = 10_000n;
 
 async function loadIpfsCache(dataDir: string): Promise<IpfsCache> {
 	const cachePath = `${dataDir}/ipfs-cache.json`;
-	try {
-		return JSON.parse(await readFile(cachePath, "utf-8")) as IpfsCache;
-	} catch {
-		return {};
-	}
+	return readJsonFileOrDefault(cachePath, (raw) => raw as IpfsCache, {}, { fallbackOnError: true });
 }
 
 async function saveIpfsCache(dataDir: string, cache: IpfsCache): Promise<void> {
 	const cachePath = `${dataDir}/ipfs-cache.json`;
-	await mkdir(dirname(cachePath), { recursive: true });
-	await writeFile(cachePath, JSON.stringify(cache, null, 2), "utf-8");
+	await writeJsonFileAtomic(cachePath, cache, { indent: 2 });
 }
 
 /** Check if the CID is still reachable via an IPFS gateway. */
@@ -907,8 +907,7 @@ async function executeSetAgentURI(
 async function updateConfigAgentId(configPath: string, agentId: number): Promise<void> {
 	if (!existsSync(configPath)) return;
 
-	const content = await readFile(configPath, "utf-8");
-	const yaml = YAML.parse(content) as Record<string, unknown>;
+	const yaml = await readYamlFile<Record<string, unknown>>(configPath);
 	yaml.agent_id = agentId;
-	await writeFile(configPath, YAML.stringify(yaml), "utf-8");
+	await writeYamlFileAtomic(configPath, yaml);
 }

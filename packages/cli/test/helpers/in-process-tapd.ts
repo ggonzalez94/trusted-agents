@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import {
 	type IConversationLogger,
 	type ITrustStore,
@@ -6,7 +5,7 @@ import {
 	type TapTransferApprovalContext,
 	loadTrustedAgentConfigFromDataDir,
 } from "trusted-agents-core";
-import { Daemon } from "trusted-agents-tapd";
+import { Daemon, socketFilePath } from "trusted-agents-tapd";
 import { ALL_CHAINS } from "../../src/lib/chains.js";
 import { createCliRuntime } from "../../src/lib/cli-runtime.js";
 
@@ -65,7 +64,7 @@ export async function startInProcessTapd(options: InProcessTapdOptions): Promise
 	const daemon = new Daemon({
 		config: {
 			dataDir,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			ringBufferSize: 100,

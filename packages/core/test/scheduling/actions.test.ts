@@ -4,6 +4,7 @@ import {
 	buildSchedulingAcceptText,
 	buildSchedulingProposalText,
 	buildSchedulingRejectText,
+	parseSchedulingActionPayload,
 	parseSchedulingActionRequest,
 	parseSchedulingActionResponse,
 } from "../../src/scheduling/actions.js";
@@ -90,6 +91,58 @@ function makeCancelMessage(overrides: Record<string, unknown> = {}): ProtocolMes
 		{ requestId: "req_789", status: "rejected" },
 	);
 }
+
+// ── parseSchedulingActionPayload ─────────────────────────────────────────────
+
+describe("parseSchedulingActionPayload", () => {
+	it("supports explicit legacy aliases for the runtime fallback parser", () => {
+		const result = parseSchedulingActionPayload(
+			{
+				type: "scheduling/request",
+				title: "Dinner",
+				durationMinutes: 90,
+				proposedSlots: [{ start: "tomorrow morning", end: "tomorrow afternoon", ignored: true }],
+				timezone: "America/New_York",
+				note: "Bring notes",
+				location: "Cafe",
+			},
+			{
+				typeAliases: { "scheduling/request": "scheduling/propose" },
+				durationFields: ["durationMinutes", "duration"],
+				slotFields: ["proposedSlots", "slots"],
+				originTimezoneFields: ["timezone", "originTimezone"],
+				defaultSchedulingId: () => "sch_generated",
+				defaultOriginTimezone: "UTC",
+				copySlots: true,
+				includeLocation: false,
+				validateSlotDates: false,
+			},
+		);
+
+		expect(result).toEqual({
+			type: "scheduling/propose",
+			schedulingId: "sch_generated",
+			title: "Dinner",
+			duration: 90,
+			slots: [{ start: "tomorrow morning", end: "tomorrow afternoon" }],
+			originTimezone: "America/New_York",
+			note: "Bring notes",
+		});
+	});
+
+	it("keeps strict slot validation by default", () => {
+		const result = parseSchedulingActionPayload({
+			type: "scheduling/propose",
+			schedulingId: "sch_abc123",
+			title: "Dinner",
+			duration: 90,
+			slots: [{ start: "tomorrow morning", end: "tomorrow afternoon" }],
+			originTimezone: "America/New_York",
+		});
+
+		expect(result).toBeNull();
+	});
+});
 
 // ── parseSchedulingActionRequest ─────────────────────────────────────────────
 

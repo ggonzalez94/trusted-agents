@@ -1,9 +1,15 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { Client, getInboxIdForIdentifier } from "@xmtp/node-sdk";
 import type { DecodedMessage, Dm, Signer } from "@xmtp/node-sdk";
 import { hexToBytes } from "viem";
-import { TransportError, isEthereumAddress, nowISO, toErrorMessage } from "../common/index.js";
+import {
+	TransportError,
+	isEthereumAddress,
+	isNonEmptyString,
+	isObject,
+	nowISO,
+	toErrorMessage,
+} from "../common/index.js";
 import type { IAgentResolver } from "../identity/resolver.js";
 import {
 	CONNECTION_REQUEST,
@@ -24,6 +30,7 @@ import type {
 	TransportReconcileOptions,
 	TransportReconcileResult,
 } from "./interface.js";
+import { xmtpSyncStatePath } from "./paths.js";
 import type { TransportSendOptions } from "./types.js";
 import { createXmtpSigner } from "./xmtp-signer.js";
 import { FileXmtpSyncStateStore, type XmtpConversationCheckpoint } from "./xmtp-sync-state.js";
@@ -91,7 +98,7 @@ export class XmtpTransport implements TransportProvider {
 		this.syncState =
 			config.syncStatePath || config.dbPath
 				? new FileXmtpSyncStateStore(
-						config.syncStatePath ?? join(config.dbPath ?? ".", "sync-state.json"),
+						config.syncStatePath ?? xmtpSyncStatePath(config.dbPath ?? "."),
 					)
 				: null;
 	}
@@ -564,11 +571,11 @@ export class XmtpTransport implements TransportProvider {
 			return false;
 		}
 
-		if (typeof parsed !== "object" || parsed === null) {
+		if (!isObject(parsed)) {
 			return false;
 		}
 
-		const payload = parsed as Record<string, unknown>;
+		const payload = parsed;
 		if (payload.jsonrpc !== "2.0") {
 			return false;
 		}
@@ -621,7 +628,7 @@ export class XmtpTransport implements TransportProvider {
 		clearTimeout(pending.timer);
 		this.pendingRequests.delete(requestId);
 
-		if ("error" in payload && payload.error && typeof payload.error === "object") {
+		if ("error" in payload && isObject(payload.error)) {
 			const errorMessage =
 				typeof (payload.error as { message?: unknown }).message === "string"
 					? (payload.error as { message: string }).message
@@ -631,12 +638,12 @@ export class XmtpTransport implements TransportProvider {
 		}
 
 		const result = payload.result;
-		if (typeof result !== "object" || result === null) {
+		if (!isObject(result)) {
 			pending.reject(new TransportError(`Invalid receipt payload for message ${requestId}`));
 			return true;
 		}
 
-		const receipt = result as Record<string, unknown>;
+		const receipt = result;
 		if (
 			receipt.received !== true ||
 			typeof receipt.status !== "string" ||
@@ -650,15 +657,9 @@ export class XmtpTransport implements TransportProvider {
 
 		pending.resolve({
 			received: true,
-			requestId:
-				typeof receipt.requestId === "string" && receipt.requestId.length > 0
-					? receipt.requestId
-					: requestId,
+			requestId: isNonEmptyString(receipt.requestId) ? receipt.requestId : requestId,
 			status: receipt.status,
-			receivedAt:
-				typeof receipt.receivedAt === "string" && receipt.receivedAt.length > 0
-					? receipt.receivedAt
-					: nowISO(),
+			receivedAt: isNonEmptyString(receipt.receivedAt) ? receipt.receivedAt : nowISO(),
 		});
 		return true;
 	}
@@ -803,17 +804,17 @@ export class XmtpTransport implements TransportProvider {
 	}
 
 	private extractAgentIdentifier(params: unknown, key: string): AgentIdentifier | null {
-		if (typeof params !== "object" || params === null) {
+		if (!isObject(params)) {
 			return null;
 		}
 
-		const nested = (params as Record<string, unknown>)[key];
-		if (typeof nested !== "object" || nested === null) {
+		const nested = params[key];
+		if (!isObject(nested)) {
 			return null;
 		}
 
-		const agentId = (nested as { agentId?: unknown }).agentId;
-		const chain = (nested as { chain?: unknown }).chain;
+		const agentId = nested.agentId;
+		const chain = nested.chain;
 		if (
 			typeof agentId !== "number" ||
 			agentId < 0 ||

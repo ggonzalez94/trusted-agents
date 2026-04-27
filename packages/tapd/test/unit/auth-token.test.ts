@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { generateAuthToken, loadAuthToken, persistAuthToken } from "../../src/auth-token.js";
+import {
+	generateAuthToken,
+	loadAuthToken,
+	persistAuthToken,
+	tokenFilePath,
+} from "../../src/auth-token.js";
 
 describe("auth-token", () => {
 	let dataDir: string;
@@ -33,7 +38,7 @@ describe("auth-token", () => {
 			const token = "abcdef0123456789abcdef0123456789";
 			await persistAuthToken(dataDir, token);
 
-			const tokenPath = join(dataDir, ".tapd-token");
+			const tokenPath = tokenFilePath(dataDir);
 			const contents = await readFile(tokenPath, "utf-8");
 			expect(contents).toBe(token);
 
@@ -45,7 +50,7 @@ describe("auth-token", () => {
 			await persistAuthToken(dataDir, "old-token-padding-padding-padding");
 			await persistAuthToken(dataDir, "new-token-padding-padding-padding");
 
-			const contents = await readFile(join(dataDir, ".tapd-token"), "utf-8");
+			const contents = await readFile(tokenFilePath(dataDir), "utf-8");
 			expect(contents).toBe("new-token-padding-padding-padding");
 		});
 	});

@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { socketFilePath } from "trusted-agents-tapd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	OpenClawTapdClient,
@@ -31,23 +32,23 @@ describe("resolveSocketPath", () => {
 
 	it("derives the socket path from an explicit data dir (beats TAP_DATA_DIR)", () => {
 		vi.stubEnv("TAP_DATA_DIR", "/env/tap");
-		expect(resolveSocketPath({ dataDir: "/tmp/agent" })).toBe("/tmp/agent/.tapd.sock");
+		expect(resolveSocketPath({ dataDir: "/tmp/agent" })).toBe(socketFilePath("/tmp/agent"));
 	});
 
 	it("falls back to process.env.TAP_DATA_DIR when neither socketPath nor dataDir is provided", () => {
 		vi.stubEnv("TAP_DATA_DIR", "/env/tap-isolated");
-		expect(resolveSocketPath({})).toBe("/env/tap-isolated/.tapd.sock");
+		expect(resolveSocketPath({})).toBe(socketFilePath("/env/tap-isolated"));
 	});
 
 	it("ignores an empty TAP_DATA_DIR and falls through to $HOME/.trustedagents", () => {
 		vi.stubEnv("TAP_DATA_DIR", "");
 		vi.stubEnv("HOME", "/home/alice");
-		expect(resolveSocketPath({})).toBe("/home/alice/.trustedagents/.tapd.sock");
+		expect(resolveSocketPath({})).toBe(socketFilePath("/home/alice/.trustedagents"));
 	});
 
 	it("falls back to $HOME/.trustedagents when nothing else is set", () => {
 		vi.stubEnv("HOME", "/home/bob");
-		expect(resolveSocketPath({})).toBe("/home/bob/.trustedagents/.tapd.sock");
+		expect(resolveSocketPath({})).toBe(socketFilePath("/home/bob/.trustedagents"));
 	});
 });
 
@@ -265,7 +266,7 @@ describe("OpenClawTapdClient", () => {
 	it("throws TapdNotRunningError when the socket file does not exist", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "openclaw-tapd-missing-"));
 		try {
-			const client = new OpenClawTapdClient({ socketPath: join(dataDir, ".tapd.sock") });
+			const client = new OpenClawTapdClient({ socketPath: socketFilePath(dataDir) });
 			await expect(client.health()).rejects.toBeInstanceOf(TapdNotRunningError);
 		} finally {
 			await rm(dataDir, { recursive: true, force: true });

@@ -1,3 +1,4 @@
+import { createGrantSet } from "trusted-agents-core";
 import { describe, expect, it } from "vitest";
 import { filterPendingForContact } from "../../lib/pending.js";
 import type { Contact, PendingItem } from "../../lib/types.js";
@@ -11,8 +12,8 @@ function makeContact(overrides: Partial<Contact> = {}): Contact {
 		peerDisplayName: "Alice (Base)",
 		peerAgentAddress: "0x2222222222222222222222222222222222222222",
 		permissions: {
-			grantedByMe: { version: "tap-grants/v1", updatedAt: "2026-01-01T00:00:00Z", grants: [] },
-			grantedByPeer: { version: "tap-grants/v1", updatedAt: "2026-01-01T00:00:00Z", grants: [] },
+			grantedByMe: createGrantSet([], "2026-01-01T00:00:00Z"),
+			grantedByPeer: createGrantSet([], "2026-01-01T00:00:00Z"),
 		},
 		establishedAt: "2026-01-01T00:00:00Z",
 		lastContactAt: "2026-01-01T00:00:00Z",

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import {
 	type Contact,
@@ -10,10 +10,12 @@ import {
 	type TransportOwnerInfo,
 	TransportOwnerLock,
 	fsErrorCode,
+	isNonEmptyString,
 	isProcessAlive,
+	isRecord,
+	legacyConversationsDir,
 	resolveDataDir as resolveDataDirPath,
 } from "trusted-agents-core";
-import YAML from "yaml";
 import {
 	type TapHermesDaemonState,
 	type TapHermesPluginConfig,
@@ -21,6 +23,7 @@ import {
 	loadTapHermesPluginConfig,
 	resolveHermesHome,
 } from "../hermes/config.js";
+import { readJsonFile, readYamlFileSync } from "../lib/atomic-write.js";
 import {
 	resolveConfigPath,
 	resolveDataDir,
@@ -219,16 +222,9 @@ function readConfigState(configPath: string): ConfigState {
 		return { kind: "missing" };
 	}
 
-	let raw: string;
-	try {
-		raw = readFileSync(configPath, "utf-8");
-	} catch (err) {
-		return { kind: "invalid", error: err instanceof Error ? err.message : String(err) };
-	}
-
 	let parsed: unknown;
 	try {
-		parsed = YAML.parse(raw);
+		parsed = readYamlFileSync(configPath);
 	} catch (err) {
 		return { kind: "invalid", error: err instanceof Error ? err.message : String(err) };
 	}
@@ -238,12 +234,11 @@ function readConfigState(configPath: string): ConfigState {
 		return { kind: "invalid", error: "config.yaml is empty" };
 	}
 
-	if (typeof parsed !== "object" || Array.isArray(parsed)) {
+	if (!isRecord(parsed)) {
 		return { kind: "invalid", error: "config.yaml must be a YAML mapping" };
 	}
 
-	const record = parsed as Record<string, unknown>;
-	const rawAgentId = record.agent_id;
+	const rawAgentId = parsed.agent_id;
 	let agentId: number | null;
 	if (rawAgentId === undefined || rawAgentId === null) {
 		// Field absent entirely — distinct from "present but -1". Treat as not
@@ -258,8 +253,8 @@ function readConfigState(configPath: string): ConfigState {
 		};
 	}
 
-	const rawChain = record.chain;
-	const chain = typeof rawChain === "string" && rawChain.length > 0 ? rawChain : null;
+	const rawChain = parsed.chain;
+	const chain = isNonEmptyString(rawChain) ? rawChain : null;
 
 	return { kind: "parsed", agentId, chain };
 }
@@ -296,7 +291,7 @@ async function readConversations(dataDir: string): Promise<ReadResult<Conversati
 	// silently undercounts messages without any warning. So we do our own scan
 	// here, track the per-file failures, and surface them as a readable error
 	// if any file couldn't be parsed.
-	const conversationsDir = join(resolveDataDirPath(dataDir), "conversations");
+	const conversationsDir = legacyConversationsDir(resolveDataDirPath(dataDir));
 	let entries: string[];
 	try {
 		entries = await readdir(conversationsDir);
@@ -313,13 +308,14 @@ async function readConversations(dataDir: string): Promise<ReadResult<Conversati
 		if (!entry.endsWith(".json")) continue;
 		const filePath = join(conversationsDir, entry);
 		try {
-			const raw = await readFile(filePath, "utf-8");
-			const parsed = JSON.parse(raw) as unknown;
-			if (!isConversationLog(parsed)) {
-				failed.push(entry);
-				continue;
-			}
-			value.push(parsed);
+			value.push(
+				await readJsonFile(filePath, (parsed) => {
+					if (!isConversationLog(parsed)) {
+						throw new Error("Invalid conversation log");
+					}
+					return parsed;
+				}),
+			);
 		} catch {
 			failed.push(entry);
 		}
@@ -347,14 +343,13 @@ function isConversationLog(value: unknown): value is ConversationLog {
 	// A file like `{}`, `{"messages": null}`, or even
 	// `{"messages": [null]}` must be counted as "unreadable" rather than
 	// crashing the whole command during iteration.
-	if (typeof value !== "object" || value === null) return false;
-	const record = value as Record<string, unknown>;
-	if (!Array.isArray(record.messages)) return false;
-	if (typeof record.peerAgentId !== "number") return false;
-	if (typeof record.peerDisplayName !== "string") return false;
-	for (const message of record.messages) {
-		if (typeof message !== "object" || message === null) return false;
-		const entry = message as Record<string, unknown>;
+	if (!isRecord(value)) return false;
+	if (!Array.isArray(value.messages)) return false;
+	if (typeof value.peerAgentId !== "number") return false;
+	if (typeof value.peerDisplayName !== "string") return false;
+	for (const message of value.messages) {
+		if (!isRecord(message)) return false;
+		const entry = message;
 		if (entry.direction !== "incoming" && entry.direction !== "outgoing") return false;
 		if (typeof entry.timestamp !== "string") return false;
 	}

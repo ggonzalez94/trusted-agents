@@ -9,8 +9,15 @@ export {
 	type PaymentRequestParams,
 	type TransferExecuteParams,
 	defineTapApp,
+	hasTapAppShape,
 } from "./types.js";
-export { FileAppStorage } from "./storage.js";
+export {
+	FileAppStorage,
+	TAP_APPS_DIR,
+	TAP_APP_STATE_FILE,
+	appDataDirPath,
+	appStatePath,
+} from "./storage.js";
 export { buildActionContext, type BuildActionContextDeps } from "./context.js";
 export {
 	type AppManifest,
@@ -21,6 +28,7 @@ export {
 	addAppToManifest,
 	removeAppFromManifest,
 	buildRoutingTable,
+	appManifestPath,
 } from "./manifest.js";
 export {
 	TapAppRegistry,

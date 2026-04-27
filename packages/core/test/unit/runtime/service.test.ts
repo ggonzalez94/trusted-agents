@@ -5,7 +5,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { TapAppRegistry } from "../../../src/app/registry.js";
 import { TransportError, ValidationError } from "../../../src/common/errors.js";
-import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import {
 	buildConnectionRequest,
 	buildConnectionResult,
@@ -45,6 +44,8 @@ import {
 	BOB,
 	BOB_SIGNING_PROVIDER,
 } from "../../fixtures/test-keys.js";
+import { jsonClone } from "../../helpers/clone.js";
+import { buildRuntimeTestConfig } from "../../helpers/config.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackTempDir } = useTempDirs();
@@ -138,10 +139,6 @@ const PEER_AGENT: ResolvedAgent = {
 	resolvedAt: "2026-03-07T00:00:00.000Z",
 };
 
-function cloneContact<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
-
 async function submitConnectionRequest(
 	transport: FakeTransport,
 	senderInboxId: string,
@@ -188,13 +185,13 @@ function makeActiveContact(connectionId: string): Contact {
 
 function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 	const contacts = new Map(
-		initialContacts.map((contact) => [contact.connectionId, cloneContact(contact)]),
+		initialContacts.map((contact) => [contact.connectionId, jsonClone(contact)]),
 	);
 	return {
-		getContacts: async () => [...contacts.values()].map((contact) => cloneContact(contact)),
-		getContact: async (connectionId: string) => cloneContact(contacts.get(connectionId) ?? null),
+		getContacts: async () => [...contacts.values()].map((contact) => jsonClone(contact)),
+		getContact: async (connectionId: string) => jsonClone(contacts.get(connectionId) ?? null),
 		findByAgentAddress: async (address: `0x${string}`, chain?: string) =>
-			cloneContact(
+			jsonClone(
 				[...contacts.values()].find(
 					(contact) =>
 						contact.peerAgentAddress.toLowerCase() === address.toLowerCase() &&
@@ -202,20 +199,20 @@ function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 				) ?? null,
 			),
 		findByAgentId: async (agentId: number, chain: string) =>
-			cloneContact(
+			jsonClone(
 				[...contacts.values()].find(
 					(contact) => contact.peerAgentId === agentId && contact.peerChain === chain,
 				) ?? null,
 			),
 		addContact: async (contact: Contact) => {
-			contacts.set(contact.connectionId, cloneContact(contact));
+			contacts.set(contact.connectionId, jsonClone(contact));
 		},
 		updateContact: async (connectionId: string, updates: Partial<Contact>) => {
 			const existing = contacts.get(connectionId);
 			if (!existing) {
 				return;
 			}
-			contacts.set(connectionId, cloneContact({ ...existing, ...updates }));
+			contacts.set(connectionId, jsonClone({ ...existing, ...updates }));
 		},
 		removeContact: async (connectionId: string) => {
 			contacts.delete(connectionId);
@@ -226,7 +223,7 @@ function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 				return;
 			}
 			contacts.set(connectionId, {
-				...cloneContact(existing),
+				...jsonClone(existing),
 				lastContactAt: "2026-03-08T00:00:00.000Z",
 			});
 		},
@@ -275,16 +272,7 @@ async function createService(
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-service-"));
 	trackTempDir(dataDir);
 
-	const config: TrustedAgentsConfig = {
-		agentId: 1,
-		chain: "eip155:8453",
-		ows: { wallet: "test", apiKey: "ows_key_test" },
-		dataDir,
-		chains: {},
-		inviteExpirySeconds: 3600,
-		resolveCacheTtlMs: 60_000,
-		resolveCacheMaxEntries: 128,
-	};
+	const config = buildRuntimeTestConfig({ dataDir });
 	const requestJournal = new FileRequestJournalImpl(dataDir);
 	const transport = dependencies.transport ?? new FakeTransport(options);
 	const appRegistry = new TapAppRegistry(dataDir);
@@ -1006,11 +994,10 @@ describe("TapMessagingService", () => {
 				commandType: "publish-grant-set",
 				commandPayload: {
 					peer: activeContact.peerDisplayName,
-					grantSet: {
-						version: "tap-grants/v1",
-						updatedAt: "2026-03-08T00:00:00.000Z",
-						grants: [{ grantId: "queued-chat", scope: "general-chat" }],
-					},
+					grantSet: createGrantSet(
+						[{ grantId: "queued-chat", scope: "general-chat" }],
+						"2026-03-08T00:00:00.000Z",
+					),
 					note: "queued publish",
 				},
 				commandRequestedBy: "test",
@@ -2129,18 +2116,10 @@ describe("TapMessagingService", () => {
 		await service.start();
 
 		const invalidUpdate = buildPermissionsUpdate({
-			grantSet: {
-				version: "tap-grants/v1",
-				updatedAt: "2026-03-08T00:00:00.000Z",
-				grants: [
-					{
-						grantId: "invalid",
-						scope: "general-chat",
-						updatedAt: "2026-03-08T00:00:00.000Z",
-						status: "active",
-					},
-				],
-			},
+			grantSet: createGrantSet(
+				[{ grantId: "invalid", scope: "general-chat" }],
+				"2026-03-08T00:00:00.000Z",
+			),
 			grantor: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
 			grantee: { agentId: 999, chain: PEER_AGENT.chain },
 			timestamp: "2026-03-08T00:00:01.000Z",
@@ -3500,16 +3479,7 @@ describe("TapMessagingService", () => {
 			const transport = new SilentTransport();
 			const dataDir = await mkdtemp(join(tmpdir(), "tap-fire-and-forget-"));
 			trackTempDir(dataDir);
-			const config: TrustedAgentsConfig = {
-				agentId: 1,
-				chain: "eip155:8453",
-				ows: { wallet: "test", apiKey: "ows_key_test" },
-				dataDir,
-				chains: {},
-				inviteExpirySeconds: 3600,
-				resolveCacheTtlMs: 60_000,
-				resolveCacheMaxEntries: 128,
-			};
+			const config = buildRuntimeTestConfig({ dataDir });
 			const requestJournal = new FileRequestJournalImpl(dataDir);
 			const appRegistry = new TapAppRegistry(dataDir);
 			const service = new TapMessagingService(
@@ -3560,16 +3530,7 @@ describe("TapMessagingService", () => {
 			const transport = new FakeTransport();
 			const dataDir = await mkdtemp(join(tmpdir(), "tap-eager-log-"));
 			trackTempDir(dataDir);
-			const config: TrustedAgentsConfig = {
-				agentId: 1,
-				chain: "eip155:8453",
-				ows: { wallet: "test", apiKey: "ows_key_test" },
-				dataDir,
-				chains: {},
-				inviteExpirySeconds: 3600,
-				resolveCacheTtlMs: 60_000,
-				resolveCacheMaxEntries: 128,
-			};
+			const config = buildRuntimeTestConfig({ dataDir });
 			const service = new TapMessagingService(
 				{
 					config,
@@ -3610,16 +3571,7 @@ describe("TapMessagingService", () => {
 
 			const dataDir = await mkdtemp(join(tmpdir(), "tap-publish-fail-"));
 			trackTempDir(dataDir);
-			const config: TrustedAgentsConfig = {
-				agentId: 1,
-				chain: "eip155:8453",
-				ows: { wallet: "test", apiKey: "ows_key_test" },
-				dataDir,
-				chains: {},
-				inviteExpirySeconds: 3600,
-				resolveCacheTtlMs: 60_000,
-				resolveCacheMaxEntries: 128,
-			};
+			const config = buildRuntimeTestConfig({ dataDir });
 			const service = new TapMessagingService(
 				{
 					config,

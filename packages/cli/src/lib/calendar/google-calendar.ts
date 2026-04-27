@@ -1,6 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { AvailabilityWindow, CalendarEvent, ICalendarProvider } from "trusted-agents-core";
+import {
+	type AvailabilityWindow,
+	type CalendarEvent,
+	type ICalendarProvider,
+	isObject,
+} from "trusted-agents-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,12 +47,7 @@ export class GoogleCalendarCliProvider implements ICalendarProvider {
 				timeout: 30_000,
 			});
 		} catch (err: unknown) {
-			if (
-				err !== null &&
-				typeof err === "object" &&
-				"code" in err &&
-				(err as { code?: string }).code === "ENOENT"
-			) {
+			if (isObject(err) && "code" in err && err.code === "ENOENT") {
 				throw new Error(
 					"gws CLI not found. Install it from https://github.com/nicholasgasior/gws and ensure it is on your PATH.",
 				);

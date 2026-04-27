@@ -14,6 +14,8 @@ export {
 } from "./execution.js";
 export {
 	FileRequestJournal,
+	REQUEST_JOURNAL_FILE,
+	requestJournalPath,
 	type IRequestJournal,
 	type RequestJournalDirection,
 	type RequestJournalEntry,
@@ -22,6 +24,7 @@ export {
 } from "./request-journal.js";
 export type {
 	TapCommandJob,
+	TapCommandJobIntent,
 	TapCommandJobResult,
 	TapCommandJobResultPayload,
 	TapCommandJobType,
@@ -36,6 +39,18 @@ export {
 	getPermissionLedgerPath,
 	type PermissionLedgerEntry,
 } from "./permission-ledger.js";
+export {
+	LEGACY_OUTBOX_DIR,
+	LEGACY_OUTBOX_PROCESSING_DIR,
+	LEGACY_OUTBOX_QUEUED_DIR,
+	LEGACY_OUTBOX_RESULTS_DIR,
+	LEGACY_PENDING_CONNECTS_FILE,
+	legacyOutboxDir,
+	legacyOutboxProcessingDir,
+	legacyOutboxQueuedDir,
+	legacyOutboxResultsDir,
+	legacyPendingConnectsPath,
+} from "./legacy-state-paths.js";
 export {
 	buildOutgoingActionRequest,
 	buildOutgoingActionResult,
@@ -53,6 +68,7 @@ export {
 	buildTransferRequestText,
 	buildTransferResponseText,
 	extractMessageData,
+	parseTransferActionPayload,
 	parsePermissionGrantRequest,
 	parseTransferActionRequest,
 	parseTransferActionResponse,
@@ -96,7 +112,9 @@ export {
 export { ERC20_TRANSFER_ABI, executeOnchainTransfer } from "./transfer-executor.js";
 export {
 	isProcessAlive,
+	TRANSPORT_OWNER_LOCK_FILE,
 	TransportOwnerLock,
+	transportOwnerLockPath,
 	type TransportOwnerInfo,
 	TransportOwnershipError,
 } from "./transport-owner-lock.js";

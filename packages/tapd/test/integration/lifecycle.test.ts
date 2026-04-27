@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TapEvent } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { socketFilePath } from "../../src/config.js";
 import { Daemon } from "../../src/daemon.js";
+import { portFilePath } from "../../src/port-file.js";
 
 interface FakeService {
 	hooks: {
@@ -55,7 +57,7 @@ describe("Daemon lifecycle", () => {
 		daemon = new Daemon({
 			config: {
 				dataDir,
-				socketPath: join(dataDir, ".tapd.sock"),
+				socketPath: socketFilePath(dataDir),
 				tcpHost: "127.0.0.1",
 				tcpPort: 0,
 				ringBufferSize: 100,
@@ -92,7 +94,7 @@ describe("Daemon lifecycle", () => {
 		expect(body).toMatchObject({ agentId: 42, displayName: "Alice" });
 
 		// The daemon publishes its bound TCP port so clients can discover us.
-		const portFile = join(dataDir, ".tapd.port");
+		const portFile = portFilePath(dataDir);
 		const portContents = await readFile(portFile, "utf-8");
 		expect(Number.parseInt(portContents, 10)).toBe(port);
 
@@ -109,7 +111,7 @@ describe("Daemon lifecycle", () => {
 		daemon = new Daemon({
 			config: {
 				dataDir,
-				socketPath: join(dataDir, ".tapd.sock"),
+				socketPath: socketFilePath(dataDir),
 				tcpHost: "127.0.0.1",
 				tcpPort: 0,
 				ringBufferSize: 100,
@@ -163,7 +165,7 @@ describe("Daemon lifecycle", () => {
 		const failingDaemon = new Daemon({
 			config: {
 				dataDir,
-				socketPath: join(dataDir, ".tapd.sock"),
+				socketPath: socketFilePath(dataDir),
 				tcpHost: "127.0.0.1",
 				tcpPort: blockerPort,
 				ringBufferSize: 100,
@@ -203,7 +205,7 @@ describe("Daemon lifecycle", () => {
 
 		// No port file on disk — the daemon never bound, so publishing one
 		// would advertise a dead control plane.
-		await expect(stat(join(dataDir, ".tapd.port"))).rejects.toThrow();
+		await expect(stat(portFilePath(dataDir))).rejects.toThrow();
 
 		// Cleanup: release the blocker and the bound-but-failed daemon.
 		await new Promise<void>((resolve) => blocker.close(() => resolve()));

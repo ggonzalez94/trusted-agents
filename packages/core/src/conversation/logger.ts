@@ -1,13 +1,13 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import {
 	AsyncMutex,
 	assertPathWithinBase,
 	assertSafeFileComponent,
-	fsErrorCode,
 	resolveDataDir,
 } from "../common/index.js";
+import { legacyConversationsDir } from "./paths.js";
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
 
@@ -36,7 +36,7 @@ export class FileConversationLogger implements IConversationLogger {
 
 	constructor(dataDir: string = join(process.env.HOME ?? "~", ".trustedagents")) {
 		this.dataDir = resolveDataDir(dataDir);
-		this.conversationsDir = join(this.dataDir, "conversations");
+		this.conversationsDir = legacyConversationsDir(this.dataDir);
 	}
 	private readonly dataDir: string;
 
@@ -105,16 +105,16 @@ export class FileConversationLogger implements IConversationLogger {
 		for (const entry of entries) {
 			if (!entry.endsWith(".json")) continue;
 			const filePath = join(this.conversationsDir, entry);
-			try {
-				const raw = await readFile(filePath, "utf-8");
-				const log = normalizeConversationLog(JSON.parse(raw) as ConversationLog);
-				if (filter?.connectionId && log.connectionId !== filter.connectionId) {
-					continue;
-				}
-				logs.push(log);
-			} catch {
-				// Skip corrupted files
+			const log = await readJsonFileOrDefault(
+				filePath,
+				(raw) => normalizeConversationLog(raw as ConversationLog),
+				null,
+				{ fallbackOnError: true },
+			);
+			if (!log || (filter?.connectionId && log.connectionId !== filter.connectionId)) {
+				continue;
 			}
+			logs.push(log);
 		}
 
 		return logs;
@@ -139,24 +139,19 @@ export class FileConversationLogger implements IConversationLogger {
 
 	private async loadLog(conversationId: string): Promise<ConversationLog | null> {
 		const filePath = this.filePathForConversation(conversationId);
-		try {
-			const raw = await readFile(filePath, "utf-8");
-			return normalizeConversationLog(JSON.parse(raw) as ConversationLog);
-		} catch (err: unknown) {
-			if (fsErrorCode(err) === "ENOENT") return null;
-			throw err;
-		}
+		return readJsonFileOrDefault(
+			filePath,
+			(raw) => normalizeConversationLog(raw as ConversationLog),
+			null,
+		);
 	}
 
 	private async saveLog(conversationId: string, log: ConversationLog): Promise<void> {
-		await mkdir(this.conversationsDir, { recursive: true, mode: 0o700 });
 		const filePath = this.filePathForConversation(conversationId);
-		const tmpPath = `${filePath}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(log, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(filePath, log, {
+			directoryMode: 0o700,
+			tempPrefix: ".conversation",
 		});
-		await rename(tmpPath, filePath);
 	}
 
 	private filePathForConversation(conversationId: string): string {

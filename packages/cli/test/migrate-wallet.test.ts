@@ -3,11 +3,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deleteWallet } from "@open-wallet-standard/core";
+import { legacyConversationsDir, xmtpDataDirPath } from "trusted-agents-core";
 import { keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { migrateWalletCommand } from "../src/commands/migrate-wallet.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
+import { legacyWalletIdentityDir, legacyWalletKeyPath } from "../src/lib/legacy-wallet.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { useOwsArtifactCleanup } from "./helpers/ows-cleanup.js";
 import { runCli } from "./helpers/run-cli.js";
@@ -28,8 +31,8 @@ describe("tap migrate-wallet", () => {
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-migrate-test-"));
 		dataDir = join(tmpDir, "data");
-		configPath = join(dataDir, "config.yaml");
-		keyPath = join(dataDir, "identity", "agent.key");
+		configPath = defaultConfigPath(dataDir);
+		keyPath = legacyWalletKeyPath(dataDir);
 
 		// Clean up stale OWS wallets from previous test runs that may have
 		// failed before afterEach cleanup (wallet names are deterministic)
@@ -48,9 +51,9 @@ describe("tap migrate-wallet", () => {
 
 	/** Set up a legacy data dir with config.yaml + identity/agent.key */
 	async function setupLegacyAgent(agentId: number): Promise<void> {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
-		await mkdir(join(dataDir, "conversations"), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
+		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		await writeFile(keyPath, TEST_PRIVATE_KEY, { mode: 0o600 });
 
@@ -61,13 +64,17 @@ describe("tap migrate-wallet", () => {
 		await writeFile(configPath, YAML.stringify(yamlConfig), "utf-8");
 	}
 
+	async function readConfig() {
+		return YAML.parse(await readFile(configPath, "utf-8"));
+	}
+
 	it("should migrate a legacy agent to OWS", async () => {
 		await setupLegacyAgent(42);
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
 		// Config should have OWS block
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		expect(updatedConfig.ows).toBeDefined();
 		expect(updatedConfig.ows.wallet).toBe("tap-agent-42");
 		expect(updatedConfig.ows.api_key).toMatch(/^ows_key_/);
@@ -106,7 +113,7 @@ describe("tap migrate-wallet", () => {
 	});
 
 	it("should fail when agent.key does not exist", async () => {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
 
 		const yamlConfig = { agent_id: 42, chain: "eip155:8453" };
 		await writeFile(configPath, YAML.stringify(yamlConfig), "utf-8");
@@ -123,7 +130,7 @@ describe("tap migrate-wallet", () => {
 		await setupLegacyAgent(42);
 
 		// Add OWS block to config
-		const configContent = YAML.parse(await readFile(configPath, "utf-8"));
+		const configContent = await readConfig();
 		configContent.ows = { wallet: "existing-wallet", api_key: "ows_key_existing" };
 		await writeFile(configPath, YAML.stringify(configContent), "utf-8");
 
@@ -139,9 +146,9 @@ describe("tap migrate-wallet", () => {
 	});
 
 	it("should handle 0x-prefixed keys", async () => {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
-		await mkdir(join(dataDir, "conversations"), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
+		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		// Write key with 0x prefix
 		await writeFile(keyPath, `0x${TEST_PRIVATE_KEY}`, { mode: 0o600 });
@@ -151,7 +158,7 @@ describe("tap migrate-wallet", () => {
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		expect(updatedConfig.ows).toBeDefined();
 		expect(updatedConfig.ows.wallet).toBe("tap-agent-99");
 		expect(existsSync(keyPath)).toBe(false);
@@ -163,14 +170,14 @@ describe("tap migrate-wallet", () => {
 		await setupLegacyAgent(7);
 
 		// Add extra fields to config
-		const configContent = YAML.parse(await readFile(configPath, "utf-8"));
+		const configContent = await readConfig();
 		configContent.invite_expiry_seconds = 3600;
 		configContent.execution = { mode: "eip7702" };
 		await writeFile(configPath, YAML.stringify(configContent), "utf-8");
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 
 		// Original fields preserved
 		expect(updatedConfig.agent_id).toBe(7);
@@ -186,9 +193,9 @@ describe("tap migrate-wallet", () => {
 	});
 
 	it("should use a random wallet name for unregistered agents (agent_id: -1)", async () => {
-		await mkdir(join(dataDir, "identity"), { recursive: true });
-		await mkdir(join(dataDir, "conversations"), { recursive: true });
-		await mkdir(join(dataDir, "xmtp"), { recursive: true });
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
+		await mkdir(legacyConversationsDir(dataDir), { recursive: true });
+		await mkdir(xmtpDataDirPath(dataDir), { recursive: true });
 
 		await writeFile(keyPath, TEST_PRIVATE_KEY, { mode: 0o600 });
 
@@ -197,7 +204,7 @@ describe("tap migrate-wallet", () => {
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		expect(updatedConfig.ows.wallet).toMatch(/^tap-[0-9a-f]{8}$/);
 		expect(existsSync(keyPath)).toBe(false);
 
@@ -222,7 +229,7 @@ describe("tap migrate-wallet", () => {
 		expect(output.status).toBe("ok");
 		expect(output.data.status).toBe("migrated");
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		trackOwsArtifacts(updatedConfig);
 	});
 });

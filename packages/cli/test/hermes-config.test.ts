@@ -26,7 +26,7 @@ describe("Tap Hermes config", () => {
 
 	it("normalizes identity defaults and rejects duplicates", () => {
 		const parsed = parseTapHermesPluginConfig({
-			identities: [{ dataDir: "/tmp/alpha" }],
+			identities: [{ name: "  ", dataDir: " /tmp/alpha " }],
 		});
 
 		expect(parsed.identities).toEqual([

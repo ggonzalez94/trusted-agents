@@ -14,9 +14,13 @@ import { HttpError } from "../errors.js";
 import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
-	isNonEmptyString,
+	hasOptionalStringFields,
+	hasPeerField,
+	isBoolean,
+	isNonBlankString,
+	isOptionalArray,
 	isOptionalReasonBody,
-	isOptionalString,
+	isPositiveFiniteNumber,
 	requireBody,
 	requireParam,
 } from "../validation.js";
@@ -44,17 +48,15 @@ interface RequestMeetingBody {
 function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (!isNonEmptyString(v.peer)) return false;
-	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
-	if (typeof v.duration !== "number" || !Number.isFinite(v.duration) || v.duration <= 0) {
+	if (!hasPeerField(v)) return false;
+	if (!isNonBlankString(v.title)) return false;
+	if (!isPositiveFiniteNumber(v.duration)) return false;
+	if (!isOptionalArray(v.slots)) return false;
+	if (
+		!hasOptionalStringFields(v, ["preferred", "location", "note", "schedulingId", "originTimezone"])
+	) {
 		return false;
 	}
-	if (v.slots !== undefined && !Array.isArray(v.slots)) return false;
-	if (!isOptionalString(v.preferred)) return false;
-	if (!isOptionalString(v.location)) return false;
-	if (!isOptionalString(v.note)) return false;
-	if (!isOptionalString(v.schedulingId)) return false;
-	if (!isOptionalString(v.originTimezone)) return false;
 	return true;
 }
 
@@ -66,8 +68,8 @@ interface RespondBody {
 function isRespondBody(value: unknown): value is RespondBody {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (typeof v.approve !== "boolean") return false;
-	if (!isOptionalString(v.reason)) return false;
+	if (!isBoolean(v.approve)) return false;
+	if (!hasOptionalStringFields(v, ["reason"])) return false;
 	return true;
 }
 

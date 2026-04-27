@@ -156,6 +156,11 @@ describe("meetings routes", () => {
 			await expect(request({}, { peer: "Alice", duration: 30 })).rejects.toThrow();
 		});
 
+		it("rejects blank title in flat shape", async () => {
+			const { request } = createMeetingsRoutes(makeService() as never);
+			await expect(request({}, { peer: "Alice", title: " \t ", duration: 30 })).rejects.toThrow();
+		});
+
 		it("rejects missing duration in flat shape", async () => {
 			const { request } = createMeetingsRoutes(makeService() as never);
 			await expect(request({}, { peer: "Alice", title: "Standup" })).rejects.toThrow();

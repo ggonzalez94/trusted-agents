@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import YAML from "yaml";
-import { writeFileAtomic } from "../lib/atomic-write.js";
+import { isObject } from "trusted-agents-core";
+import { readYamlFile, writeYamlFileAtomic } from "../lib/atomic-write.js";
 import { resolveChainAlias } from "../lib/chains.js";
 import {
 	resolveConfigPath,
@@ -61,18 +60,21 @@ export async function configSetCommand(
 			throw new Error(`Config file not found at ${configPath}. Run 'tap init' first.`);
 		}
 
-		const content = await readFile(configPath, "utf-8");
-		const yaml = (YAML.parse(content) as Record<string, unknown>) ?? {};
+		const yaml = (await readYamlFile<Record<string, unknown> | null>(configPath)) ?? {};
 
 		// Handle nested keys like xmtp.db_encryption_key
 		const parts = normalizeConfigPath(key);
 		let target: Record<string, unknown> = yaml;
 		for (let i = 0; i < parts.length - 1; i++) {
 			const part = parts[i]!;
-			if (typeof target[part] !== "object" || target[part] === null) {
-				target[part] = {};
+			const next = target[part];
+			if (isObject(next)) {
+				target = next;
+			} else {
+				const child: Record<string, unknown> = {};
+				target[part] = child;
+				target = child;
 			}
-			target = target[part] as Record<string, unknown>;
 		}
 
 		const leafKey = parts[parts.length - 1]!;
@@ -81,7 +83,7 @@ export async function configSetCommand(
 		const resolvedValue = leafKey === "chain" ? resolveChainAlias(value) : value;
 		target[leafKey] = parseConfigValue(parts, resolvedValue);
 
-		await writeFileAtomic(configPath, YAML.stringify(yaml));
+		await writeYamlFileAtomic(configPath, yaml);
 
 		success({ key, value: target[leafKey], path: configPath }, opts, startTime);
 	} catch (err) {

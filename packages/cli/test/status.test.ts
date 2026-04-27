@@ -7,24 +7,24 @@ import {
 	FileRequestJournal,
 	FileTrustStore,
 	TransportOwnerLock,
+	contactsFilePath,
+	legacyConversationsDir,
+	requestJournalPath,
+	transportOwnerLockPath,
 } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
-import { saveTapHermesPluginConfig } from "../src/hermes/config.js";
+import { getTapHermesPaths, saveTapHermesPluginConfig } from "../src/hermes/config.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { UNREGISTERED_AGENT_CONFIG_YAML, buildAgentConfigYaml } from "./helpers/config-fixtures.js";
 
-const MINIMAL_CONFIG = [
-	"agent_id: 42",
-	"chain: eip155:8453",
-	"ows:",
-	"  wallet: demo-wallet",
-	"  api_key: demo-key",
-].join("\n");
+const MINIMAL_CONFIG = buildAgentConfigYaml({ agentId: 42 });
 
 async function makeAgentDir(root: string, config = MINIMAL_CONFIG): Promise<string> {
 	const dataDir = join(root, "agent");
 	await mkdir(dataDir, { recursive: true });
-	await writeFile(join(dataDir, "config.yaml"), config, "utf-8");
+	await writeFile(defaultConfigPath(dataDir), config, "utf-8");
 	return dataDir;
 }
 
@@ -135,16 +135,7 @@ describe("tap status", () => {
 	});
 
 	it("reports not-registered when agent_id < 0", async () => {
-		const dataDir = await makeAgentDir(
-			tempRoot,
-			[
-				"agent_id: -1",
-				"chain: eip155:8453",
-				"ows:",
-				"  wallet: demo-wallet",
-				"  api_key: demo-key",
-			].join("\n"),
-		);
+		const dataDir = await makeAgentDir(tempRoot, UNREGISTERED_AGENT_CONFIG_YAML);
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -210,20 +201,14 @@ describe("tap status", () => {
 		});
 		// Simulate a live hermes daemon state file pointing at our PID (self,
 		// so isProcessAlive returns true).
-		const daemonStatePath = join(
-			hermesHome,
-			"plugins",
-			"trusted-agents-tap",
-			"state",
-			"daemon.json",
-		);
-		await mkdir(join(hermesHome, "plugins", "trusted-agents-tap", "state"), { recursive: true });
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.stateDir, { recursive: true });
 		await writeFile(
-			daemonStatePath,
+			hermesPaths.daemonStatePath,
 			JSON.stringify({
 				pid: process.pid,
 				gatewayPid: process.pid,
-				socketPath: join(hermesHome, "tap-hermes.sock"),
+				socketPath: hermesPaths.socketPath,
 				startedAt: new Date().toISOString(),
 				identities: ["other"],
 			}),
@@ -346,7 +331,7 @@ describe("tap status", () => {
 	it("reports config-invalid when config.yaml is empty", async () => {
 		const dataDir = join(tempRoot, "broken-agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(join(dataDir, "config.yaml"), "", "utf-8");
+		await writeFile(defaultConfigPath(dataDir), "", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -363,7 +348,7 @@ describe("tap status", () => {
 	it("reports config-invalid when config.yaml has garbage yaml", async () => {
 		const dataDir = join(tempRoot, "broken-yaml-agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(join(dataDir, "config.yaml"), "not: [valid: yaml", "utf-8");
+		await writeFile(defaultConfigPath(dataDir), "not: [valid: yaml", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -399,7 +384,7 @@ describe("tap status", () => {
 		// parents.
 		const foreignParent = join(tempRoot, "agent-b");
 		await mkdir(foreignParent, { recursive: true });
-		const foreignConfig = join(foreignParent, "config.yaml");
+		const foreignConfig = defaultConfigPath(foreignParent);
 		await writeFile(
 			foreignConfig,
 			["agent_id: 7", "chain: eip155:8453", "ows:", "  wallet: other", "  api_key: other"].join(
@@ -445,7 +430,7 @@ describe("tap status", () => {
 		const dataDir = await makeAgentDir(tempRoot);
 
 		// Write a lock file pointing at a pid that can't be alive.
-		const lockPath = join(dataDir, ".transport.lock");
+		const lockPath = transportOwnerLockPath(dataDir);
 		await writeFile(
 			lockPath,
 			JSON.stringify({
@@ -483,7 +468,7 @@ describe("tap status", () => {
 		// "everything is fine". Prior bug: a catch-all in readJournal returned
 		// [] for JSON parse failures.
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, "request-journal.json"), "{ not json", "utf-8");
+		await writeFile(requestJournalPath(dataDir), "{ not json", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -498,7 +483,7 @@ describe("tap status", () => {
 
 	it("surfaces corrupt contacts.json as a warning", async () => {
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, "contacts.json"), "[not an object", "utf-8");
+		await writeFile(contactsFilePath(dataDir), "[not an object", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -515,7 +500,7 @@ describe("tap status", () => {
 		// malformed lock file aborted the whole status command — which is
 		// exactly the crash-recovery scenario tap status exists to diagnose.
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, ".transport.lock"), "{ not json", "utf-8");
+		await writeFile(transportOwnerLockPath(dataDir), "{ not json", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -539,24 +524,25 @@ describe("tap status", () => {
 		// `{"messages": [null]}` made it to summarizeMessages which then threw
 		// on iteration.
 		const dataDir = await makeAgentDir(tempRoot);
-		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationsDir = legacyConversationsDir(dataDir);
+		await mkdir(conversationsDir, { recursive: true });
 		// Schema-invalid: missing messages array
-		await writeFile(join(dataDir, "conversations", "conv-empty.json"), "{}", "utf-8");
+		await writeFile(join(conversationsDir, "conv-empty.json"), "{}", "utf-8");
 		// Schema-invalid: messages is not an array
 		await writeFile(
-			join(dataDir, "conversations", "conv-null-messages.json"),
+			join(conversationsDir, "conv-null-messages.json"),
 			JSON.stringify({ messages: null, peerAgentId: 1, peerDisplayName: "X" }),
 			"utf-8",
 		);
 		// Schema-invalid: messages contains non-object entries
 		await writeFile(
-			join(dataDir, "conversations", "conv-null-element.json"),
+			join(conversationsDir, "conv-null-element.json"),
 			JSON.stringify({ messages: [null], peerAgentId: 1, peerDisplayName: "X" }),
 			"utf-8",
 		);
 		// Schema-invalid: message entry is missing direction
 		await writeFile(
-			join(dataDir, "conversations", "conv-bad-direction.json"),
+			join(conversationsDir, "conv-bad-direction.json"),
 			JSON.stringify({
 				messages: [{ timestamp: "2026-01-01T00:00:00Z" }],
 				peerAgentId: 1,
@@ -588,7 +574,7 @@ describe("tap status", () => {
 		// fired even though ownership was actually unknown. A live host might
 		// still be draining the queue.
 		const dataDir = await makeAgentDir(tempRoot);
-		await writeFile(join(dataDir, ".transport.lock"), "{ not json", "utf-8");
+		await writeFile(transportOwnerLockPath(dataDir), "{ not json", "utf-8");
 		const journal = new FileRequestJournal(dataDir);
 		await journal.putOutbound({
 			requestId: "cmd-unknown",
@@ -636,7 +622,11 @@ describe("tap status", () => {
 			{ connectionId: "conn-1", peerAgentId: 100, peerDisplayName: "Alice" },
 		);
 		// Seed a corrupt file next to it.
-		await writeFile(join(dataDir, "conversations", "conv-broken.json"), "{ not json", "utf-8");
+		await writeFile(
+			join(legacyConversationsDir(dataDir), "conv-broken.json"),
+			"{ not json",
+			"utf-8",
+		);
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -658,19 +648,18 @@ describe("tap status", () => {
 		// identities" warning fires — even though the actual problem is the
 		// unreadable config, not a missing identity.
 		const dataDir = await makeAgentDir(tempRoot);
-		const hermesPluginDir = join(hermesHome, "plugins", "trusted-agents-tap");
-		await mkdir(hermesPluginDir, { recursive: true });
-		await writeFile(join(hermesPluginDir, "config.json"), "{ not: json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.pluginDir, { recursive: true });
+		await writeFile(hermesPaths.configPath, "{ not: json", "utf-8");
 
 		// And a live daemon state pointing at our pid so daemon_running is true.
-		const stateDir = join(hermesPluginDir, "state");
-		await mkdir(stateDir, { recursive: true });
+		await mkdir(hermesPaths.stateDir, { recursive: true });
 		await writeFile(
-			join(stateDir, "daemon.json"),
+			hermesPaths.daemonStatePath,
 			JSON.stringify({
 				pid: process.pid,
 				gatewayPid: process.pid,
-				socketPath: join(hermesHome, "tap-hermes.sock"),
+				socketPath: hermesPaths.socketPath,
 				startedAt: new Date().toISOString(),
 				identities: [],
 			}),
@@ -701,9 +690,9 @@ describe("tap status", () => {
 		await saveTapHermesPluginConfig(hermesHome, {
 			identities: [{ name: "default", dataDir, reconcileIntervalMinutes: 10 }],
 		});
-		const stateDir = join(hermesHome, "plugins", "trusted-agents-tap", "state");
-		await mkdir(stateDir, { recursive: true });
-		await writeFile(join(stateDir, "daemon.json"), "{ not json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.stateDir, { recursive: true });
+		await writeFile(hermesPaths.daemonStatePath, "{ not json", "utf-8");
 
 		await statusCommand({ hermesHome }, { json: true, dataDir });
 
@@ -732,9 +721,9 @@ describe("tap status", () => {
 		await saveTapHermesPluginConfig(hermesHome, {
 			identities: [{ name: "default", dataDir, reconcileIntervalMinutes: 10 }],
 		});
-		const stateDir = join(hermesHome, "plugins", "trusted-agents-tap", "state");
-		await mkdir(stateDir, { recursive: true });
-		await writeFile(join(stateDir, "daemon.json"), "{ not json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.stateDir, { recursive: true });
+		await writeFile(hermesPaths.daemonStatePath, "{ not json", "utf-8");
 
 		await statusCommand({ hermesHome }, { json: true, dataDir });
 
@@ -753,9 +742,9 @@ describe("tap status", () => {
 		// installed". The whole point of the debug command is to expose the
 		// root cause.
 		const dataDir = await makeAgentDir(tempRoot);
-		const hermesPluginDir = join(hermesHome, "plugins", "trusted-agents-tap");
-		await mkdir(hermesPluginDir, { recursive: true });
-		await writeFile(join(hermesPluginDir, "config.json"), "{ not: json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.pluginDir, { recursive: true });
+		await writeFile(hermesPaths.configPath, "{ not: json", "utf-8");
 
 		await statusCommand({ hermesHome }, { json: true, dataDir });
 

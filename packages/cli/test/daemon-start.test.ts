@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logFilePath, pidFilePath, portFilePath } from "trusted-agents-tapd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -55,8 +56,8 @@ describe("tap daemon start", () => {
 		spawnTapdDetachedMock.mockResolvedValue({
 			pid: 4321,
 			port: 49999,
-			logPath: join(dataDir, ".tapd.log"),
-			pidPath: join(dataDir, ".tapd.pid"),
+			logPath: logFilePath(dataDir),
+			pidPath: pidFilePath(dataDir),
 		});
 	});
 
@@ -67,7 +68,7 @@ describe("tap daemon start", () => {
 	});
 
 	it("starts successfully even when a stale port file is left behind", async () => {
-		await writeFile(join(dataDir, ".tapd.port"), "49999", "utf-8");
+		await writeFile(portFilePath(dataDir), "49999", "utf-8");
 
 		await daemonStartCommand({ json: true });
 

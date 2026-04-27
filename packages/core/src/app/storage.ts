@@ -1,15 +1,25 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex } from "../common/index.js";
 import type { TapAppStorage } from "./types.js";
+
+export const TAP_APPS_DIR = "apps";
+export const TAP_APP_STATE_FILE = "state.json";
+
+export function appDataDirPath(dataDir: string, appId: string): string {
+	return join(dataDir, TAP_APPS_DIR, appId);
+}
+
+export function appStatePath(dataDir: string, appId: string): string {
+	return join(appDataDirPath(dataDir, appId), TAP_APP_STATE_FILE);
+}
 
 export class FileAppStorage implements TapAppStorage {
 	private readonly filePath: string;
 	private readonly writeMutex = new AsyncMutex();
 
 	constructor(dataDir: string, appId: string) {
-		this.filePath = join(dataDir, "apps", appId, "state.json");
+		this.filePath = appStatePath(dataDir, appId);
 	}
 
 	async get(key: string): Promise<unknown | undefined> {
@@ -46,27 +56,10 @@ export class FileAppStorage implements TapAppStorage {
 	}
 
 	private async load(): Promise<Record<string, unknown>> {
-		try {
-			const content = await readFile(this.filePath, "utf-8");
-			return JSON.parse(content) as Record<string, unknown>;
-		} catch (err: unknown) {
-			if (
-				err &&
-				typeof err === "object" &&
-				"code" in err &&
-				(err as { code: string }).code === "ENOENT"
-			) {
-				return {};
-			}
-			throw err;
-		}
+		return readJsonFileOrDefault(this.filePath, (raw) => raw as Record<string, unknown>, {});
 	}
 
 	private async save(data: Record<string, unknown>): Promise<void> {
-		const dir = dirname(this.filePath);
-		await mkdir(dir, { recursive: true });
-		const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
-		await writeFile(tmpPath, JSON.stringify(data, null, "\t"), { mode: 0o600 });
-		await rename(tmpPath, this.filePath);
+		await writeJsonFileAtomic(this.filePath, data, { tempPrefix: ".state" });
 	}
 }

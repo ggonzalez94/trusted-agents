@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { ConfigError, OwsSigningProvider, type TrustedAgentsConfig } from "trusted-agents-core";
-import YAML from "yaml";
+import { readYamlFileSync } from "./atomic-write.js";
+import { defaultConfigPath } from "./config-loader.js";
+import { legacyWalletKeyPath } from "./legacy-wallet.js";
 
 interface StoredWalletConfig {
 	ows?: {
@@ -25,9 +26,7 @@ function loadStoredWalletConfig(configPath: string): StoredWalletConfig | undefi
 	}
 
 	try {
-		return (
-			(YAML.parse(readFileSync(configPath, "utf-8")) as StoredWalletConfig | null) ?? undefined
-		);
+		return readYamlFileSync<StoredWalletConfig | null>(configPath) ?? undefined;
 	} catch {
 		return undefined;
 	}
@@ -37,7 +36,7 @@ function resolveEffectiveOwsConfig(options: WalletConfigStatusOptions): {
 	wallet: string;
 	apiKey: string;
 } {
-	const configPath = options.configPath ?? join(options.dataDir, "config.yaml");
+	const configPath = options.configPath ?? defaultConfigPath(options.dataDir);
 	const stored = loadStoredWalletConfig(configPath);
 
 	return {
@@ -54,7 +53,7 @@ export function getLegacyWalletMigrationWarning(
 		return undefined;
 	}
 
-	const keyPath = join(options.dataDir, "identity", "agent.key");
+	const keyPath = legacyWalletKeyPath(options.dataDir);
 	if (!existsSync(keyPath)) {
 		return undefined;
 	}

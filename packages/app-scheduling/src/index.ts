@@ -1,4 +1,4 @@
-import { defineTapApp } from "trusted-agents-core";
+import { defineTapApp, generateActionId } from "trusted-agents-core";
 import { handleSchedulingRequest } from "./handler.js";
 
 export { handleSchedulingRequest } from "./handler.js";
@@ -48,8 +48,7 @@ export function buildSchedulingPayload(params: {
 }): Record<string, unknown> {
 	return {
 		type: "scheduling/propose",
-		schedulingId:
-			params.schedulingId ?? `sch_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+		schedulingId: params.schedulingId ?? generateActionId("sch"),
 		title: params.title,
 		duration: params.durationMinutes,
 		slots: params.proposedSlots,

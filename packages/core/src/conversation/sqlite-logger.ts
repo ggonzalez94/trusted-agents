@@ -1,8 +1,8 @@
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import Database from "better-sqlite3";
-import { resolveDataDir } from "../common/index.js";
+import { isNonEmptyString, isObject, resolveDataDir } from "../common/index.js";
 import type { IConversationLogger } from "./logger.js";
+import { conversationsDbPath } from "./paths.js";
 import { applySchema } from "./sqlite-schema.js";
 import { generateMarkdownTranscript } from "./transcript.js";
 import type { ConversationLog, ConversationMessage } from "./types.js";
@@ -85,7 +85,7 @@ export class SqliteConversationLogger implements IConversationLogger {
 	constructor(dataDir: string) {
 		this.dataDir = resolveDataDir(dataDir);
 		mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
-		this.db = new Database(join(this.dataDir, "conversations.db"));
+		this.db = new Database(conversationsDbPath(this.dataDir));
 		applySchema(this.db);
 
 		this.stmtSelectConversation = this.db.prepare(
@@ -767,8 +767,8 @@ function validateConversationLogForImport(log: ConversationLog): void {
 		new Error(`importLog: conversation ${log.conversationId} message[${i}] ${issue}`);
 	for (let i = 0; i < log.messages.length; i += 1) {
 		const message = log.messages[i];
-		if (!message || typeof message !== "object") throw msgErr(i, "is not an object");
-		if (typeof message.timestamp !== "string" || message.timestamp.length === 0)
+		if (!isObject(message)) throw msgErr(i, "is not an object");
+		if (!isNonEmptyString(message.timestamp))
 			throw msgErr(i, "has missing or non-string timestamp");
 		if (!isStrictIsoTimestamp(message.timestamp))
 			throw msgErr(

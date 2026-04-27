@@ -5,7 +5,9 @@ import { join } from "node:path";
 import * as core from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as removeCommandModule from "../src/commands/remove.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
+import { buildAgentConfigYaml } from "./helpers/config-fixtures.js";
 import { runCli } from "./helpers/run-cli.js";
 
 const { TEST_ADDRESS, mockOwsProvider, mockCreateViemAccount } = vi.hoisted(() => {
@@ -104,11 +106,11 @@ describe("tap remove", () => {
 		const output = JSON.parse(result.stdout);
 		expect(output.data.dry_run).toBe(true);
 		expect(output.data.data_dir).toBe(resolvedDataDir);
-		expect(output.data.config_path).toBe(join(resolvedDataDir, "config.yaml"));
+		expect(output.data.config_path).toBe(defaultConfigPath(resolvedDataDir));
 		expect(output.data.agent_id).toBe(42);
-		expect(output.data.paths_to_remove).toContain(join(resolvedDataDir, "contacts.json"));
+		expect(output.data.paths_to_remove).toContain(core.contactsFilePath(resolvedDataDir));
 		expect(output.data.paths_to_remove).toContain(
-			join(resolvedDataDir, "conversations", "peer-1.json"),
+			join(core.legacyConversationsDir(resolvedDataDir), "peer-1.json"),
 		);
 		expect(output.data.blocking_reasons).toEqual([]);
 		expect(output.data.warnings).toContain(
@@ -162,7 +164,7 @@ describe("tap remove", () => {
 
 	it("refuses removal when a live transport owner lock exists", async () => {
 		await writeFile(
-			join(dataDir, ".transport.lock"),
+			core.transportOwnerLockPath(dataDir),
 			JSON.stringify(
 				{
 					pid: process.pid,
@@ -213,7 +215,7 @@ describe("tap remove", () => {
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.status).toBe("ok");
 		expect(output.data.removed).toBe(true);
-		expect(output.data.removed_paths).toContain(join(resolvedDataDir, "config.yaml"));
+		expect(output.data.removed_paths).toContain(defaultConfigPath(resolvedDataDir));
 		expect(existsSync(dataDir)).toBe(false);
 	});
 
@@ -225,13 +227,11 @@ describe("tap remove", () => {
 		expect(dryRun.status).toBe("ok");
 		expect(dryRun.data.blocking_reasons).toEqual([]);
 		expect(dryRun.data.can_remove).toBe(true);
-		expect(dryRun.data.paths_to_remove).toContain(join(resolvedDataDir, "apps.json"));
-		expect(dryRun.data.paths_to_remove).toContain(join(resolvedDataDir, "apps", "transfer"));
+		expect(dryRun.data.paths_to_remove).toContain(core.appManifestPath(resolvedDataDir));
+		expect(dryRun.data.paths_to_remove).toContain(core.appDataDirPath(resolvedDataDir, "transfer"));
+		expect(dryRun.data.paths_to_remove).toContain(core.appStatePath(resolvedDataDir, "transfer"));
 		expect(dryRun.data.paths_to_remove).toContain(
-			join(resolvedDataDir, "apps", "transfer", "state.json"),
-		);
-		expect(dryRun.data.paths_to_remove).toContain(
-			join(resolvedDataDir, "contacts.json.abc123.tmp"),
+			`${core.contactsFilePath(resolvedDataDir)}.abc123.tmp`,
 		);
 
 		stdoutWrites.length = 0;
@@ -299,11 +299,11 @@ describe("tap remove", () => {
 		const badDataDir = join(tmpDir, "bad-agent");
 		await mkdir(badDataDir, { recursive: true });
 		await writeFile(
-			join(badDataDir, "config.yaml"),
+			defaultConfigPath(badDataDir),
 			"some_unrelated_field: value\nanother: thing\n",
 			"utf-8",
 		);
-		await writeFile(join(badDataDir, "contacts.json"), "[]\n", "utf-8");
+		await writeFile(core.contactsFilePath(badDataDir), "[]\n", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -320,8 +320,8 @@ describe("tap remove", () => {
 	it("accepts a minimal legacy config.yaml that only has a chain field", async () => {
 		const legacyDataDir = join(tmpDir, "legacy-agent");
 		await mkdir(legacyDataDir, { recursive: true });
-		await writeFile(join(legacyDataDir, "config.yaml"), "chain: eip155:8453\n", "utf-8");
-		await writeFile(join(legacyDataDir, "contacts.json"), "[]\n", "utf-8");
+		await writeFile(defaultConfigPath(legacyDataDir), "chain: eip155:8453\n", "utf-8");
+		await writeFile(core.contactsFilePath(legacyDataDir), "[]\n", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -341,7 +341,7 @@ describe("tap remove", () => {
 		// TAP always writes CAIP-2 (`eip155:<id>`), so a colonless value like
 		// `mainnet` must not match the signature and trigger a wipe.
 		await writeFile(
-			join(foreignDataDir, "config.yaml"),
+			defaultConfigPath(foreignDataDir),
 			"chain: mainnet\nsome_other_tool_field: value\n",
 			"utf-8",
 		);
@@ -363,8 +363,8 @@ describe("tap remove", () => {
 	it("accepts a chainless config.yaml that has only agent_id (config loader defaults chain)", async () => {
 		const chainlessDataDir = join(tmpDir, "chainless-agent");
 		await mkdir(chainlessDataDir, { recursive: true });
-		await writeFile(join(chainlessDataDir, "config.yaml"), "agent_id: 42\n", "utf-8");
-		await writeFile(join(chainlessDataDir, "contacts.json"), "[]\n", "utf-8");
+		await writeFile(defaultConfigPath(chainlessDataDir), "agent_id: 42\n", "utf-8");
+		await writeFile(core.contactsFilePath(chainlessDataDir), "[]\n", "utf-8");
 
 		await removeCommandModule.removeCommand(
 			{ unsafeWipeDataDir: true, yes: true },
@@ -411,7 +411,7 @@ describe("tap remove", () => {
 		const output = JSON.parse(stdoutWrites[0]!);
 		expect(output.status).toBe("ok");
 		expect(output.data.data_dir).toBe(resolvedActualDataDir);
-		expect(output.data.removed_paths).toContain(join(resolvedActualDataDir, "config.yaml"));
+		expect(output.data.removed_paths).toContain(defaultConfigPath(resolvedActualDataDir));
 		expect(existsSync(actualDataDir)).toBe(false);
 	});
 
@@ -468,7 +468,7 @@ describe("tap remove", () => {
 
 		const result = await removeCommandModule.probeRemoveNativeBalance(
 			dataDir,
-			join(dataDir, "config.yaml"),
+			defaultConfigPath(dataDir),
 		);
 
 		expect(result.probe.checked).toBe(true);
@@ -520,28 +520,24 @@ describe("tap remove", () => {
 
 async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "identity"), { recursive: true });
-	await mkdir(join(dataDir, "conversations"), { recursive: true });
-	await mkdir(join(dataDir, "xmtp"), { recursive: true });
-	await mkdir(join(dataDir, "apps", "transfer"), { recursive: true });
+	await mkdir(core.legacyConversationsDir(dataDir), { recursive: true });
+	await mkdir(core.xmtpDataDirPath(dataDir), { recursive: true });
+	await mkdir(core.appDataDirPath(dataDir, "transfer"), { recursive: true });
 	await writeFile(
-		join(dataDir, "config.yaml"),
-		"agent_id: 42\nchain: eip155:8453\nows:\n  wallet: test-wallet\n  api_key: test-api-key\n",
+		defaultConfigPath(dataDir),
+		`${buildAgentConfigYaml({ agentId: 42, wallet: "test-wallet", apiKey: "test-api-key" })}\n`,
 		"utf-8",
 	);
-	await writeFile(join(dataDir, "contacts.json"), "[]\n", "utf-8");
-	await writeFile(join(dataDir, "conversations", "peer-1.json"), "[]\n", "utf-8");
-	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");
+	await writeFile(core.contactsFilePath(dataDir), "[]\n", "utf-8");
+	await writeFile(join(core.legacyConversationsDir(dataDir), "peer-1.json"), "[]\n", "utf-8");
+	await writeFile(join(core.xmtpDataDirPath(dataDir), "agent.db3"), "", "utf-8");
 	await writeFile(join(dataDir, "pending-invites.json"), "[]\n", "utf-8");
 	await writeFile(
-		join(dataDir, "apps.json"),
+		core.appManifestPath(dataDir),
 		JSON.stringify({ apps: { transfer: { package: "tap-app-transfer" } } }),
 		"utf-8",
 	);
-	await writeFile(
-		join(dataDir, "apps", "transfer", "state.json"),
-		JSON.stringify({ grants: [] }),
-		"utf-8",
-	);
+	await writeFile(core.appStatePath(dataDir, "transfer"), JSON.stringify({ grants: [] }), "utf-8");
 	// Simulate an orphaned atomic-write temp file from an interrupted store write.
-	await writeFile(join(dataDir, "contacts.json.abc123.tmp"), "[]\n", "utf-8");
+	await writeFile(`${core.contactsFilePath(dataDir)}.abc123.tmp`, "[]\n", "utf-8");
 }

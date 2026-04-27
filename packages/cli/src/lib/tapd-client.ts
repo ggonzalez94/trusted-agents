@@ -1,6 +1,4 @@
-import { readFile } from "node:fs/promises";
 import { request } from "node:http";
-import { join } from "node:path";
 import type {
 	Contact,
 	ConversationLog,
@@ -17,15 +15,13 @@ import type {
 	TapSyncReport,
 	TimeSlot,
 } from "trusted-agents-core";
-import { TAPD_PORT_FILE, TAPD_TOKEN_FILE } from "trusted-agents-tapd";
+import { loadAuthToken, loadBoundPort, socketFilePath } from "trusted-agents-tapd";
 
 // The Unix socket lives next to the token file. tapd binds it on every start
 // at `<dataDir>/.tapd.sock`. The CLI talks to tapd over this socket so it
 // shares the same auth/transport boundary as the OpenClaw and Hermes
 // clients — only the bundled web UI uses the TCP port, and only because
 // browsers can't speak Unix sockets.
-const SOCKET_FILE = ".tapd.sock";
-
 /**
  * Thrown when the tapd token file is missing/empty, i.e. tapd hasn't started
  * (or has already cleaned up after itself). Callers can recover by either
@@ -67,16 +63,16 @@ export interface TapdConnectionInfo {
  * signals tapd is not running for this data dir.
  */
 export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo> {
-	let token: string;
+	let token: string | null;
 	try {
-		token = (await readFile(join(dataDir, TAPD_TOKEN_FILE), "utf-8")).trim();
+		token = await loadAuthToken(dataDir);
 	} catch {
 		throw new TapdNotRunningError();
 	}
 	if (!token) {
 		throw new TapdNotRunningError();
 	}
-	return { socketPath: join(dataDir, SOCKET_FILE), token };
+	return { socketPath: socketFilePath(dataDir), token };
 }
 
 /**
@@ -105,14 +101,13 @@ export interface TapdUiInfo {
  * the Unix socket via `discoverTapd` / `TapdClient`.
  */
 export async function discoverTapdUiUrl(dataDir: string): Promise<TapdUiInfo> {
-	let portRaw: string;
+	let port: number | null;
 	try {
-		portRaw = await readFile(join(dataDir, TAPD_PORT_FILE), "utf-8");
+		port = await loadBoundPort(dataDir);
 	} catch {
 		throw new TapdNotRunningError();
 	}
-	const port = Number.parseInt(portRaw.trim(), 10);
-	if (!Number.isInteger(port) || port <= 0) {
+	if (port === null) {
 		throw new TapdNotRunningError();
 	}
 	const { token } = await discoverTapd(dataDir);
@@ -368,13 +363,7 @@ function tapdHttpRequest<T>(
 					reject(buildErrorFromBody(text, status));
 					return;
 				}
-				let parsed: unknown;
-				try {
-					parsed = text ? JSON.parse(text) : undefined;
-				} catch {
-					parsed = undefined;
-				}
-				resolve(parsed as T);
+				resolve(parseOptionalJson(text) as T);
 			});
 			res.on("error", reject);
 		});
@@ -393,12 +382,7 @@ function tapdHttpRequest<T>(
 }
 
 function buildErrorFromBody(text: string, status: number): TapdClientError {
-	let body: unknown;
-	try {
-		body = text ? JSON.parse(text) : undefined;
-	} catch {
-		body = undefined;
-	}
+	const body = parseOptionalJson(text);
 	const errPayload = (
 		body as
 			| { error?: { code?: string; message?: string; details?: Record<string, unknown> } }
@@ -410,4 +394,12 @@ function buildErrorFromBody(text: string, status: number): TapdClientError {
 		status,
 		errPayload?.details,
 	);
+}
+
+function parseOptionalJson(text: string): unknown {
+	try {
+		return text ? JSON.parse(text) : undefined;
+	} catch {
+		return undefined;
+	}
 }

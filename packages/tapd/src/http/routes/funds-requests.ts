@@ -4,17 +4,20 @@ import type {
 	TapRequestFundsResult,
 } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord, isNonEmptyString, isOptionalString, requireBody } from "../validation.js";
+import {
+	asRecord,
+	hasOptionalStringFields,
+	hasPeerField,
+	hasTapTransferFields,
+	requireBody,
+} from "../validation.js";
 
 function isFundsRequestBody(value: unknown): value is TapRequestFundsInput {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (!isNonEmptyString(v.peer)) return false;
-	if (v.asset !== "native" && v.asset !== "usdc") return false;
-	if (!isNonEmptyString(v.amount)) return false;
-	if (!isNonEmptyString(v.chain)) return false;
-	if (typeof v.toAddress !== "string" || !v.toAddress.startsWith("0x")) return false;
-	if (!isOptionalString(v.note)) return false;
+	if (!hasPeerField(v)) return false;
+	if (!hasTapTransferFields(v)) return false;
+	if (!hasOptionalStringFields(v, ["note"])) return false;
 	return true;
 }
 

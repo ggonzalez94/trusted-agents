@@ -73,6 +73,14 @@ def _hermes_config_path() -> Path:
     return _hermes_home() / "plugins" / "trusted-agents-tap" / "config.json"
 
 
+def _tapd_socket_path(data_dir: Path) -> Path:
+    return data_dir / SOCKET_NAME
+
+
+def _tapd_token_path(socket_path: Path) -> Path:
+    return socket_path.parent / TOKEN_FILE_NAME
+
+
 def _load_hermes_identities() -> list[dict[str, Any]]:
     """Read the Hermes plugin config and return the list of identities.
 
@@ -183,7 +191,7 @@ def _load_auth_token(socket_path: Path) -> tuple[str | None, str | None]:
     is mode 0o600, so a same-uid process that cannot read it cannot call
     the daemon — this is the security boundary the unix-socket auth relies
     on. Parent dir of the socket is the tapd dataDir."""
-    token_path = socket_path.parent / TOKEN_FILE_NAME
+    token_path = _tapd_token_path(socket_path)
     try:
         raw = token_path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
@@ -392,7 +400,7 @@ def send_request(action: str, params: dict | None = None) -> Any:
 
     # Strip the identity key so it doesn't leak into tapd request bodies.
     dispatch_params = {k: v for k, v in params.items() if k != "identity"}
-    socket_path = data_dir / SOCKET_NAME
+    socket_path = _tapd_socket_path(data_dir)
     return _dispatch(action, dispatch_params, socket_path)
 
 
@@ -472,7 +480,7 @@ def drain_all_identities() -> list[dict]:
 
     if len(identities) == 0:
         data_dir = _legacy_data_dir()
-        socket_path = data_dir / SOCKET_NAME
+        socket_path = _tapd_socket_path(data_dir)
         drained, err = _drain_one(socket_path)
         if err is not None:
             return [_meta_error_notification("default", err)]
@@ -481,7 +489,7 @@ def drain_all_identities() -> list[dict]:
     merged: list[dict] = []
     for entry in identities:
         name = entry["name"]
-        socket_path = Path(entry["dataDir"]) / SOCKET_NAME
+        socket_path = _tapd_socket_path(Path(entry["dataDir"]))
         drained, err = _drain_one(socket_path)
         if err is not None:
             merged.append(_meta_error_notification(name, err))

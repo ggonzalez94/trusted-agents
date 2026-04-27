@@ -1,4 +1,4 @@
-import type { TapActionContext } from "trusted-agents-core";
+import { type TapActionContext, createGrantSet } from "trusted-agents-core";
 import { describe, expect, it, vi } from "vitest";
 import { handleTransferRequest } from "../src/handler.js";
 
@@ -54,16 +54,8 @@ function buildMockContext(
 				status: "active",
 				createdAt: new Date().toISOString(),
 				permissions: {
-					grantedByMe: {
-						version: "tap-grants/v1",
-						updatedAt: new Date().toISOString(),
-						grants: overrides.grantsToPeer ?? [],
-					},
-					grantedByPeer: {
-						version: "tap-grants/v1",
-						updatedAt: new Date().toISOString(),
-						grants: [],
-					},
+					grantedByMe: createGrantSet(overrides.grantsToPeer ?? []),
+					grantedByPeer: createGrantSet([]),
 				},
 			},
 			grantsFromPeer: [],

@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { isObject, isRecord } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import type { OutputFormat } from "../types.js";
 
@@ -115,13 +116,11 @@ function printPlain(data: unknown): void {
 		return;
 	}
 
-	if (typeof data === "object") {
-		const obj = data as Record<string, unknown>;
-
+	if (isObject(data)) {
 		// Check if it's a list wrapper (e.g. { contacts: [...] })
-		const keys = Object.keys(obj);
+		const keys = Object.keys(data);
 		if (keys.length === 1) {
-			const value = obj[keys[0]!];
+			const value = data[keys[0]!];
 			if (Array.isArray(value)) {
 				printTable(value);
 				return;
@@ -132,7 +131,7 @@ function printPlain(data: unknown): void {
 		const scalarEntries: [string, unknown][] = [];
 		const arrayEntries: [string, unknown[]][] = [];
 
-		for (const [key, val] of Object.entries(obj)) {
+		for (const [key, val] of Object.entries(data)) {
 			if (Array.isArray(val)) {
 				arrayEntries.push([key, val]);
 			} else {
@@ -151,7 +150,7 @@ function printPlain(data: unknown): void {
 		for (const [key, items] of arrayEntries) {
 			process.stdout.write(`\n${humanizeKey(key)}:\n`);
 			for (const item of items) {
-				if (typeof item === "object" && item !== null) {
+				if (isObject(item)) {
 					const lines = JSON.stringify(item, null, 2).split("\n");
 					process.stdout.write(`  - ${lines[0]}\n`);
 					for (const line of lines.slice(1)) {
@@ -187,11 +186,11 @@ function printNdjson(data: unknown): void {
 		return;
 	}
 
-	if (typeof data === "object" && data !== null) {
+	if (isObject(data)) {
 		const obj = data as Record<string, unknown>;
-		const entries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
-		if (entries.length === 1) {
-			for (const item of entries[0]![1] as unknown[]) {
+		const arrayEntry = findSingleArrayEntry(obj);
+		if (arrayEntry) {
+			for (const item of arrayEntry[1]) {
 				process.stdout.write(`${stableStringify(item)}\n`);
 			}
 			return;
@@ -203,7 +202,7 @@ function printNdjson(data: unknown): void {
 
 function printKeyValue(label: string, val: unknown, maxLabelLen: number): void {
 	// Nested object → indented pretty JSON
-	if (typeof val === "object" && val !== null) {
+	if (isObject(val)) {
 		process.stdout.write(`${label}:\n`);
 		const json = JSON.stringify(val, null, 2);
 		for (const line of json.split("\n")) {
@@ -236,7 +235,7 @@ function printTable(rows: unknown[]): void {
 	}
 
 	const first = rows[0];
-	if (typeof first !== "object" || first === null) {
+	if (!isObject(first)) {
 		for (const row of rows) {
 			process.stdout.write(`${String(row)}\n`);
 		}
@@ -349,17 +348,17 @@ function applyFieldSelection(data: unknown, fields: string[]): unknown {
 		return data.map((item) => selectFields(item, fields));
 	}
 
-	if (typeof data !== "object" || data === null) {
+	if (!isObject(data)) {
 		return data;
 	}
 
 	const obj = data as Record<string, unknown>;
-	const arrayEntries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
-	if (arrayEntries.length === 1) {
-		const [arrayKey, arrayValue] = arrayEntries[0]!;
+	const arrayEntry = findSingleArrayEntry(obj);
+	if (arrayEntry) {
+		const [arrayKey, arrayValue] = arrayEntry;
 		return {
-			...Object.fromEntries(Object.entries(obj).filter(([key]) => key !== arrayKey)),
-			[arrayKey]: (arrayValue as unknown[]).map((item) => selectFields(item, fields)),
+			...objectWithoutKey(obj, arrayKey),
+			[arrayKey]: arrayValue.map((item) => selectFields(item, fields)),
 		};
 	}
 
@@ -367,14 +366,14 @@ function applyFieldSelection(data: unknown, fields: string[]): unknown {
 }
 
 function selectFields(value: unknown, fields: string[]): unknown {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+	if (!isRecord(value)) {
 		return value;
 	}
 
 	const result: Record<string, unknown> = {};
 	for (const field of fields) {
 		const path = field.split(".").filter(Boolean);
-		const selected = getPath(value as Record<string, unknown>, path);
+		const selected = getPath(value, path);
 		if (selected !== undefined) {
 			setPath(result, path, selected);
 		}
@@ -386,10 +385,10 @@ function selectFields(value: unknown, fields: string[]): unknown {
 function getPath(obj: Record<string, unknown>, path: string[]): unknown {
 	let current: unknown = obj;
 	for (const segment of path) {
-		if (typeof current !== "object" || current === null || Array.isArray(current)) {
+		if (!isRecord(current)) {
 			return undefined;
 		}
-		current = (current as Record<string, unknown>)[segment];
+		current = current[segment];
 	}
 	return current;
 }
@@ -404,7 +403,7 @@ function setPath(target: Record<string, unknown>, path: string[], value: unknown
 		}
 
 		const existing = current[segment];
-		if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
+		if (!isRecord(existing)) {
 			current[segment] = {};
 		}
 		current = current[segment] as Record<string, unknown>;
@@ -423,19 +422,19 @@ function applyPagination(
 		return paginateArray(data, limit, offset, (items) => items);
 	}
 
-	if (typeof data !== "object" || data === null) {
+	if (!isObject(data)) {
 		return { data };
 	}
 
 	const obj = data as Record<string, unknown>;
-	const arrayEntries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
-	if (arrayEntries.length !== 1) {
+	const arrayEntry = findSingleArrayEntry(obj);
+	if (!arrayEntry) {
 		return { data };
 	}
 
-	const [arrayKey, arrayValue] = arrayEntries[0]!;
-	const paginated = paginateArray(arrayValue as unknown[], limit, offset, (items) => ({
-		...Object.fromEntries(Object.entries(obj).filter(([key]) => key !== arrayKey)),
+	const [arrayKey, arrayValue] = arrayEntry;
+	const paginated = paginateArray(arrayValue, limit, offset, (items) => ({
+		...objectWithoutKey(obj, arrayKey),
 		[arrayKey]: items,
 	}));
 
@@ -468,6 +467,17 @@ function paginateArray<T>(
 	};
 }
 
+function findSingleArrayEntry(obj: Record<string, unknown>): [string, unknown[]] | undefined {
+	const entries = Object.entries(obj).filter((entry): entry is [string, unknown[]] =>
+		Array.isArray(entry[1]),
+	);
+	return entries.length === 1 ? entries[0] : undefined;
+}
+
+function objectWithoutKey(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(obj).filter(([candidate]) => candidate !== key));
+}
+
 function stableStringify(value: unknown): string {
 	return JSON.stringify(sortValue(value));
 }
@@ -476,7 +486,7 @@ function sortValue(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map(sortValue);
 	}
-	if (typeof value !== "object" || value === null) {
+	if (!isObject(value)) {
 		return value;
 	}
 

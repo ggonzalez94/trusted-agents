@@ -1,12 +1,14 @@
-import { readFile } from "node:fs/promises";
 import { request } from "node:http";
-import { dirname, join } from "node:path";
-import type { TapNotification, TapNotificationType } from "trusted-agents-tapd";
+import { join } from "node:path";
+import {
+	type TapNotification,
+	type TapNotificationType,
+	socketFilePath,
+} from "trusted-agents-tapd";
+import { readTapdToken, tapdTokenPathForSocket } from "./tapd-token.js";
 
 export type { TapNotification, TapNotificationType };
 
-const DEFAULT_SOCKET_NAME = ".tapd.sock";
-const TOKEN_FILE_NAME = ".tapd-token";
 const DEFAULT_DATA_DIR = ".trustedagents";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -62,11 +64,11 @@ export interface OpenClawTapdClientOptions {
  */
 export function resolveSocketPath(options: OpenClawTapdClientOptions): string {
 	if (options.socketPath) return options.socketPath;
-	if (options.dataDir) return join(options.dataDir, DEFAULT_SOCKET_NAME);
+	if (options.dataDir) return socketFilePath(options.dataDir);
 	const envDataDir = process.env.TAP_DATA_DIR;
-	if (envDataDir && envDataDir.length > 0) return join(envDataDir, DEFAULT_SOCKET_NAME);
+	if (envDataDir && envDataDir.length > 0) return socketFilePath(envDataDir);
 	const fallbackDataDir = join(process.env.HOME ?? "/tmp", DEFAULT_DATA_DIR);
-	return join(fallbackDataDir, DEFAULT_SOCKET_NAME);
+	return socketFilePath(fallbackDataDir);
 }
 
 /**
@@ -85,7 +87,7 @@ export class OpenClawTapdClient {
 
 	constructor(options: OpenClawTapdClientOptions = {}) {
 		this.socketPath = resolveSocketPath(options);
-		this.tokenPath = join(dirname(this.socketPath), TOKEN_FILE_NAME);
+		this.tokenPath = tapdTokenPathForSocket(this.socketPath);
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	}
 
@@ -199,9 +201,7 @@ export class OpenClawTapdClient {
 
 	private async loadToken(): Promise<string> {
 		try {
-			const token = (await readFile(this.tokenPath, "utf-8")).trim();
-			if (!token) throw new Error(`tapd token file ${this.tokenPath} is empty`);
-			return token;
+			return await readTapdToken(this.tokenPath);
 		} catch (err: unknown) {
 			const code = (err as NodeJS.ErrnoException | undefined)?.code;
 			if (code === "ENOENT") {

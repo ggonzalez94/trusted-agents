@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installCommand } from "../src/commands/install.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
+import { legacyWalletIdentityDir, legacyWalletKeyPath } from "../src/lib/legacy-wallet.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("tap install", () => {
@@ -270,14 +272,11 @@ describe("tap install", () => {
 		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		await mkdir(join(homeDir, ".claude"), { recursive: true });
 		await writeFakeNpx(binDir, join(tempRoot, "npx.log"));
-		await mkdir(join(homeDir, ".trustedagents", "identity"), { recursive: true });
+		const dataDir = join(homeDir, ".trustedagents");
+		await mkdir(legacyWalletIdentityDir(dataDir), { recursive: true });
+		await writeFile(defaultConfigPath(dataDir), "agent_id: 11\nchain: eip155:8453\n", "utf-8");
 		await writeFile(
-			join(homeDir, ".trustedagents", "config.yaml"),
-			"agent_id: 11\nchain: eip155:8453\n",
-			"utf-8",
-		);
-		await writeFile(
-			join(homeDir, ".trustedagents", "identity", "agent.key"),
+			legacyWalletKeyPath(dataDir),
 			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 			"utf-8",
 		);

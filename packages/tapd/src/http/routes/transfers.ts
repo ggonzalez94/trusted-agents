@@ -1,12 +1,12 @@
 import type { RouteHandler } from "../router.js";
-import { asRecord, isNonEmptyString, requireBody } from "../validation.js";
+import {
+	type TapTransferFields,
+	asRecord,
+	hasTapTransferFields,
+	requireBody,
+} from "../validation.js";
 
-export interface TransferExecutionRequest {
-	asset: "native" | "usdc";
-	amount: string;
-	chain: string;
-	toAddress: `0x${string}`;
-}
+export interface TransferExecutionRequest extends TapTransferFields {}
 
 export interface TransferExecutionResult {
 	txHash: `0x${string}`;
@@ -19,11 +19,7 @@ export type TransferExecutor = (
 function isTransferBody(value: unknown): value is TransferExecutionRequest {
 	const v = asRecord(value);
 	if (!v) return false;
-	if (v.asset !== "native" && v.asset !== "usdc") return false;
-	if (!isNonEmptyString(v.amount)) return false;
-	if (!isNonEmptyString(v.chain)) return false;
-	if (typeof v.toAddress !== "string" || !v.toAddress.startsWith("0x")) return false;
-	return true;
+	return hasTapTransferFields(v);
 }
 
 /**

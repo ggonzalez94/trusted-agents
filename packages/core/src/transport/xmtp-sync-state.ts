@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { AsyncMutex, fsErrorCode, nowISO } from "../common/index.js";
+import { join } from "node:path";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
+import { AsyncMutex, isNonEmptyString, isObject, nowISO } from "../common/index.js";
 
 export interface XmtpConversationCheckpoint {
 	lastSentAtNs: string;
@@ -28,7 +27,7 @@ export class FileXmtpSyncStateStore {
 
 	async isInitialized(): Promise<boolean> {
 		const state = await this.load();
-		return typeof state.initializedAt === "string" && state.initializedAt.length > 0;
+		return isNonEmptyString(state.initializedAt);
 	}
 
 	async getCheckpoint(conversationId: string): Promise<XmtpConversationCheckpoint | null> {
@@ -72,40 +71,32 @@ export class FileXmtpSyncStateStore {
 	}
 
 	private async load(): Promise<XmtpSyncStateFile> {
-		try {
-			const raw = await readFile(this.path, "utf-8");
-			const parsed = JSON.parse(raw) as Partial<XmtpSyncStateFile>;
-			return {
-				version: 1,
-				initializedAt:
-					typeof parsed.initializedAt === "string" && parsed.initializedAt.length > 0
-						? parsed.initializedAt
-						: undefined,
-				conversations: normalizeConversations(parsed.conversations),
-			};
-		} catch (error: unknown) {
-			if (fsErrorCode(error) === "ENOENT") {
-				return { ...EMPTY_STATE, conversations: {} };
-			}
-			throw error;
-		}
+		return readJsonFileOrDefault<XmtpSyncStateFile>(
+			this.path,
+			(raw) => {
+				const parsed = raw as Partial<XmtpSyncStateFile>;
+				return {
+					version: 1,
+					initializedAt: isNonEmptyString(parsed.initializedAt) ? parsed.initializedAt : undefined,
+					conversations: normalizeConversations(parsed.conversations),
+				};
+			},
+			{ ...EMPTY_STATE, conversations: {} },
+		);
 	}
 
 	private async save(state: XmtpSyncStateFile): Promise<void> {
-		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-		const tmpPath = `${this.path}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(state, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(this.path, state, {
+			directoryMode: 0o700,
+			tempPrefix: ".xmtp-sync-state",
 		});
-		await rename(tmpPath, this.path);
 	}
 }
 
 function normalizeConversations(
 	conversations: unknown,
 ): Record<string, XmtpConversationCheckpoint> {
-	if (!conversations || typeof conversations !== "object") {
+	if (!isObject(conversations)) {
 		return {};
 	}
 
@@ -118,12 +109,12 @@ function normalizeConversations(
 }
 
 function normalizeCheckpoint(checkpoint: unknown): XmtpConversationCheckpoint | null {
-	if (!checkpoint || typeof checkpoint !== "object") {
+	if (!isObject(checkpoint)) {
 		return null;
 	}
 
 	const candidate = checkpoint as Partial<XmtpConversationCheckpoint>;
-	if (typeof candidate.lastSentAtNs !== "string" || candidate.lastSentAtNs.length === 0) {
+	if (!isNonEmptyString(candidate.lastSentAtNs)) {
 		return null;
 	}
 

@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -12,13 +12,14 @@ import {
 	createSigningProviderViemAccount,
 	fsErrorCode,
 	isProcessAlive,
+	isRecord,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
 import { formatUnits, isAddress } from "viem";
-import YAML from "yaml";
+import { readYamlFile } from "../lib/atomic-write.js";
 import { ALL_CHAINS, resolveChainAlias } from "../lib/chains.js";
-import { resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
+import { defaultConfigPath, resolveDataDir as resolveCliDataDir } from "../lib/config-loader.js";
 import { handleCommandError, toErrorMessage } from "../lib/errors.js";
 import { error, success } from "../lib/output.js";
 import { promptInput, promptYesNo } from "../lib/prompt.js";
@@ -104,14 +105,12 @@ export interface RemovePlan {
 // generic `chain: mainnet` field.
 async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 	try {
-		const raw = await readFile(configPath, "utf-8");
-		const parsed = YAML.parse(raw);
-		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		const parsed = await readYamlFile(configPath);
+		if (!isRecord(parsed)) {
 			return false;
 		}
-		const obj = parsed as { chain?: unknown; agent_id?: unknown };
-		const hasAgentId = typeof obj.agent_id === "number";
-		const hasCaip2Chain = typeof obj.chain === "string" && obj.chain.includes(":");
+		const hasAgentId = typeof parsed.agent_id === "number";
+		const hasCaip2Chain = typeof parsed.chain === "string" && parsed.chain.includes(":");
 		return hasAgentId || hasCaip2Chain;
 	} catch {
 		return false;
@@ -548,7 +547,7 @@ async function resolveRemoveDataDir(opts: GlobalOptions): Promise<string> {
 }
 
 function resolveRemoveConfigPath(opts: GlobalOptions, dataDir: string): string {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	if (!opts.config) {
 		return configPath;
 	}
@@ -564,8 +563,8 @@ function resolveRemoveConfigPath(opts: GlobalOptions, dataDir: string): string {
 
 async function readAgentId(configPath: string): Promise<[number | null, string | null]> {
 	try {
-		const raw = await readFile(configPath, "utf-8");
-		const parsed = (YAML.parse(raw) as RemoveStoredConfig | null | undefined) ?? undefined;
+		const parsed =
+			(await readYamlFile<RemoveStoredConfig | null | undefined>(configPath)) ?? undefined;
 		if (typeof parsed?.agent_id === "number" && Number.isFinite(parsed.agent_id)) {
 			return [parsed.agent_id, null];
 		}
@@ -579,12 +578,12 @@ async function readAgentId(configPath: string): Promise<[number | null, string |
 }
 
 async function readAgentAddress(dataDir: string): Promise<[string | null, string | null]> {
-	const configPath = join(dataDir, "config.yaml");
+	const configPath = defaultConfigPath(dataDir);
 	try {
-		const raw = await readFile(configPath, "utf-8");
 		const parsed =
-			(YAML.parse(raw) as { ows?: { wallet?: string; api_key?: string }; chain?: string } | null) ??
-			undefined;
+			(await readYamlFile<{ ows?: { wallet?: string; api_key?: string }; chain?: string } | null>(
+				configPath,
+			)) ?? undefined;
 		if (!parsed?.ows?.wallet || !parsed?.ows?.api_key) {
 			const legacyWarning = getLegacyWalletMigrationWarning({ dataDir, configPath });
 			return [null, legacyWarning ?? "OWS wallet config is missing from config.yaml."];

@@ -1,6 +1,6 @@
 import type { TapConnectResult, TapMessagingService } from "trusted-agents-core";
 import type { RouteHandler } from "../router.js";
-import { asRecord, isNonEmptyString, requireBody } from "../validation.js";
+import { asRecord, isNonEmptyString, isOptionalNumber, requireBody } from "../validation.js";
 
 interface ConnectBody {
 	inviteUrl: string;
@@ -11,7 +11,7 @@ function isConnectBody(value: unknown): value is ConnectBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (!isNonEmptyString(v.inviteUrl)) return false;
-	if (v.waitMs !== undefined && typeof v.waitMs !== "number") return false;
+	if (!isOptionalNumber(v.waitMs)) return false;
 	return true;
 }
 

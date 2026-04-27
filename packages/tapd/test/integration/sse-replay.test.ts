@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TapEvent } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { socketFilePath } from "../../src/config.js";
 import { Daemon } from "../../src/daemon.js";
 
 interface FakeService {
@@ -92,7 +93,7 @@ describe("tapd SSE replay", () => {
 		daemon = new Daemon({
 			config: {
 				dataDir,
-				socketPath: join(dataDir, ".tapd.sock"),
+				socketPath: socketFilePath(dataDir),
 				tcpHost: "127.0.0.1",
 				tcpPort: 0,
 				ringBufferSize: 100,

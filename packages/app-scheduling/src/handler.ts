@@ -7,9 +7,11 @@ import type {
 	TimeSlot,
 } from "trusted-agents-core";
 import {
+	createGrantSet,
 	findApplicableSchedulingGrants,
 	findSchedulableSchedulingSlots,
 	mapSchedulingDecisionToResult,
+	parseSchedulingActionPayload,
 } from "trusted-agents-core";
 
 export async function handleSchedulingRequest(ctx: TapActionContext): Promise<TapActionResult> {
@@ -50,7 +52,7 @@ function handleGrantOnlyEvaluation(
 ): TapActionResult {
 	// Check if grants cover this scheduling request
 	const matchingGrants = findApplicableSchedulingGrants(
-		{ version: "tap-grants/v1", updatedAt: "", grants: ctx.peer.grantsToPeer },
+		createGrantSet(ctx.peer.grantsToPeer, ""),
 		proposal,
 	);
 
@@ -132,61 +134,10 @@ function handleGrantOnlyEvaluation(
 }
 
 function validatePayload(payload: Record<string, unknown>): SchedulingProposal | null {
-	if (payload.type !== "scheduling/propose" && payload.type !== "scheduling/counter") {
-		return null;
-	}
-
-	if (typeof payload.title !== "string" || payload.title.length === 0) {
-		return null;
-	}
-
-	if (typeof payload.duration !== "number" || payload.duration <= 0) {
-		return null;
-	}
-
-	if (!Array.isArray(payload.slots) || payload.slots.length === 0) {
-		return null;
-	}
-
-	const slots: TimeSlot[] = [];
-	for (const slot of payload.slots) {
-		if (
-			typeof slot !== "object" ||
-			slot === null ||
-			typeof (slot as Record<string, unknown>).start !== "string" ||
-			typeof (slot as Record<string, unknown>).end !== "string"
-		) {
-			return null;
-		}
-		const s = slot as { start: string; end: string };
-		const startDate = new Date(s.start);
-		const endDate = new Date(s.end);
-		if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-			return null;
-		}
-		if (startDate >= endDate) {
-			return null;
-		}
-		slots.push({ start: s.start, end: s.end });
-	}
-
-	const schedulingId =
-		typeof payload.schedulingId === "string" && payload.schedulingId.length > 0
-			? payload.schedulingId
-			: `sch_${Date.now()}`;
-
-	const originTimezone =
-		typeof payload.originTimezone === "string" && payload.originTimezone.length > 0
-			? payload.originTimezone
-			: "UTC";
-
-	return {
-		type: payload.type as "scheduling/propose" | "scheduling/counter",
-		schedulingId,
-		title: payload.title,
-		duration: payload.duration as number,
-		slots,
-		originTimezone,
-		...(typeof payload.note === "string" && payload.note.length > 0 ? { note: payload.note } : {}),
-	};
+	return parseSchedulingActionPayload(payload, {
+		defaultSchedulingId: () => `sch_${Date.now()}`,
+		defaultOriginTimezone: "UTC",
+		copySlots: true,
+		includeLocation: false,
+	});
 }

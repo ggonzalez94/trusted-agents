@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { TapAppRegistry } from "../../../src/app/registry.js";
-import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import { buildConnectionResult } from "../../../src/connection/handshake.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
@@ -25,6 +24,8 @@ import type { TransportSendOptions } from "../../../src/transport/types.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
 import { ALICE_SIGNING_PROVIDER, BOB } from "../../fixtures/test-keys.js";
+import { jsonClone } from "../../helpers/clone.js";
+import { buildRuntimeTestConfig } from "../../helpers/config.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackTempDir } = useTempDirs();
@@ -49,10 +50,6 @@ const PEER_AGENT: ResolvedAgent = {
 	resolvedAt: "2026-03-07T00:00:00.000Z",
 };
 
-function clone<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
-
 function makeActiveContact(connectionId: string): Contact {
 	return {
 		connectionId,
@@ -76,12 +73,12 @@ function makeConnectingContact(connectionId: string): Contact {
 }
 
 function createMemoryTrustStore(initial: Contact[] = []): ITrustStore {
-	const contacts = new Map(initial.map((c) => [c.connectionId, clone(c)]));
+	const contacts = new Map(initial.map((c) => [c.connectionId, jsonClone(c)]));
 	return {
-		getContacts: async () => [...contacts.values()].map(clone),
-		getContact: async (id: string) => clone(contacts.get(id) ?? null),
+		getContacts: async () => [...contacts.values()].map(jsonClone),
+		getContact: async (id: string) => jsonClone(contacts.get(id) ?? null),
 		findByAgentAddress: async (address: `0x${string}`, chain?: string) =>
-			clone(
+			jsonClone(
 				[...contacts.values()].find(
 					(c) =>
 						c.peerAgentAddress.toLowerCase() === address.toLowerCase() &&
@@ -89,17 +86,17 @@ function createMemoryTrustStore(initial: Contact[] = []): ITrustStore {
 				) ?? null,
 			),
 		findByAgentId: async (agentId: number, chain: string) =>
-			clone(
+			jsonClone(
 				[...contacts.values()].find((c) => c.peerAgentId === agentId && c.peerChain === chain) ??
 					null,
 			),
 		addContact: async (c: Contact) => {
-			contacts.set(c.connectionId, clone(c));
+			contacts.set(c.connectionId, jsonClone(c));
 		},
 		updateContact: async (id: string, updates: Partial<Contact>) => {
 			const existing = contacts.get(id);
 			if (!existing) return;
-			contacts.set(id, clone({ ...existing, ...updates }));
+			contacts.set(id, jsonClone({ ...existing, ...updates }));
 		},
 		removeContact: async (id: string) => {
 			contacts.delete(id);
@@ -107,7 +104,7 @@ function createMemoryTrustStore(initial: Contact[] = []): ITrustStore {
 		touchContact: async (id: string) => {
 			const existing = contacts.get(id);
 			if (!existing) return;
-			contacts.set(id, { ...clone(existing), lastContactAt: "2026-03-08T00:00:00.000Z" });
+			contacts.set(id, { ...jsonClone(existing), lastContactAt: "2026-03-08T00:00:00.000Z" });
 		},
 	};
 }
@@ -176,16 +173,7 @@ async function buildService(options?: {
 }): Promise<BuiltService> {
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-typed-events-"));
 	trackTempDir(dataDir);
-	const config: TrustedAgentsConfig = {
-		agentId: 1,
-		chain: "eip155:8453",
-		ows: { wallet: "test", apiKey: "ows_key_test" },
-		dataDir,
-		chains: {},
-		inviteExpirySeconds: 3600,
-		resolveCacheTtlMs: 60_000,
-		resolveCacheMaxEntries: 128,
-	};
+	const config = buildRuntimeTestConfig({ dataDir });
 	const transport = new FakeTransport();
 	const requestJournal = new FileRequestJournal(dataDir);
 	const trustStore = createMemoryTrustStore(options?.initialContacts ?? []);

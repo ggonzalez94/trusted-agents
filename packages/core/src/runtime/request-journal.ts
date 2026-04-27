@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 
 export type RequestJournalDirection = "inbound" | "outbound";
@@ -35,6 +34,12 @@ interface RequestJournalFile {
 	entries: RequestJournalEntry[];
 }
 
+export const REQUEST_JOURNAL_FILE = "request-journal.json";
+
+export function requestJournalPath(dataDir: string): string {
+	return join(dataDir, REQUEST_JOURNAL_FILE);
+}
+
 export interface IRequestJournal {
 	claimInbound(
 		entry: Omit<RequestJournalEntry, "createdAt" | "updatedAt" | "status"> & {
@@ -61,7 +66,7 @@ export class FileRequestJournal implements IRequestJournal {
 
 	constructor(dataDir = join(process.env.HOME ?? "~", ".trustedagents")) {
 		this.dataDir = resolveDataDir(dataDir);
-		this.path = join(this.dataDir, "request-journal.json");
+		this.path = requestJournalPath(this.dataDir);
 	}
 
 	private readonly dataDir: string;
@@ -210,30 +215,21 @@ export class FileRequestJournal implements IRequestJournal {
 	}
 
 	private async load(): Promise<RequestJournalFile> {
-		try {
-			const raw = await readFile(this.path, "utf-8");
-			const parsed = JSON.parse(raw) as RequestJournalFile;
-			return Array.isArray(parsed.entries) ? parsed : { entries: [] };
-		} catch (err: unknown) {
-			if (
-				err instanceof Error &&
-				"code" in err &&
-				(err as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return { entries: [] };
-			}
-			throw err;
-		}
+		return readJsonFileOrDefault(
+			this.path,
+			(raw) => {
+				const parsed = raw as RequestJournalFile;
+				return Array.isArray(parsed.entries) ? parsed : { entries: [] };
+			},
+			{ entries: [] },
+		);
 	}
 
 	private async save(file: RequestJournalFile): Promise<void> {
-		await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
-		const tmpPath = `${this.path}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(file, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(this.path, file, {
+			directoryMode: 0o700,
+			tempPrefix: ".request-journal",
 		});
-		await rename(tmpPath, this.path);
 	}
 
 	private upsertOutboundEntry(

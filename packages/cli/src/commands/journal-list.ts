@@ -35,10 +35,7 @@ export async function journalListCommand(
 			status: e.status,
 			created_at: e.createdAt,
 			updated_at: e.updatedAt,
-			last_error:
-				(e.metadata && typeof e.metadata === "object" && "lastError" in e.metadata
-					? (e.metadata as Record<string, unknown>).lastError
-					: undefined) ?? null,
+			last_error: e.metadata?.lastError ?? null,
 		}));
 
 		success({ entries: rows, count: rows.length }, opts, startTime);

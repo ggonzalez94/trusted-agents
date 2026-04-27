@@ -4,11 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { configSetCommand } from "../src/commands/config-set.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 
 describe("config set", () => {
 	let tmpDir: string;
 	const { stdout: stdoutWrites } = useCapturedOutput();
+	const configPath = () => defaultConfigPath(tmpDir);
+	const readConfig = () => readFile(configPath(), "utf-8");
+	const readConfigYaml = async <T>() => YAML.parse(await readConfig()) as T;
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-config-set-test-"));
@@ -16,7 +20,7 @@ describe("config set", () => {
 
 		await mkdir(tmpDir, { recursive: true });
 		await writeFile(
-			join(tmpDir, "config.yaml"),
+			configPath(),
 			[
 				"agent_id: 1",
 				"chain: eip155:8453",
@@ -40,7 +44,7 @@ describe("config set", () => {
 			dataDir: tmpDir,
 		});
 
-		const config = await readFile(join(tmpDir, "config.yaml"), "utf-8");
+		const config = await readConfig();
 		expect(config).toContain("paymaster_provider: candide");
 		expect(config).not.toContain("paymasterProvider:");
 	});
@@ -51,7 +55,7 @@ describe("config set", () => {
 			dataDir: tmpDir,
 		});
 
-		const config = await readFile(join(tmpDir, "config.yaml"), "utf-8");
+		const config = await readConfig();
 		expect(config).toContain("chain: eip155:167000");
 	});
 
@@ -65,10 +69,10 @@ describe("config set", () => {
 			dataDir: tmpDir,
 		});
 
-		const config = YAML.parse(await readFile(join(tmpDir, "config.yaml"), "utf-8")) as {
+		const config = await readConfigYaml<{
 			resolve_cache_ttl_ms: unknown;
 			ipfs?: { provider?: unknown };
-		};
+		}>();
 		expect(config.resolve_cache_ttl_ms).toBe(60000);
 		expect(config.ipfs?.provider).toBe("1234");
 	});
@@ -79,20 +83,21 @@ describe("config set", () => {
 			dataDir: tmpDir,
 		});
 
-		const config = await readFile(join(tmpDir, "config.yaml"), "utf-8");
+		const config = await readConfig();
 		expect(config).toContain("tack_api_url: https://tack.example.test");
 		expect(config).not.toContain("tackApiUrl:");
 	});
 
 	it("rejects split-brain config and data-dir overrides", async () => {
 		const otherDir = join(tmpDir, "other-agent");
+		const otherConfigPath = defaultConfigPath(otherDir);
 		await mkdir(otherDir, { recursive: true });
-		await writeFile(join(otherDir, "config.yaml"), "agent_id: 9\nchain: eip155:8453\n", "utf-8");
+		await writeFile(otherConfigPath, "agent_id: 9\nchain: eip155:8453\n", "utf-8");
 
 		await configSetCommand("chain", "base", {
 			json: true,
 			dataDir: tmpDir,
-			config: join(otherDir, "config.yaml"),
+			config: otherConfigPath,
 		});
 
 		expect(process.exitCode).toBe(1);
