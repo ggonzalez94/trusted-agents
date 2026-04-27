@@ -26,4 +26,9 @@ export {
 	persistBoundPort,
 	portFilePath,
 } from "./port-file.js";
-export { pidFilePath } from "./pid-file.js";
+export {
+	loadTapdPidRecord,
+	persistTapdPidRecordExclusive,
+	pidFilePath,
+	type TapdPidRecord,
+} from "./pid-file.js";

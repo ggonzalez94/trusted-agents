@@ -1,12 +1,19 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { open, readFile, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fsErrorCode } from "trusted-agents-core";
-import { parseBoundPort, pidFilePath, portFilePath } from "trusted-agents-tapd";
+import {
+	type TapdPidRecord,
+	loadTapdPidRecord,
+	parseBoundPort,
+	persistTapdPidRecordExclusive,
+	pidFilePath,
+	portFilePath,
+} from "trusted-agents-tapd";
 import { toErrorMessage } from "./errors.js";
 
 const execFileAsync = promisify(execFile);
@@ -30,12 +37,6 @@ export function resolveTapdBinPath(): string {
 
 const LOG_FILE = ".tapd.log";
 
-interface TapdPidRecord {
-	pid: number;
-	binPath?: string;
-	ownerToken?: string;
-}
-
 export interface TapdProcessInspection {
 	status: "missing" | "running" | "dead" | "mismatch" | "unknown";
 	pid?: number;
@@ -57,40 +58,6 @@ export interface TapdSpawnResult {
 	port: number;
 	logPath: string;
 	pidPath: string;
-}
-
-async function readTapdPidRecord(pidPath: string): Promise<TapdPidRecord> {
-	const raw = (await readFile(pidPath, "utf-8")).trim();
-	if (raw.length === 0) {
-		throw new Error(`Invalid pid in ${pidPath}`);
-	}
-	let parsed: Partial<TapdPidRecord>;
-	try {
-		parsed = JSON.parse(raw) as Partial<TapdPidRecord>;
-	} catch (err) {
-		throw new Error(`Invalid pidfile at ${pidPath}: ${toErrorMessage(err)}`);
-	}
-	if (!Number.isInteger(parsed.pid) || !parsed.pid || parsed.pid <= 0) {
-		throw new Error(`Invalid pid in ${pidPath}`);
-	}
-	return {
-		pid: parsed.pid,
-		binPath: typeof parsed.binPath === "string" ? parsed.binPath : undefined,
-		ownerToken: typeof parsed.ownerToken === "string" ? parsed.ownerToken : undefined,
-	};
-}
-
-async function writeTapdPidRecord(pidPath: string, record: TapdPidRecord): Promise<void> {
-	// `wx` = O_CREAT|O_EXCL — fails with EEXIST if the file already exists.
-	// This is the lock that closes the check-then-act window between
-	// `inspectTapdProcess` and `spawnTapdDetached`: if another process is
-	// racing us, exactly one will win the exclusive create and the other
-	// will see EEXIST and unwind its spawned child.
-	await writeFile(pidPath, JSON.stringify(record), {
-		encoding: "utf-8",
-		mode: 0o600,
-		flag: "wx",
-	});
 }
 
 function commandLineMatchesTapd(commandLine: string, record: TapdPidRecord): boolean {
@@ -142,7 +109,7 @@ export async function inspectTapdProcess(dataDir: string): Promise<TapdProcessIn
 
 	let record: TapdPidRecord;
 	try {
-		record = await readTapdPidRecord(pidPath);
+		record = await loadTapdPidRecord(pidPath);
 	} catch (err) {
 		return {
 			status: "mismatch",
@@ -243,7 +210,7 @@ export async function spawnTapdDetached(options: TapdSpawnOptions): Promise<Tapd
 
 	const childPid = child.pid;
 	try {
-		await writeTapdPidRecord(pidPath, { pid: childPid, binPath, ownerToken });
+		await persistTapdPidRecordExclusive(pidPath, { pid: childPid, binPath, ownerToken });
 	} catch (err) {
 		if (fsErrorCode(err) === "EEXIST") {
 			// Another tap daemon start raced us and won the exclusive pidfile
