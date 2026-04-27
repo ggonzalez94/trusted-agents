@@ -1,4 +1,10 @@
-import { isEthereumAddress, isNonEmptyString, readNonEmptyString } from "../common/index.js";
+import {
+	isEthereumAddress,
+	isNonEmptyString,
+	isObject,
+	isRecord,
+	readNonEmptyString,
+} from "../common/index.js";
 import type { PermissionGrant } from "../permissions/types.js";
 import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
 import type { ProtocolMessage } from "../transport/interface.js";
@@ -115,39 +121,27 @@ export function parsePermissionGrantRequest(
 
 	const grants: PermissionGrant[] = [];
 	for (const input of data.grants) {
-		if (typeof input !== "object" || input === null) {
+		if (!isObject(input)) {
 			return null;
 		}
 
-		const grant = input as {
-			grantId?: unknown;
-			scope?: unknown;
-			constraints?: unknown;
-			status?: unknown;
-			updatedAt?: unknown;
-		};
-
 		if (
-			typeof grant.grantId !== "string" ||
-			grant.grantId.length === 0 ||
-			typeof grant.scope !== "string" ||
-			grant.scope.length === 0
+			typeof input.grantId !== "string" ||
+			input.grantId.length === 0 ||
+			typeof input.scope !== "string" ||
+			input.scope.length === 0
 		) {
 			return null;
 		}
 
 		grants.push({
-			grantId: grant.grantId,
-			scope: grant.scope,
-			...(grant.constraints &&
-			typeof grant.constraints === "object" &&
-			!Array.isArray(grant.constraints)
-				? { constraints: grant.constraints as Record<string, unknown> }
-				: {}),
-			status: grant.status === "revoked" ? "revoked" : "active",
+			grantId: input.grantId,
+			scope: input.scope,
+			...(isRecord(input.constraints) ? { constraints: input.constraints } : {}),
+			status: input.status === "revoked" ? "revoked" : "active",
 			updatedAt:
-				typeof grant.updatedAt === "string" && grant.updatedAt.length > 0
-					? grant.updatedAt
+				typeof input.updatedAt === "string" && input.updatedAt.length > 0
+					? input.updatedAt
 					: new Date().toISOString(),
 		});
 	}
@@ -184,29 +178,23 @@ export function buildPermissionGrantRequestText(request: PermissionGrantRequestA
 }
 
 export function extractMessageData(message: ProtocolMessage): Record<string, unknown> | null {
-	if (typeof message.params !== "object" || message.params === null) {
+	if (!isObject(message.params)) {
 		return null;
 	}
 
-	const container = (message.params as { message?: unknown }).message;
-	if (typeof container !== "object" || container === null) {
+	const container = message.params.message;
+	if (!isObject(container)) {
 		return null;
 	}
 
-	const parts = (container as { parts?: unknown }).parts;
+	const parts = container.parts;
 	if (!Array.isArray(parts)) {
 		return null;
 	}
 
 	for (const part of parts) {
-		if (
-			typeof part === "object" &&
-			part !== null &&
-			(part as { kind?: unknown }).kind === "data" &&
-			typeof (part as { data?: unknown }).data === "object" &&
-			(part as { data?: unknown }).data !== null
-		) {
-			return (part as { data: Record<string, unknown> }).data;
+		if (isObject(part) && part.kind === "data" && isObject(part.data)) {
+			return part.data;
 		}
 	}
 
@@ -230,30 +218,25 @@ export function extractActionResultData(message: ProtocolMessage): {
 		return null;
 	}
 
-	if (typeof message.params !== "object" || message.params === null) {
+	if (!isObject(message.params)) {
 		return null;
 	}
 
-	const params = message.params as {
-		requestId?: unknown;
-		status?: unknown;
-		message?: unknown;
-	};
-	if (!isNonEmptyString(params.requestId)) {
+	if (!isNonEmptyString(message.params.requestId)) {
 		return null;
 	}
 
 	const data = extractMessageData({
 		...message,
-		params: { message: params.message },
+		params: { message: message.params.message },
 	});
 	if (!data) {
 		return null;
 	}
 
 	return {
-		requestId: params.requestId,
-		status: params.status,
+		requestId: message.params.requestId,
+		status: message.params.status,
 		data,
 	};
 }

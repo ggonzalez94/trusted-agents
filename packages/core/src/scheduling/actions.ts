@@ -1,4 +1,4 @@
-import { isNonEmptyString, readNonEmptyString } from "../common/index.js";
+import { isNonEmptyString, isObject, readNonEmptyString } from "../common/index.js";
 import { extractActionRequestData, extractActionResultData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
@@ -26,22 +26,20 @@ function isValidIsoDate(value: unknown): value is string {
 }
 
 function isValidTimeSlot(slot: unknown): slot is TimeSlot {
-	if (typeof slot !== "object" || slot === null) {
+	if (!isObject(slot)) {
 		return false;
 	}
-	const s = slot as { start?: unknown; end?: unknown };
-	if (!isValidIsoDate(s.start) || !isValidIsoDate(s.end)) {
+	if (!isValidIsoDate(slot.start) || !isValidIsoDate(slot.end)) {
 		return false;
 	}
-	return new Date(s.start as string) < new Date(s.end as string);
+	return new Date(slot.start) < new Date(slot.end);
 }
 
 function isStringTimeSlot(slot: unknown): slot is TimeSlot {
-	if (typeof slot !== "object" || slot === null) {
+	if (!isObject(slot)) {
 		return false;
 	}
-	const s = slot as { start?: unknown; end?: unknown };
-	return typeof s.start === "string" && typeof s.end === "string";
+	return typeof slot.start === "string" && typeof slot.end === "string";
 }
 
 function readFirstMatching<T>(

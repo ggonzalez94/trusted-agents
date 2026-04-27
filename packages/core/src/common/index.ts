@@ -18,6 +18,8 @@ export { nowISO, isExpired, expiresIn, toISO } from "./time.js";
 export {
 	isEthereumAddress,
 	isNonEmptyString,
+	isObject,
+	isRecord,
 	readNonEmptyString,
 	isCAIP2Chain,
 	caip2ToChainId,

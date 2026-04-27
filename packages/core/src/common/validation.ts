@@ -14,6 +14,14 @@ export function readNonEmptyString(value: unknown): string | undefined {
 	return isNonEmptyString(value) ? value : undefined;
 }
 
+export function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return isObject(value) && !Array.isArray(value);
+}
+
 export function isCAIP2Chain(value: string): boolean {
 	return CAIP2_REGEX.test(value);
 }
