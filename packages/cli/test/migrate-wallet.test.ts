@@ -61,13 +61,17 @@ describe("tap migrate-wallet", () => {
 		await writeFile(configPath, YAML.stringify(yamlConfig), "utf-8");
 	}
 
+	async function readConfig() {
+		return YAML.parse(await readFile(configPath, "utf-8"));
+	}
+
 	it("should migrate a legacy agent to OWS", async () => {
 		await setupLegacyAgent(42);
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
 		// Config should have OWS block
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		expect(updatedConfig.ows).toBeDefined();
 		expect(updatedConfig.ows.wallet).toBe("tap-agent-42");
 		expect(updatedConfig.ows.api_key).toMatch(/^ows_key_/);
@@ -123,7 +127,7 @@ describe("tap migrate-wallet", () => {
 		await setupLegacyAgent(42);
 
 		// Add OWS block to config
-		const configContent = YAML.parse(await readFile(configPath, "utf-8"));
+		const configContent = await readConfig();
 		configContent.ows = { wallet: "existing-wallet", api_key: "ows_key_existing" };
 		await writeFile(configPath, YAML.stringify(configContent), "utf-8");
 
@@ -151,7 +155,7 @@ describe("tap migrate-wallet", () => {
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		expect(updatedConfig.ows).toBeDefined();
 		expect(updatedConfig.ows.wallet).toBe("tap-agent-99");
 		expect(existsSync(keyPath)).toBe(false);
@@ -163,14 +167,14 @@ describe("tap migrate-wallet", () => {
 		await setupLegacyAgent(7);
 
 		// Add extra fields to config
-		const configContent = YAML.parse(await readFile(configPath, "utf-8"));
+		const configContent = await readConfig();
 		configContent.invite_expiry_seconds = 3600;
 		configContent.execution = { mode: "eip7702" };
 		await writeFile(configPath, YAML.stringify(configContent), "utf-8");
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 
 		// Original fields preserved
 		expect(updatedConfig.agent_id).toBe(7);
@@ -197,7 +201,7 @@ describe("tap migrate-wallet", () => {
 
 		await migrateWalletCommand({ json: true, dataDir }, { nonInteractive: true, passphrase: "" });
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		expect(updatedConfig.ows.wallet).toMatch(/^tap-[0-9a-f]{8}$/);
 		expect(existsSync(keyPath)).toBe(false);
 
@@ -222,7 +226,7 @@ describe("tap migrate-wallet", () => {
 		expect(output.status).toBe("ok");
 		expect(output.data.status).toBe("migrated");
 
-		const updatedConfig = YAML.parse(await readFile(configPath, "utf-8"));
+		const updatedConfig = await readConfig();
 		trackOwsArtifacts(updatedConfig);
 	});
 });
