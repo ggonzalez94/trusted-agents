@@ -15,7 +15,13 @@ export { generateNonce, generateConnectionId, generateActionId } from "./crypto.
 
 export { nowISO, isExpired, expiresIn, toISO } from "./time.js";
 
-export { isEthereumAddress, isCAIP2Chain, caip2ToChainId } from "./validation.js";
+export {
+	isEthereumAddress,
+	isNonEmptyString,
+	readNonEmptyString,
+	isCAIP2Chain,
+	caip2ToChainId,
+} from "./validation.js";
 
 export { AsyncMutex } from "./mutex.js";
 

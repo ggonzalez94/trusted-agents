@@ -1,3 +1,4 @@
+import { isNonEmptyString, readNonEmptyString } from "../common/index.js";
 import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
 import { extractMessageData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
@@ -16,14 +17,6 @@ function isValidIsoDate(value: unknown): value is string {
 	}
 	const d = new Date(value);
 	return !Number.isNaN(d.getTime());
-}
-
-function isNonEmptyString(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0;
-}
-
-function optionalNonEmptyString(value: unknown): string | undefined {
-	return isNonEmptyString(value) ? value : undefined;
 }
 
 function isValidTimeSlot(slot: unknown): slot is TimeSlot {
@@ -75,8 +68,8 @@ export function parseSchedulingActionPayload(
 	}
 
 	const location =
-		options.includeLocation === false ? undefined : optionalNonEmptyString(data.location);
-	const note = optionalNonEmptyString(data.note);
+		options.includeLocation === false ? undefined : readNonEmptyString(data.location);
+	const note = readNonEmptyString(data.note);
 	const slots = options.copySlots
 		? data.slots.map((slot) => {
 				const { start, end } = slot as TimeSlot;
@@ -144,7 +137,7 @@ export function parseSchedulingActionResponse(
 			return null;
 		}
 
-		const note = optionalNonEmptyString(data.note);
+		const note = readNonEmptyString(data.note);
 
 		return {
 			type: "scheduling/accept",
@@ -159,7 +152,7 @@ export function parseSchedulingActionResponse(
 			return null;
 		}
 
-		const reason = optionalNonEmptyString(data.reason);
+		const reason = readNonEmptyString(data.reason);
 
 		return {
 			type: data.type as "scheduling/reject" | "scheduling/cancel",

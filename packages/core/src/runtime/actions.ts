@@ -1,4 +1,4 @@
-import { isEthereumAddress } from "../common/index.js";
+import { isEthereumAddress, isNonEmptyString, readNonEmptyString } from "../common/index.js";
 import type { PermissionGrant } from "../permissions/types.js";
 import { ACTION_REQUEST, ACTION_RESULT } from "../protocol/methods.js";
 import type { ProtocolMessage } from "../transport/interface.js";
@@ -66,7 +66,7 @@ export function parseTransferActionPayload(
 		amount: data.amount,
 		chain: data.chain,
 		toAddress: data.toAddress,
-		note: typeof data.note === "string" && data.note.length > 0 ? data.note : undefined,
+		note: readNonEmptyString(data.note),
 	};
 }
 
@@ -119,7 +119,7 @@ export function parseTransferActionResponse(
 			typeof data.txHash === "string" && isEthereumAddressLikeHash(data.txHash)
 				? data.txHash
 				: undefined,
-		error: typeof data.error === "string" && data.error.length > 0 ? data.error : undefined,
+		error: readNonEmptyString(data.error),
 	};
 }
 
@@ -186,7 +186,7 @@ export function parsePermissionGrantRequest(
 		type: "permissions/request-grants",
 		actionId: data.actionId,
 		grants,
-		note: typeof data.note === "string" && data.note.length > 0 ? data.note : undefined,
+		note: readNonEmptyString(data.note),
 	};
 }
 
@@ -252,12 +252,9 @@ function hasValidTransferFields(data: Record<string, unknown>): data is Record<s
 } {
 	return (
 		(data.asset === "native" || data.asset === "usdc") &&
-		typeof data.actionId === "string" &&
-		data.actionId.length > 0 &&
-		typeof data.amount === "string" &&
-		data.amount.length > 0 &&
-		typeof data.chain === "string" &&
-		data.chain.length > 0 &&
+		isNonEmptyString(data.actionId) &&
+		isNonEmptyString(data.amount) &&
+		isNonEmptyString(data.chain) &&
 		typeof data.toAddress === "string" &&
 		isEthereumAddress(data.toAddress)
 	);
