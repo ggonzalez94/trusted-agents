@@ -7,6 +7,7 @@ import type {
 	TimeSlot,
 } from "trusted-agents-core";
 import {
+	createGrantSet,
 	findApplicableSchedulingGrants,
 	findSchedulableSchedulingSlots,
 	mapSchedulingDecisionToResult,
@@ -50,7 +51,7 @@ function handleGrantOnlyEvaluation(
 ): TapActionResult {
 	// Check if grants cover this scheduling request
 	const matchingGrants = findApplicableSchedulingGrants(
-		{ version: "tap-grants/v1", updatedAt: "", grants: ctx.peer.grantsToPeer },
+		createGrantSet(ctx.peer.grantsToPeer, ""),
 		proposal,
 	);
 

@@ -5,6 +5,7 @@ import type {
 	TransferAsset,
 } from "trusted-agents-core";
 import {
+	createGrantSet,
 	findApplicableTransferGrants,
 	isEthereumAddress,
 	toErrorMessage,
@@ -25,7 +26,7 @@ export async function handleTransferRequest(ctx: TapActionContext): Promise<TapA
 
 	// Check if grants cover this transfer
 	const matchingGrants = findApplicableTransferGrants(
-		{ version: "tap-grants/v1", updatedAt: "", grants: ctx.peer.grantsToPeer },
+		createGrantSet(ctx.peer.grantsToPeer, ""),
 		request,
 	);
 
