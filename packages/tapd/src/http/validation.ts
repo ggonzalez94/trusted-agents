@@ -1,12 +1,11 @@
+import { isNonEmptyString, isObject } from "trusted-agents-core";
 import { HttpError } from "./errors.js";
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-	if (!value || typeof value !== "object") return null;
-	return value as Record<string, unknown>;
-}
+export { isNonEmptyString };
 
-export function isNonEmptyString(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0;
+export function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!isObject(value)) return null;
+	return value as Record<string, unknown>;
 }
 
 export function isNonBlankString(value: unknown): value is string {
