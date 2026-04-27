@@ -45,6 +45,7 @@ import {
 	BOB,
 	BOB_SIGNING_PROVIDER,
 } from "../../fixtures/test-keys.js";
+import { jsonClone } from "../../helpers/clone.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackTempDir } = useTempDirs();
@@ -138,10 +139,6 @@ const PEER_AGENT: ResolvedAgent = {
 	resolvedAt: "2026-03-07T00:00:00.000Z",
 };
 
-function cloneContact<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
-
 async function submitConnectionRequest(
 	transport: FakeTransport,
 	senderInboxId: string,
@@ -188,13 +185,13 @@ function makeActiveContact(connectionId: string): Contact {
 
 function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 	const contacts = new Map(
-		initialContacts.map((contact) => [contact.connectionId, cloneContact(contact)]),
+		initialContacts.map((contact) => [contact.connectionId, jsonClone(contact)]),
 	);
 	return {
-		getContacts: async () => [...contacts.values()].map((contact) => cloneContact(contact)),
-		getContact: async (connectionId: string) => cloneContact(contacts.get(connectionId) ?? null),
+		getContacts: async () => [...contacts.values()].map((contact) => jsonClone(contact)),
+		getContact: async (connectionId: string) => jsonClone(contacts.get(connectionId) ?? null),
 		findByAgentAddress: async (address: `0x${string}`, chain?: string) =>
-			cloneContact(
+			jsonClone(
 				[...contacts.values()].find(
 					(contact) =>
 						contact.peerAgentAddress.toLowerCase() === address.toLowerCase() &&
@@ -202,20 +199,20 @@ function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 				) ?? null,
 			),
 		findByAgentId: async (agentId: number, chain: string) =>
-			cloneContact(
+			jsonClone(
 				[...contacts.values()].find(
 					(contact) => contact.peerAgentId === agentId && contact.peerChain === chain,
 				) ?? null,
 			),
 		addContact: async (contact: Contact) => {
-			contacts.set(contact.connectionId, cloneContact(contact));
+			contacts.set(contact.connectionId, jsonClone(contact));
 		},
 		updateContact: async (connectionId: string, updates: Partial<Contact>) => {
 			const existing = contacts.get(connectionId);
 			if (!existing) {
 				return;
 			}
-			contacts.set(connectionId, cloneContact({ ...existing, ...updates }));
+			contacts.set(connectionId, jsonClone({ ...existing, ...updates }));
 		},
 		removeContact: async (connectionId: string) => {
 			contacts.delete(connectionId);
@@ -226,7 +223,7 @@ function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 				return;
 			}
 			contacts.set(connectionId, {
-				...cloneContact(existing),
+				...jsonClone(existing),
 				lastContactAt: "2026-03-08T00:00:00.000Z",
 			});
 		},

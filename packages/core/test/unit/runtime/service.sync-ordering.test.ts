@@ -39,6 +39,7 @@ import type { TransportSendOptions } from "../../../src/transport/types.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
 import { ALICE, BOB_SIGNING_PROVIDER } from "../../fixtures/test-keys.js";
+import { jsonClone } from "../../helpers/clone.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackTempDir } = useTempDirs();
@@ -173,17 +174,13 @@ function createRecordingConversationLogger(): IConversationLogger & {
 // In-memory trust store (same pattern as service.recovery.test.ts)
 // ---------------------------------------------------------------------------
 
-function cloneContact<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
-
 function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
-	const contacts = new Map(initialContacts.map((c) => [c.connectionId, cloneContact(c)]));
+	const contacts = new Map(initialContacts.map((c) => [c.connectionId, jsonClone(c)]));
 	return {
-		getContacts: async () => [...contacts.values()].map((c) => cloneContact(c)),
-		getContact: async (connectionId) => cloneContact(contacts.get(connectionId) ?? null),
+		getContacts: async () => [...contacts.values()].map((c) => jsonClone(c)),
+		getContact: async (connectionId) => jsonClone(contacts.get(connectionId) ?? null),
 		findByAgentAddress: async (address, chain) =>
-			cloneContact(
+			jsonClone(
 				[...contacts.values()].find(
 					(c) =>
 						c.peerAgentAddress.toLowerCase() === address.toLowerCase() &&
@@ -191,17 +188,17 @@ function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 				) ?? null,
 			),
 		findByAgentId: async (agentId, chain) =>
-			cloneContact(
+			jsonClone(
 				[...contacts.values()].find((c) => c.peerAgentId === agentId && c.peerChain === chain) ??
 					null,
 			),
 		addContact: async (contact) => {
-			contacts.set(contact.connectionId, cloneContact(contact));
+			contacts.set(contact.connectionId, jsonClone(contact));
 		},
 		updateContact: async (connectionId, updates) => {
 			const existing = contacts.get(connectionId);
 			if (!existing) return;
-			contacts.set(connectionId, cloneContact({ ...existing, ...updates }));
+			contacts.set(connectionId, jsonClone({ ...existing, ...updates }));
 		},
 		removeContact: async (connectionId) => {
 			contacts.delete(connectionId);
@@ -210,7 +207,7 @@ function createMemoryTrustStore(initialContacts: Contact[] = []): ITrustStore {
 			const existing = contacts.get(connectionId);
 			if (!existing) return;
 			contacts.set(connectionId, {
-				...cloneContact(existing),
+				...jsonClone(existing),
 				lastContactAt: new Date().toISOString(),
 			});
 		},
