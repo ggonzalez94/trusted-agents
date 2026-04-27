@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, realpath, rm } from "node:fs/promises";
+import { open, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { readJsonFileOrDefault } from "../common/atomic-json.js";
 import { fsErrorCode, resolveDataDir } from "../common/index.js";
 
 export interface TransportOwnerInfo {
@@ -107,31 +108,27 @@ export class TransportOwnerLock {
 	}
 
 	private async readOwner(): Promise<TransportOwnerInfo | null> {
-		try {
-			const raw = await readFile(this.lockPath, "utf-8");
-			const parsed = JSON.parse(raw) as Partial<TransportOwnerInfo>;
-			if (
-				typeof parsed.pid === "number" &&
-				typeof parsed.owner === "string" &&
-				typeof parsed.acquiredAt === "string"
-			) {
-				return {
-					pid: parsed.pid,
-					owner: parsed.owner,
-					acquiredAt: parsed.acquiredAt,
-					instanceId: typeof parsed.instanceId === "string" ? parsed.instanceId : undefined,
-					dataDirRealpath:
-						typeof parsed.dataDirRealpath === "string" ? parsed.dataDirRealpath : undefined,
-				};
-			}
-			return null;
-		} catch (error: unknown) {
-			if (fsErrorCode(error) === "ENOENT") {
-				return null;
-			}
-			throw error;
-		}
+		return readJsonFileOrDefault(this.lockPath, parseOwnerInfo, null);
 	}
+}
+
+function parseOwnerInfo(raw: unknown): TransportOwnerInfo | null {
+	const parsed = raw as Partial<TransportOwnerInfo>;
+	if (
+		typeof parsed.pid === "number" &&
+		typeof parsed.owner === "string" &&
+		typeof parsed.acquiredAt === "string"
+	) {
+		return {
+			pid: parsed.pid,
+			owner: parsed.owner,
+			acquiredAt: parsed.acquiredAt,
+			instanceId: typeof parsed.instanceId === "string" ? parsed.instanceId : undefined,
+			dataDirRealpath:
+				typeof parsed.dataDirRealpath === "string" ? parsed.dataDirRealpath : undefined,
+		};
+	}
+	return null;
 }
 
 export function isProcessAlive(pid: number): boolean {
