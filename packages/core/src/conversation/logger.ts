@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { writeJsonFileAtomic } from "../common/atomic-json.js";
 import {
 	AsyncMutex,
 	assertPathWithinBase,
@@ -149,14 +149,11 @@ export class FileConversationLogger implements IConversationLogger {
 	}
 
 	private async saveLog(conversationId: string, log: ConversationLog): Promise<void> {
-		await mkdir(this.conversationsDir, { recursive: true, mode: 0o700 });
 		const filePath = this.filePathForConversation(conversationId);
-		const tmpPath = `${filePath}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(log, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(filePath, log, {
+			directoryMode: 0o700,
+			tempPrefix: ".conversation",
 		});
-		await rename(tmpPath, filePath);
 	}
 
 	private filePathForConversation(conversationId: string): string {

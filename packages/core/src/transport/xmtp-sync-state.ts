@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex, fsErrorCode, nowISO } from "../common/index.js";
 
 export interface XmtpConversationCheckpoint {
@@ -92,13 +92,10 @@ export class FileXmtpSyncStateStore {
 	}
 
 	private async save(state: XmtpSyncStateFile): Promise<void> {
-		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-		const tmpPath = `${this.path}.${randomUUID()}.tmp`;
-		await writeFile(tmpPath, JSON.stringify(state, null, "\t"), {
-			encoding: "utf-8",
-			mode: 0o600,
+		await writeJsonFileAtomic(this.path, state, {
+			directoryMode: 0o700,
+			tempPrefix: ".xmtp-sync-state",
 		});
-		await rename(tmpPath, this.path);
 	}
 }
 
