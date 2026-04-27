@@ -36,16 +36,8 @@ export interface PermissionGrantRequestAction extends Record<string, unknown> {
 }
 
 export function parseTransferActionRequest(message: ProtocolMessage): TransferActionRequest | null {
-	if (message.method !== ACTION_REQUEST) {
-		return null;
-	}
-
-	const data = extractMessageData(message);
-	if (!data) {
-		return null;
-	}
-
-	return parseTransferActionPayload(data);
+	const data = extractActionRequestData(message);
+	return data ? parseTransferActionPayload(data) : null;
 }
 
 export function parseTransferActionPayload(
@@ -108,11 +100,7 @@ export function parseTransferActionResponse(
 export function parsePermissionGrantRequest(
 	message: ProtocolMessage,
 ): PermissionGrantRequestAction | null {
-	if (message.method !== ACTION_REQUEST) {
-		return null;
-	}
-
-	const data = extractMessageData(message);
+	const data = extractActionRequestData(message);
 	if (!data || data.type !== "permissions/request-grants") {
 		return null;
 	}
@@ -223,6 +211,14 @@ export function extractMessageData(message: ProtocolMessage): Record<string, unk
 	}
 
 	return null;
+}
+
+export function extractActionRequestData(message: ProtocolMessage): Record<string, unknown> | null {
+	if (message.method !== ACTION_REQUEST) {
+		return null;
+	}
+
+	return extractMessageData(message);
 }
 
 export function extractActionResultData(message: ProtocolMessage): {

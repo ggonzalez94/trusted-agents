@@ -1,6 +1,5 @@
 import { isNonEmptyString, readNonEmptyString } from "../common/index.js";
-import { ACTION_REQUEST } from "../protocol/methods.js";
-import { extractActionResultData, extractMessageData } from "../runtime/actions.js";
+import { extractActionRequestData, extractActionResultData } from "../runtime/actions.js";
 import type { ProtocolMessage } from "../transport/interface.js";
 import type { SchedulingAccept, SchedulingProposal, SchedulingReject, TimeSlot } from "./types.js";
 
@@ -152,11 +151,7 @@ export function parseSchedulingActionPayload(
 }
 
 export function parseSchedulingActionRequest(message: ProtocolMessage): SchedulingProposal | null {
-	if (message.method !== ACTION_REQUEST) {
-		return null;
-	}
-
-	const data = extractMessageData(message);
+	const data = extractActionRequestData(message);
 	return data ? parseSchedulingActionPayload(data) : null;
 }
 
