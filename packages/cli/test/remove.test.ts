@@ -227,11 +227,9 @@ describe("tap remove", () => {
 		expect(dryRun.status).toBe("ok");
 		expect(dryRun.data.blocking_reasons).toEqual([]);
 		expect(dryRun.data.can_remove).toBe(true);
-		expect(dryRun.data.paths_to_remove).toContain(join(resolvedDataDir, "apps.json"));
-		expect(dryRun.data.paths_to_remove).toContain(join(resolvedDataDir, "apps", "transfer"));
-		expect(dryRun.data.paths_to_remove).toContain(
-			join(resolvedDataDir, "apps", "transfer", "state.json"),
-		);
+		expect(dryRun.data.paths_to_remove).toContain(core.appManifestPath(resolvedDataDir));
+		expect(dryRun.data.paths_to_remove).toContain(core.appDataDirPath(resolvedDataDir, "transfer"));
+		expect(dryRun.data.paths_to_remove).toContain(core.appStatePath(resolvedDataDir, "transfer"));
 		expect(dryRun.data.paths_to_remove).toContain(
 			`${core.contactsFilePath(resolvedDataDir)}.abc123.tmp`,
 		);
@@ -524,7 +522,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "identity"), { recursive: true });
 	await mkdir(join(dataDir, "conversations"), { recursive: true });
 	await mkdir(join(dataDir, "xmtp"), { recursive: true });
-	await mkdir(join(dataDir, "apps", "transfer"), { recursive: true });
+	await mkdir(core.appDataDirPath(dataDir, "transfer"), { recursive: true });
 	await writeFile(
 		defaultConfigPath(dataDir),
 		`${buildAgentConfigYaml({ agentId: 42, wallet: "test-wallet", apiKey: "test-api-key" })}\n`,
@@ -535,15 +533,11 @@ async function seedAgentData(dataDir: string): Promise<void> {
 	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");
 	await writeFile(join(dataDir, "pending-invites.json"), "[]\n", "utf-8");
 	await writeFile(
-		join(dataDir, "apps.json"),
+		core.appManifestPath(dataDir),
 		JSON.stringify({ apps: { transfer: { package: "tap-app-transfer" } } }),
 		"utf-8",
 	);
-	await writeFile(
-		join(dataDir, "apps", "transfer", "state.json"),
-		JSON.stringify({ grants: [] }),
-		"utf-8",
-	);
+	await writeFile(core.appStatePath(dataDir, "transfer"), JSON.stringify({ grants: [] }), "utf-8");
 	// Simulate an orphaned atomic-write temp file from an interrupted store write.
 	await writeFile(`${core.contactsFilePath(dataDir)}.abc123.tmp`, "[]\n", "utf-8");
 }

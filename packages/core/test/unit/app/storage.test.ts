@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { FileAppStorage } from "../../../src/app/storage.js";
+import {
+	FileAppStorage,
+	TAP_APPS_DIR,
+	TAP_APP_STATE_FILE,
+	appDataDirPath,
+	appStatePath,
+} from "../../../src/app/storage.js";
 import { useTempDir } from "../../helpers/temp-dir.js";
 
 describe("FileAppStorage", () => {
@@ -8,6 +14,15 @@ describe("FileAppStorage", () => {
 
 	beforeEach(() => {
 		storage = new FileAppStorage(dir.path, "test-app");
+	});
+
+	it("derives app state paths from the data dir and app id", () => {
+		expect(TAP_APPS_DIR).toBe("apps");
+		expect(TAP_APP_STATE_FILE).toBe("state.json");
+		expect(appDataDirPath("/tmp/tap-data", "transfer")).toBe("/tmp/tap-data/apps/transfer");
+		expect(appStatePath("/tmp/tap-data", "transfer")).toBe(
+			"/tmp/tap-data/apps/transfer/state.json",
+		);
 	});
 
 	it("returns undefined for missing keys", async () => {
@@ -78,8 +93,7 @@ describe("FileAppStorage", () => {
 		await storage.set("important", "data");
 
 		const { writeFile } = await import("node:fs/promises");
-		const { join } = await import("node:path");
-		await writeFile(join(dir.path, "apps", "test-app", "state.json"), "not valid json{{{");
+		await writeFile(appStatePath(dir.path, "test-app"), "not valid json{{{");
 
 		await expect(storage.get("important")).rejects.toThrow();
 	});

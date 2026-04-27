@@ -3,12 +3,23 @@ import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-jso
 import { AsyncMutex } from "../common/index.js";
 import type { TapAppStorage } from "./types.js";
 
+export const TAP_APPS_DIR = "apps";
+export const TAP_APP_STATE_FILE = "state.json";
+
+export function appDataDirPath(dataDir: string, appId: string): string {
+	return join(dataDir, TAP_APPS_DIR, appId);
+}
+
+export function appStatePath(dataDir: string, appId: string): string {
+	return join(appDataDirPath(dataDir, appId), TAP_APP_STATE_FILE);
+}
+
 export class FileAppStorage implements TapAppStorage {
 	private readonly filePath: string;
 	private readonly writeMutex = new AsyncMutex();
 
 	constructor(dataDir: string, appId: string) {
-		this.filePath = join(dataDir, "apps", appId, "state.json");
+		this.filePath = appStatePath(dataDir, appId);
 	}
 
 	async get(key: string): Promise<unknown | undefined> {
