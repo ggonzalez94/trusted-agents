@@ -11,6 +11,7 @@ import {
 	TransportOwnerLock,
 	fsErrorCode,
 	isProcessAlive,
+	isRecord,
 	resolveDataDir as resolveDataDirPath,
 } from "trusted-agents-core";
 import {
@@ -231,12 +232,11 @@ function readConfigState(configPath: string): ConfigState {
 		return { kind: "invalid", error: "config.yaml is empty" };
 	}
 
-	if (typeof parsed !== "object" || Array.isArray(parsed)) {
+	if (!isRecord(parsed)) {
 		return { kind: "invalid", error: "config.yaml must be a YAML mapping" };
 	}
 
-	const record = parsed as Record<string, unknown>;
-	const rawAgentId = record.agent_id;
+	const rawAgentId = parsed.agent_id;
 	let agentId: number | null;
 	if (rawAgentId === undefined || rawAgentId === null) {
 		// Field absent entirely — distinct from "present but -1". Treat as not
@@ -251,7 +251,7 @@ function readConfigState(configPath: string): ConfigState {
 		};
 	}
 
-	const rawChain = record.chain;
+	const rawChain = parsed.chain;
 	const chain = typeof rawChain === "string" && rawChain.length > 0 ? rawChain : null;
 
 	return { kind: "parsed", agentId, chain };
@@ -341,14 +341,13 @@ function isConversationLog(value: unknown): value is ConversationLog {
 	// A file like `{}`, `{"messages": null}`, or even
 	// `{"messages": [null]}` must be counted as "unreadable" rather than
 	// crashing the whole command during iteration.
-	if (typeof value !== "object" || value === null) return false;
-	const record = value as Record<string, unknown>;
-	if (!Array.isArray(record.messages)) return false;
-	if (typeof record.peerAgentId !== "number") return false;
-	if (typeof record.peerDisplayName !== "string") return false;
-	for (const message of record.messages) {
-		if (typeof message !== "object" || message === null) return false;
-		const entry = message as Record<string, unknown>;
+	if (!isRecord(value)) return false;
+	if (!Array.isArray(value.messages)) return false;
+	if (typeof value.peerAgentId !== "number") return false;
+	if (typeof value.peerDisplayName !== "string") return false;
+	for (const message of value.messages) {
+		if (!isRecord(message)) return false;
+		const entry = message;
 		if (entry.direction !== "incoming" && entry.direction !== "outgoing") return false;
 		if (typeof entry.timestamp !== "string") return false;
 	}

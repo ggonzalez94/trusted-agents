@@ -12,6 +12,7 @@ import {
 	createSigningProviderViemAccount,
 	fsErrorCode,
 	isProcessAlive,
+	isRecord,
 	loadTrustedAgentConfigFromDataDir,
 	resolveDataDir as resolveAbsoluteDataDir,
 } from "trusted-agents-core";
@@ -105,12 +106,11 @@ export interface RemovePlan {
 async function hasTapDataDirSignature(configPath: string): Promise<boolean> {
 	try {
 		const parsed = await readYamlFile(configPath);
-		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		if (!isRecord(parsed)) {
 			return false;
 		}
-		const obj = parsed as { chain?: unknown; agent_id?: unknown };
-		const hasAgentId = typeof obj.agent_id === "number";
-		const hasCaip2Chain = typeof obj.chain === "string" && obj.chain.includes(":");
+		const hasAgentId = typeof parsed.agent_id === "number";
+		const hasCaip2Chain = typeof parsed.chain === "string" && parsed.chain.includes(":");
 		return hasAgentId || hasCaip2Chain;
 	} catch {
 		return false;

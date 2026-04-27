@@ -1,4 +1,5 @@
 import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk";
+import { isRecord } from "trusted-agents-core";
 import { readTrimmedString } from "./input.js";
 
 /**
@@ -42,14 +43,13 @@ export const tapOpenClawPluginConfigSchema: OpenClawPluginConfigSchema = {
 
 export function parseTapOpenClawPluginConfig(raw: unknown): TapOpenClawPluginConfig {
 	if (raw === undefined || raw === null) return {};
-	if (typeof raw !== "object" || Array.isArray(raw)) {
+	if (!isRecord(raw)) {
 		throw new Error("TAP plugin config must be an object");
 	}
-	const input = raw as { dataDir?: unknown; tapdSocketPath?: unknown };
 	const result: TapOpenClawPluginConfig = {};
-	const dataDir = parseOptionalTrimmedString(input.dataDir, "dataDir");
+	const dataDir = parseOptionalTrimmedString(raw.dataDir, "dataDir");
 	if (dataDir !== undefined) result.dataDir = dataDir;
-	const tapdSocketPath = parseOptionalTrimmedString(input.tapdSocketPath, "tapdSocketPath");
+	const tapdSocketPath = parseOptionalTrimmedString(raw.tapdSocketPath, "tapdSocketPath");
 	if (tapdSocketPath !== undefined) result.tapdSocketPath = tapdSocketPath;
 	return result;
 }
