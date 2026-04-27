@@ -120,19 +120,19 @@ export class LoopbackTransportNetwork {
 		const peer = this.getActive(peerId);
 		if (!peer) {
 			const queued = this.mailboxes.get(peerId) ?? [];
-			queued.push(structuredClone(envelope));
+			queued.push(cloneEnvelope(envelope));
 			this.mailboxes.set(peerId, queued);
 			return createReceipt(envelope.message, "queued");
 		}
 
-		const ack = await peer.receive(structuredClone(envelope));
+		const ack = await peer.receive(cloneEnvelope(envelope));
 		return createReceipt(envelope.message, ack.status);
 	}
 
 	drain(agentId: number): LoopbackEnvelope[] {
 		const queued = this.mailboxes.get(agentId) ?? [];
 		this.mailboxes.delete(agentId);
-		return queued.map((envelope) => structuredClone(envelope));
+		return queued.map(cloneEnvelope);
 	}
 }
 
@@ -148,7 +148,7 @@ export class LoopbackTransport implements TransportProvider {
 	async send(peerId: number, message: ProtocolMessage): Promise<TransportReceipt> {
 		return await this.network.deliver(peerId, {
 			from: this.localAgentId,
-			message: structuredClone(message) as ProtocolMessage,
+			message: cloneProtocolMessage(message),
 		});
 	}
 
@@ -195,7 +195,7 @@ export class LoopbackTransport implements TransportProvider {
 		return await handler({
 			from: envelope.from,
 			senderInboxId: `loopback:${envelope.from}`,
-			message: structuredClone(envelope.message) as ProtocolMessage,
+			message: cloneProtocolMessage(envelope.message),
 		});
 	}
 }
@@ -228,6 +228,14 @@ export function clearLoopbackRuntime(dataDir: string): void {
 
 function isResultMethod(method: string): boolean {
 	return method === CONNECTION_RESULT || method === ACTION_RESULT;
+}
+
+function cloneEnvelope(envelope: LoopbackEnvelope): LoopbackEnvelope {
+	return structuredClone(envelope) as LoopbackEnvelope;
+}
+
+function cloneProtocolMessage(message: ProtocolMessage): ProtocolMessage {
+	return structuredClone(message) as ProtocolMessage;
 }
 
 function createReceipt(
