@@ -3269,7 +3269,7 @@ export class TapMessagingService {
 	): TapActionResult {
 		// Grant-only evaluation: check if grants cover this request, accept first slot
 		const matchingGrants = findApplicableSchedulingGrants(
-			{ version: "tap-grants/v1", updatedAt: "", grants: ctx.peer.grantsToPeer },
+			createGrantSet(ctx.peer.grantsToPeer, ""),
 			proposal,
 		);
 
