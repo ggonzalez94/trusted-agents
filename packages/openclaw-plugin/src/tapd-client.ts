@@ -1,11 +1,14 @@
 import { request } from "node:http";
 import { join } from "node:path";
-import type { TapNotification, TapNotificationType } from "trusted-agents-tapd";
+import {
+	type TapNotification,
+	type TapNotificationType,
+	socketFilePath,
+} from "trusted-agents-tapd";
 import { readTapdToken, tapdTokenPathForSocket } from "./tapd-token.js";
 
 export type { TapNotification, TapNotificationType };
 
-const DEFAULT_SOCKET_NAME = ".tapd.sock";
 const DEFAULT_DATA_DIR = ".trustedagents";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -61,11 +64,11 @@ export interface OpenClawTapdClientOptions {
  */
 export function resolveSocketPath(options: OpenClawTapdClientOptions): string {
 	if (options.socketPath) return options.socketPath;
-	if (options.dataDir) return join(options.dataDir, DEFAULT_SOCKET_NAME);
+	if (options.dataDir) return socketFilePath(options.dataDir);
 	const envDataDir = process.env.TAP_DATA_DIR;
-	if (envDataDir && envDataDir.length > 0) return join(envDataDir, DEFAULT_SOCKET_NAME);
+	if (envDataDir && envDataDir.length > 0) return socketFilePath(envDataDir);
 	const fallbackDataDir = join(process.env.HOME ?? "/tmp", DEFAULT_DATA_DIR);
-	return join(fallbackDataDir, DEFAULT_SOCKET_NAME);
+	return socketFilePath(fallbackDataDir);
 }
 
 /**

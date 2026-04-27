@@ -4,7 +4,9 @@ export {
 	TAPD_LOG_FILE,
 	TAPD_PORT_FILE,
 	TAPD_PID_FILE,
+	TAPD_SOCKET_FILE,
 	TAPD_TOKEN_FILE,
+	socketFilePath,
 	type TapdConfig,
 	type TapdConfigOptions,
 } from "./config.js";

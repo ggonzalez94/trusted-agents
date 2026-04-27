@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTapdConfig } from "../../src/config.js";
+import { TAPD_SOCKET_FILE, resolveTapdConfig, socketFilePath } from "../../src/config.js";
 
 describe("resolveTapdConfig", () => {
 	it("uses defaults when no env or options provided", () => {
@@ -40,6 +40,11 @@ describe("resolveTapdConfig", () => {
 
 	it("derives the socket path under the resolved data dir", () => {
 		const config = resolveTapdConfig({}, { dataDir: "/tmp/x" });
-		expect(config.socketPath).toBe("/tmp/x/.tapd.sock");
+		expect(config.socketPath).toBe(socketFilePath("/tmp/x"));
+	});
+
+	it("exposes the tapd socket file name and path helper", () => {
+		expect(TAPD_SOCKET_FILE).toBe(".tapd.sock");
+		expect(socketFilePath("/tmp/tap-data")).toBe("/tmp/tap-data/.tapd.sock");
 	});
 });

@@ -25,12 +25,15 @@ const DEFAULT_TCP_HOST = "127.0.0.1";
 // Hermes setup) starts its own tapd on the same machine.
 const DEFAULT_TCP_PORT = 0;
 const DEFAULT_RING_BUFFER_SIZE = 1000;
-const SOCKET_FILE = ".tapd.sock";
-
+export const TAPD_SOCKET_FILE = ".tapd.sock";
 export const TAPD_PORT_FILE = ".tapd.port";
 export const TAPD_PID_FILE = ".tapd.pid";
 export const TAPD_TOKEN_FILE = ".tapd-token";
 export const TAPD_LOG_FILE = ".tapd.log";
+
+export function socketFilePath(dataDir: string): string {
+	return join(dataDir, TAPD_SOCKET_FILE);
+}
 
 export function resolveTapdConfig(
 	env: Record<string, string | undefined>,
@@ -39,7 +42,7 @@ export function resolveTapdConfig(
 	const dataDir = options.dataDir ?? env.TAP_DATA_DIR ?? DEFAULT_DATA_DIR;
 	const tcpHost = options.tcpHost ?? env.TAPD_HOST ?? DEFAULT_TCP_HOST;
 	const tcpPort = options.tcpPort ?? parsePort(env.TAPD_PORT) ?? DEFAULT_TCP_PORT;
-	const socketPath = options.socketPath ?? join(dataDir, SOCKET_FILE);
+	const socketPath = options.socketPath ?? socketFilePath(dataDir);
 	const ringBufferSize = options.ringBufferSize ?? DEFAULT_RING_BUFFER_SIZE;
 
 	return { dataDir, socketPath, tcpHost, tcpPort, ringBufferSize };

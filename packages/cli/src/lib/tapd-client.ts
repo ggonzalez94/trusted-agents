@@ -1,5 +1,4 @@
 import { request } from "node:http";
-import { join } from "node:path";
 import type {
 	Contact,
 	ConversationLog,
@@ -16,15 +15,13 @@ import type {
 	TapSyncReport,
 	TimeSlot,
 } from "trusted-agents-core";
-import { loadAuthToken, loadBoundPort } from "trusted-agents-tapd";
+import { loadAuthToken, loadBoundPort, socketFilePath } from "trusted-agents-tapd";
 
 // The Unix socket lives next to the token file. tapd binds it on every start
 // at `<dataDir>/.tapd.sock`. The CLI talks to tapd over this socket so it
 // shares the same auth/transport boundary as the OpenClaw and Hermes
 // clients — only the bundled web UI uses the TCP port, and only because
 // browsers can't speak Unix sockets.
-const SOCKET_FILE = ".tapd.sock";
-
 /**
  * Thrown when the tapd token file is missing/empty, i.e. tapd hasn't started
  * (or has already cleaned up after itself). Callers can recover by either
@@ -75,7 +72,7 @@ export async function discoverTapd(dataDir: string): Promise<TapdConnectionInfo>
 	if (!token) {
 		throw new TapdNotRunningError();
 	}
-	return { socketPath: join(dataDir, SOCKET_FILE), token };
+	return { socketPath: socketFilePath(dataDir), token };
 }
 
 /**
