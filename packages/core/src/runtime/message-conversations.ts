@@ -4,6 +4,7 @@ import {
 	ValidationError,
 	assertSafeFileComponent,
 	generateNonce,
+	isNonEmptyString,
 	isObject,
 	nowISO,
 } from "../common/index.js";
@@ -213,9 +214,7 @@ function buildProtocolMessage(
 }
 
 function extractMessageId(message: Message): string | undefined {
-	return typeof message.messageId === "string" && message.messageId.length > 0
-		? message.messageId
-		: undefined;
+	return isNonEmptyString(message.messageId) ? message.messageId : undefined;
 }
 
 function extractProtocolMessage(request: ProtocolMessage): Message | null {
@@ -253,12 +252,12 @@ function extractMessageContent(parts: MessagePart[]): string | null {
 	const fragments = parts
 		.flatMap((part) => {
 			if (part.kind === "text") {
-				return typeof part.text === "string" && part.text.length > 0 ? [part.text] : [];
+				return isNonEmptyString(part.text) ? [part.text] : [];
 			}
 
 			try {
 				const serialized = JSON.stringify(part.data);
-				return typeof serialized === "string" && serialized.length > 0 ? [serialized] : [];
+				return isNonEmptyString(serialized) ? [serialized] : [];
 			} catch {
 				return [];
 			}
@@ -278,13 +277,11 @@ export function resolveConversationId(contact: Contact): string {
 }
 
 function resolveScope(request: ProtocolMessage, metadata?: Partial<TrustedAgentMetadata>): string {
-	return typeof metadata?.scope === "string" && metadata.scope.length > 0
-		? metadata.scope
-		: request.method;
+	return isNonEmptyString(metadata?.scope) ? metadata.scope : request.method;
 }
 
 function toSafeConversationId(value: string | undefined): string | null {
-	if (typeof value !== "string" || value.length === 0) {
+	if (!isNonEmptyString(value)) {
 		return null;
 	}
 
