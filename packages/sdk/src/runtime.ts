@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import {
 	type AppManifestEntry,
 	type BuildTapRuntimeContextOptions,
@@ -30,6 +29,7 @@ import {
 	type TapSyncReport,
 	type TrustedAgentsConfig,
 	addAppToManifest,
+	appDataDirPath,
 	buildDefaultTapRuntimeContext,
 	hasTapAppShape,
 	loadTrustedAgentConfigFromDataDir,
@@ -363,7 +363,7 @@ export class TapRuntime extends EventEmitter {
 
 		// Optionally remove app state directory
 		if (options?.removeState) {
-			const stateDir = join(ctx.config.dataDir, "apps", appId);
+			const stateDir = appDataDirPath(ctx.config.dataDir, appId);
 			await rm(stateDir, { recursive: true, force: true });
 		}
 	}
