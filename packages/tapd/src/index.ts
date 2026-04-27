@@ -20,3 +20,9 @@ export {
 	loadAuthToken,
 	tokenFilePath,
 } from "./auth-token.js";
+export {
+	loadBoundPort,
+	parseBoundPort,
+	persistBoundPort,
+	portFilePath,
+} from "./port-file.js";

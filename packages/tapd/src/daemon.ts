@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type {
 	ICalendarProvider,
@@ -31,6 +31,7 @@ import { TapdHttpServer } from "./http/server.js";
 import { handleSseConnection } from "./http/sse.js";
 import { classifyEventToNotification } from "./notification-classifier.js";
 import { NotificationQueue } from "./notification-queue.js";
+import { persistBoundPort } from "./port-file.js";
 import { TapdRuntime } from "./runtime.js";
 
 export const TAPD_VERSION = "0.2.0-beta.7";
@@ -148,10 +149,7 @@ export class Daemon {
 			// fixture) can discover where to reach us without parsing stdout.
 			const boundPort = this.server.boundTcpPort();
 			if (boundPort > 0) {
-				await writeFile(join(this.options.config.dataDir, TAPD_PORT_FILE), String(boundPort), {
-					encoding: "utf-8",
-					mode: 0o600,
-				});
+				await persistBoundPort(this.options.config.dataDir, boundPort);
 			}
 		} catch (error) {
 			await this.releaseResources();

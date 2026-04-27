@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { request } from "node:http";
 import { join } from "node:path";
 import type {
@@ -17,7 +16,7 @@ import type {
 	TapSyncReport,
 	TimeSlot,
 } from "trusted-agents-core";
-import { TAPD_PORT_FILE, loadAuthToken } from "trusted-agents-tapd";
+import { loadAuthToken, loadBoundPort } from "trusted-agents-tapd";
 
 // The Unix socket lives next to the token file. tapd binds it on every start
 // at `<dataDir>/.tapd.sock`. The CLI talks to tapd over this socket so it
@@ -105,14 +104,13 @@ export interface TapdUiInfo {
  * the Unix socket via `discoverTapd` / `TapdClient`.
  */
 export async function discoverTapdUiUrl(dataDir: string): Promise<TapdUiInfo> {
-	let portRaw: string;
+	let port: number | null;
 	try {
-		portRaw = await readFile(join(dataDir, TAPD_PORT_FILE), "utf-8");
+		port = await loadBoundPort(dataDir);
 	} catch {
 		throw new TapdNotRunningError();
 	}
-	const port = Number.parseInt(portRaw.trim(), 10);
-	if (!Number.isInteger(port) || port <= 0) {
+	if (port === null) {
 		throw new TapdNotRunningError();
 	}
 	const { token } = await discoverTapd(dataDir);

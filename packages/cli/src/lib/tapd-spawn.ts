@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fsErrorCode } from "trusted-agents-core";
-import { TAPD_PID_FILE, TAPD_PORT_FILE } from "trusted-agents-tapd";
+import { TAPD_PID_FILE, TAPD_PORT_FILE, parseBoundPort } from "trusted-agents-tapd";
 import { toErrorMessage } from "./errors.js";
 
 const execFileAsync = promisify(execFile);
@@ -404,8 +404,8 @@ async function waitForPortFileAndLiveness(
 	while (Date.now() < deadline) {
 		try {
 			const raw = await readFile(portPath, "utf-8");
-			const port = Number.parseInt(raw.trim(), 10);
-			if (Number.isInteger(port) && port > 0) return port;
+			const port = parseBoundPort(raw);
+			if (port !== null) return port;
 		} catch {
 			// not yet
 		}
