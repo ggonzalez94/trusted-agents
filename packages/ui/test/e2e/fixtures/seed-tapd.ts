@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createGrantSet } from "trusted-agents-core";
 import { Daemon } from "trusted-agents-tapd";
 
 /**
@@ -110,16 +111,8 @@ function makeSeedContact() {
 		peerDisplayName: "Bob",
 		peerAgentAddress: "0xbb00000000000000000000000000000000000000",
 		permissions: {
-			grantedByMe: {
-				version: "tap-grants/v1",
-				updatedAt: "2026-04-01T00:00:00.000Z",
-				grants: [],
-			},
-			grantedByPeer: {
-				version: "tap-grants/v1",
-				updatedAt: "2026-04-01T00:00:00.000Z",
-				grants: [],
-			},
+			grantedByMe: createGrantSet([], "2026-04-01T00:00:00.000Z"),
+			grantedByPeer: createGrantSet([], "2026-04-01T00:00:00.000Z"),
 		},
 		establishedAt: "2026-04-01T00:00:00.000Z",
 		lastContactAt: "2026-04-01T00:05:00.000Z",

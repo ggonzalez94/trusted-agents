@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleConnectionRequest } from "../../../src/connection/request-handler.js";
 import type { IAgentResolver } from "../../../src/identity/resolver.js";
 import type { ResolvedAgent } from "../../../src/identity/types.js";
+import { createGrantSet } from "../../../src/permissions/types.js";
 import type { ProtocolMessage } from "../../../src/transport/interface.js";
 import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
@@ -76,16 +77,8 @@ function makeExistingContact(status: Contact["status"]): Contact {
 		peerDisplayName: "Alice",
 		peerAgentAddress: ALICE.address,
 		permissions: {
-			grantedByMe: {
-				version: "tap-grants/v1",
-				updatedAt: "2025-01-01T00:00:00.000Z",
-				grants: [],
-			},
-			grantedByPeer: {
-				version: "tap-grants/v1",
-				updatedAt: "2025-01-01T00:00:00.000Z",
-				grants: [],
-			},
+			grantedByMe: createGrantSet([], "2025-01-01T00:00:00.000Z"),
+			grantedByPeer: createGrantSet([], "2025-01-01T00:00:00.000Z"),
 		},
 		establishedAt: "2025-01-01T00:00:00.000Z",
 		lastContactAt: "2025-01-01T00:00:00.000Z",

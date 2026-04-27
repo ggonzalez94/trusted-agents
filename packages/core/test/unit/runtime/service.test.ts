@@ -1006,11 +1006,10 @@ describe("TapMessagingService", () => {
 				commandType: "publish-grant-set",
 				commandPayload: {
 					peer: activeContact.peerDisplayName,
-					grantSet: {
-						version: "tap-grants/v1",
-						updatedAt: "2026-03-08T00:00:00.000Z",
-						grants: [{ grantId: "queued-chat", scope: "general-chat" }],
-					},
+					grantSet: createGrantSet(
+						[{ grantId: "queued-chat", scope: "general-chat" }],
+						"2026-03-08T00:00:00.000Z",
+					),
 					note: "queued publish",
 				},
 				commandRequestedBy: "test",
@@ -2129,18 +2128,10 @@ describe("TapMessagingService", () => {
 		await service.start();
 
 		const invalidUpdate = buildPermissionsUpdate({
-			grantSet: {
-				version: "tap-grants/v1",
-				updatedAt: "2026-03-08T00:00:00.000Z",
-				grants: [
-					{
-						grantId: "invalid",
-						scope: "general-chat",
-						updatedAt: "2026-03-08T00:00:00.000Z",
-						status: "active",
-					},
-				],
-			},
+			grantSet: createGrantSet(
+				[{ grantId: "invalid", scope: "general-chat" }],
+				"2026-03-08T00:00:00.000Z",
+			),
 			grantor: { agentId: PEER_AGENT.agentId, chain: PEER_AGENT.chain },
 			grantee: { agentId: 999, chain: PEER_AGENT.chain },
 			timestamp: "2026-03-08T00:00:01.000Z",

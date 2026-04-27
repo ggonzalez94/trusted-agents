@@ -1,3 +1,4 @@
+import { createGrantSet } from "trusted-agents-core";
 import { describe, expect, it, vi } from "vitest";
 import { createContactsWriteRoutes } from "../../../src/http/routes/contacts-write.js";
 
@@ -10,8 +11,8 @@ const contact = {
 	peerDisplayName: "Alice",
 	status: "active" as const,
 	permissions: {
-		grantedByMe: { updatedAt: "", grants: [] },
-		grantedByPeer: { updatedAt: "", grants: [] },
+		grantedByMe: createGrantSet([], ""),
+		grantedByPeer: createGrantSet([], ""),
 	},
 };
 
