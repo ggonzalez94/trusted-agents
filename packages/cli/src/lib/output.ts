@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { isRecord } from "trusted-agents-core";
+import { isObject, isRecord } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import type { OutputFormat } from "../types.js";
 
@@ -152,7 +152,7 @@ function printPlain(data: unknown): void {
 		for (const [key, items] of arrayEntries) {
 			process.stdout.write(`\n${humanizeKey(key)}:\n`);
 			for (const item of items) {
-				if (typeof item === "object" && item !== null) {
+				if (isObject(item)) {
 					const lines = JSON.stringify(item, null, 2).split("\n");
 					process.stdout.write(`  - ${lines[0]}\n`);
 					for (const line of lines.slice(1)) {
@@ -188,7 +188,7 @@ function printNdjson(data: unknown): void {
 		return;
 	}
 
-	if (typeof data === "object" && data !== null) {
+	if (isObject(data)) {
 		const obj = data as Record<string, unknown>;
 		const entries = Object.entries(obj).filter(([, value]) => Array.isArray(value));
 		if (entries.length === 1) {
@@ -204,7 +204,7 @@ function printNdjson(data: unknown): void {
 
 function printKeyValue(label: string, val: unknown, maxLabelLen: number): void {
 	// Nested object → indented pretty JSON
-	if (typeof val === "object" && val !== null) {
+	if (isObject(val)) {
 		process.stdout.write(`${label}:\n`);
 		const json = JSON.stringify(val, null, 2);
 		for (const line of json.split("\n")) {
@@ -237,7 +237,7 @@ function printTable(rows: unknown[]): void {
 	}
 
 	const first = rows[0];
-	if (typeof first !== "object" || first === null) {
+	if (!isObject(first)) {
 		for (const row of rows) {
 			process.stdout.write(`${String(row)}\n`);
 		}
@@ -350,7 +350,7 @@ function applyFieldSelection(data: unknown, fields: string[]): unknown {
 		return data.map((item) => selectFields(item, fields));
 	}
 
-	if (typeof data !== "object" || data === null) {
+	if (!isObject(data)) {
 		return data;
 	}
 
@@ -424,7 +424,7 @@ function applyPagination(
 		return paginateArray(data, limit, offset, (items) => items);
 	}
 
-	if (typeof data !== "object" || data === null) {
+	if (!isObject(data)) {
 		return { data };
 	}
 

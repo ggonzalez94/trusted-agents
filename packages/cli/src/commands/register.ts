@@ -10,6 +10,7 @@ import {
 	fetchRegistrationFile,
 	getExecutionPreview,
 	getUsdcAsset,
+	isObject,
 	validateRegistrationFile,
 } from "trusted-agents-core";
 import type {
@@ -191,7 +192,7 @@ function canonicalizeJson(value: unknown): unknown {
 		return value.map((item) => canonicalizeJson(item));
 	}
 
-	if (value !== null && typeof value === "object") {
+	if (isObject(value)) {
 		return Object.fromEntries(
 			Object.entries(value as Record<string, unknown>)
 				.filter(([, entryValue]) => entryValue !== undefined)
