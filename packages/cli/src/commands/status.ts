@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import {
@@ -13,7 +13,6 @@ import {
 	isProcessAlive,
 	resolveDataDir as resolveDataDirPath,
 } from "trusted-agents-core";
-import YAML from "yaml";
 import {
 	type TapHermesDaemonState,
 	type TapHermesPluginConfig,
@@ -21,6 +20,7 @@ import {
 	loadTapHermesPluginConfig,
 	resolveHermesHome,
 } from "../hermes/config.js";
+import { readYamlFileSync } from "../lib/atomic-write.js";
 import {
 	resolveConfigPath,
 	resolveDataDir,
@@ -219,16 +219,9 @@ function readConfigState(configPath: string): ConfigState {
 		return { kind: "missing" };
 	}
 
-	let raw: string;
-	try {
-		raw = readFileSync(configPath, "utf-8");
-	} catch (err) {
-		return { kind: "invalid", error: err instanceof Error ? err.message : String(err) };
-	}
-
 	let parsed: unknown;
 	try {
-		parsed = YAML.parse(raw);
+		parsed = readYamlFileSync(configPath);
 	} catch (err) {
 		return { kind: "invalid", error: err instanceof Error ? err.message : String(err) };
 	}
