@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
+import { isRecord } from "trusted-agents-core";
 import { resolveHermesHome } from "../hermes/config.js";
 import { installTapHermesAssets } from "../hermes/install.js";
 import { resolveConfigPath, resolveDataDir } from "../lib/config-loader.js";
@@ -472,8 +473,4 @@ async function execOpenClawJsonCommand(args: string[]): Promise<Record<string, u
 	}
 
 	return parsed;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
