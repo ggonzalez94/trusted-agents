@@ -6,10 +6,9 @@ import type {
 import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
+	hasTapTransferFields,
 	isNonEmptyString,
 	isOptionalString,
-	isTapTransferAsset,
-	isZeroXPrefixedString,
 	requireBody,
 } from "../validation.js";
 
@@ -17,10 +16,7 @@ function isFundsRequestBody(value: unknown): value is TapRequestFundsInput {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (!isNonEmptyString(v.peer)) return false;
-	if (!isTapTransferAsset(v.asset)) return false;
-	if (!isNonEmptyString(v.amount)) return false;
-	if (!isNonEmptyString(v.chain)) return false;
-	if (!isZeroXPrefixedString(v.toAddress)) return false;
+	if (!hasTapTransferFields(v)) return false;
 	if (!isOptionalString(v.note)) return false;
 	return true;
 }

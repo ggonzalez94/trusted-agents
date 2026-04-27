@@ -21,6 +21,23 @@ export function isZeroXPrefixedString(value: unknown): value is `0x${string}` {
 	return typeof value === "string" && value.startsWith("0x");
 }
 
+export interface TapTransferFields {
+	asset: "native" | "usdc";
+	amount: string;
+	chain: string;
+	toAddress: `0x${string}`;
+}
+
+export function hasTapTransferFields(
+	value: Record<string, unknown>,
+): value is Record<string, unknown> & TapTransferFields {
+	if (!isTapTransferAsset(value.asset)) return false;
+	if (!isNonEmptyString(value.amount)) return false;
+	if (!isNonEmptyString(value.chain)) return false;
+	if (!isZeroXPrefixedString(value.toAddress)) return false;
+	return true;
+}
+
 // Route-level input validation throws HttpError(400, ...) so the server's
 // top-level catch (see http/server.ts `handle`) maps missing route params
 // and guard-rejected bodies to a 4xx response. Plain `Error` would fall
