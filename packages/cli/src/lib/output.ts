@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { isRecord } from "trusted-agents-core";
 import type { GlobalOptions } from "../types.js";
 import type { OutputFormat } from "../types.js";
 
@@ -367,14 +368,14 @@ function applyFieldSelection(data: unknown, fields: string[]): unknown {
 }
 
 function selectFields(value: unknown, fields: string[]): unknown {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+	if (!isRecord(value)) {
 		return value;
 	}
 
 	const result: Record<string, unknown> = {};
 	for (const field of fields) {
 		const path = field.split(".").filter(Boolean);
-		const selected = getPath(value as Record<string, unknown>, path);
+		const selected = getPath(value, path);
 		if (selected !== undefined) {
 			setPath(result, path, selected);
 		}
@@ -386,10 +387,10 @@ function selectFields(value: unknown, fields: string[]): unknown {
 function getPath(obj: Record<string, unknown>, path: string[]): unknown {
 	let current: unknown = obj;
 	for (const segment of path) {
-		if (typeof current !== "object" || current === null || Array.isArray(current)) {
+		if (!isRecord(current)) {
 			return undefined;
 		}
-		current = (current as Record<string, unknown>)[segment];
+		current = current[segment];
 	}
 	return current;
 }
@@ -404,7 +405,7 @@ function setPath(target: Record<string, unknown>, path: string[], value: unknown
 		}
 
 		const existing = current[segment];
-		if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
+		if (!isRecord(existing)) {
 			current[segment] = {};
 		}
 		current = current[segment] as Record<string, unknown>;
