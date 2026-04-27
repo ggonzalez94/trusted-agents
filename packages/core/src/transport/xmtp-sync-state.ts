@@ -1,7 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonFileAtomic } from "../common/atomic-json.js";
-import { AsyncMutex, fsErrorCode, nowISO } from "../common/index.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
+import { AsyncMutex, nowISO } from "../common/index.js";
 
 export interface XmtpConversationCheckpoint {
 	lastSentAtNs: string;
@@ -72,23 +71,21 @@ export class FileXmtpSyncStateStore {
 	}
 
 	private async load(): Promise<XmtpSyncStateFile> {
-		try {
-			const raw = await readFile(this.path, "utf-8");
-			const parsed = JSON.parse(raw) as Partial<XmtpSyncStateFile>;
-			return {
-				version: 1,
-				initializedAt:
-					typeof parsed.initializedAt === "string" && parsed.initializedAt.length > 0
-						? parsed.initializedAt
-						: undefined,
-				conversations: normalizeConversations(parsed.conversations),
-			};
-		} catch (error: unknown) {
-			if (fsErrorCode(error) === "ENOENT") {
-				return { ...EMPTY_STATE, conversations: {} };
-			}
-			throw error;
-		}
+		return readJsonFileOrDefault<XmtpSyncStateFile>(
+			this.path,
+			(raw) => {
+				const parsed = raw as Partial<XmtpSyncStateFile>;
+				return {
+					version: 1,
+					initializedAt:
+						typeof parsed.initializedAt === "string" && parsed.initializedAt.length > 0
+							? parsed.initializedAt
+							: undefined,
+					conversations: normalizeConversations(parsed.conversations),
+				};
+			},
+			{ ...EMPTY_STATE, conversations: {} },
+		);
 	}
 
 	private async save(state: XmtpSyncStateFile): Promise<void> {

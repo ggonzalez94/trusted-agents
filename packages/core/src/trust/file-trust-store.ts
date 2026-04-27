@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonFileAtomic } from "../common/atomic-json.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import { AsyncMutex, nowISO, resolveDataDir } from "../common/index.js";
 import { ConnectionError } from "../common/index.js";
 import type { ITrustStore } from "./trust-store.js";
@@ -124,19 +123,7 @@ export class FileTrustStore implements ITrustStore {
 	}
 
 	private async load(): Promise<ContactsFile> {
-		try {
-			const raw = await readFile(this.contactsPath, "utf-8");
-			return JSON.parse(raw) as ContactsFile;
-		} catch (err: unknown) {
-			if (
-				err instanceof Error &&
-				"code" in err &&
-				(err as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return { contacts: [] };
-			}
-			throw err;
-		}
+		return readJsonFileOrDefault(this.contactsPath, (raw) => raw as ContactsFile, { contacts: [] });
 	}
 
 	private async save(data: ContactsFile): Promise<void> {
