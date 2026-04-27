@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGrantSet } from "trusted-agents-core";
-import { Daemon } from "trusted-agents-tapd";
+import { Daemon, socketFilePath } from "trusted-agents-tapd";
 
 /**
  * Spins up an in-process tapd Daemon against a temp data dir, with stub
@@ -67,7 +67,7 @@ export async function seedTapd(): Promise<SeededTapd> {
 	const daemon = new Daemon({
 		config: {
 			dataDir,
-			socketPath: join(dataDir, ".tapd.sock"),
+			socketPath: socketFilePath(dataDir),
 			tcpHost: "127.0.0.1",
 			tcpPort: 0,
 			ringBufferSize: 100,
