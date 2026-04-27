@@ -16,7 +16,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { TapAppRegistry } from "../../../src/app/registry.js";
 import { ValidationError } from "../../../src/common/errors.js";
-import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import { buildConnectionResult } from "../../../src/connection/handshake.js";
 import { generateInvite } from "../../../src/connection/invite.js";
 import type { IConversationLogger } from "../../../src/conversation/logger.js";
@@ -37,6 +36,7 @@ import type { ITrustStore } from "../../../src/trust/trust-store.js";
 import type { Contact } from "../../../src/trust/types.js";
 import { ALICE_SIGNING_PROVIDER, BOB, BOB_SIGNING_PROVIDER } from "../../fixtures/test-keys.js";
 import { jsonClone } from "../../helpers/clone.js";
+import { buildRuntimeTestConfig } from "../../helpers/config.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackTempDir } = useTempDirs();
@@ -179,16 +179,7 @@ async function createService(opts: {
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-connect-"));
 	trackTempDir(dataDir);
 
-	const config: TrustedAgentsConfig = {
-		agentId: 1,
-		chain: "eip155:8453",
-		ows: { wallet: "test", apiKey: "ows_key_test" },
-		dataDir,
-		chains: {},
-		inviteExpirySeconds: 3600,
-		resolveCacheTtlMs: 60_000,
-		resolveCacheMaxEntries: 128,
-	};
+	const config = buildRuntimeTestConfig({ dataDir });
 
 	const transport = opts.transport ?? new ManualTransport();
 	const requestJournal = new FileRequestJournalImpl(dataDir);

@@ -5,7 +5,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { TapAppRegistry } from "../../../src/app/registry.js";
 import { TransportError, ValidationError } from "../../../src/common/errors.js";
-import type { TrustedAgentsConfig } from "../../../src/config/types.js";
 import {
 	buildConnectionRequest,
 	buildConnectionResult,
@@ -46,6 +45,7 @@ import {
 	BOB_SIGNING_PROVIDER,
 } from "../../fixtures/test-keys.js";
 import { jsonClone } from "../../helpers/clone.js";
+import { buildRuntimeTestConfig } from "../../helpers/config.js";
 import { useTempDirs } from "../../helpers/temp-dir.js";
 
 const { track: trackTempDir } = useTempDirs();
@@ -272,16 +272,7 @@ async function createService(
 	const dataDir = await mkdtemp(join(tmpdir(), "tap-service-"));
 	trackTempDir(dataDir);
 
-	const config: TrustedAgentsConfig = {
-		agentId: 1,
-		chain: "eip155:8453",
-		ows: { wallet: "test", apiKey: "ows_key_test" },
-		dataDir,
-		chains: {},
-		inviteExpirySeconds: 3600,
-		resolveCacheTtlMs: 60_000,
-		resolveCacheMaxEntries: 128,
-	};
+	const config = buildRuntimeTestConfig({ dataDir });
 	const requestJournal = new FileRequestJournalImpl(dataDir);
 	const transport = dependencies.transport ?? new FakeTransport(options);
 	const appRegistry = new TapAppRegistry(dataDir);
@@ -3488,16 +3479,7 @@ describe("TapMessagingService", () => {
 			const transport = new SilentTransport();
 			const dataDir = await mkdtemp(join(tmpdir(), "tap-fire-and-forget-"));
 			trackTempDir(dataDir);
-			const config: TrustedAgentsConfig = {
-				agentId: 1,
-				chain: "eip155:8453",
-				ows: { wallet: "test", apiKey: "ows_key_test" },
-				dataDir,
-				chains: {},
-				inviteExpirySeconds: 3600,
-				resolveCacheTtlMs: 60_000,
-				resolveCacheMaxEntries: 128,
-			};
+			const config = buildRuntimeTestConfig({ dataDir });
 			const requestJournal = new FileRequestJournalImpl(dataDir);
 			const appRegistry = new TapAppRegistry(dataDir);
 			const service = new TapMessagingService(
@@ -3548,16 +3530,7 @@ describe("TapMessagingService", () => {
 			const transport = new FakeTransport();
 			const dataDir = await mkdtemp(join(tmpdir(), "tap-eager-log-"));
 			trackTempDir(dataDir);
-			const config: TrustedAgentsConfig = {
-				agentId: 1,
-				chain: "eip155:8453",
-				ows: { wallet: "test", apiKey: "ows_key_test" },
-				dataDir,
-				chains: {},
-				inviteExpirySeconds: 3600,
-				resolveCacheTtlMs: 60_000,
-				resolveCacheMaxEntries: 128,
-			};
+			const config = buildRuntimeTestConfig({ dataDir });
 			const service = new TapMessagingService(
 				{
 					config,
@@ -3598,16 +3571,7 @@ describe("TapMessagingService", () => {
 
 			const dataDir = await mkdtemp(join(tmpdir(), "tap-publish-fail-"));
 			trackTempDir(dataDir);
-			const config: TrustedAgentsConfig = {
-				agentId: 1,
-				chain: "eip155:8453",
-				ows: { wallet: "test", apiKey: "ows_key_test" },
-				dataDir,
-				chains: {},
-				inviteExpirySeconds: 3600,
-				resolveCacheTtlMs: 60_000,
-				resolveCacheMaxEntries: 128,
-			};
+			const config = buildRuntimeTestConfig({ dataDir });
 			const service = new TapMessagingService(
 				{
 					config,
