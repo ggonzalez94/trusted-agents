@@ -110,7 +110,7 @@ describe("tap remove", () => {
 		expect(output.data.agent_id).toBe(42);
 		expect(output.data.paths_to_remove).toContain(core.contactsFilePath(resolvedDataDir));
 		expect(output.data.paths_to_remove).toContain(
-			join(resolvedDataDir, "conversations", "peer-1.json"),
+			join(core.legacyConversationsDir(resolvedDataDir), "peer-1.json"),
 		);
 		expect(output.data.blocking_reasons).toEqual([]);
 		expect(output.data.warnings).toContain(
@@ -520,7 +520,7 @@ describe("tap remove", () => {
 
 async function seedAgentData(dataDir: string): Promise<void> {
 	await mkdir(join(dataDir, "identity"), { recursive: true });
-	await mkdir(join(dataDir, "conversations"), { recursive: true });
+	await mkdir(core.legacyConversationsDir(dataDir), { recursive: true });
 	await mkdir(join(dataDir, "xmtp"), { recursive: true });
 	await mkdir(core.appDataDirPath(dataDir, "transfer"), { recursive: true });
 	await writeFile(
@@ -529,7 +529,7 @@ async function seedAgentData(dataDir: string): Promise<void> {
 		"utf-8",
 	);
 	await writeFile(core.contactsFilePath(dataDir), "[]\n", "utf-8");
-	await writeFile(join(dataDir, "conversations", "peer-1.json"), "[]\n", "utf-8");
+	await writeFile(join(core.legacyConversationsDir(dataDir), "peer-1.json"), "[]\n", "utf-8");
 	await writeFile(join(dataDir, "xmtp", "agent.db3"), "", "utf-8");
 	await writeFile(join(dataDir, "pending-invites.json"), "[]\n", "utf-8");
 	await writeFile(

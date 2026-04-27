@@ -13,6 +13,7 @@ import {
 	isNonEmptyString,
 	isProcessAlive,
 	isRecord,
+	legacyConversationsDir,
 	resolveDataDir as resolveDataDirPath,
 } from "trusted-agents-core";
 import {
@@ -290,7 +291,7 @@ async function readConversations(dataDir: string): Promise<ReadResult<Conversati
 	// silently undercounts messages without any warning. So we do our own scan
 	// here, track the per-file failures, and surface them as a readable error
 	// if any file couldn't be parsed.
-	const conversationsDir = join(resolveDataDirPath(dataDir), "conversations");
+	const conversationsDir = legacyConversationsDir(resolveDataDirPath(dataDir));
 	let entries: string[];
 	try {
 		entries = await readdir(conversationsDir);

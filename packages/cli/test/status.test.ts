@@ -8,6 +8,7 @@ import {
 	FileTrustStore,
 	TransportOwnerLock,
 	contactsFilePath,
+	legacyConversationsDir,
 	requestJournalPath,
 } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -528,24 +529,25 @@ describe("tap status", () => {
 		// `{"messages": [null]}` made it to summarizeMessages which then threw
 		// on iteration.
 		const dataDir = await makeAgentDir(tempRoot);
-		await mkdir(join(dataDir, "conversations"), { recursive: true });
+		const conversationsDir = legacyConversationsDir(dataDir);
+		await mkdir(conversationsDir, { recursive: true });
 		// Schema-invalid: missing messages array
-		await writeFile(join(dataDir, "conversations", "conv-empty.json"), "{}", "utf-8");
+		await writeFile(join(conversationsDir, "conv-empty.json"), "{}", "utf-8");
 		// Schema-invalid: messages is not an array
 		await writeFile(
-			join(dataDir, "conversations", "conv-null-messages.json"),
+			join(conversationsDir, "conv-null-messages.json"),
 			JSON.stringify({ messages: null, peerAgentId: 1, peerDisplayName: "X" }),
 			"utf-8",
 		);
 		// Schema-invalid: messages contains non-object entries
 		await writeFile(
-			join(dataDir, "conversations", "conv-null-element.json"),
+			join(conversationsDir, "conv-null-element.json"),
 			JSON.stringify({ messages: [null], peerAgentId: 1, peerDisplayName: "X" }),
 			"utf-8",
 		);
 		// Schema-invalid: message entry is missing direction
 		await writeFile(
-			join(dataDir, "conversations", "conv-bad-direction.json"),
+			join(conversationsDir, "conv-bad-direction.json"),
 			JSON.stringify({
 				messages: [{ timestamp: "2026-01-01T00:00:00Z" }],
 				peerAgentId: 1,
@@ -625,7 +627,11 @@ describe("tap status", () => {
 			{ connectionId: "conn-1", peerAgentId: 100, peerDisplayName: "Alice" },
 		);
 		// Seed a corrupt file next to it.
-		await writeFile(join(dataDir, "conversations", "conv-broken.json"), "{ not json", "utf-8");
+		await writeFile(
+			join(legacyConversationsDir(dataDir), "conv-broken.json"),
+			"{ not json",
+			"utf-8",
+		);
 
 		await statusCommand({}, { json: true, dataDir });
 
