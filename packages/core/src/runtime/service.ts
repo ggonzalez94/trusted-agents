@@ -16,6 +16,8 @@ import {
 	fsErrorCode,
 	generateConnectionId,
 	generateNonce,
+	isNonEmptyString,
+	isObject,
 	nowISO,
 	toErrorMessage,
 } from "../common/index.js";
@@ -4774,27 +4776,33 @@ function buildRequestKey(senderInboxId: string, message: ProtocolMessage): strin
 }
 
 function parseConnectionRequest(message: ProtocolMessage): ConnectionRequestParams {
-	const params = message.params as ConnectionRequestParams | undefined;
+	if (!isObject(message.params)) {
+		throw new ValidationError("Invalid connection request payload");
+	}
+	const params = message.params as Partial<ConnectionRequestParams>;
+	const invite = params.invite;
 	if (
-		typeof params?.from?.agentId !== "number" ||
+		typeof params.from?.agentId !== "number" ||
 		typeof params.from.chain !== "string" ||
-		typeof params.invite !== "object" ||
-		params.invite === null ||
-		typeof params.invite.agentId !== "number" ||
-		typeof params.invite.chain !== "string" ||
-		typeof params.invite.expires !== "number" ||
-		typeof params.invite.signature !== "string" ||
+		!isObject(invite) ||
+		typeof invite.agentId !== "number" ||
+		typeof invite.chain !== "string" ||
+		typeof invite.expires !== "number" ||
+		typeof invite.signature !== "string" ||
 		typeof params.timestamp !== "string"
 	) {
 		throw new ValidationError("Invalid connection request payload");
 	}
-	return params;
+	return params as ConnectionRequestParams;
 }
 
 function parseConnectionResult(message: ProtocolMessage): ConnectionResultParams {
-	const params = message.params as ConnectionResultParams | undefined;
+	if (!isObject(message.params)) {
+		throw new ValidationError("Invalid connection result payload");
+	}
+	const params = message.params as Partial<ConnectionResultParams>;
 	if (
-		typeof params?.requestId !== "string" ||
+		typeof params.requestId !== "string" ||
 		typeof params.from?.agentId !== "number" ||
 		typeof params.from.chain !== "string" ||
 		(params.status !== "accepted" && params.status !== "rejected") ||
@@ -4802,13 +4810,13 @@ function parseConnectionResult(message: ProtocolMessage): ConnectionResultParams
 	) {
 		throw new ValidationError("Invalid connection result payload");
 	}
-	return params;
+	return params as ConnectionResultParams;
 }
 
 function parsePermissionsUpdate(
 	message: ProtocolMessage,
 ): PermissionsUpdateParams & { note?: string } {
-	if (typeof message.params !== "object" || message.params === null) {
+	if (!isObject(message.params)) {
 		throw new ValidationError("Invalid grant publication payload");
 	}
 
@@ -4821,8 +4829,7 @@ function parsePermissionsUpdate(
 	};
 
 	if (
-		typeof params.grantSet !== "object" ||
-		params.grantSet === null ||
+		!isObject(params.grantSet) ||
 		typeof params.grantor?.agentId !== "number" ||
 		typeof params.grantor.chain !== "string" ||
 		typeof params.grantee?.agentId !== "number" ||
@@ -4836,7 +4843,7 @@ function parsePermissionsUpdate(
 		grantSet: normalizeGrantInput(params.grantSet),
 		grantor: params.grantor,
 		grantee: params.grantee,
-		note: typeof params.note === "string" && params.note.length > 0 ? params.note : undefined,
+		note: isNonEmptyString(params.note) ? params.note : undefined,
 		timestamp: params.timestamp,
 	};
 }
@@ -5126,7 +5133,7 @@ function peerConnectionResultCacheKey(chain: string, agentId: number): string {
 }
 
 function isPlausiblePlannedContact(value: unknown): value is Contact {
-	if (typeof value !== "object" || value === null) return false;
+	if (!isObject(value)) return false;
 	const c = value as Partial<Contact>;
 	return (
 		typeof c.connectionId === "string" &&
@@ -5207,10 +5214,10 @@ interface PendingConnectionRevokeDelivery {
 function parsePendingConnectionRevokeDelivery(
 	metadata: Record<string, unknown> | undefined,
 ): PendingConnectionRevokeDelivery | null {
-	if (!metadata || typeof metadata !== "object") return null;
-	const revokeDelivery = (metadata as Record<string, unknown>).revokeDelivery;
-	if (!revokeDelivery || typeof revokeDelivery !== "object") return null;
-	const delivery = revokeDelivery as Record<string, unknown>;
+	if (!metadata) return null;
+	const revokeDelivery = metadata.revokeDelivery;
+	if (!isObject(revokeDelivery)) return null;
+	const delivery = revokeDelivery;
 	const peerAddress = asString(delivery.peerAddress);
 	if (
 		typeof delivery.peerAgentId !== "number" ||
@@ -5288,8 +5295,7 @@ function parsePendingPermissionsUpdateDelivery(
 		typeof metadata.peerAgentId !== "number" ||
 		typeof metadata.peerName !== "string" ||
 		!peerAddress?.startsWith("0x") ||
-		!grantSet ||
-		typeof grantSet !== "object" ||
+		!isObject(grantSet) ||
 		!isProtocolMessage(metadata.request)
 	) {
 		return null;
@@ -5301,7 +5307,7 @@ function parsePendingPermissionsUpdateDelivery(
 		peerAgentId: metadata.peerAgentId,
 		peerName: metadata.peerName,
 		peerAddress: peerAddress as `0x${string}`,
-		grantSet: grantSet as PermissionGrantSet,
+		grantSet: grantSet as unknown as PermissionGrantSet,
 		request: metadata.request,
 	};
 }
@@ -5471,7 +5477,7 @@ function parseDeliveryFailureMetadata(
 		return null;
 	}
 	const raw = metadata[DELIVERY_FAILURE_METADATA_KEY];
-	if (typeof raw !== "object" || raw === null) {
+	if (!isObject(raw)) {
 		return null;
 	}
 	const candidate = raw as Partial<DeliveryFailureMetadata>;
@@ -5488,11 +5494,7 @@ function parseDeliveryFailureMetadata(
 
 function isProtocolMessage(value: unknown): value is ProtocolMessage {
 	return (
-		typeof value === "object" &&
-		value !== null &&
-		(value as { jsonrpc?: unknown }).jsonrpc === "2.0" &&
-		typeof (value as { method?: unknown }).method === "string" &&
-		"id" in (value as Record<string, unknown>)
+		isObject(value) && value.jsonrpc === "2.0" && typeof value.method === "string" && "id" in value
 	);
 }
 
