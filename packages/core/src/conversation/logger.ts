@@ -1,11 +1,10 @@
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { writeJsonFileAtomic } from "../common/atomic-json.js";
+import { readJsonFileOrDefault, writeJsonFileAtomic } from "../common/atomic-json.js";
 import {
 	AsyncMutex,
 	assertPathWithinBase,
 	assertSafeFileComponent,
-	fsErrorCode,
 	resolveDataDir,
 } from "../common/index.js";
 import { generateMarkdownTranscript } from "./transcript.js";
@@ -105,16 +104,16 @@ export class FileConversationLogger implements IConversationLogger {
 		for (const entry of entries) {
 			if (!entry.endsWith(".json")) continue;
 			const filePath = join(this.conversationsDir, entry);
-			try {
-				const raw = await readFile(filePath, "utf-8");
-				const log = normalizeConversationLog(JSON.parse(raw) as ConversationLog);
-				if (filter?.connectionId && log.connectionId !== filter.connectionId) {
-					continue;
-				}
-				logs.push(log);
-			} catch {
-				// Skip corrupted files
+			const log = await readJsonFileOrDefault(
+				filePath,
+				(raw) => normalizeConversationLog(raw as ConversationLog),
+				null,
+				{ fallbackOnError: true },
+			);
+			if (!log || (filter?.connectionId && log.connectionId !== filter.connectionId)) {
+				continue;
 			}
+			logs.push(log);
 		}
 
 		return logs;
@@ -139,13 +138,11 @@ export class FileConversationLogger implements IConversationLogger {
 
 	private async loadLog(conversationId: string): Promise<ConversationLog | null> {
 		const filePath = this.filePathForConversation(conversationId);
-		try {
-			const raw = await readFile(filePath, "utf-8");
-			return normalizeConversationLog(JSON.parse(raw) as ConversationLog);
-		} catch (err: unknown) {
-			if (fsErrorCode(err) === "ENOENT") return null;
-			throw err;
-		}
+		return readJsonFileOrDefault(
+			filePath,
+			(raw) => normalizeConversationLog(raw as ConversationLog),
+			null,
+		);
 	}
 
 	private async saveLog(conversationId: string, log: ConversationLog): Promise<void> {
