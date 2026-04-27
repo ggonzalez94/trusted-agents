@@ -13,6 +13,13 @@ export function isOptionalString(value: unknown): boolean {
 	return value === undefined || typeof value === "string";
 }
 
+export function hasOptionalStringFields(
+	value: Record<string, unknown>,
+	fields: readonly string[],
+): boolean {
+	return fields.every((field) => isOptionalString(value[field]));
+}
+
 export function isBoolean(value: unknown): value is boolean {
 	return typeof value === "boolean";
 }

@@ -6,9 +6,9 @@ import type {
 import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
+	hasOptionalStringFields,
 	hasPeerField,
 	hasTapTransferFields,
-	isOptionalString,
 	requireBody,
 } from "../validation.js";
 
@@ -17,7 +17,7 @@ function isFundsRequestBody(value: unknown): value is TapRequestFundsInput {
 	if (!v) return false;
 	if (!hasPeerField(v)) return false;
 	if (!hasTapTransferFields(v)) return false;
-	if (!isOptionalString(v.note)) return false;
+	if (!hasOptionalStringFields(v, ["note"])) return false;
 	return true;
 }
 

@@ -14,10 +14,10 @@ import { HttpError } from "../errors.js";
 import type { RouteHandler } from "../router.js";
 import {
 	asRecord,
+	hasOptionalStringFields,
 	hasPeerField,
 	isBoolean,
 	isOptionalReasonBody,
-	isOptionalString,
 	isPositiveFiniteNumber,
 	requireBody,
 	requireParam,
@@ -50,11 +50,11 @@ function isRequestMeetingBody(value: unknown): value is RequestMeetingBody {
 	if (typeof v.title !== "string" || v.title.trim().length === 0) return false;
 	if (!isPositiveFiniteNumber(v.duration)) return false;
 	if (v.slots !== undefined && !Array.isArray(v.slots)) return false;
-	if (!isOptionalString(v.preferred)) return false;
-	if (!isOptionalString(v.location)) return false;
-	if (!isOptionalString(v.note)) return false;
-	if (!isOptionalString(v.schedulingId)) return false;
-	if (!isOptionalString(v.originTimezone)) return false;
+	if (
+		!hasOptionalStringFields(v, ["preferred", "location", "note", "schedulingId", "originTimezone"])
+	) {
+		return false;
+	}
 	return true;
 }
 
@@ -67,7 +67,7 @@ function isRespondBody(value: unknown): value is RespondBody {
 	const v = asRecord(value);
 	if (!v) return false;
 	if (!isBoolean(v.approve)) return false;
-	if (!isOptionalString(v.reason)) return false;
+	if (!hasOptionalStringFields(v, ["reason"])) return false;
 	return true;
 }
 
