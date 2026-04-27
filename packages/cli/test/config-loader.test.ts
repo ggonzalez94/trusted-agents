@@ -7,6 +7,9 @@ import { loadConfig, resolveConfigPath, resolveDataDir } from "../src/lib/config
 describe("config-loader", () => {
 	let tmpDir: string;
 	let originalHome: string | undefined;
+	const configPath = (dataDir = tmpDir) => join(dataDir, "config.yaml");
+	const writeConfig = (lines: string[], dataDir = tmpDir) =>
+		writeFile(configPath(dataDir), [...lines, ""].join("\n"), "utf-8");
 
 	beforeEach(async () => {
 		tmpDir = await mkdtemp(join(tmpdir(), "tap-config-test-"));
@@ -48,16 +51,16 @@ describe("config-loader", () => {
 		it("should prefer config.yaml inside dataDir when it exists", async () => {
 			const dataDir = join(tmpDir, "data");
 			await mkdir(dataDir, { recursive: true });
-			await writeFile(join(dataDir, "config.yaml"), "agent_id: 1", "utf-8");
+			await writeConfig(["agent_id: 1"], dataDir);
 
 			const path = resolveConfigPath({}, dataDir);
-			expect(path).toBe(join(dataDir, "config.yaml"));
+			expect(path).toBe(configPath(dataDir));
 		});
 
 		it("should return <dataDir>/config.yaml as default path", () => {
 			const dataDir = join(tmpDir, "fresh-data-no-config");
 			const path = resolveConfigPath({}, dataDir);
-			expect(path).toBe(join(dataDir, "config.yaml"));
+			expect(path).toBe(configPath(dataDir));
 		});
 	});
 
@@ -91,7 +94,7 @@ describe("config-loader", () => {
 			["Taiko mainnet", "taiko", "eip4337", "servo"],
 		])("defaults %s to %s mode with %s paymaster", async (_, chain, mode, paymaster) => {
 			await mkdir(tmpDir, { recursive: true });
-			await writeFile(join(tmpDir, "config.yaml"), `agent_id: 1\nchain: ${chain}\n`, "utf-8");
+			await writeConfig(["agent_id: 1", `chain: ${chain}`]);
 
 			const config = await loadConfig({ dataDir: tmpDir });
 
@@ -101,18 +104,13 @@ describe("config-loader", () => {
 
 		it("loads optional IPFS provider settings from config", async () => {
 			await mkdir(tmpDir, { recursive: true });
-			await writeFile(
-				join(tmpDir, "config.yaml"),
-				[
-					"agent_id: 1",
-					"chain: base",
-					"ipfs:",
-					"  provider: tack",
-					"  tack_api_url: https://tack.example.test",
-					"",
-				].join("\n"),
-				"utf-8",
-			);
+			await writeConfig([
+				"agent_id: 1",
+				"chain: base",
+				"ipfs:",
+				"  provider: tack",
+				"  tack_api_url: https://tack.example.test",
+			]);
 
 			const config = await loadConfig({ dataDir: tmpDir });
 			expect(config.ipfs?.provider).toBe("tack");
@@ -130,11 +128,7 @@ describe("config-loader", () => {
 		it("preserves the saved chain when config.yaml already exists", async () => {
 			const dataDir = join(tmpDir, "existing-config");
 			await mkdir(dataDir, { recursive: true });
-			await writeFile(
-				join(dataDir, "config.yaml"),
-				["agent_id: -1", "chain: eip155:167000", ""].join("\n"),
-				"utf-8",
-			);
+			await writeConfig(["agent_id: -1", "chain: eip155:167000"], dataDir);
 
 			const config = await loadConfig({ dataDir }, { requireAgentId: false });
 			expect(config.chain).toBe("eip155:167000");
@@ -143,11 +137,7 @@ describe("config-loader", () => {
 		it("overrides the selected chain RPC URL from CLI or env", async () => {
 			const dataDir = join(tmpDir, "rpc-override");
 			await mkdir(dataDir, { recursive: true });
-			await writeFile(
-				join(dataDir, "config.yaml"),
-				["agent_id: 1", "chain: eip155:8453", ""].join("\n"),
-				"utf-8",
-			);
+			await writeConfig(["agent_id: 1", "chain: eip155:8453"], dataDir);
 
 			process.env.TAP_RPC_URL = "https://example.test/base-override";
 			const config = await loadConfig({ dataDir });
@@ -160,11 +150,7 @@ describe("config-loader", () => {
 			const otherDir = join(tmpDir, "agent-b");
 			await mkdir(dataDir, { recursive: true });
 			await mkdir(otherDir, { recursive: true });
-			await writeFile(
-				join(otherDir, "config.yaml"),
-				["agent_id: 1", "chain: eip155:8453", ""].join("\n"),
-				"utf-8",
-			);
+			await writeConfig(["agent_id: 1", "chain: eip155:8453"], otherDir);
 
 			await expect(
 				loadConfig(
@@ -174,9 +160,7 @@ describe("config-loader", () => {
 					},
 					{ requireAgentId: false },
 				),
-			).rejects.toThrow(
-				`Config path must match the TAP data dir config at ${join(dataDir, "config.yaml")}`,
-			);
+			).rejects.toThrow(`Config path must match the TAP data dir config at ${configPath(dataDir)}`);
 		});
 	});
 });
