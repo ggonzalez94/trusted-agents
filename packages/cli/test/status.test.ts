@@ -11,6 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
 import { saveTapHermesPluginConfig } from "../src/hermes/config.js";
+import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { UNREGISTERED_AGENT_CONFIG_YAML, buildAgentConfigYaml } from "./helpers/config-fixtures.js";
 
@@ -19,7 +20,7 @@ const MINIMAL_CONFIG = buildAgentConfigYaml({ agentId: 42 });
 async function makeAgentDir(root: string, config = MINIMAL_CONFIG): Promise<string> {
 	const dataDir = join(root, "agent");
 	await mkdir(dataDir, { recursive: true });
-	await writeFile(join(dataDir, "config.yaml"), config, "utf-8");
+	await writeFile(defaultConfigPath(dataDir), config, "utf-8");
 	return dataDir;
 }
 
@@ -332,7 +333,7 @@ describe("tap status", () => {
 	it("reports config-invalid when config.yaml is empty", async () => {
 		const dataDir = join(tempRoot, "broken-agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(join(dataDir, "config.yaml"), "", "utf-8");
+		await writeFile(defaultConfigPath(dataDir), "", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -349,7 +350,7 @@ describe("tap status", () => {
 	it("reports config-invalid when config.yaml has garbage yaml", async () => {
 		const dataDir = join(tempRoot, "broken-yaml-agent");
 		await mkdir(dataDir, { recursive: true });
-		await writeFile(join(dataDir, "config.yaml"), "not: [valid: yaml", "utf-8");
+		await writeFile(defaultConfigPath(dataDir), "not: [valid: yaml", "utf-8");
 
 		await statusCommand({}, { json: true, dataDir });
 
@@ -385,7 +386,7 @@ describe("tap status", () => {
 		// parents.
 		const foreignParent = join(tempRoot, "agent-b");
 		await mkdir(foreignParent, { recursive: true });
-		const foreignConfig = join(foreignParent, "config.yaml");
+		const foreignConfig = defaultConfigPath(foreignParent);
 		await writeFile(
 			foreignConfig,
 			["agent_id: 7", "chain: eip155:8453", "ows:", "  wallet: other", "  api_key: other"].join(
