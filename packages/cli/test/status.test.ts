@@ -14,7 +14,7 @@ import {
 } from "trusted-agents-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { statusCommand } from "../src/commands/status.js";
-import { saveTapHermesPluginConfig } from "../src/hermes/config.js";
+import { getTapHermesPaths, saveTapHermesPluginConfig } from "../src/hermes/config.js";
 import { defaultConfigPath } from "../src/lib/config-loader.js";
 import { useCapturedOutput } from "./helpers/capture-output.js";
 import { UNREGISTERED_AGENT_CONFIG_YAML, buildAgentConfigYaml } from "./helpers/config-fixtures.js";
@@ -201,20 +201,14 @@ describe("tap status", () => {
 		});
 		// Simulate a live hermes daemon state file pointing at our PID (self,
 		// so isProcessAlive returns true).
-		const daemonStatePath = join(
-			hermesHome,
-			"plugins",
-			"trusted-agents-tap",
-			"state",
-			"daemon.json",
-		);
-		await mkdir(join(hermesHome, "plugins", "trusted-agents-tap", "state"), { recursive: true });
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.stateDir, { recursive: true });
 		await writeFile(
-			daemonStatePath,
+			hermesPaths.daemonStatePath,
 			JSON.stringify({
 				pid: process.pid,
 				gatewayPid: process.pid,
-				socketPath: join(hermesHome, "tap-hermes.sock"),
+				socketPath: hermesPaths.socketPath,
 				startedAt: new Date().toISOString(),
 				identities: ["other"],
 			}),
@@ -654,19 +648,18 @@ describe("tap status", () => {
 		// identities" warning fires — even though the actual problem is the
 		// unreadable config, not a missing identity.
 		const dataDir = await makeAgentDir(tempRoot);
-		const hermesPluginDir = join(hermesHome, "plugins", "trusted-agents-tap");
-		await mkdir(hermesPluginDir, { recursive: true });
-		await writeFile(join(hermesPluginDir, "config.json"), "{ not: json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.pluginDir, { recursive: true });
+		await writeFile(hermesPaths.configPath, "{ not: json", "utf-8");
 
 		// And a live daemon state pointing at our pid so daemon_running is true.
-		const stateDir = join(hermesPluginDir, "state");
-		await mkdir(stateDir, { recursive: true });
+		await mkdir(hermesPaths.stateDir, { recursive: true });
 		await writeFile(
-			join(stateDir, "daemon.json"),
+			hermesPaths.daemonStatePath,
 			JSON.stringify({
 				pid: process.pid,
 				gatewayPid: process.pid,
-				socketPath: join(hermesHome, "tap-hermes.sock"),
+				socketPath: hermesPaths.socketPath,
 				startedAt: new Date().toISOString(),
 				identities: [],
 			}),
@@ -697,9 +690,9 @@ describe("tap status", () => {
 		await saveTapHermesPluginConfig(hermesHome, {
 			identities: [{ name: "default", dataDir, reconcileIntervalMinutes: 10 }],
 		});
-		const stateDir = join(hermesHome, "plugins", "trusted-agents-tap", "state");
-		await mkdir(stateDir, { recursive: true });
-		await writeFile(join(stateDir, "daemon.json"), "{ not json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.stateDir, { recursive: true });
+		await writeFile(hermesPaths.daemonStatePath, "{ not json", "utf-8");
 
 		await statusCommand({ hermesHome }, { json: true, dataDir });
 
@@ -728,9 +721,9 @@ describe("tap status", () => {
 		await saveTapHermesPluginConfig(hermesHome, {
 			identities: [{ name: "default", dataDir, reconcileIntervalMinutes: 10 }],
 		});
-		const stateDir = join(hermesHome, "plugins", "trusted-agents-tap", "state");
-		await mkdir(stateDir, { recursive: true });
-		await writeFile(join(stateDir, "daemon.json"), "{ not json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.stateDir, { recursive: true });
+		await writeFile(hermesPaths.daemonStatePath, "{ not json", "utf-8");
 
 		await statusCommand({ hermesHome }, { json: true, dataDir });
 
@@ -749,9 +742,9 @@ describe("tap status", () => {
 		// installed". The whole point of the debug command is to expose the
 		// root cause.
 		const dataDir = await makeAgentDir(tempRoot);
-		const hermesPluginDir = join(hermesHome, "plugins", "trusted-agents-tap");
-		await mkdir(hermesPluginDir, { recursive: true });
-		await writeFile(join(hermesPluginDir, "config.json"), "{ not: json", "utf-8");
+		const hermesPaths = getTapHermesPaths(hermesHome);
+		await mkdir(hermesPaths.pluginDir, { recursive: true });
+		await writeFile(hermesPaths.configPath, "{ not: json", "utf-8");
 
 		await statusCommand({ hermesHome }, { json: true, dataDir });
 
