@@ -63,17 +63,8 @@ export interface CreateTapRuntimeOptions {
 	createSigningProvider?: (config: TrustedAgentsConfig) => Promise<SigningProviderLike>;
 }
 
-/**
- * Minimal signing provider shape the SDK accepts.
- * Compatible with both OwsSigningProvider and custom implementations.
- */
-export interface SigningProviderLike {
-	getAddress(): Promise<`0x${string}`>;
-	signMessage(message: unknown): Promise<`0x${string}`>;
-	signTypedData(params: unknown): Promise<`0x${string}`>;
-	signTransaction(tx: unknown): Promise<`0x${string}`>;
-	signAuthorization(params: unknown): Promise<unknown>;
-}
+/** Signing provider shape accepted by the SDK. */
+export type SigningProviderLike = SigningProvider;
 
 /**
  * TapRuntime is the public SDK entry point for all TAP hosts.
@@ -128,8 +119,7 @@ export class TapRuntime extends EventEmitter {
 		}
 
 		const contextOptions: BuildTapRuntimeContextOptions = {
-			// biome-ignore lint/suspicious/noExplicitAny: SigningProviderLike is compatible with SigningProvider
-			signingProvider: signingProvider as any,
+			signingProvider,
 			...this.options.contextOptions,
 		};
 		this.context = await buildDefaultTapRuntimeContext(this._config, contextOptions);
