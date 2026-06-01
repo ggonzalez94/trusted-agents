@@ -416,7 +416,12 @@ describe("connection request auto-accept (spec §1.5)", () => {
 			senderInboxId: "peer-inbox-hook-invalid",
 			message: request,
 		});
-		await sleep(50);
+
+		// Wait until the rejection response has been sent — that proves the
+		// async processing completed, making the negative assertion deterministic.
+		await waitForCondition("rejected connection/result sent", () =>
+			transport.sentMessages.some((m) => m.message.method === "connection/result"),
+		);
 
 		expect(onConnectionEstablished).not.toHaveBeenCalled();
 
