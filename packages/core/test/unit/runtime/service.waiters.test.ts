@@ -393,8 +393,10 @@ describe("connect waiter lifecycle (spec §3.2 + Task 4.1)", () => {
 		// registered inside connect() before it awaits the waiterPromise.
 		const connectPromise = service.connect({ inviteUrl: url, waitMs: 10_000 });
 
-		// Give connect() time to register the waiter and reach the await.
-		await sleep(50);
+		// Wait until connect() has sent the connection/request — the waiter is
+		// registered immediately before transport.send(), so observing the sent
+		// message guarantees the waiter exists.
+		await waitFor(() => transport.sentMessages.length === 1);
 
 		// Stop the service. This calls rejectAllConnectWaiters() which rejects the
 		// waiter, causing connectInternal to throw, which propagates to connect().
